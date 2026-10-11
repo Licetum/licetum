@@ -1,5 +1,5 @@
 # Build from the repository root: docker build -f web/Dockerfile --target <stage> .
-FROM node:24-bookworm-slim AS base
+FROM node:25-bookworm-slim AS base
 
 # CI image for the quality checks (task check runs inside it).
 FROM base AS ci
@@ -29,7 +29,7 @@ RUN pnpm build
 
 # A small server: Next.js traces what it needs into .next/standalone. Everything is configured at run time by the
 # environment (ADMIN_API_URL, ADMIN_API_PUBLIC_URL, CHECK_API_URL, APP_BASE_URL, SESSION_SECRET), nothing is baked in.
-FROM node:24-bookworm-slim AS prod
+FROM node:25-bookworm-slim AS prod
 
 ENV NODE_ENV=production \
     PORT=3000 \
