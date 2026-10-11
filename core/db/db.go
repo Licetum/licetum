@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -45,14 +46,19 @@ func Connect(ctx context.Context, cfg config.Database) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parse DB__URI: %w", err)
 	}
 
-	maxConns := cfg.PoolSize + cfg.MaxOverflow
+	// The sum is taken in 64 bits and checked before it becomes the int32 the pool takes: a value from the
+	// environment that does not fit must be an error, not a pool of a different size.
+	maxConns := int64(cfg.PoolSize) + int64(cfg.MaxOverflow)
 	if maxConns <= 0 {
 		maxConns = 10
+	}
+	if maxConns > math.MaxInt32 {
+		return nil, fmt.Errorf("DB__POOL_SIZE + DB__MAX_OVERFLOW must not exceed %d", math.MaxInt32)
 	}
 	poolCfg.MaxConns = int32(maxConns)
 	if cfg.PoolSize > 0 {
 		poolCfg.MinConns = 0
-		poolCfg.MinIdleConns = int32(min(cfg.PoolSize, maxConns))
+		poolCfg.MinIdleConns = int32(min(int64(cfg.PoolSize), maxConns))
 	}
 	if cfg.PoolRecycle > 0 {
 		poolCfg.MaxConnLifetime = cfg.PoolRecycle
