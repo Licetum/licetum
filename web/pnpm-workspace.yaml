@@ -1,5 +1,9 @@
 allowBuilds:
   esbuild: true
+  # Jest reaches these two without scripts: the watcher is used only in --watch mode, and the resolver's
+  # binary comes with its optional package. Their install scripts stay off.
+  '@parcel/watcher': false
+  unrs-resolver: false
 minimumReleaseAgeExclude:
   - i18next@26.4.3
   - lucide-react@1.55.0
