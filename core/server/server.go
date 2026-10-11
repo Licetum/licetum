@@ -26,7 +26,7 @@ import (
 )
 
 // Version is the API version in the OpenAPI document.
-const Version = "1.0.0"
+const Version = "0.1.0"
 
 // description is the OpenAPI info.description (English source; translated in docs_i18n.go).
 const description = `**Licetum** is a centralized authorization service for all of your company's services.
