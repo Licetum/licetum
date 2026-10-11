@@ -46,7 +46,7 @@
     "knip": "6.41.0",
     "orval": "8.41.0",
     "oxfmt": "0.72.0",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=20.9.0"
