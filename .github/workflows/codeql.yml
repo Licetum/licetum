@@ -36,12 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: github/codeql-action/init@v4
-        with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
-          queries: security-extended
-
+      # Go is set up before init: the tracer of CodeQL wraps the go in PATH, and a later setup-go would replace it.
       - uses: actions/setup-go@v6
         if: matrix.language == 'go'
         with:
@@ -49,6 +44,12 @@ jobs:
           cache-dependency-path: |
             core/go.sum
             admin-api/go.sum
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
 
       - name: Build the Go modules for CodeQL
         if: matrix.language == 'go'
