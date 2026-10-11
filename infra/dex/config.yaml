@@ -20,8 +20,8 @@ staticClients:
     name: Licetum local development
     secret: licetum-local-secret
     redirectURIs:
-      - http://localhost:8002/service/8222eafd-cef3-5136-a189-8cb46b0e67d0/oauth/callback
-      - http://127.0.0.1:8002/service/8222eafd-cef3-5136-a189-8cb46b0e67d0/oauth/callback
+      - http://localhost:8002/service/275d0b64-c908-5af4-a046-41dd0c3ac1aa/oauth/callback
+      - http://127.0.0.1:8002/service/275d0b64-c908-5af4-a046-41dd0c3ac1aa/oauth/callback
 
 enablePasswordDB: true
 staticPasswords:
