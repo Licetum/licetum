@@ -34,7 +34,7 @@ jobs:
           - language: javascript-typescript
             build-mode: none
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Go is set up before init: the tracer of CodeQL wraps the go in PATH, and a later setup-go would replace it.
       - uses: actions/setup-go@v7

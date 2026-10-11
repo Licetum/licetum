@@ -39,7 +39,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       stable: ${{ steps.version.outputs.stable }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -131,7 +131,7 @@ jobs:
             dockerfile: web/Dockerfile
             target: prod
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v3
 
