@@ -33,8 +33,8 @@ src/components/     providers, kit (page header, tags, empty/error blocks), bran
 src/lib/            session, env, access, undo notice, URL state
 src/i18n/           ru, en and zh dictionaries (en is the source); scripts/check-locales.mjs checks them
 src/theme/          the visual system as an Ant Design theme
-tests/              vitest unit tests (domain helpers, grant form model, session cookie)
-e2e/                Playwright tests against a running stack
+tests/              Jest tests: domain helpers, grant form model, schemas, session cookie; tests/ui renders components
+                    with mocked data (no browser, no running stack)
 ```
 
 ## Run
@@ -57,11 +57,11 @@ pnpm knip             # unused files, exports and dependencies
 pnpm check:i18n       # same keys and {{variables}} in en, ru and zh; every key the code uses exists
 pnpm format:check     # oxfmt
 pnpm build            # production build (also runs check:i18n)
-E2E_BASE_URL=http://localhost:3000 pnpm e2e
+pnpm test             # Jest
 ```
 
-`task web:lint` runs all linters, `task web:test` the unit tests; neither runs the build or the e2e tests. The e2e tests sign in with `E2E_USER` / `E2E_PASSWORD` (default:
-the local development account of `infra/dex/config.yaml`).
+`task web:lint` runs all linters, `task web:test` the Jest tests. The interface is tested with mocked API responses, not
+against a running stack: the backend has its own integration tests (`task go:test:integration`).
 
 ## Conventions that bite
 
