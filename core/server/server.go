@@ -297,17 +297,25 @@ func logAndRecover(app *engine.App, next http.Handler) http.Handler {
 				writeJSONError(rec, apperr.Internal().Localize(requestLang(r)))
 			}
 			app.ObserveHTTP(info.operation, strconv.Itoa(rec.status), time.Since(start).Seconds())
+			// The path, the user and the person named on behalf come from the request or from the token: they are
+			// made safe for a log line before they are written.
 			attrs := []any{
-				"request_id", info.id, "method", r.Method, "path", r.URL.Path, "operation", info.operation,
-				"user", info.user, "status", rec.status, "duration_ms", time.Since(start).Milliseconds(),
+				"request_id", logSafe(info.id), "method", logSafe(r.Method), "path", logSafe(r.URL.Path), "operation", info.operation,
+				"user", logSafe(info.user), "status", rec.status, "duration_ms", time.Since(start).Milliseconds(),
 			}
 			if info.onBehalfOf != "" {
-				attrs = append(attrs, "on_behalf_of", info.onBehalfOf)
+				attrs = append(attrs, "on_behalf_of", logSafe(info.onBehalfOf))
 			}
 			slog.InfoContext(r.Context(), "request", attrs...)
 		}()
 		next.ServeHTTP(rec, r)
 	})
+}
+
+// logSafe escapes the line breaks of a value that came from a client or a token, so one request cannot write a
+// second log entry. The JSON handler escapes everything else.
+func logSafe(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", `\n`), "\r", `\r`)
 }
 
 func writeJSONError(w http.ResponseWriter, err *apperr.Error) {
