@@ -43,8 +43,8 @@ var (
 
 // platformIDNamespace is the prefix of the names the self-service ids are derived from: the product name. The ids are
 // stored in the databases and named in the redirect URIs of the identity providers. A database seeded under another
-// prefix (the product was called ReAuthz before the first public release) holds other ids and has to be recreated:
-// the seed never re-keys rows, and the redirect URIs must name the new service id.
+// prefix holds other ids and has to be recreated: the seed never re-keys rows, and the redirect URIs must name the
+// new service id.
 const platformIDNamespace = "licetum:platform:"
 
 func platformID(name string) uuid.UUID {
