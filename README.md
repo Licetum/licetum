@@ -1,178 +1,186 @@
 # Licetum
 
+[![CI](https://github.com/Licetum/licetum/actions/workflows/ci.yml/badge.svg)](https://github.com/Licetum/licetum/actions/workflows/ci.yml)
+![Go](https://img.shields.io/badge/Go-1.26-00ADD8)
+![License](https://img.shields.io/badge/license-MIT%20%2B%20AGPL--3.0-blue)
+
 ## Languages
 
 **English** · [Русский](docs/README.ru.md) · [简体中文](docs/README.zh-CN.md)
 
-Licetum is a cross-service authorization platform for a standard way to ask which business entities
-a user can access.
+**Connect your services once. Ask once. Explain every answer.**
 
-The main problem it solves is duplicated permission contracts and exports. A service should not
-need a custom endpoint for every consumer that asks for the user's projects, tickets, documents, or
-other resources. Licetum provides one common contract for this question and returns the permission
-projection that another system can apply to its own data.
+Licetum is a central authorization service for microservice teams. Each service publishes its resources
+once. Any consumer then asks one question, *what can this user access?*, and gets an answer it can apply to
+its own API, UI or database query. Every answer can be explained. The name comes from the Latin *licet*,
+"it is permitted".
 
-## The problem
+## Why Licetum
 
-A business entity is often owned by one service but used by several others.
+In a microservice architecture, permissions are spread across databases, config files and home-grown
+services. Every service that needs to know "which projects can this user see?" ends up with its own
+endpoint, its own export format and its own reading of the rules. The copies drift apart: one service shows
+a project that another one hides.
 
-For example:
+Licetum replaces the copies with one contract:
 
-- Service A owns projects.
-- An MCP service, search service, or reporting service needs to show only projects available to
-  the current user.
-- A private-data service needs to filter database rows so that every request returns only allowed
-  entity IDs.
-- A support system may let a person create tickets only for themselves, while team members can see
-  tickets created by any member of their team.
+- The owning service keeps its data and decides which of its resources are published.
+- Licetum holds the rules: who may do what on which resources, with which denials and exceptions, and for
+  how long.
+- Consumers ask one question and apply the answer: a list of allowed IDs, or a yes/no decision.
 
-Without a common contract, every consuming service has to implement its own permissions endpoint,
-export format, synchronization job, and interpretation of access rules. These implementations
-drift apart. One system may show a project that another hides, or every service may repeat the same
-logic for users, groups, and shared resources.
+Licetum does not store business records, does not replace your identity provider, and does not enforce
+access on your behalf. Services that receive an answer remain responsible for applying it.
 
-The core question is:
+## How it works
 
-> How can any system ask for the same user's access to the same business entities without building
-> a new permission integration for every pair of services?
+```mermaid
+flowchart LR
+  S["Owning service<br/>publishes its resources"]
+  C["Consumer service<br/>API, search, MCP, reporting"]
+  L["Licetum<br/>rules and resource catalog"]
+  DB[(PostgreSQL)]
+  R[(Redis)]
+  S -- "SQL view or HTTP endpoint" --> L
+  C -- "GET /service/{id}/permission" --> L
+  L --- DB
+  L --- R
+```
 
-## The standard visibility contract
+A consumer asks for the subject's permissions in a registered service:
 
-A consuming service asks Licetum for the current subject's permissions in a registered service:
+```http
+GET /service/{service_id}/permission
+Authorization: Bearer <user-token>
+```
 
-    GET /service/{service_id}/permission
-    Authorization: Bearer <user-token>
+The answer lists the resources the subject can reach, with the access levels on each:
 
-Conceptually, the response looks like this:
+```json
+{
+  "project": {
+    "type": "sync",
+    "resources": [
+      { "id": "1", "name": "Project 1", "access": ["read"] },
+      { "id": "2", "name": "Project 2", "access": ["read", "write"] }
+    ]
+  }
+}
+```
 
-    {
-      "project": {
-        "type": "sync",
-        "resources": [
-          { "id": "1", "name": "Project 1", "access": ["read"] },
-          { "id": "2", "name": "Project 2", "access": ["read", "write"] }
-        ]
-      }
-    }
+A type without concrete resources, such as a feature, an operation or a mode, comes back as
+`"type": "not_sync"` with the access levels on the type as a whole.
 
-The actual response also describes resource types without concrete resources. Those types return
-access to the type as a whole, which is useful for global capabilities such as a feature, operation,
-or mode.
+For a single decision, ask a question per check. One request holds up to 100 of them:
 
-This contract gives every consuming system the same answer to the same question:
+```http
+POST /service/{service_id}/check
+Authorization: Bearer <user-token>
+Content-Type: application/json
 
-> “Hello, what can this user access in that service?”
+{
+  "checks": [
+    { "type": "project", "resource_id": "2", "action": "write" },
+    { "type": "project", "action": "create" }
+  ],
+  "explain": true
+}
+```
 
-The consumer can then use the returned IDs in its own API, UI, MCP tool, search query, or database
-filter. Licetum does not return business records and does not take over CRUD ownership.
+With `explain`, each answer says which rules grant the level, which denials apply, and which exceptions lift them.
 
-## How resource publication works
+## Features
 
-The source service remains responsible for deciding which of its business entities are published
-as authorization resources and what relationships or metadata they expose.
+- **One visibility contract.** Every consumer asks the same question and gets the same answer, whether it is
+  an API, a search index, an MCP tool or a reporting job.
+- **Exact resource IDs.** The answer lists the allowed resources by their IDs, so a consumer can use them in
+  a `WHERE` filter or in a row-level security policy.
+- **Explainable decisions.** Every answer can show the rules behind it: what grants access, what denies it,
+  and what lifts the denial.
+- **Allow, deny and exceptions.** A deny rule wins over an allow rule. An exception placed below a denial
+  lifts it for the resources it covers.
+- **Hierarchies across services.** A permission on a parent resource reaches the resources below it, even
+  when the parent and the children belong to different services.
+- **Groups and roles.** Groups say *who*: they can be nested, and membership can come from token claims such
+  as `department`. Roles say *what*: named sets of access levels that are granted to a user, a group or
+  everyone who matches some claims.
+- **Attribute-based rules.** A rule can match resources by the attributes their source publishes, such as an
+  `owner` field, and conditions can read token claims, request context or the time of day.
+- **Time-bound access.** Start and expiry dates on rules and group memberships support temporary access.
+- **Policy as code.** Lint a service's policy, run test scenarios against it, export it as a
+  `licetum.policy/v1` document, and import it with a dry run first.
+- **History you can revert.** Every change is recorded with the entity before and after. A recorded change
+  can be reverted on its own, or several can be rolled back as one batch.
 
-Licetum can read that published resource view through:
+## Who it is for
 
-- a read-only SQL view available to a service account, including a database replica;
-- an HTTP resource endpoint;
-- a synchronizer that keeps the shared resource catalog current.
+- **Architecture and platform teams** get one contract for resource visibility across services.
+- **Service developers** make one call instead of building a permissions endpoint for each consumer.
+- **Access administrators** grant and revoke access in one place and can see why a person has it.
+- **Security reviewers** get answers that can be explained and a change history that can be audited.
 
-This removes the need for every consumer to implement its own permission export. The source service
-keeps its business logic and data ownership; Licetum standardizes the permission contract used by
-all consumers.
+## Quick start
 
-The same model also allows common resources and relationships to be synchronized once and reused by
-several services. This helps keep visibility consistent when the same project, organization, team,
-or customer appears in multiple systems.
+You need Docker and [Task](https://taskfile.dev).
 
-## What problem does Licetum solve?
+```bash
+task dev
+```
 
-Licetum builds a shared permission view over resources that remain owned by their source services:
+This starts PostgreSQL, Redis, a local Dex OIDC provider, the check API, the admin API and the web interface,
+with hot reload for the Go services and the web interface.
 
-- **One visibility contract.** Consumers ask one standard API instead of implementing a custom
-  “my projects” or “export permissions” endpoint for every system.
-- **Exact resource IDs.** A permission response can list every resource available to a subject and
-  the access levels granted on each resource.
-- **Consistent cross-service visibility.** MCP, search, UI, reporting, support, and private-data
-  systems can apply the same result.
-- **Database-friendly access control.** Applications can use the returned IDs in a WHERE filter or
-  use them to build a row-level security (RLS) policy.
-- **Business logic stays at the source.** The owning service decides which resources and relationships
-  are published; Licetum evaluates access to them.
-- **Less repeated integration work.** Consumers no longer need separate contracts, permission exports,
-  and synchronization code for every upstream service.
+| Component | URL |
+|---|---|
+| Web interface | http://localhost:3000 |
+| Admin API | http://localhost:8002 |
+| Check API | http://localhost:8001 |
 
-## Direct permission checks
+Sign in at http://localhost:3000 as `admin@example.com` with the password `password`. These credentials are
+for development only.
 
-Sometimes a service needs one decision rather than a complete visibility list:
-
-- may this subject perform write on project 42?
-- may this user create a new ticket?
-- may this team member read this conversation?
-
-The check API supports multiple questions in one request and can explain the result: which rules
-granted access, which denials applied, and which narrower exceptions lifted them.
-
-## Groups, roles, hierarchies, and rules
-
-The core value is the common resource-permission contract. Groups, roles and other policy features make that
-contract practical and understandable:
-
-- **Groups** gather people. A group is a subject of its own, groups can be nested, and membership may depend on
-  claims such as department, region or organization.
-- **Roles** are named sets of permissions. A role says *what* can be done (access levels on a resource type, on a
-  resource, or on a resource found through a claim); a group says *who*. An access rule grants a role to a user, to a
-  group, or to everyone who matches some claims, so the same role can be reused everywhere.
-- Resource types can reference parents from the same or another service: a permission on a parent cascades to the
-  resources below it.
-- Allow rules, deny rules and narrower exceptions cover both common and exceptional business cases.
-- Start and expiration dates support temporary access.
-- Global type-level permissions cover capabilities that have no concrete resource ID.
-
-For example, a project service can publish projects, a team service can publish team membership, and a support
-service can publish conversations. A "support agent" role can read conversations, and an access rule grants it to the
-"support team" group: every new member of the group gets access at once. Consumers do not need to invent a different
-permission protocol for each case.
+To run the Go binaries without Docker, see the guides for the [core](core/README.md) and the
+[admin API](admin-api/README.md). Each can print its OpenAPI specification without a server:
+`licetum openapi check` for the check API, `licetum-admin openapi admin` for the admin API.
 
 ## What Licetum is not
 
-- It is not an identity provider. It uses OAuth2/OIDC tokens and their claims.
+- It is not an identity provider. It uses the OAuth2/OIDC tokens your identity provider issues and their claims.
 - It is not a business database. Source services keep their records and remain responsible for CRUD.
-- It is not a database RLS extension. Licetum provides authorized IDs or decisions; the consuming
-  service applies them to its own query and storage layer.
+- It is not a database RLS extension. Licetum provides allowed IDs or decisions. Your service applies them to
+  its own queries and storage.
 - It is not only a frontend filter. Backend and data-access layers must enforce the result.
 
-## Try it
+## Documentation
 
-The repository includes PostgreSQL, Redis, a local Dex OIDC provider, the runtime, the admin API and the
-admin interface:
-
-    task dev
-
-Open http://localhost:3000 and use admin@example.com / password. These credentials are for
-development only.
-
-For implementation details, see the [core guide](core/README.md) (the runtime and the check API),
-the [admin API guide](admin-api/README.md) and the [web guide](web/README.md).
+- [core/](core/README.md): the engine, the check API, the database schema and migrations (MIT).
+- [admin-api/](admin-api/README.md): the admin API, the policy tools and the `licetum-admin` binary (AGPL-3.0).
+- [web/](web/README.md): the admin interface (AGPL-3.0).
 
 ## Repositories
 
 The project lives in the [Licetum](https://github.com/Licetum) organization:
 
-- [licetum](https://github.com/Licetum/licetum) — this repository: the runtime and the admin API (Go), and the web interface (Next.js).
+- [licetum](https://github.com/Licetum/licetum): this repository, with the engine, the APIs and the web interface.
 - [licetum-go-sdk](https://github.com/Licetum/licetum-go-sdk), [licetum-ts-sdk](https://github.com/Licetum/licetum-ts-sdk),
-  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk) — client libraries for the check API (to be published;
-  each carries its own license file).
-- [licetum-helm](https://github.com/Licetum/licetum-helm) — the Helm chart.
-- [licetum-docs](https://github.com/Licetum/licetum-docs) — the documentation.
+  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk): client libraries for the check API (to be
+  published; each will carry its own license file).
+- [licetum-helm](https://github.com/Licetum/licetum-helm): the Helm chart.
+- [licetum-docs](https://github.com/Licetum/licetum-docs): the documentation.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. To report a security vulnerability,
+follow [SECURITY.md](SECURITY.md) and do not open a public issue.
 
 ## License
 
 Licetum is made of three parts, each under its own license (see [LICENSE](LICENSE)):
 
-- [`core/`](core/LICENSE) — the engine, the check API, the database schema and the runtime: MIT License.
-- [`admin-api/`](admin-api/LICENSE) — the admin API: GNU Affero General Public License v3.0 only.
-- [`web/`](web/LICENSE) — the admin interface: GNU Affero General Public License v3.0 only.
+- [`core/`](core/LICENSE): the engine, the check API, the database schema and the runtime. MIT License.
+- [`admin-api/`](admin-api/LICENSE): the admin API. GNU Affero General Public License v3.0 only.
+- [`web/`](web/LICENSE): the admin interface. GNU Affero General Public License v3.0 only.
 
 If you run a modified `admin-api/` or `web/` as a network service, the AGPL requires you to offer its source to
-the users of that service. The names and logos of Licetum are not covered by these licenses ([TRADEMARKS.md](TRADEMARKS.md)).
+the users of that service. The names and logos of Licetum are not covered by these licenses
+([TRADEMARKS.md](TRADEMARKS.md)).
