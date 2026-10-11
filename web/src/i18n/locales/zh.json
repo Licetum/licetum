@@ -1,0 +1,1281 @@
+{
+  "access": {
+    "byResourcesNote": "树状视图只显示规则本身所说的内容。要知道谁能看到某个具体资源，需要反向查询，目前尚未提供。",
+    "col": {
+      "author": "作者",
+      "conditions": "条件",
+      "count": "访问权限",
+      "kind": "类型",
+      "recipient": "对象",
+      "status": "状态",
+      "what": "内容",
+      "where": "范围",
+      "who": "授予谁"
+    },
+    "effect": {
+      "allow": "允许",
+      "deny": "拒绝",
+      "except": "例外"
+    },
+    "empty": {
+      "hint": "向组或个人授予访问权限：选择谁、什么、在哪里，立即生效。",
+      "title": "尚未授予任何访问权限"
+    },
+    "filter": {
+      "author": "作者",
+      "effect": "效果",
+      "term": "期限",
+      "where": "范围",
+      "who": "授予谁"
+    },
+    "filters": "筛选",
+    "noMatch": {
+      "hint": "搜索范围包括组或个人、类型、服务和作者。",
+      "title": "没有符合筛选条件的内容"
+    },
+    "rulesCount_other": "{{count}} 条访问权限",
+    "search": "搜索：组、个人、类型、服务、作者…",
+    "selected_other": "已选择：{{count}}",
+    "showSystem": "显示平台自身的访问权限",
+    "shown": "显示 {{shown}} / {{total}}",
+    "term": {
+      "dated": "有截止日期",
+      "expiring": "即将到期",
+      "forever": "无截止日期"
+    },
+    "view": {
+      "grantees": "按人员和组",
+      "list": "列表",
+      "resources": "按资源"
+    },
+    "viewLabel": "视图"
+  },
+  "accessGroups": {
+    "add": "添加级别集",
+    "blocked": "无法删除：有访问权限或角色条目正在使用该级别集",
+    "delete": "删除级别集 @{{name}}？",
+    "hint": "此类型的一组命名访问级别；访问权限以 @name 引用它。",
+    "levels": "级别（read、write）",
+    "name": "名称（editor）",
+    "none": "暂无级别集。",
+    "title": "级别集"
+  },
+  "admins": {
+    "area": {
+      "assignment_rule": "访问权限",
+      "group": "组",
+      "group_member": "组成员",
+      "role": "角色",
+      "service": "服务与设置",
+      "type_resource": "类型与数据源"
+    },
+    "conditionNote": "按条件（例如令牌的某个声明）确定的成员资格由身份提供方决定：请在那里修改该声明。",
+    "grant": "授予平台管理权限",
+    "grantConfirm": "授予",
+    "granted": "已授予平台访问权限",
+    "group": "管理员组",
+    "level": {
+      "denied": "已拒绝",
+      "read": "查看",
+      "write": "管理"
+    },
+    "lockNote": "Licetum 不会允许移除最后一种管理访问权限的方式。但拒绝仍然优先于允许，因此拒绝自己某个范围可能会让您失去对它的访问；如果所有人仍被锁定，请在能访问数据库的地方运行“licetum restore-admin -user <名称>”。",
+    "matrix": {
+      "empty": "没有列出对平台自身的访问权限。"
+    },
+    "matrixTitle": "谁能对平台做什么",
+    "members_other": "{{count}} 名成员",
+    "mine": "我的权限",
+    "noAdmins": "管理员组不存在。只有恢复命令或数据库修复才能恢复访问。",
+    "noMembers": "组里还没有人。",
+    "preset": {
+      "confirm": "我明白这将允许他们修改平台自身的权限",
+      "full": "完全管理",
+      "fullHint": "读取和修改全部六个范围，包括谁可以管理平台。",
+      "view": "查看全部",
+      "viewHint": "对六个范围的读取权限：服务、类型与数据源、组、组成员、角色、访问权限。"
+    },
+    "presetLabel": "预设",
+    "recover": "如果没有人能再管理平台，可从服务器恢复访问：初始化不会在访问被撤销后把它还回来。",
+    "ruleName": "平台：{{area}}"
+  },
+  "auth": {
+    "copied": "已复制",
+    "copyDetails": "复制详情给管理员",
+    "error": {
+      "api_unreachable": "管理 API 没有响应。请检查它是否在运行，以及 ADMIN_API_URL 是否正确。",
+      "not_seeded": "Licetum 尚未设置：自助服务尚未创建。请运行迁移（licetum migrate）后重试。",
+      "unknown": "登录请求已过期或被拒绝。请重试。"
+    },
+    "errorHint": "如果错误反复出现，请把时间和错误代码告诉您的管理员。",
+    "errorTitle": "登录失败",
+    "help": "请使用您工作中使用的账号登录。如果仍然失败，请把时间和下面的详情告诉您的管理员。",
+    "helpTitle": "无法登录？",
+    "noAccessBody": "您已以 {{name}}（@{{username}}）登录，但无权管理 Licetum。请联系平台管理员。",
+    "noAccessTitle": "您没有访问权限",
+    "retry": "重新登录",
+    "signIn": "使用公司账号登录",
+    "signOutAndRetry": "使用其他账号登录",
+    "subtitle": "请使用您工作中使用的账号登录。",
+    "title": "您的服务权限，集中在一处"
+  },
+  "check": {
+    "addAttr": "添加属性",
+    "addContext": "添加上下文属性",
+    "addQuestion": "添加问题",
+    "allTypes": "所有类型",
+    "attrs": "属性",
+    "attrsHint": "此人的令牌会携带的声明。规则会读取它们。",
+    "context": "请求上下文",
+    "contextHint": "请求本身携带的内容（地址、渠道）。由调用方服务设置；切勿从用户输入复制。",
+    "denied": "是什么拒绝了它",
+    "deniedNone": "没有。",
+    "failed": "检查失败",
+    "grantAccess": "授予访问权限",
+    "granted": "是什么授予了访问权限",
+    "grantedNone": "没有：没有规则在此授予该级别。",
+    "level": "级别",
+    "lifted": "被例外解除",
+    "linkCopied": "链接已复制",
+    "list": {
+      "none": "{{subject}} 在此服务中看不到任何内容。",
+      "noneHint": "没有规则授予其访问权限。请向其所在的组或直接向此人授予访问权限。",
+      "resources": "资源",
+      "wholeType": "整个类型"
+    },
+    "missingAttr": "请求缺少某个条件所读取的属性：按规则所述，拒绝生效。",
+    "mode": {
+      "list": "某人能看到什么",
+      "one": "单个问题"
+    },
+    "modeLabel": "模式",
+    "noAccessHint": "没有规则在此资源上向此人授予该级别。",
+    "on": "在 {{target}} 上",
+    "onType": "在 {{type}} 的全部资源上",
+    "resource": "资源",
+    "resourcePlaceholder": "名称或 id（留空 — 整个类型）",
+    "ruleFallback": "规则 {{id}}",
+    "run": "检查",
+    "saveTest": "保存为测试",
+    "saveTestFailed": "无法保存测试",
+    "savedTest": "已保存为服务策略的测试",
+    "sentence": {
+      "allowed": "{{subject}} 对服务“{{service}}”中的 {{target}} 拥有“{{action}}”访问权限。",
+      "denied": "{{subject}} 对服务“{{service}}”中的 {{target}} 没有“{{action}}”访问权限。"
+    },
+    "service": "服务",
+    "share": "复制链接",
+    "show": "显示",
+    "standing": "仍然有效：没有例外解除它",
+    "start": {
+      "hint": "输入用户名，选择类型和资源，Licetum 会回答此人能否执行，以及由哪些规则决定。",
+      "title": "询问某个人"
+    },
+    "testExists": "该服务已有同名场景。",
+    "title": "访问检查",
+    "type": "类型",
+    "typePlaceholder": "选择类型",
+    "unresolved": "资源的某个父级尚未加载：为安全起见，拒绝规则会生效。",
+    "verdict": {
+      "allowed": "✔ 允许",
+      "denied": "⊘ 拒绝",
+      "no_access": "— 无访问权限",
+      "resource_not_found": "未找到资源",
+      "type_not_found": "未找到类型"
+    },
+    "who": "谁",
+    "whoSees": "还有谁能访问此项",
+    "wholeType": "整个类型“{{type}}”",
+    "why": "为什么？"
+  },
+  "common": {
+    "actions": "操作",
+    "cancel": "取消",
+    "copied": "已复制",
+    "copy": "复制",
+    "create": "创建",
+    "delete": "删除",
+    "edit": "编辑",
+    "loadFailed": "无法加载数据",
+    "open": "打开",
+    "resetFilters": "重置筛选",
+    "retry": "重试",
+    "save": "保存",
+    "saveFailed": "无法保存更改"
+  },
+  "cond": {
+    "add": "添加条件",
+    "attr": "属性",
+    "attrPlaceholder": "department",
+    "op": "运算符",
+    "ops": {
+      "eq": "等于",
+      "ge": "至少",
+      "gt": "大于",
+      "in": "在列表中",
+      "in_cidr": "在网络内",
+      "le": "至多",
+      "lt": "小于",
+      "ne": "不等于",
+      "not_in": "不在列表中",
+      "regex": "匹配"
+    },
+    "remove": "移除",
+    "source": "来源",
+    "sources": {
+      "claim": "令牌",
+      "context": "请求",
+      "now": "时间"
+    },
+    "value": "值",
+    "valueList": "a, b, c"
+  },
+  "delegation": {
+    "calls": {
+      "at": "时间",
+      "checked": "检查：允许 {{allowed}} / {{total}}",
+      "client": "客户端",
+      "empty": "还没有调用",
+      "emptyHint": "受信任客户端的每次调用都会记录在这里：哪个客户端、询问了谁、结果如何。",
+      "older": "更早的调用",
+      "permission": "权限",
+      "subject": "对象",
+      "title": "代表个人发起的调用",
+      "what": "内容"
+    },
+    "claims": {
+      "contextHint": "这是请求的属性，不是令牌的属性：由调用方放入 context。",
+      "none": "规则尚未读取任何声明：仅凭名称识别此人。",
+      "title": "此服务的策略读取的内容",
+      "usage": "规则中 {{rules}} 处，基于声明的目标中 {{targets}} 处，组成员资格中 {{memberships}} 处",
+      "warn": "受信任的客户端必须发送这些声明——如果它转发的是个人的令牌，则该令牌必须携带它们。否则答案会与真实情况不同：读取缺失声明的规则不会生效，此人也不会进入由该声明定义的组。"
+    },
+    "clients": "受信任的客户端",
+    "clientsHelp": "客户端令牌的 azp（或 client_id）。请信任后端客户端，而不是用户用来登录的那个客户端：受信任客户端的令牌可以询问任何人。",
+    "clientsPlaceholder": "客户端令牌的 azp，然后按 Enter",
+    "example": "可复制的调用",
+    "intro": "您信任的客户端应用可以在没有个人令牌的情况下询问此人能做什么：它使用自己的令牌登录，并给出此人及其令牌本应携带的声明。",
+    "saved": "已保存受信任的客户端",
+    "title": "代表个人"
+  },
+  "grant": {
+    "addedMore_other": "已授予：{{count}}。表单已清空，可继续下一个。",
+    "advanced": {
+      "deny": "拒绝而不是允许",
+      "description": "用途说明（可选）",
+      "enabled": "已启用",
+      "exception": "例外：解除层级中其上方的拒绝",
+      "label": "更多",
+      "name": "访问权限名称（可选）",
+      "onMissing": "如果请求缺少某个属性",
+      "onMissingApply": "拒绝生效（更安全）",
+      "onMissingSkip": "拒绝不生效"
+    },
+    "create": "授予访问权限",
+    "createAndMore": "授予并继续添加",
+    "created_other": "已授予的访问权限：{{count}}",
+    "impact": "访问权限立即生效。10 秒内可以撤销。",
+    "noRight": "您可以查看访问权限，但不能创建。",
+    "open": "授予访问权限",
+    "preview": {
+      "already_other": "已有 {{count}} 条访问权限给予相同的内容",
+      "capability": "授予的是没有资源的权限——没有可计数的内容。",
+      "conflict": {
+        "deny": {
+          "above": "其上方的拒绝会取消它：",
+          "inside": "其内部的拒绝会挖掉一部分："
+        },
+        "exception": {
+          "above": "其上方的例外：",
+          "inside": "其内部的例外："
+        }
+      },
+      "conflicts_other": "有 {{count}} 条拒绝或例外与此访问权限相交",
+      "dynamic": "资源由提问者的声明找到，因此有多少取决于具体的人。",
+      "failed": "无法计算影响。您仍然可以授予该访问权限。",
+      "noPeople_other": "已知的 {{count}} 个人中没有人符合",
+      "partial_other": "（另有 {{count}} 条访问权限未计入）",
+      "people_other": "涉及 {{count}} 个已知的人",
+      "registryEmpty": "尚未见到任何人，因此无法说明会涉及谁。人员在登录服务后才会出现。",
+      "registryOff": "人员注册表已关闭，因此无法说明会涉及谁。可通过 SUBJECTS__ENABLED 开启。",
+      "resources_other": "涵盖 {{count}} 个资源",
+      "title": "这将产生的效果"
+    },
+    "problem": {
+      "claim": "请填写此人令牌中的声明名称。",
+      "condition": "请至少添加一个条件并填写完整。",
+      "dates": "开始日期晚于结束日期。",
+      "everyone": "请确认所有人都将获得此访问权限。",
+      "group": "请选择一个组。",
+      "guard": "请填写限制条件。",
+      "levels": "请至少选择一个级别。",
+      "person": "请输入用户名。",
+      "resources": "请至少选择一个资源。",
+      "role": "请选择一个角色。",
+      "source": "该类型没有数据源，因此无法缩小到具体资源。",
+      "type": "请选择服务和资源类型。",
+      "where": "请填写属性条件。"
+    },
+    "sentence": {
+      "allow": "{{who}} 将获得 {{place}} 上的 {{levels}}。{{term}}",
+      "deny": "无论其他访问权限如何规定，{{who}} 都不会获得 {{place}} 上的 {{levels}}。{{term}}",
+      "except": "{{who}} 将获得 {{place}} 上的 {{levels}}，即使其上方的拒绝另有规定。{{term}}",
+      "forever": "无截止日期。",
+      "from": "自 {{date}} 起。",
+      "placeAll": "服务“{{service}}”中类型“{{type}}”的所有资源",
+      "placeClaim": "通过声明“{{claim}}”找到的类型“{{type}}”的资源",
+      "placeResources_other": "类型“{{type}}”的 {{count}} 个资源（{{names}}…）",
+      "placeWhere": "类型“{{type}}”中满足 {{cond}} 的资源",
+      "role": "{{who}} 将获得角色“{{role}}”的权限。{{term}}",
+      "until": "直到 {{date}}。",
+      "whoCondition": "所有符合 {{cond}} 的人",
+      "whoEveryone": "所有人",
+      "whoGroup": "组“{{name}}”",
+      "whoPerson": "“{{name}}”"
+    },
+    "title": "授予访问权限",
+    "what": {
+      "all": "所有级别",
+      "custom": "自定义",
+      "edit": "读取和修改",
+      "everyLevel": "每个级别",
+      "label": "内容",
+      "levels": "访问级别",
+      "noRoles": "还没有角色。请到“角色”中创建。",
+      "presets": "级别集",
+      "read": "读取",
+      "role": "角色",
+      "rolePlaceholder": "选择角色"
+    },
+    "when": {
+      "from": "起始日期",
+      "guard": "仅当…（限制条件）",
+      "label": "条件",
+      "requiresGroup": "仅限以下组的成员…",
+      "until": "截止日期"
+    },
+    "where": {
+      "all": "该类型的所有资源",
+      "attrPlaceholder": "kind",
+      "byAttr": "按属性",
+      "byAttrHint": "属性（按数据源报告的）满足全部条件的资源。",
+      "byClaim": "按此人的属性",
+      "byClaimHint": "资源按声明的值找到：每个人获得其自身值所指向资源的访问权限。",
+      "claim": "令牌的声明（例如 department）",
+      "label": "范围",
+      "manyRules_other": "将为每个资源创建一条访问权限：{{count}} 条。",
+      "matchBy": "匹配方式：name、id 或 meta.<属性>",
+      "noResources": "未找到资源",
+      "noSource": "该类型没有数据源，因此只能授予“该类型的所有资源”。",
+      "resources": "已选择的资源",
+      "resourcesPlaceholder": "按名称或 id 搜索资源",
+      "scope": "哪些资源",
+      "service": "服务",
+      "type": "资源类型"
+    },
+    "who": {
+      "condition": "按条件",
+      "conditionHint": "令牌满足全部条件的所有人。至少需要一个条件。",
+      "everyone": "所有人",
+      "everyoneConfirm": "我明白这是面向所有人的访问权限",
+      "everyoneWarn": "所有登录的人都将获得此访问权限。",
+      "group": "组",
+      "groupPlaceholder": "选择组",
+      "label": "授予谁",
+      "noGroups": "还没有组。请到“人员与组”中创建。",
+      "person": "个人",
+      "personHint": "此人在其令牌中的名称：用户名（preferred_username），或 sub。",
+      "personPlaceholder": "例如 alice"
+    }
+  },
+  "grantDetail": {
+    "allHistory": "完整历史 →",
+    "check": "检查访问…",
+    "deadNote": "该访问权限指向一个没有数据源的类型的资源，因此无法生效。请连接数据源或删除该访问权限。",
+    "description": "说明",
+    "disabledNote": "此访问权限已停用：启用之前它对任何人都不生效。",
+    "duplicate": "复制",
+    "exceptionNote": "例外：对它所涵盖的资源，解除层级中其上方的拒绝。",
+    "extend": "延长：",
+    "forever": "无截止日期",
+    "gone": {
+      "hint": "它可能已被删除。更改记录在历史中。",
+      "history": "打开历史",
+      "list": "返回列表",
+      "title": "此访问权限已不存在"
+    },
+    "history": "此访问权限的历史",
+    "kind": "标记",
+    "noHistory": "还没有记录。",
+    "onMissing": {
+      "apply": "缺少属性：拒绝生效",
+      "skip": "缺少属性：拒绝不生效"
+    },
+    "plus30": "+30 天",
+    "plus7": "+7 天",
+    "rename": "重命名",
+    "renamed": "名称已更改",
+    "rule": "规则",
+    "term": "期限",
+    "termChanged": "期限已更改",
+    "undoNote": "期限立即保存；10 秒内可以撤销。",
+    "untilDate": "直到 {{date}}",
+    "untilPick": "直到某个日期"
+  },
+  "group": {
+    "add": "添加",
+    "addMember": "加入组",
+    "added": "已加入组",
+    "checkMember": "查看成员能看到什么",
+    "col": {
+      "status": "状态",
+      "term": "期限",
+      "who": "组内成员"
+    },
+    "conditionHint": "令牌满足全部条件的所有人都在组内——例如 department = sales。",
+    "delete": {
+      "action": "删除组",
+      "blocked": "无法删除组：它正在被使用",
+      "blockedBy": "它被以下内容使用：{{what}}。请先移除它们。",
+      "body": "它不能被任何访问权限或其他组使用。",
+      "title": "删除组“{{name}}”？"
+    },
+    "empty": {
+      "hint": "添加人员、另一个组，或针对令牌的条件。",
+      "title": "组里还没有人"
+    },
+    "hideForm": "隐藏表单",
+    "kind": {
+      "condition": "按条件",
+      "conditionShort": "条件",
+      "nested": "嵌套组",
+      "nestedShort": "嵌套组",
+      "person": "个人",
+      "personShort": "个人"
+    },
+    "kindLabel": "条目类型",
+    "nestedIn": "该组属于：",
+    "nestedNone": "该组不属于任何其他组。",
+    "nestedNote": "嵌套组中的所有人也在本组中。",
+    "nestedPlaceholder": "选择组",
+    "noAccess": {
+      "hint": "向组授予访问权限，其所有成员都会获得。",
+      "title": "该组还没有访问权限"
+    },
+    "notFound": {
+      "back": "返回组列表",
+      "hint": "它可能已被删除。",
+      "title": "该组不存在"
+    },
+    "personPlaceholder": "用户名，例如 dave",
+    "remove": "移除",
+    "removed": "已从组中移除",
+    "rename": "重命名",
+    "subtitle": "名称在整个系统中唯一。",
+    "tab": {
+      "access": "访问权限（{{count}}）",
+      "composition": "组成（{{count}}）",
+      "nested": "所属（{{count}}）"
+    }
+  },
+  "history": {
+    "after": "之后",
+    "before": "之前",
+    "cannotRevert": "无法撤销此更改（之后的更改可能依赖它）。",
+    "copyLink": "复制链接",
+    "count": "{{shown}} / {{total}} 条记录",
+    "empty": {
+      "hint": "每一次授予或撤销访问权限都会显示在这里。",
+      "title": "还没有更改"
+    },
+    "entity": {
+      "access_group": "级别集",
+      "assignment_rule": "访问权限",
+      "group": "组",
+      "group_member": "成员资格",
+      "log_settings": "日志设置",
+      "role": "角色",
+      "role_permission": "角色权限",
+      "service": "服务",
+      "synchronizer": "数据源",
+      "type_resource": "资源类型"
+    },
+    "field": "字段",
+    "filter": {
+      "period": "时间段",
+      "service": "服务",
+      "what": "更改了什么",
+      "who": "谁"
+    },
+    "hideRaw": "隐藏原始数据",
+    "live": "实时",
+    "liveOff": "实时：关",
+    "liveOn": "实时",
+    "memberNested": "嵌套组",
+    "memberPredicate": "按条件",
+    "more": "显示更多",
+    "noDiff": "此记录没有字段级差异。",
+    "noMatch": "没有符合这些筛选条件的记录",
+    "noRevert": "无法撤销此记录：只有访问权限、组、成员资格、角色和级别集可以撤销。",
+    "op": {
+      "create": "创建",
+      "delete": "删除",
+      "update": "更改"
+    },
+    "openEntity": "打开",
+    "period": {
+      "all": "全部时间",
+      "today": "今天",
+      "week": "最近 7 天"
+    },
+    "planNote": "撤销本身也是一次更改，会出现在历史中。",
+    "platformWide": "整个平台",
+    "revert": "撤销此更改",
+    "revertBody": "该实体将恢复到此更改之前的样子：",
+    "revertConfirm": "撤销",
+    "revertFailed": "无法撤销",
+    "revertTitle": "撤销此更改？",
+    "reverted": "已撤销",
+    "rollbackBody_other": "此记录之后的 {{count}} 项更改将在一个事务中按从新到旧的顺序撤销：",
+    "rollbackConfirm": "回退",
+    "rollbackTitle": "回退到此时间点？",
+    "rollbackTo": "回退到此时间点",
+    "rolledBack": "已回退到该时间点",
+    "sentence": "{{actor}} {{verb}}了{{entity}}“{{name}}”",
+    "showRaw": "原始数据",
+    "system": "系统",
+    "title": "更改历史",
+    "today": "今天",
+    "verb": {
+      "create": "创建",
+      "delete": "删除",
+      "update": "更改"
+    },
+    "yesterday": "昨天"
+  },
+  "home": {
+    "allHistory": "完整历史 →",
+    "attention": {
+      "dead": "该访问权限不起作用",
+      "everyone": "已向所有人授予访问权限",
+      "expiring_other": "{{count}} 天后到期",
+      "lint_other": "{{service}}：{{count}} 条策略发现",
+      "none": "没有需要关注的事项。",
+      "title": "需要关注"
+    },
+    "check": "检查访问",
+    "checkHint": "为什么是“是”或“否”",
+    "connect": "连接服务",
+    "connectHint": "让它出现在 Licetum 中",
+    "day": "下午好",
+    "evening": "晚上好",
+    "grantHint": "给组或个人",
+    "hello": "您好",
+    "morning": "早上好",
+    "night": "晚安",
+    "recent": "最近的更改",
+    "recentNoRight": "历史仅对能读取所有服务的人开放。",
+    "recentNone": "还没有更改。",
+    "setup": "入门",
+    "setupCount": "{{done}} / {{total}}",
+    "setupHide": "隐藏",
+    "step": {
+      "grant": "已授予第一条访问权限",
+      "grantCta": "授予",
+      "group": "已创建第一个组",
+      "groupCta": "创建",
+      "idp": "已连接登录提供方",
+      "service": "已添加服务",
+      "serviceCta": "添加"
+    },
+    "stepDone": "已完成：",
+    "stepTodo": "待办：",
+    "title": "{{greeting}}，{{name}}"
+  },
+  "integration": {
+    "about": {
+      "authzen": "同样的问题，使用 OpenID AuthZEN 1.0 格式，供已支持它的客户端使用。",
+      "check": "回答最多 100 个“此人能否对该对象执行此操作”的问题，可附带解释。",
+      "permission": "按类型返回此人可使用的资源及其级别。用于过滤列表。"
+    },
+    "api": "检查 API",
+    "codes": {
+      "200": "答案",
+      "401": "没有令牌，或令牌无效或已过期",
+      "403": "请求有效，但不允许此调用方",
+      "404": "服务不存在",
+      "424": "服务的登录提供方没有响应",
+      "meaning": "含义",
+      "status": "代码",
+      "title": "响应代码"
+    },
+    "fresh": {
+      "body": "答案最多缓存 60 秒。修改权限后，请把写入响应中的 X-Authz-Revision 头作为 at_least_as_fresh 传入，或使用 consistency=higher。",
+      "title": "答案的新鲜度"
+    },
+    "hint": "此服务的代码如何询问 Licetum 某人能做什么。下面的调用已带有该服务自己的名称和类型。",
+    "lang": "语言",
+    "mode": {
+      "check": "X 能否对 Z 执行 Y（单个问题）",
+      "permission": "某人能做什么（列表）"
+    },
+    "modeLabel": "询问什么",
+    "try": {
+      "401": "令牌被拒绝：已过期，或由与此服务所连接的提供方不同的提供方签发。",
+      "424": "服务的登录提供方没有响应，因此无法验证令牌。",
+      "hint": "令牌仅用于这一次请求，不会被保存。请粘贴您的服务从其身份提供方获得的令牌。",
+      "run": "试用",
+      "title": "用您的令牌试一试",
+      "token": "访问令牌"
+    }
+  },
+  "logs": {
+    "applied": "设置会在约 15 秒内应用到每个副本，无需重启。",
+    "event": {
+      "access": "API 请求",
+      "decision": "检查决定",
+      "sync": "资源同步"
+    },
+    "events": "事件",
+    "field": "字段",
+    "fields": {
+      "add": "添加字段",
+      "all": "所有字段",
+      "choose": "选择",
+      "rename": "写作"
+    },
+    "fieldsLabel": "字段",
+    "format": {
+      "text": "文本"
+    },
+    "formatLabel": "格式",
+    "level": "级别",
+    "preset": {
+      "audit": "决定审计",
+      "dev": "开发",
+      "prod": "生产"
+    },
+    "presets": "预设",
+    "preview": "示例行",
+    "reset": "重置为默认值",
+    "sample": {
+      "help": "拒绝总是会被记录。"
+    },
+    "sampleLabel": "日志中允许决定的占比",
+    "saved": "设置已应用。其他副本会在 15 秒内跟进。",
+    "scope": "这些是 Licetum 进程的日志。权限的更改保存在“历史”中。",
+    "subject": {
+      "hash": "哈希",
+      "omit": "省略",
+      "plain": "原样",
+      "plainWarn": "此人的标识符将被写入进程日志。"
+    },
+    "subjectLabel": "主体",
+    "title": "进程日志"
+  },
+  "members": {
+    "everyone": "所有人"
+  },
+  "nav": {
+    "access": "访问",
+    "check": "检查",
+    "grants": "授权",
+    "history": "历史",
+    "home": "首页",
+    "people": "人员与组",
+    "roles": "角色",
+    "services": "服务"
+  },
+  "palette": {
+    "actions": "操作",
+    "check": "检查访问…",
+    "connect": "连接服务…",
+    "empty": "没有找到",
+    "goto": "前往",
+    "grant": "授予访问权限…",
+    "groups": "组",
+    "placeholder": "您想做什么或打开什么？",
+    "roles": "角色",
+    "services": "服务"
+  },
+  "people": {
+    "col": {
+      "composition": "组成",
+      "grants": "访问权限",
+      "group": "组",
+      "groups": "组",
+      "lastSeen": "最近一次出现",
+      "nestedIn": "嵌套于",
+      "person": "个人",
+      "rules": "直接访问权限"
+    },
+    "create": "创建组",
+    "empty": {
+      "hint": "组按某种特征把人员联合起来；授予组的访问权限会被其所有成员获得。",
+      "tag": "空",
+      "title": "还没有组"
+    },
+    "findHint": "要查看未列出的人，请打开 /people/<用户名>。",
+    "nameHelp": "在整个系统中唯一。组按某种特征把人员联合起来——授予组的访问权限会被其所有成员获得。",
+    "nameLabel": "组名称",
+    "namePlaceholder": "branch-managers",
+    "noMatch": "没有找到",
+    "noPeople": "还没有人被提到",
+    "noPeopleHint": "请直接打开某个人：/people/用户名。",
+    "registryOff": "人员注册表已关闭：只列出规则和历史中提到的人。用 SUBJECTS__ENABLED 开启它，即可看到所有登录的人及其姓名和组。",
+    "search": "按名称或组成搜索…",
+    "searchPeople": "按用户名查找人员…",
+    "tab": {
+      "groups": "组",
+      "people": "人员"
+    }
+  },
+  "person": {
+    "attrsHint": "此人令牌的声明，用于计算他们能看到什么。不会被保存。",
+    "attrs_other": "属性（{{count}}）",
+    "check": "检查访问…",
+    "groupsNote": "按条件定义的组不在此列出：它们取决于令牌的属性。",
+    "how": "原因",
+    "howNamed": "在组成中被点名",
+    "inGroups": "组：",
+    "lastSeen": "最近一次出现：{{at}}",
+    "noDirect": "没有直接访问权限。",
+    "noGroups": "没有任何成员资格点名此人。",
+    "noGroupsHint": "按条件定义的组（department = sales）取决于令牌，而不是关于此人的记录。",
+    "noServices": "还没有连接任何服务。",
+    "nothing": "在服务“{{service}}”中不允许任何操作。",
+    "nothingHint": "请向组或此人授予访问权限。",
+    "revokeAll": "撤销直接访问权限和成员资格…",
+    "revokeBody": "这将删除 {{direct}} 条直接访问权限和 {{groups}} 条点名此人的成员资格。",
+    "revokeConfirm": "撤销",
+    "revokeHelp": "访问权限来自令牌中的属性：要全部撤销，请在身份提供方修改它们，或把此人从成员资格中移除。令牌最多被信任 5 分钟；答案最多缓存 60 秒。",
+    "revokeHelpTitle": "如何全部撤销",
+    "revokeTitle": "撤销所有按名称授予的权限？",
+    "revoked_other": "已撤销：{{count}}",
+    "service": "服务",
+    "tab": {
+      "direct_other": "直接访问权限（{{count}}）",
+      "effective": "实际访问权限",
+      "groups_other": "组（{{count}}）"
+    }
+  },
+  "policy": {
+    "attention_other": "{{count}} 项需要关注",
+    "doc": {
+      "applied": "文档已应用",
+      "apply": "应用",
+      "applyBody": "更改在一个事务中完成，并会出现在历史中。",
+      "applyTitle": "应用文档？",
+      "badJson": "文本不是有效的 JSON",
+      "badShape": "这不是策略文档：缺少“format”和“service”",
+      "choose": "选择文件",
+      "dry": "显示将发生的更改",
+      "export": "下载策略",
+      "hint": "服务的整个策略保存为一个文件，用名称代替 id：组及其成员、角色、级别集和访问权限。可与代码放在一起，并应用到另一个环境。",
+      "import": "应用文档",
+      "noChanges": "没有需要更改的内容：服务已与文档一致。",
+      "paste": "或在此粘贴文档",
+      "plan": "已创建 {{created}} · 已更改 {{updated}} · 已删除 {{deleted}} · 未变 {{unchanged}}",
+      "prune": "删除文档中没有的访问权限",
+      "pruneWarn": "将删除的访问权限：{{count}}。更改在一个事务中完成，并会出现在历史中。"
+    },
+    "expect": {
+      "allow": "允许",
+      "deny": "拒绝"
+    },
+    "lint": {
+      "finding": "发现",
+      "hint": "什么也不决定、授予的比看上去更多、彼此重复，或没有任何东西使用的规则。",
+      "none": "没有发现。策略中没有无作用的规则，也没有重复。",
+      "openGroup": "打开组",
+      "openRole": "打开角色",
+      "openRule": "打开访问权限",
+      "recheck": "重新检查",
+      "severity": "严重程度"
+    },
+    "severity": {
+      "error": "错误",
+      "info": "信息",
+      "warning": "警告"
+    },
+    "tab": {
+      "document": "文档",
+      "lint": "发现（{{count}}）",
+      "tests": "测试"
+    },
+    "tests": {
+      "add": "添加场景",
+      "added_other": "已添加：{{count}}",
+      "badFile": "该文件不是场景列表",
+      "col": {
+        "checks": "检查项",
+        "name": "场景"
+      },
+      "empty": {
+        "hint": "描述某人必须（或不得）看到什么，并在每次修改规则后运行它。",
+        "title": "还没有场景"
+      },
+      "expect": "预期",
+      "failed": "失败",
+      "got": "实际：{{decision}}",
+      "load": "加载文件",
+      "local_other": "此浏览器中保留着 {{count}} 个场景，来自服务器保存它们之前。",
+      "moveLocal": "移到服务器",
+      "namePlaceholder": "销售可以读取文档",
+      "passed": "通过",
+      "resourceEmpty": "资源（留空 — 整个类型）",
+      "run": "全部运行",
+      "save": "保存到文件",
+      "storage": "场景与服务一起保存，所有管理它的人运行的都是同一批。检查页面上的“保存为测试”可添加一个；也可以保存和加载文件。",
+      "summary": "通过 {{passed}} / {{total}} · 覆盖 {{covered}} / {{rules}} 条规则"
+    }
+  },
+  "prefs": {
+    "language": "语言",
+    "theme": "主题",
+    "themeDark": "深色主题",
+    "themeDarkName": "深色",
+    "themeLight": "浅色主题",
+    "themeLightName": "浅色",
+    "themeSystemName": "跟随系统"
+  },
+  "resources": {
+    "check": "为某人检查…",
+    "children": "子项",
+    "col": {
+      "attrs": "属性",
+      "name": "名称",
+      "parent": "父级"
+    },
+    "count": "{{shown}} / {{total}}",
+    "grant": "在此资源上授予访问权限",
+    "inactive": "已停用",
+    "noSource": {
+      "hint": "没有数据源就没有资源：访问权限只能授予整个类型。",
+      "title": "该类型没有数据源"
+    },
+    "noType": "该类型不存在",
+    "orphan": "无父级",
+    "orphans_other": "{{count}} 个没有父级",
+    "refresh": "从数据源刷新",
+    "refreshFailed": "数据源没有响应；数据保持原样。",
+    "refreshed_other": "已刷新：{{count}} 个资源",
+    "search": "按名称、id 或属性搜索",
+    "showInactive": "已停用",
+    "switchedOff_other": "{{count}} 个已停用",
+    "title": "类型“{{type}}”的资源",
+    "unresolvedHint": "父级尚未进入缓存。在它出现之前，可能覆盖此资源的拒绝规则会对它生效。",
+    "unresolvedTag": "未找到父级",
+    "unresolved_other": "{{count}} 个未找到父级",
+    "view": {
+      "list": "列表",
+      "tree": "树"
+    },
+    "zero": {
+      "hint": "空列表就是数据源的答案：该类型之前的所有资源都会被停用。请检查数据源。",
+      "title": "数据源没有返回任何资源"
+    }
+  },
+  "role": {
+    "col": {
+      "scope": "资源"
+    },
+    "delete": {
+      "blocked": "无法删除角色：有访问权限正在授予它",
+      "blockedBy": "至少有一条访问权限授予此角色。请先删除或修改它。",
+      "body": "其权限将一并删除。",
+      "title": "删除角色“{{name}}”？"
+    },
+    "notFound": "该角色不存在",
+    "perm": {
+      "add": "添加权限",
+      "deleteImpact_other": "这会影响 {{count}} 条授予此角色的访问权限。",
+      "deleteTitle": "删除该权限？",
+      "edit": "修改权限",
+      "empty": "该角色还没有权限。",
+      "impactNote": "对角色的更改会立即作用于授予它的每一条访问权限。",
+      "noWildcard": "角色中不允许“*”：拒绝所有内容需要单独的拒绝规则。"
+    },
+    "tab": {
+      "permissions": "权限（{{count}}）",
+      "usage": "使用位置（{{count}}）"
+    },
+    "usage": {
+      "none": "该角色尚未授予任何人",
+      "noneHint": "请把该角色授予组或个人。"
+    }
+  },
+  "roles": {
+    "col": {
+      "name": "名称",
+      "perms": "权限",
+      "usage": "使用中"
+    },
+    "empty": {
+      "hint": "角色是一组可以授予组的权限。",
+      "title": "还没有角色"
+    },
+    "grant": "授予该角色…",
+    "nameHelp": "在整个系统中唯一。角色是一组命名的权限：先添加权限，再把角色授予组或个人。",
+    "nameLabel": "角色名称",
+    "namePlaceholder": "文档编辑者",
+    "new": "创建角色",
+    "usageCount_other": "{{count}} 条访问权限"
+  },
+  "rule": {
+    "allLevels": "每个级别",
+    "deleteBody": "人们会立即失去它。10 秒内可以撤销，之后可在历史中撤销。",
+    "deleteTitle_other": "删除 {{count}} 条访问权限？",
+    "deletedDone_other": "已删除 {{count}} 条规则",
+    "deny": "拒绝",
+    "disable": "停用",
+    "disabledDone_other": "已停用 {{count}} 条规则",
+    "enable": "启用",
+    "enabledDone_other": "已启用 {{count}} 条规则",
+    "everyone": "所有人",
+    "exception": "例外",
+    "from": "自 {{date}} 起",
+    "fromClaim": "按声明“{{claim}}”确定的资源",
+    "guardGroup": "仅限组成员",
+    "kind": {
+      "condition": "按条件",
+      "everyone": "所有人",
+      "group": "组",
+      "person": "个人"
+    },
+    "onlyIf": "仅当 {{cond}}",
+    "role": "角色：{{name}}",
+    "roleTarget": "角色的权限",
+    "status": {
+      "active": "有效",
+      "dead": "不起作用",
+      "deadHint": "该规则指向一个没有数据源的类型的资源，因此无法生效。",
+      "disabled": "已停用",
+      "expired": "已过期",
+      "expiring_other": "{{count}} 天后到期",
+      "scheduled": "尚未开始"
+    },
+    "subjectKind": {
+      "agent": "智能体",
+      "group": "组",
+      "service": "服务",
+      "user": "个人"
+    },
+    "title": "{{who}}：{{what}} — {{where}}",
+    "unknownGroup": "（未知的组）",
+    "until": "直到 {{date}}",
+    "where": "满足 {{cond}} 的资源",
+    "wholeType": "该类型的所有资源"
+  },
+  "service": {
+    "allHistory": "完整历史 →",
+    "appUrl": "应用地址",
+    "authUrl": "授权地址",
+    "danger": "危险区域",
+    "delete": {
+      "action": "删除服务",
+      "blocked": "无法删除服务",
+      "blockedBy": "它还有：{{what}}。请先删除它们。",
+      "body": "输入其 slug 以确认。",
+      "hint": "只要服务还有资源类型，就无法删除。",
+      "mismatch": "slug 不匹配",
+      "title": "删除服务“{{name}}”？",
+      "type": "输入 slug“{{slug}}”"
+    },
+    "edit": "编辑连接",
+    "iconUrl": "图标地址",
+    "incomplete": {
+      "cta": "添加类型",
+      "hint": "服务还没有资源类型。请先描述它们，然后连接数据源。",
+      "title": "设置尚未完成"
+    },
+    "makePublic": "使客户端成为公共客户端（移除密钥，使用 PKCE 登录）",
+    "name": "名称",
+    "newSecret": "新的客户端密钥",
+    "notFound": {
+      "back": "返回服务列表",
+      "hint": "它可能已被删除，或地址有误。",
+      "title": "该服务不存在"
+    },
+    "recent": "服务的最近更改",
+    "secretHelp": "当前密钥永远不会显示。",
+    "secretKeep": "留空以保留当前密钥",
+    "secretNone": "无 — 公共客户端（PKCE）",
+    "secretSet": "已保存",
+    "secretStatus": "客户端密钥",
+    "signin": "登录（提供方）",
+    "state": "状态",
+    "tab": {
+      "integration": "集成",
+      "overview": "概览",
+      "policy": "策略",
+      "sources": "数据源",
+      "types": "资源类型"
+    },
+    "tokenUrl": "令牌地址"
+  },
+  "services": {
+    "col": {
+      "rules": "访问权限",
+      "service": "服务",
+      "status": "状态",
+      "types": "类型"
+    },
+    "connect": "连接服务",
+    "counts": "类型 {{types}} · 访问权限 {{rules}}",
+    "countsFailed": "无法加载计数；列表可能不完整。",
+    "empty": {
+      "hint": "三个步骤：登录提供方、资源类型、资源的数据源。",
+      "title": "连接您的第一个服务"
+    },
+    "filter": {
+      "all": "状态：全部",
+      "status": "状态"
+    },
+    "noMatch": "没有匹配的服务",
+    "open": "打开",
+    "search": "按名称或 slug 搜索…",
+    "shown": "显示 {{shown}} / {{total}}",
+    "status": {
+      "incomplete": "设置未完成",
+      "ready": "就绪"
+    },
+    "system": {
+      "hint": "管理对平台自身的访问。修改它可能会把您锁在外面。"
+    },
+    "systemTag": "系统",
+    "tab": {
+      "integration": "集成"
+    },
+    "view": {
+      "cards": "卡片",
+      "table": "表格"
+    },
+    "viewLabel": "视图"
+  },
+  "settings": {
+    "tab": {
+      "admins": "管理员",
+      "logs": "日志"
+    },
+    "title": "设置"
+  },
+  "shell": {
+    "accessFailed": "无法加载您的权限",
+    "mainNav": "主导航",
+    "roleAdmin": "平台管理员",
+    "roleReader": "受限访问",
+    "search": "搜索和命令",
+    "searchShort": "搜索",
+    "skip": "跳到内容"
+  },
+  "sources": {
+    "addHeader": "添加请求头",
+    "attrsNote": "资源的任何其他字段都会成为它的属性；访问权限随后可以按它选择资源（例如 owner = anna）。",
+    "cache": "列表保留 {{seconds}} 秒",
+    "cacheTtl": "列表保留时间",
+    "cacheTtlHelp": "此时间窗口内的请求不会访问数据源，因此数据最多可能滞后这么久。留空 — 默认（10 秒），0 — 不缓存。",
+    "col": {
+      "source": "数据源"
+    },
+    "connect": "连接数据源",
+    "delete": {
+      "body": "该类型各个资源上的访问权限将失效；整个类型上的访问权限保留。",
+      "title": "删除“{{type}}”的数据源？"
+    },
+    "drawer": {
+      "title": "类型“{{type}}”的数据源"
+    },
+    "dsn": "连接字符串",
+    "dsnHelp": "PostgreSQL。请使用只读账号。密码不会再次显示；保留掩码即可保持原密码。",
+    "headerName": "请求头名称",
+    "headerValue": "请求头的值",
+    "headers": "请求头",
+    "headersHelp": "这些值是机密：不会再次显示。保留 ******** 即可保持已保存的值。",
+    "hint": "数据源告诉 Licetum 服务有哪些对象。Licetum 向它请求列表；列表会被保存并刷新。",
+    "kind": "数据源类型",
+    "listQuery": "全部资源的查询",
+    "listQueryHelp": "列 id、name、parent_id；其他每一列都会成为资源的属性。",
+    "noTypes": {
+      "hint": "数据源属于某个资源类型。",
+      "title": "请先描述类型"
+    },
+    "none": "没有数据源 — 没有资源的权限",
+    "parentsHelp": "可选。列 id、parent_type、parent_id：每个链接一行。",
+    "parentsList": "全部资源的父级（多个父级）",
+    "parentsOne": "按 :id 查询单个资源的父级",
+    "probe": "现有资源的 id",
+    "probeHelp": "保存前，Licetum 会向数据源请求此资源，以确保它可用。",
+    "query": "按 :id 查询单个资源",
+    "queryHelp": "相同的列；参数写作 :id。",
+    "rawNote": "服务的代码如何询问 Licetum：",
+    "seconds": "秒",
+    "test": {
+      "attrs": "资源的属性",
+      "duplicates_other": "有 {{count}} 个 id 出现多次；以最后一行为准。",
+      "empty": "空列表被视为真相：保存它会停用该类型的所有资源。",
+      "failed": "数据源没有响应。",
+      "hint": "按这些设置向数据源请求完整列表，并显示 Licetum 会如何理解它。不会保存任何内容。",
+      "noAttrs": "除 id、名称和父级外，数据源没有报告其他属性。",
+      "orphansHint": "既不在此次答复中，也不在父级类型的缓存中（它可能尚未同步）。在父级出现之前，可能覆盖它们的拒绝规则会生效。",
+      "orphans_other": "{{count}} 个资源的父级不存在于任何地方",
+      "run": "试用数据源",
+      "total_other": "数据源在 {{ms}} 毫秒内返回了 {{count}} 行。",
+      "unresolvable_other": "{{count}} 个父级链接没有指向此类型的任何父级类型，已被忽略。"
+    },
+    "url": "基础地址",
+    "urlHelp": "{url} 返回列表，{url}/{id} 返回单个资源。"
+  },
+  "types": {
+    "add": "添加类型",
+    "addLevel": "添加级别",
+    "addParent": "添加父级",
+    "blocker": {
+      "assignment_rule": "访问权限",
+      "role_permission": "角色权限",
+      "synchronizer": "一个数据源",
+      "type_resource": "子类型"
+    },
+    "col": {
+      "levels": "级别",
+      "name": "类型",
+      "parents": "父级",
+      "source": "数据源"
+    },
+    "delete": {
+      "blocked": "无法删除类型",
+      "blockedBy": "它仍被以下内容使用：{{what}}。",
+      "body": "它必须没有数据源、没有子类型，也没有访问权限或角色权限。",
+      "title": "删除类型“{{name}}”？"
+    },
+    "edit": "修改类型",
+    "empty": {
+      "hint": "类型是授予访问权限的一类对象：“文档”、“项目”。添加第一个。",
+      "title": "服务还没有资源类型"
+    },
+    "hint": "授予访问权限的对象种类。类型可以有父级：父级上的访问权限会向下传递给子级。",
+    "impliesHelp": "“write 包含 read”：授予 write 即授予 read，拒绝 read 即拒绝 write。",
+    "includes": "包含",
+    "inherit": "向下传递的内容",
+    "inheritAll": "所有级别",
+    "level": "级别",
+    "nameHelp": "在服务内唯一。服务按此名称询问该类型。",
+    "namePlaceholder": "文档",
+    "noSource": "无数据源",
+    "noSourceNote": "没有数据源的类型是“没有资源的权限”：只能对整个类型授予访问权限。要对单个对象授予访问权限，请连接数据源。",
+    "parent": "父类型",
+    "parentsHelp": "父级可以属于另一个服务：授予父级资源的访问权限会传递到与之关联的此类型资源。",
+    "resources": "资源"
+  },
+  "undo": {
+    "action": "撤销",
+    "done": "已撤销",
+    "failed": "无法撤销。请查看历史。"
+  },
+  "user": {
+    "docs": "文档",
+    "logout": "退出登录",
+    "menu": "用户菜单",
+    "settings": "设置"
+  },
+  "whohas": {
+    "assumed": "父级未知",
+    "col": {
+      "people": "已知人员",
+      "via": "来源",
+      "what": "内容",
+      "who": "对象"
+    },
+    "decision": {
+      "allow": "允许",
+      "deny": "拒绝",
+      "except": "例外"
+    },
+    "dynamicHint": "它们是否到达此资源，取决于提问者的令牌。",
+    "dynamic_other": "有 {{count}} 条规则通过声明找到其资源",
+    "guarded": "带限制条件",
+    "limited": "只尝试了最近的。",
+    "more_other": "另有 {{count}} 个",
+    "none": "没有规则授予对此的访问权限。除了通过声明查找资源的规则，没有人拥有它。",
+    "note": "这是规则列表；拒绝可能被例外解除。要知道某个人实际得到什么，请使用检查。",
+    "open": "打开",
+    "registryEmpty": "尚未见到任何人，因此不显示人员；只显示规则。",
+    "registryOff": "人员注册表已关闭，因此不显示人员；只显示规则。可通过 SUBJECTS__ENABLED 开启。",
+    "registry_other": "人员取自 {{count}} 个已知主体。",
+    "role": "角色“{{name}}”",
+    "title": "谁能访问",
+    "via": {
+      "ancestor": "上层资源",
+      "attribute": "按属性",
+      "claim": "通过声明找到",
+      "resource": "此资源",
+      "type": "整个类型"
+    }
+  },
+  "wizard": {
+    "back": "返回",
+    "check": {
+      "count_other": "{{count}} 个资源",
+      "failed": "数据源没有响应",
+      "hint": "Licetum 已向每个数据源请求其资源。",
+      "next": {
+        "body": "向某个组授予访问权限，然后让您的服务询问 Licetum：",
+        "title": "下一步"
+      },
+      "noSource": "无数据源",
+      "zero": "没有资源"
+    },
+    "discover": {
+      "fail": "无法自动检测——请手动输入地址。",
+      "ok": "已找到地址：授权、令牌、JWKS。"
+    },
+    "discoverBtn": "自动检测",
+    "done": "完成：打开服务",
+    "hideUrls": "隐藏地址",
+    "icon": {
+      "help": "可选。图片地址，显示在服务旁边；Licetum 不会请求它。"
+    },
+    "issuer": "提供方地址（issuer）",
+    "issuerHelp": "您服务的身份提供方地址，例如 Keycloak realm。",
+    "leave": "离开向导",
+    "next": "下一步",
+    "noRight": "您无法连接服务：需要修改服务的权限。",
+    "secret": {
+      "help": "可选：留空表示公共客户端（使用 PKCE 登录）。"
+    },
+    "secretLabel": "客户端密钥",
+    "showUrls": "显示地址",
+    "signin": {
+      "done": "服务“{{slug}}”已创建。请继续设置它的资源类型。"
+    },
+    "slug": {
+      "help": "用于地址的短名称：小写拉丁字母、数字、“-”和“_”。检查 API 接受用它代替 id。",
+      "invalid": "小写拉丁字母、数字、“-”和“_”；以字母或数字开头"
+    },
+    "sources": {
+      "hint": "数据源告诉 Licetum 服务有哪些对象。为每个想要逐个对象授予访问权限的类型连接一个数据源；没有数据源的类型是针对整个类型的权限。",
+      "skip": "您可以跳过此步骤，稍后在“数据源”标签页连接数据源。"
+    },
+    "step": {
+      "check": "检查",
+      "signin": "登录",
+      "source": "数据源",
+      "types": "资源类型"
+    },
+    "title": "连接服务",
+    "types": {
+      "add": "添加类型",
+      "existing": "已有：",
+      "hint": "描述将授予访问权限的对象种类。选择模板后修改，或逐个添加类型。类型可以有父级：授予文件夹的访问权限随后会传递到其中的文档。",
+      "noParent": "无父级",
+      "order": "父级必须排在其子级上方。",
+      "template": {
+        "one": "单个类型",
+        "tree": "层级：文件夹 → 文档"
+      }
+    },
+    "url": {
+      "help": "可选。显示在界面中；Licetum 不会请求它。"
+    }
+  }
+}

@@ -1,0 +1,176 @@
+:root {
+  /* Decision colours (brief §5.2): they do not replace colorSuccess/colorError, they carry the meaning of a rule. */
+  --licetum-allow-fg: #0b6b3f;
+  --licetum-allow-bg: #e6f4ec;
+  --licetum-deny-fg: #a8261b;
+  --licetum-deny-bg: #fceae8;
+  --licetum-except-fg: #9a4b05;
+  --licetum-except-bg: #fdf1e1;
+  --licetum-inherit-fg: #475569;
+  --licetum-inherit-bg: #eef1f5;
+  --licetum-accent: #3f4dd8;
+  --licetum-muted: #475569;
+  --licetum-border: #e2e8f0;
+  --licetum-surface: #ffffff;
+  --licetum-layout: #f6f7f9;
+  --licetum-text: #0f172a;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --licetum-allow-fg: #6fd3a1;
+  --licetum-allow-bg: #10281d;
+  --licetum-deny-fg: #ff8f85;
+  --licetum-deny-bg: #2e1512;
+  --licetum-except-fg: #f5b76b;
+  --licetum-except-bg: #2b1e0c;
+  --licetum-inherit-fg: #9aa6bd;
+  --licetum-inherit-bg: #1a2233;
+  --licetum-accent: #8c97ff;
+  --licetum-muted: #9aa6bd;
+  --licetum-border: #273044;
+  --licetum-surface: #121826;
+  --licetum-layout: #0b1020;
+  --licetum-text: #e6eaf2;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--licetum-layout);
+  color: var(--licetum-text);
+}
+
+body {
+  font-family:
+    'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans SC',
+    sans-serif;
+  font-size: 14px;
+  line-height: 22px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+/* Keyboard focus is always visible (WCAG 2.4.7). */
+:focus-visible {
+  outline: 2px solid var(--licetum-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  z-index: 2000;
+  padding: 8px 12px;
+  background: var(--licetum-surface);
+  color: var(--licetum-accent);
+  border: 1px solid var(--licetum-accent);
+  border-radius: 6px;
+}
+.skip-link:focus {
+  top: 8px;
+}
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+@media (max-width: 1023px) {
+  .page {
+    padding: 16px;
+  }
+}
+
+.decision {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.decision.allow {
+  color: var(--licetum-allow-fg);
+  background: var(--licetum-allow-bg);
+}
+.decision.deny {
+  color: var(--licetum-deny-fg);
+  background: var(--licetum-deny-bg);
+}
+.decision.except {
+  color: var(--licetum-except-fg);
+  background: var(--licetum-except-bg);
+}
+.decision.neutral {
+  color: var(--licetum-inherit-fg);
+  background: var(--licetum-inherit-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* On a narrow screen the header wraps: the sections go to a second line under the brand and the tools. */
+@media (max-width: 1023px) {
+  .ant-layout .ant-layout-header.app-header {
+    height: auto !important;
+    min-height: 56px;
+    flex-wrap: wrap !important;
+    row-gap: 4px;
+    padding: 8px 16px !important;
+    line-height: normal !important;
+  }
+  .app-nav {
+    order: 3;
+    flex: 1 1 100%;
+  }
+  /* the theme name in the header goes away on a narrow screen: the icon and the menu remain */
+  .hide-narrow {
+    display: none;
+  }
+}
+
+/* The header tabs have no panels of their own: the page below is the content. */
+.app-tabs {
+  flex: 1;
+  min-width: 0;
+}
+/* the tabs fill the header from top to bottom: the underline of the active tab sits on its lower edge */
+.app-tabs,
+.app-tabs .ant-tabs-nav,
+.app-tabs .ant-tabs-nav-wrap,
+.app-tabs .ant-tabs-nav-list {
+  height: 100%;
+}
+.app-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+.app-tabs .ant-tabs-tab-btn {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.app-tabs .ant-tabs-nav::before {
+  border-bottom: none;
+}
+.app-tabs .ant-tabs-content-holder {
+  display: none;
+}

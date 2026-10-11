@@ -1,0 +1,250 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOLANGCI_LINT_VERSION: v2.14.0
+
+jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          base: ${{ github.ref }}
+          filters: |
+            go:
+              - 'core/**'
+              - 'admin-api/**'
+              - 'Taskfile.yaml'
+              - 'docker-compose.yml'
+              - 'infra/**'
+              - '.github/workflows/**'
+            web:
+              - 'web/**'
+              - 'core/schema/**'
+              - 'admin-api/schema/**'
+              - 'Taskfile.yaml'
+              - 'docker-compose.yml'
+              - 'infra/**'
+              - '.github/workflows/**'
+
+  go-lint:
+    name: Go lint and schema checks
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - name: Install golangci-lint
+        run: curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b "$(go env GOPATH)/bin" "$GOLANGCI_LINT_VERSION"
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Go lint
+        run: task go:lint
+
+  go-test:
+    name: Go tests
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Go tests and collect coverage
+        run: task go:coverage
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: |
+            core/reports/coverage.*
+            admin-api/reports/coverage.*
+          if-no-files-found: ignore
+
+  web-check:
+    name: Web lint, typecheck and build
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Web lint and checks
+        run: CI=true task web:lint
+
+      - name: Web unit tests
+        run: task web:test
+
+      - name: Build web
+        working-directory: web
+        run: pnpm build
+
+  web-e2e:
+    name: Web end-to-end tests
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    env:
+      E2E_BASE_URL: http://localhost:3000
+      ADMIN_API_URL: http://localhost:8002
+      ADMIN_API_PUBLIC_URL: http://localhost:8002
+      CHECK_API_URL: http://localhost:8001
+      CHECK_API_PUBLIC_URL: http://localhost:8001
+      APP_BASE_URL: http://localhost:3000
+      SESSION_SECRET: ci-only-session-secret-0123456789abcdef0123456789
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # The Go side of the development stack: PostgreSQL, Redis, the local Dex, the migration and both APIs.
+      - name: Start the Go stack
+        run: docker compose up -d --build dex admin check
+
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      # The production image of the interface, as it is released: it is configured by the environment at run time.
+      - name: Build and start web
+        run: |
+          docker build -f web/Dockerfile --target prod -t licetum-web .
+          docker run -d --name licetum_web_ci --network host \
+            -e ADMIN_API_URL -e ADMIN_API_PUBLIC_URL -e CHECK_API_URL -e CHECK_API_PUBLIC_URL \
+            -e APP_BASE_URL -e SESSION_SECRET licetum-web
+
+      - name: Wait for the stack
+        run: |
+          for i in $(seq 1 120); do
+            if curl -fs http://localhost:8002/platform >/dev/null && curl -fs http://localhost:8001/docs >/dev/null \
+               && curl -fs http://localhost:3000/login >/dev/null; then exit 0; fi
+            sleep 3
+          done
+          docker compose ps
+          docker compose logs --tail 80 admin check dex
+          docker logs --tail 80 licetum_web_ci
+          exit 1
+
+      - name: Install the browser
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        working-directory: web
+        run: pnpm e2e
+
+      - name: Keep the logs of a failed run
+        if: failure()
+        run: |
+          docker compose logs --no-color > stack.log 2>&1 || true
+          docker logs licetum_web_ci > web.log 2>&1 || true
+
+      - name: Keep the evidence of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-failure
+          path: |
+            web/test-results
+            stack.log
+            web.log
+          if-no-files-found: ignore
+
+      - name: Stop the stack
+        if: always()
+        run: |
+          docker rm -f licetum_web_ci || true
+          docker compose down -v
+
+  dco:
+    name: Developer Certificate of Origin
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # Every commit of the pull request ends with a Signed-off-by line (git commit -s), see CONTRIBUTING.md.
+      - name: Check the sign-off of every commit
+        run: |
+          missing=0
+          for sha in $(git rev-list --no-merges "origin/${{ github.base_ref }}..HEAD"); do
+            if ! git log -1 --format=%B "$sha" | grep -qE '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::commit $sha has no Signed-off-by line (use git commit -s)"
+              missing=1
+            fi
+          done
+          exit $missing

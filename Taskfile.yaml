@@ -1,0 +1,194 @@
+version: "3"
+
+# Tools the Go tasks expect on PATH: Go 1.26+ and golangci-lint v2 (2.14+). govulncheck is run
+# through `go run`, nothing to install. Web: Node 22+ with pnpm (corepack enable); `web` is the Next.js interface.
+
+vars:
+  GOLANGCI_LINT: '{{.GOLANGCI_LINT | default "golangci-lint"}}'
+
+tasks:
+  default:
+    desc: List the tasks
+    cmds:
+      - task --list
+    silent: true
+
+  install:
+    desc: Install Go modules and web dependencies
+    deps: [go:install, web:install]
+
+  lint:
+    desc: All linters (locally they also fix and format; with CI=true they only check)
+    deps: [go:lint, web:lint]
+
+  check:
+    desc: All checks without changing files (as in CI)
+    cmds:
+      - CI=true {{.TASK_EXE}} lint
+
+  fix:
+    desc: Formatting and auto-fixes only (golangci-lint, oxfmt)
+    deps: [go:fix, web:format]
+
+  test:
+    desc: Backend unit and integration tests (integration tests use disposable Testcontainers) and web unit tests
+    cmds:
+      - task: go:test
+      - task: web:test
+
+  generate:
+    desc: Export the OpenAPI schemas and regenerate the API client of web (orval)
+    cmds:
+      - task: go:schema
+      - task: web:orval
+
+  dev:
+    desc: Run the whole stack with docker compose (hot reload for backend and web)
+    cmds:
+      - docker compose up {{.CLI_ARGS}}
+
+  # The Go code lives in two modules: core (MIT: the engine, the check API, the schema) and admin-api (AGPL: the admin API).
+  # Each go:* task runs in both, in this order; a module the work does not touch is still checked.
+  go:install:
+    desc: Download Go modules of core and admin-api
+    cmds:
+      - for m in core admin-api; do (cd $m && go mod download) || exit 1; done
+
+  go:golangci:
+    desc: golangci-lint — formatters (gofmt, goimports) and linters, incl. gosec, depguard layers, unused
+    cmds:
+      - |
+        for m in core admin-api; do
+          (cd $m && if [ -z "$CI" ]; then {{.GOLANGCI_LINT}} fmt ./... && {{.GOLANGCI_LINT}} run --fix ./...; else {{.GOLANGCI_LINT}} fmt --diff ./... && {{.GOLANGCI_LINT}} run ./...; fi) || exit 1
+        done
+
+  go:tidy:
+    desc: Unused / missing Go module requirements (go mod tidy) in both modules
+    cmds:
+      - |
+        for m in core admin-api; do
+          (cd $m && if [ -z "$CI" ]; then go mod tidy; else go mod tidy -diff; fi) || exit 1
+        done
+
+  go:vuln:
+    desc: Known vulnerabilities in the code and its dependencies (govulncheck), both modules
+    cmds:
+      - for m in core admin-api; do (cd $m && go run golang.org/x/vuln/cmd/govulncheck@latest ./...) || exit 1; done
+
+  go:schema:check:
+    desc: The schemas must match the code (run `task go:schema` after changing the API)
+    cmds:
+      - (cd core && go run ./cmd/licetum openapi check -yaml | diff -u schema/check.yaml -)
+      - (cd admin-api && go run ./cmd/licetum-admin openapi admin -yaml | diff -u schema/admin.yaml -)
+
+  # golangci-lint goes first and alone: it may change files, the rest only read them.
+  go:lint:
+    desc: All Go checks of both modules (golangci-lint fixes and formats first, then go mod tidy and the schema drift check)
+    cmds:
+      - task: go:golangci
+      - task: go:tidy
+      - task: go:schema:check
+
+  go:fix:
+    desc: golangci-lint fmt + run --fix in both modules
+    cmds:
+      - for m in core admin-api; do (cd $m && {{.GOLANGCI_LINT}} fmt ./... && {{.GOLANGCI_LINT}} run --fix ./...) || exit 1; done
+
+  go:test:
+    desc: Unit and integration tests of both modules
+    cmds:
+      - task: go:test:unit
+      - task: go:test:integration
+
+  go:test:unit:
+    desc: Fast unit tests without external services, both modules
+    cmds:
+      - for m in core admin-api; do (cd $m && go test -race -count=1 ./...) || exit 1; done
+
+  go:test:integration:
+    desc: Integration tests with disposable PostgreSQL and Redis containers, both modules
+    cmds:
+      - |
+        if [ -z "${DOCKER_HOST:-}" ]; then
+          export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
+        fi
+        for m in core admin-api; do (cd $m && go test -race -count=1 -tags integration ./tests/integration/...) || exit 1; done
+
+  go:coverage:
+    desc: Coverage profiles and HTML reports of both modules (unit and integration)
+    cmds:
+      - |
+        if [ -z "${DOCKER_HOST:-}" ]; then
+          export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
+        fi
+        for m in core admin-api; do
+          (cd $m && mkdir -p reports && go test -race -count=1 -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./redisx/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
+        done
+
+  go:schema:
+    desc: Export the OpenAPI schemas (core/schema/check.yaml, admin-api/schema/admin.yaml) — the inputs for orval
+    cmds:
+      - (cd core && go run ./cmd/licetum openapi check -yaml > schema/check.yaml)
+      - (cd admin-api && go run ./cmd/licetum-admin openapi admin -yaml > schema/admin.yaml)
+
+  web:install:
+    desc: pnpm install
+    dir: web
+    cmds:
+      - pnpm install
+
+  web:format:
+    desc: Format the web interface (oxfmt)
+    dir: web
+    cmds:
+      - pnpm format
+
+  web:typecheck:
+    desc: tsc --noEmit
+    dir: web
+    cmds:
+      - pnpm typecheck
+
+  web:i18n:
+    desc: Locale files have the same keys and {{"{{"}}variables{{"}}"}} (en, ru), and the code uses only defined keys
+    dir: web
+    cmds:
+      - pnpm check:i18n
+
+  web:knip:
+    desc: Unused files, exports and dependencies of the web interface (knip)
+    dir: web
+    cmds:
+      - pnpm knip
+
+  web:orval:
+    desc: Generate the API client from admin-api/schema into web/src/api (orval; not committed)
+    dir: web
+    cmds:
+      - pnpm orval
+
+  web:lint:
+    desc: All web linters (locally oxfmt formats, with CI=true it only checks)
+    dir: web
+    cmds:
+      # src/api is not committed — generate it so tsc checks it against the current schema.
+      - task: web:orval
+      - if: "[[ -z $CI ]]"
+        cmd: pnpm format
+      - if: "[[ -n $CI ]]"
+        cmd: pnpm format:check
+      - task: web:typecheck
+      - task: web:i18n
+      - task: web:knip
+
+  web:test:
+    desc: Unit tests of the web interface (vitest)
+    dir: web
+    cmds:
+      - pnpm test
+
+  web:e2e:
+    desc: End-to-end tests against a running stack (E2E_BASE_URL, E2E_USER, E2E_PASSWORD; see web/README.md)
+    dir: web
+    cmds:
+      - pnpm e2e

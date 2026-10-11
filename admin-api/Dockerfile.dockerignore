@@ -1,0 +1,7 @@
+# BuildKit picks up <Dockerfile>.dockerignore; paths are relative to the repository root (the build context).
+.git
+admin-api/tmp
+admin-api/licetum-admin
+admin-api/**/*.test
+web
+docs

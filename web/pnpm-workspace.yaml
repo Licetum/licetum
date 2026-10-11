@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: true
+minimumReleaseAgeExclude:
+  - i18next@26.4.3
+  - lucide-react@1.55.0

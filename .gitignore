@@ -1,0 +1,29 @@
+# Go (core and admin-api are separate modules)
+/core/reports/
+/admin-api/reports/
+/core/tmp/
+/admin-api/tmp/
+/core/licetum
+/admin-api/licetum-admin
+*.test
+*.out
+coverage.*
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# tooling
+.task/
+dump.rdb
+
+# ide / os
+.idea/
+.vscode/
+.DS_Store
+
+# docs: only the translated READMEs are published; the analysis and the screens stay local
+docs/*
+!docs/README.ru.md
+!docs/README.zh-CN.md

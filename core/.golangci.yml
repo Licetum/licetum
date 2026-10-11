@@ -1,0 +1,70 @@
+# golangci-lint v2. Run from core/ or admin-api/: `golangci-lint run` (or `task go:lint` from the repo root).
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused (dead code).
+  default: standard
+  enable:
+    - gosec          # security issues (SQL/command injection, weak crypto, ...)
+    - depguard       # architectural layers, see settings below
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - misspell
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - usestdlibvars
+  settings:
+    depguard:
+      # The modules: core (MIT) is the engine, the check API and the schema, and must not depend on the admin module
+      # (admin-api, AGPL). The layers inside core: server → engine → db, redisx, synchronizer → model, config, i18n, apperr.
+      rules:
+        core-is-independent:
+          files: ["**/core/**"]
+          deny:
+            - pkg: github.com/licetum/licetum/admin-api
+              desc: the core module must not depend on the admin module
+        engine:
+          files: ["**/core/engine/**"]
+          deny:
+            - pkg: github.com/licetum/licetum/core/server
+              desc: the engine must not know about HTTP
+        infrastructure:
+          files: ["**/core/db/**", "**/core/redisx/**", "**/core/synchronizer/**"]
+          deny:
+            - pkg: github.com/licetum/licetum/core/server
+              desc: infrastructure must not depend on the HTTP layer
+            - pkg: github.com/licetum/licetum/core/engine
+              desc: infrastructure must not depend on business logic
+        foundation:
+          files: ["**/core/model/**", "**/core/config/**", "**/core/i18n/**", "**/core/apperr/**"]
+          deny:
+            - pkg: github.com/licetum/licetum/core/server
+              desc: foundation packages are leaves
+            - pkg: github.com/licetum/licetum/core/engine
+              desc: foundation packages are leaves
+            - pkg: github.com/licetum/licetum/core/db
+              desc: foundation packages are leaves
+            - pkg: github.com/licetum/licetum/core/redisx
+              desc: foundation packages are leaves
+            - pkg: github.com/licetum/licetum/core/synchronizer
+              desc: foundation packages are leaves
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Tests talk to throwaway local servers.
+      - path: _test\.go
+        linters: [gosec, noctx, bodyclose]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/licetum/licetum

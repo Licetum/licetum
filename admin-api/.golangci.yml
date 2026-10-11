@@ -1,0 +1,44 @@
+# golangci-lint v2. Run from admin-api/: `golangci-lint run` (or `task go:lint` from the repo root).
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused (dead code).
+  default: standard
+  enable:
+    - gosec          # security issues (SQL/command injection, weak crypto, ...)
+    - depguard       # architectural layers, see settings below
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - misspell
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - usestdlibvars
+  settings:
+    depguard:
+      # The admin module (AGPL) is the outer layer: it may use core, the engine and the check API, and nothing above it.
+      rules:
+        admin-layers:
+          files: ["**/admin-api/service/**"]
+          deny:
+            - pkg: github.com/licetum/licetum/core/server
+              desc: the service layer must not know about HTTP
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Tests talk to throwaway local servers.
+      - path: _test\.go
+        linters: [gosec, noctx, bodyclose]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/licetum/licetum

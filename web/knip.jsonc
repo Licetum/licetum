@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // src/api (the orval-generated client) is gitignored, so knip skips it on its own.
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "orval/**/*.ts",
+    "scripts/**/*.mjs",
+    "e2e/**/*.ts",
+    "tests/**/*.ts",
+  ],
+}

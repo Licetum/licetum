@@ -1,0 +1,15 @@
+# BuildKit picks up <Dockerfile>.dockerignore; paths are relative to the repository root (the build context).
+.git
+# Only the OpenAPI schema of the admin API is needed (the input for orval).
+admin-api/*
+core/*
+!admin-api/schema
+frontend
+docs
+web/node_modules
+web/.next
+web/src/api
+web/test-results
+web/playwright-report
+web/.env*
+!web/.env.example

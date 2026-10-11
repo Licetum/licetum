@@ -1,0 +1,80 @@
+name: Bug report
+description: Something does not work the way the documentation or the API says
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. For a security vulnerability do not use this form: see [SECURITY.md](../../SECURITY.md).
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - core (check API, engine, synchronizers, migrations)
+        - admin-api (admin API, policies, batches, change log)
+        - web (admin interface)
+        - Docker images or Docker Compose
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The release tag (for example `v1.2.3`) or the output of `git rev-parse --short HEAD`.
+      placeholder: v1.2.3 or a commit hash
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem. A request, a rule or a configuration is most useful.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or responses
+      description: |
+        The relevant part of the log or the error body (`detail` and `extra`). Remove tokens, client secrets,
+        connection strings and personal data before you paste them.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: How Licetum runs (Docker Compose, your own images, from sources), the database and Redis versions, the browser if it is the interface.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and found no duplicate.
+          required: true
+        - label: The logs and the examples above contain no secrets or personal data.
+          required: true

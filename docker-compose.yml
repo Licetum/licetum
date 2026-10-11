@@ -1,0 +1,139 @@
+# Development stack: sources are mounted into the containers, the Go apps are rebuilt by air and the
+# web interface runs the Next.js dev server — edits are picked up without rebuilding images.
+# For production, build the `runtime` target of core/Dockerfile (the check) or admin-api/Dockerfile (the admin API) (a single static binary).
+include:
+  - infra/postgres.compose.yml
+  - infra/redis.compose.yml
+  - infra/dex.compose.yml
+
+x-env-app: &env-app
+  DB__URI: "${DB__URI:-postgresql://authz:authz@postgres:5432/authz_db}"
+  AUTH__STATE_SECRET: "${AUTH__STATE_SECRET:-dev-only-insecure-state-secret-change-me}"
+  REDIS__URI: "${REDIS__URI:-redis://redis:6379/0}"
+  # The registry of known subjects is off unless asked for; the development stack asks, so the people screens have data.
+  SUBJECTS__ENABLED: "${SUBJECTS__ENABLED:-true}"
+  CORS__ALLOW_ORIGINS: '${CORS__ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
+  # Self-service: Licetum registers itself as a Service, and the admin API is protected by its
+  # policies (see core/db/migrate.go, SeedPlatform). The defaults below use the local
+  # Dex service; override the PLATFORM__* variables in .env to use another OAuth2 client/IdP.
+  PLATFORM__NAME: "${PLATFORM__NAME:-Licetum}"
+  PLATFORM__URL: "${PLATFORM__URL:-http://localhost:8002}"
+  PLATFORM__ICON: "${PLATFORM__ICON:-http://localhost:8002/favicon.ico}"
+  # Local Dex defaults. The token and JWKS endpoints use the Compose network name because the
+  # the APIs call them from their containers; authorization and issuer URLs are browser-facing.
+  PLATFORM__AUTHORIZATION_URL: "${PLATFORM__AUTHORIZATION_URL:-http://localhost:5556/dex/auth}"
+  PLATFORM__TOKEN_URL: "${PLATFORM__TOKEN_URL:-http://dex:5556/dex/token}"
+  PLATFORM__JWKS_URL: "${PLATFORM__JWKS_URL:-http://dex:5556/dex/keys}"
+  PLATFORM__ISSUER: "${PLATFORM__ISSUER:-http://localhost:5556/dex}"
+  PLATFORM__CLIENT_ID: "${PLATFORM__CLIENT_ID:-licetum-local}"
+  PLATFORM__CLIENT_SECRET: "${PLATFORM__CLIENT_SECRET:-licetum-local-secret}"
+  # Platform administrators: the role is seeded together with the self-service; everyone whose
+  # ADMIN_CLAIM claim takes one of ADMIN_CLAIM_VALUES (a JSON list or CSV) becomes a member. Without
+  # values the role stays empty — nobody can manage Licetum, the admin API is closed by the policies.
+  PLATFORM__ADMIN_GROUP_NAME: "${PLATFORM__ADMIN_GROUP_NAME:-Platform administrator}"
+  PLATFORM__ADMIN_CLAIM: "${PLATFORM__ADMIN_CLAIM:-preferred_username}"
+  PLATFORM__ADMIN_CLAIM_VALUES: "${PLATFORM__ADMIN_CLAIM_VALUES:-[\"admin\"]}"
+
+x-conf-go: &conf-go
+  environment:
+    <<: *env-app
+  volumes:
+    - go-build-cache:/root/.cache/go-build
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+# The Go modules: core (MIT: the check runtime) and admin-api (AGPL: the admin API, which depends on core). Both are
+# mounted, so the admin image sees the core sources it is built against (see the replace in admin-api/go.mod).
+x-core: &core
+  build:
+    context: .
+    dockerfile: core/Dockerfile
+    target: dev
+  volumes:
+    - ./core/:/src/core/:rw,z
+    - go-build-cache:/root/.cache/go-build
+
+x-admin: &admin
+  build:
+    context: .
+    dockerfile: admin-api/Dockerfile
+    target: dev
+  volumes:
+    - ./core/:/src/core/:rw,z
+    - ./admin-api/:/src/admin-api/:rw,z
+    - go-build-cache:/root/.cache/go-build
+
+services:
+  postgres_init:
+    <<: [*conf-go, *core]
+    container_name: licetum_migration
+    working_dir: /src/core
+    command: ["go", "run", "./cmd/licetum", "migrate"]
+  check:
+    <<: [*conf-go, *core]
+    container_name: licetum_check
+    working_dir: /src/core
+    # air rebuilds and restarts the app on every change under ./core.
+    command:
+      - air
+      - --tmp_dir=/tmp/air
+      - --build.cmd=go build -o /tmp/air/licetum ./cmd/licetum
+      - --build.entrypoint=/tmp/air/licetum
+      - --build.args_bin=check,-addr,:8001
+      - --build.exclude_dir=schema,tmp
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+  admin:
+    <<: [*conf-go, *admin]
+    container_name: licetum_admin
+    working_dir: /src/admin-api
+    # air rebuilds and restarts the app on every change under ./admin-api and ./core.
+    command:
+      - air
+      - --tmp_dir=/tmp/air
+      - --build.cmd=go build -o /tmp/air/licetum-admin ./cmd/licetum-admin
+      - --build.entrypoint=/tmp/air/licetum-admin
+      - --build.args_bin=admin,-addr,:8000
+      - --build.exclude_dir=schema,tmp
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+  web:
+    container_name: licetum_web
+    environment:
+      # The server of the UI calls the APIs over the Compose network; the browser is sent to the public address of the
+      # admin API to sign in (the redirect URI registered at the identity provider is built from it).
+      ADMIN_API_URL: "http://admin:8000"
+      ADMIN_API_PUBLIC_URL: "${ADMIN_API_PUBLIC_URL:-http://localhost:8002}"
+      CHECK_API_URL: "http://check:8001"
+      CHECK_API_PUBLIC_URL: "${CHECK_API_PUBLIC_URL:-http://localhost:8001}"
+      APP_BASE_URL: "${APP_BASE_URL:-http://localhost:3000}"
+      SESSION_SECRET: "${SESSION_SECRET:-dev-only-insecure-session-secret-change-me-0123456789}"
+    volumes:
+      - ./web/:/app/:rw,z
+      - /app/node_modules
+      - /app/.next
+      # orval input; the mount above hides the client generated in the image, so regenerate it
+      # on start (src/api is not committed).
+      - ./admin-api/schema/:/admin-api/schema/:ro,z
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      target: build-deps
+    command: ["sh", "-c", "pnpm orval && pnpm dev --hostname 0.0.0.0 --port 3000"]
+    ports:
+      - "3000:3000"
+    depends_on:
+      - admin
+      - check
+
+volumes:
+  go-build-cache:

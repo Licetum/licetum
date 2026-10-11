@@ -1,0 +1,12 @@
+services:
+  dex:
+    image: ghcr.io/dexidp/dex:v2.45.1
+    container_name: licetum_dex
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.docker.yaml:ro,z
+      - dex_data:/var/dex
+
+volumes:
+  dex_data:

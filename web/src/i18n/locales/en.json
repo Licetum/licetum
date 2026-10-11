@@ -1,0 +1,1407 @@
+{
+  "access": {
+    "byResourcesNote": "The tree shows what the rules themselves say. Who can see a particular resource needs a reverse lookup that doesn’t exist yet.",
+    "col": {
+      "author": "Author",
+      "conditions": "Conditions",
+      "count": "Accesses",
+      "kind": "Kind",
+      "recipient": "Recipient",
+      "status": "Status",
+      "what": "What",
+      "where": "Where",
+      "who": "To whom"
+    },
+    "effect": {
+      "allow": "Allowed",
+      "deny": "Denial",
+      "except": "Exception"
+    },
+    "empty": {
+      "hint": "Give access to a group or a person: choose who, what and where, and it takes effect at once.",
+      "title": "No access granted yet"
+    },
+    "filter": {
+      "author": "Author",
+      "effect": "Effect",
+      "term": "Term",
+      "where": "Where",
+      "who": "To whom"
+    },
+    "filters": "Filters",
+    "noMatch": {
+      "hint": "Search looks at the group or person, the type, the service and the author.",
+      "title": "Nothing matches the filters"
+    },
+    "rulesCount_few": "{{count}} accesses",
+    "rulesCount_many": "{{count}} accesses",
+    "rulesCount_one": "{{count}} access",
+    "rulesCount_other": "{{count}} accesses",
+    "search": "Search: group, person, type, service, author…",
+    "selected_few": "Selected: {{count}}",
+    "selected_many": "Selected: {{count}}",
+    "selected_one": "Selected: {{count}}",
+    "selected_other": "Selected: {{count}}",
+    "showSystem": "Show the platform’s own accesses",
+    "shown": "Showing {{shown}} of {{total}}",
+    "term": {
+      "dated": "With an end date",
+      "expiring": "Expiring soon",
+      "forever": "No end date"
+    },
+    "view": {
+      "grantees": "By people and groups",
+      "list": "List",
+      "resources": "By resources"
+    },
+    "viewLabel": "View"
+  },
+  "accessGroups": {
+    "add": "Add a set",
+    "blocked": "Can’t delete: an access or a role item uses the set",
+    "delete": "Delete the set @{{name}}?",
+    "hint": "A named set of levels of this type; an access names it as @name.",
+    "levels": "Levels (read, write)",
+    "name": "Name (editor)",
+    "none": "No sets yet.",
+    "title": "Level sets"
+  },
+  "admins": {
+    "area": {
+      "assignment_rule": "Accesses",
+      "group": "Groups",
+      "group_member": "Group members",
+      "role": "Roles",
+      "service": "Services and settings",
+      "type_resource": "Types and sources"
+    },
+    "conditionNote": "Membership by a condition (for example a claim of the token) follows the identity provider: change the claim there.",
+    "grant": "Give platform management",
+    "grantConfirm": "Give",
+    "granted": "Platform access given",
+    "group": "Administrators’ group",
+    "level": {
+      "denied": "Denied",
+      "read": "View",
+      "write": "Manage"
+    },
+    "lockNote": "Licetum refuses to remove the last way to manage access. A denial still beats an allowance, so denying yourself an area can lock you out of it; if everyone is locked out anyway, run “licetum restore-admin -user <name>” where the database is reachable.",
+    "matrix": {
+      "empty": "No accesses to the platform itself are listed."
+    },
+    "matrixTitle": "Who can do what on the platform",
+    "members_few": "{{count}} members",
+    "members_many": "{{count}} members",
+    "members_one": "{{count}} member",
+    "members_other": "{{count}} members",
+    "mine": "My permissions",
+    "noAdmins": "The group of administrators isn’t there. Only the recovery command or a database fix will bring access back.",
+    "noMembers": "Nobody is in the group yet.",
+    "preset": {
+      "confirm": "I understand this lets them change the permissions of the platform itself",
+      "full": "Full management",
+      "fullHint": "Read and change all six areas, including who may manage the platform.",
+      "view": "View everything",
+      "viewHint": "Read access to the six areas: services, types and sources, groups, group members, roles, accesses."
+    },
+    "presetLabel": "Set",
+    "recover": "If nobody can manage the platform any more, access is restored from the server: seeding does not give it back once it was revoked.",
+    "ruleName": "Platform: {{area}}"
+  },
+  "auth": {
+    "copied": "Copied",
+    "copyDetails": "Copy details for the administrator",
+    "error": {
+      "api_unreachable": "The admin API doesn’t answer. Check that it is running and that ADMIN_API_URL is right.",
+      "not_seeded": "Licetum isn’t set up yet: the self-service is not created. Run the migration (licetum migrate) and try again.",
+      "unknown": "The sign-in request expired or was rejected. Try again."
+    },
+    "errorHint": "If the error repeats, tell your administrator the time and the error code.",
+    "errorTitle": "Sign-in failed",
+    "help": "Sign in with the account you use at work. If it still fails, tell your administrator the time and the details below.",
+    "helpTitle": "Can’t sign in?",
+    "noAccessBody": "You signed in as {{name}} (@{{username}}), but you can’t manage Licetum. Ask a platform administrator.",
+    "noAccessTitle": "You don’t have access",
+    "retry": "Sign in again",
+    "signIn": "Sign in with your company account",
+    "signOutAndRetry": "Sign in with another account",
+    "subtitle": "Sign in with the account you use at work.",
+    "title": "Permissions of your services, in one place"
+  },
+  "check": {
+    "addAttr": "Add an attribute",
+    "addContext": "Add a context attribute",
+    "addQuestion": "Add a question",
+    "allTypes": "All types",
+    "attrs": "Attributes",
+    "attrsHint": "The claims the person’s token would carry. The rules look at them.",
+    "context": "Request context",
+    "contextHint": "What the request itself carries (address, channel). The calling service sets it; never copy it from user input.",
+    "denied": "What took it away",
+    "deniedNone": "Nothing.",
+    "failed": "The check failed",
+    "grantAccess": "Give access",
+    "granted": "What gave access",
+    "grantedNone": "Nothing: no rule gives this level here.",
+    "level": "Level",
+    "lifted": "lifted by an exception",
+    "linkCopied": "The link is copied",
+    "list": {
+      "none": "{{subject}} sees nothing in this service.",
+      "noneHint": "No rule gives them access. Give access to a group they are in, or to them directly.",
+      "resources": "Resources",
+      "wholeType": "the type as a whole"
+    },
+    "missingAttr": "The request lacks an attribute a condition reads: the denial applies, as the rule says.",
+    "mode": {
+      "list": "What a person sees",
+      "one": "One question"
+    },
+    "modeLabel": "Mode",
+    "noAccessHint": "No rule gives this level to this person on this resource.",
+    "on": "on {{target}}",
+    "onType": "on all of {{type}}",
+    "resource": "Resource",
+    "resourcePlaceholder": "Name or id (empty — the whole type)",
+    "ruleFallback": "Rule {{id}}",
+    "run": "Check",
+    "saveTest": "Save as a test",
+    "saveTestFailed": "Couldn’t save the test",
+    "savedTest": "Saved as a test of the service policy",
+    "sentence": {
+      "allowed": "{{subject}} has “{{action}}” access to {{target}} in the service “{{service}}”.",
+      "denied": "{{subject}} has no “{{action}}” access to {{target}} in the service “{{service}}”."
+    },
+    "service": "Service",
+    "share": "Copy the link",
+    "show": "Show",
+    "standing": "Stands: no exception lifts it",
+    "start": {
+      "hint": "Enter a username, pick a type and a resource, and Licetum answers whether the person may do it and which rules decided.",
+      "title": "Ask about a person"
+    },
+    "testExists": "The service already has a scenario with this name.",
+    "title": "Access check",
+    "type": "Type",
+    "typePlaceholder": "Choose a type",
+    "unresolved": "A parent of the resource isn’t loaded: denials are applied to be safe.",
+    "verdict": {
+      "allowed": "✔ Allowed",
+      "denied": "⊘ Denied",
+      "no_access": "— No access",
+      "resource_not_found": "Resource not found",
+      "type_not_found": "Type not found"
+    },
+    "who": "Who",
+    "whoSees": "Who else has access to this",
+    "wholeType": "the type “{{type}}” as a whole",
+    "why": "Why?"
+  },
+  "common": {
+    "actions": "Actions",
+    "cancel": "Cancel",
+    "copied": "Copied",
+    "copy": "Copy",
+    "create": "Create",
+    "delete": "Delete",
+    "edit": "Edit",
+    "loadFailed": "Couldn’t load the data",
+    "open": "Open",
+    "resetFilters": "Reset filters",
+    "retry": "Try again",
+    "save": "Save",
+    "saveFailed": "Couldn’t save the changes"
+  },
+  "cond": {
+    "add": "Add a condition",
+    "attr": "Attribute",
+    "attrPlaceholder": "department",
+    "op": "Operator",
+    "ops": {
+      "eq": "equals",
+      "ge": "at least",
+      "gt": "greater",
+      "in": "in the list",
+      "in_cidr": "in network",
+      "le": "at most",
+      "lt": "less",
+      "ne": "not equal",
+      "not_in": "not in the list",
+      "regex": "matches"
+    },
+    "remove": "Remove",
+    "source": "Source",
+    "sources": {
+      "claim": "Token",
+      "context": "Request",
+      "now": "Time"
+    },
+    "value": "Value",
+    "valueList": "a, b, c"
+  },
+  "delegation": {
+    "calls": {
+      "at": "When",
+      "checked": "Check: {{allowed}} of {{total}} allowed",
+      "client": "Client",
+      "empty": "No calls yet",
+      "emptyHint": "Every call of a trusted client is recorded here: which client, for whom and with what outcome.",
+      "older": "Older calls",
+      "permission": "Permissions",
+      "subject": "For",
+      "title": "Calls made on behalf of a person",
+      "what": "What"
+    },
+    "claims": {
+      "contextHint": "An attribute of the request, not of the token: the caller puts it into context.",
+      "none": "The rules read no claims yet: a person is known by their name alone.",
+      "title": "What the policy of this service reads",
+      "usage": "{{rules}} in rules, {{targets}} in claim-based targets, {{memberships}} in group memberships",
+      "warn": "A trusted client has to send these claims — or, if it forwards a person’s token, that token has to carry them. Otherwise the answers differ from the real ones: a rule that reads a missing claim does not apply, and a person is no longer in the group the claim defines."
+    },
+    "clients": "Trusted clients",
+    "clientsHelp": "The azp (or client_id) of the client’s token. Trust a backend client, not the one your users sign in with: a token of a trusted client may ask about anybody.",
+    "clientsPlaceholder": "The azp of the client’s token, then Enter",
+    "example": "A call to copy",
+    "intro": "A client application you trust can ask what a person may do without holding their token: it signs in with its own token and names the person and the claims their token would carry.",
+    "saved": "Trusted clients saved",
+    "title": "On behalf of a person"
+  },
+  "grant": {
+    "addedMore_few": "Given so far: {{count}}. The form is cleared for the next one.",
+    "addedMore_many": "Given so far: {{count}}. The form is cleared for the next one.",
+    "addedMore_one": "Given so far: {{count}}. The form is cleared for the next one.",
+    "addedMore_other": "Given so far: {{count}}. The form is cleared for the next one.",
+    "advanced": {
+      "deny": "Deny instead of allow",
+      "description": "What it is for (optional)",
+      "enabled": "Enabled",
+      "exception": "Exception: lifts the denials above it in the hierarchy",
+      "label": "More",
+      "name": "Name of the access (optional)",
+      "onMissing": "If the request lacks an attribute",
+      "onMissingApply": "The denial applies (safer)",
+      "onMissingSkip": "The denial does not apply"
+    },
+    "create": "Give access",
+    "createAndMore": "Give and add another",
+    "created_few": "Accesses given: {{count}}",
+    "created_many": "Accesses given: {{count}}",
+    "created_one": "Access given",
+    "created_other": "Accesses given: {{count}}",
+    "impact": "The access takes effect at once. You can undo it for 10 seconds.",
+    "noRight": "You can read accesses but not create them.",
+    "open": "Give access",
+    "preview": {
+      "already_few": "{{count}} accesses already give the same",
+      "already_many": "{{count}} accesses already give the same",
+      "already_one": "1 access already gives the same",
+      "already_other": "{{count}} accesses already give the same",
+      "capability": "Gives a permission that has no resources — there is nothing to count.",
+      "conflict": {
+        "deny": {
+          "above": "A denial above it cancels it:",
+          "inside": "A denial inside it carves out a part:"
+        },
+        "exception": {
+          "above": "An exception above it:",
+          "inside": "An exception inside it:"
+        }
+      },
+      "conflicts_few": "{{count}} denials or exceptions meet this access",
+      "conflicts_many": "{{count}} denials or exceptions meet this access",
+      "conflicts_one": "1 denial or exception meets this access",
+      "conflicts_other": "{{count}} denials or exceptions meet this access",
+      "dynamic": "The resource is found from the claim of whoever asks, so how many there are depends on the person.",
+      "failed": "The effect could not be worked out. You can still give the access.",
+      "noPeople_few": "None of the {{count}} known people matches",
+      "noPeople_many": "None of the {{count}} known people matches",
+      "noPeople_one": "None of the {{count}} known person matches",
+      "noPeople_other": "None of the {{count}} known people matches",
+      "partial_few": "(and {{count}} more accesses not counted)",
+      "partial_many": "(and {{count}} more accesses not counted)",
+      "partial_one": "(and {{count}} more accesses not counted)",
+      "partial_other": "(and {{count}} more accesses not counted)",
+      "people_few": "Reaches {{count}} known people",
+      "people_many": "Reaches {{count}} known people",
+      "people_one": "Reaches 1 known person",
+      "people_other": "Reaches {{count}} known people",
+      "registryEmpty": "Nobody has been seen yet, so who it reaches cannot be told. People appear after they sign in to a service.",
+      "registryOff": "The registry of people is off, so who this reaches cannot be told. It is turned on with SUBJECTS__ENABLED.",
+      "resources_few": "Covers {{count}} resources",
+      "resources_many": "Covers {{count}} resources",
+      "resources_one": "Covers 1 resource",
+      "resources_other": "Covers {{count}} resources",
+      "title": "What this will do"
+    },
+    "problem": {
+      "claim": "Name the claim of the person’s token.",
+      "condition": "Add at least one condition and fill it in.",
+      "dates": "The start date is after the end date.",
+      "everyone": "Confirm that everyone gets this access.",
+      "group": "Choose a group.",
+      "guard": "Fill in the guard conditions.",
+      "levels": "Choose at least one level.",
+      "person": "Enter the username.",
+      "resources": "Choose at least one resource.",
+      "role": "Choose a role.",
+      "source": "The type has no source, so it can’t be narrowed to resources.",
+      "type": "Choose the service and the resource type.",
+      "where": "Fill in the attribute conditions."
+    },
+    "sentence": {
+      "allow": "{{who}} will get {{levels}} on {{place}}. {{term}}",
+      "deny": "{{who}} will NOT get {{levels}} on {{place}}, whatever other accesses say. {{term}}",
+      "except": "{{who}} will get {{levels}} on {{place}}, even where a denial above says otherwise. {{term}}",
+      "forever": "No end date.",
+      "from": "From {{date}}.",
+      "placeAll": "all resources of the type “{{type}}” of the service “{{service}}”",
+      "placeClaim": "the resource of the type “{{type}}” found by the claim “{{claim}}”",
+      "placeResources_few": "{{count}} resources ({{names}}…) of the type “{{type}}”",
+      "placeResources_many": "{{count}} resources ({{names}}…) of the type “{{type}}”",
+      "placeResources_one": "{{names}} of the type “{{type}}”",
+      "placeResources_other": "{{count}} resources ({{names}}…) of the type “{{type}}”",
+      "placeWhere": "resources of the type “{{type}}” where {{cond}}",
+      "role": "{{who}} will get the permissions of the role “{{role}}”. {{term}}",
+      "until": "Until {{date}}.",
+      "whoCondition": "Everyone matching {{cond}}",
+      "whoEveryone": "Everyone",
+      "whoGroup": "Group “{{name}}”",
+      "whoPerson": "“{{name}}”"
+    },
+    "title": "Give access",
+    "what": {
+      "all": "All levels",
+      "custom": "Custom",
+      "edit": "Read and change",
+      "everyLevel": "every level",
+      "label": "What",
+      "levels": "Access levels",
+      "noRoles": "No roles yet. Create one in “Roles”.",
+      "presets": "Level sets",
+      "read": "Read",
+      "role": "Role",
+      "rolePlaceholder": "Choose a role"
+    },
+    "when": {
+      "from": "From date",
+      "guard": "Only if… (guard)",
+      "label": "Conditions",
+      "requiresGroup": "Only for members of the group…",
+      "until": "Until date"
+    },
+    "where": {
+      "all": "All resources of the type",
+      "attrPlaceholder": "kind",
+      "byAttr": "By attribute",
+      "byAttrHint": "Resources whose attributes (as the source reports them) match all the conditions.",
+      "byClaim": "By the person’s attribute",
+      "byClaimHint": "The resource is found by the value of the claim: each person gets access to the resource their own value points to.",
+      "claim": "Claim of the token (for example department)",
+      "label": "Where",
+      "manyRules_few": "One access per resource will be created: {{count}}.",
+      "manyRules_many": "One access per resource will be created: {{count}}.",
+      "manyRules_one": "One access will be created.",
+      "manyRules_other": "One access per resource will be created: {{count}}.",
+      "matchBy": "Match by: name, id or meta.<attribute>",
+      "noResources": "No resources found",
+      "noSource": "The type has no source, so only “all resources of the type” can be granted.",
+      "resources": "Chosen resources",
+      "resourcesPlaceholder": "Search resources by name or id",
+      "scope": "Which resources",
+      "service": "Service",
+      "type": "Resource type"
+    },
+    "who": {
+      "condition": "By condition",
+      "conditionHint": "Everyone whose token matches all the conditions. At least one condition is needed.",
+      "everyone": "Everyone",
+      "everyoneConfirm": "I understand this is access for everyone",
+      "everyoneWarn": "Everyone who signs in will get this access.",
+      "group": "Group",
+      "groupPlaceholder": "Choose a group",
+      "label": "To whom",
+      "noGroups": "No groups yet. Create one in “People and groups”.",
+      "person": "Person",
+      "personHint": "How the person is named in their token: the username (preferred_username), or sub.",
+      "personPlaceholder": "For example alice"
+    }
+  },
+  "grantDetail": {
+    "allHistory": "Whole history →",
+    "check": "Check access…",
+    "deadNote": "The access points at a resource of a type that has no source, so it can’t take effect. Connect a source or delete the access.",
+    "description": "Description",
+    "disabledNote": "This access is disabled: it applies to nobody until you enable it.",
+    "duplicate": "Duplicate",
+    "exceptionNote": "An exception: it lifts denials that lie above it in the hierarchy, for the resources it covers.",
+    "extend": "Extend:",
+    "forever": "No end date",
+    "gone": {
+      "hint": "It may have been deleted. The changes are in the history.",
+      "history": "Open the history",
+      "list": "Back to the list",
+      "title": "This access no longer exists"
+    },
+    "history": "History of this access",
+    "kind": "Label",
+    "noHistory": "No records yet.",
+    "onMissing": {
+      "apply": "A missing attribute: the denial applies",
+      "skip": "A missing attribute: the denial does not apply"
+    },
+    "plus30": "+30 days",
+    "plus7": "+7 days",
+    "rename": "Rename",
+    "renamed": "Name changed",
+    "rule": "Rule",
+    "term": "Term",
+    "termChanged": "Term changed",
+    "undoNote": "The term is saved at once; you can undo for 10 seconds.",
+    "untilDate": "Until {{date}}",
+    "untilPick": "Until a date"
+  },
+  "group": {
+    "add": "Add",
+    "addMember": "Add to the group",
+    "added": "Added to the group",
+    "checkMember": "Check what a member sees",
+    "col": {
+      "status": "Status",
+      "term": "Term",
+      "who": "Who is in"
+    },
+    "conditionHint": "Everyone whose token matches all the conditions is in the group — for example department = sales.",
+    "delete": {
+      "action": "Delete the group",
+      "blocked": "Can’t delete the group: it is in use",
+      "blockedBy": "It is used by: {{what}}. Remove those first.",
+      "body": "It must not be used by any access or other group.",
+      "title": "Delete the group “{{name}}”?"
+    },
+    "empty": {
+      "hint": "Add people, another group, or a condition on the token.",
+      "title": "The group has nobody yet"
+    },
+    "hideForm": "Hide the form",
+    "kind": {
+      "condition": "By condition",
+      "conditionShort": "condition",
+      "nested": "Nested group",
+      "nestedShort": "nested group",
+      "person": "Person",
+      "personShort": "person"
+    },
+    "kindLabel": "Kind of entry",
+    "nestedIn": "The group is part of:",
+    "nestedNone": "The group isn’t part of any other group.",
+    "nestedNote": "Everyone who is in a nested group is in this group too.",
+    "nestedPlaceholder": "Choose a group",
+    "noAccess": {
+      "hint": "Give access to the group and all its members get it.",
+      "title": "The group has no access yet"
+    },
+    "notFound": {
+      "back": "To the groups",
+      "hint": "It may have been deleted.",
+      "title": "The group doesn’t exist"
+    },
+    "personPlaceholder": "Username, for example dave",
+    "remove": "Remove",
+    "removed": "Removed from the group",
+    "rename": "Rename",
+    "subtitle": "The name is unique across the system.",
+    "tab": {
+      "access": "Access ({{count}})",
+      "composition": "Composition ({{count}})",
+      "nested": "Part of ({{count}})"
+    }
+  },
+  "history": {
+    "after": "After",
+    "before": "Before",
+    "cannotRevert": "This change can’t be reverted (a later change may depend on it).",
+    "copyLink": "Copy the link",
+    "count": "{{shown}} of {{total}} records",
+    "empty": {
+      "hint": "Every grant or revocation of access will show up here.",
+      "title": "No changes yet"
+    },
+    "entity": {
+      "access_group": "level set",
+      "assignment_rule": "access",
+      "group": "group",
+      "group_member": "membership",
+      "log_settings": "log settings",
+      "role": "role",
+      "role_permission": "role permission",
+      "service": "service",
+      "synchronizer": "source",
+      "type_resource": "resource type"
+    },
+    "field": "Field",
+    "filter": {
+      "period": "Period",
+      "service": "Service",
+      "what": "What changed",
+      "who": "Who"
+    },
+    "hideRaw": "Hide raw data",
+    "live": "Live",
+    "liveOff": "Live: off",
+    "liveOn": "Live",
+    "memberNested": "nested group",
+    "memberPredicate": "by condition",
+    "more": "Show more",
+    "noDiff": "The record has no field-level difference.",
+    "noMatch": "No records for these filters",
+    "noRevert": "This record can’t be reverted: only accesses, groups, memberships, roles and level sets can.",
+    "op": {
+      "create": "create",
+      "delete": "delete",
+      "update": "change"
+    },
+    "openEntity": "Open",
+    "period": {
+      "all": "All time",
+      "today": "Today",
+      "week": "Last 7 days"
+    },
+    "planNote": "The revert is a change of its own and appears in the history.",
+    "platformWide": "Whole platform",
+    "revert": "Revert this change",
+    "revertBody": "The entity goes back as it was before this change:",
+    "revertConfirm": "Revert",
+    "revertFailed": "Couldn’t revert",
+    "revertTitle": "Revert the change?",
+    "reverted": "Reverted",
+    "rollbackBody_few": "The {{count}} changes after this record will be undone, newest first, in one transaction:",
+    "rollbackBody_many": "The {{count}} changes after this record will be undone, newest first, in one transaction:",
+    "rollbackBody_one": "The change after this record will be undone, newest first, in one transaction:",
+    "rollbackBody_other": "The {{count}} changes after this record will be undone, newest first, in one transaction:",
+    "rollbackConfirm": "Go back",
+    "rollbackTitle": "Go back to this point?",
+    "rollbackTo": "Go back to this point",
+    "rolledBack": "Went back to that point",
+    "sentence": "{{actor}} {{verb}} {{entity}} “{{name}}”",
+    "showRaw": "Raw data",
+    "system": "System",
+    "title": "Change history",
+    "today": "Today",
+    "verb": {
+      "create": "created",
+      "delete": "deleted",
+      "update": "changed"
+    },
+    "yesterday": "Yesterday"
+  },
+  "home": {
+    "allHistory": "Whole history →",
+    "attention": {
+      "dead": "The access has no effect",
+      "everyone": "Access is given to everyone",
+      "expiring_few": "Expires in {{count}} days",
+      "expiring_many": "Expires in {{count}} days",
+      "expiring_one": "Expires in {{count}} day",
+      "expiring_other": "Expires in {{count}} days",
+      "lint_few": "{{service}}: {{count}} policy findings",
+      "lint_many": "{{service}}: {{count}} policy findings",
+      "lint_one": "{{service}}: {{count}} policy finding",
+      "lint_other": "{{service}}: {{count}} policy findings",
+      "none": "Nothing needs attention.",
+      "title": "Needs attention"
+    },
+    "check": "Check access",
+    "checkHint": "why “yes” or “no”",
+    "connect": "Connect a service",
+    "connectHint": "so it shows up in Licetum",
+    "day": "Good afternoon",
+    "evening": "Good evening",
+    "grantHint": "to a group or a person",
+    "hello": "Hello",
+    "morning": "Good morning",
+    "night": "Good night",
+    "recent": "Recent changes",
+    "recentNoRight": "The history is open to those who can read all services.",
+    "recentNone": "No changes yet.",
+    "setup": "Getting started",
+    "setupCount": "{{done}} of {{total}}",
+    "setupHide": "Hide",
+    "step": {
+      "grant": "The first access is given",
+      "grantCta": "Give",
+      "group": "The first group is created",
+      "groupCta": "Create",
+      "idp": "The sign-in provider is connected",
+      "service": "A service is added",
+      "serviceCta": "Add"
+    },
+    "stepDone": "Done: ",
+    "stepTodo": "To do: ",
+    "title": "{{greeting}}, {{name}}"
+  },
+  "integration": {
+    "about": {
+      "authzen": "The same question in the OpenID AuthZEN 1.0 format, for clients that already speak it.",
+      "check": "Answers up to 100 questions “may the person do this on that”, optionally with an explanation.",
+      "permission": "Returns, for each type, the resources the person may use and their levels. Use it to filter a list."
+    },
+    "api": "Check API",
+    "codes": {
+      "200": "The answer",
+      "401": "No token, or the token is invalid or expired",
+      "403": "The request is valid but not allowed for this caller",
+      "404": "The service doesn’t exist",
+      "424": "The sign-in provider of the service doesn’t answer",
+      "meaning": "Meaning",
+      "status": "Code",
+      "title": "Response codes"
+    },
+    "fresh": {
+      "body": "Answers are cached for up to 60 seconds. After changing permissions pass the X-Authz-Revision header of the write response as at_least_as_fresh, or use consistency=higher.",
+      "title": "Freshness of the answers"
+    },
+    "hint": "How the code of this service asks Licetum what a person may do. The calls below carry the service’s own name and types.",
+    "lang": "Language",
+    "mode": {
+      "check": "Can X do Y on Z (one question)",
+      "permission": "What a person can do (list)"
+    },
+    "modeLabel": "What to ask",
+    "try": {
+      "401": "The token was rejected: it is expired, or issued by another provider than the one this service is connected to.",
+      "424": "The sign-in provider of the service doesn’t answer, so tokens can’t be verified.",
+      "hint": "The token is used for this one request and is not stored. Paste the token your service gets from its identity provider.",
+      "run": "Try",
+      "title": "Try it with your token",
+      "token": "Access token"
+    }
+  },
+  "logs": {
+    "applied": "Settings apply to every replica within about 15 seconds, without a restart.",
+    "event": {
+      "access": "API requests",
+      "decision": "Check decisions",
+      "sync": "Resource synchronizations"
+    },
+    "events": "Events",
+    "field": "Field",
+    "fields": {
+      "add": "Add a field",
+      "all": "All fields",
+      "choose": "Choose",
+      "rename": "write as"
+    },
+    "fieldsLabel": "Fields",
+    "format": {
+      "text": "Text"
+    },
+    "formatLabel": "Format",
+    "level": "Level",
+    "preset": {
+      "audit": "Decision audit",
+      "dev": "Development",
+      "prod": "Production"
+    },
+    "presets": "Presets",
+    "preview": "Sample line",
+    "reset": "Reset to defaults",
+    "sample": {
+      "help": "Denials are always logged."
+    },
+    "sampleLabel": "Share of allowed decisions in the log",
+    "saved": "Settings applied. Other replicas pick them up within 15 seconds.",
+    "scope": "These are the logs of the Licetum process. Changes to permissions are kept in “History”.",
+    "subject": {
+      "hash": "Hash",
+      "omit": "Omit",
+      "plain": "As is",
+      "plainWarn": "The person’s identifier will be written to the process logs."
+    },
+    "subjectLabel": "Subject",
+    "title": "Process logs"
+  },
+  "members": {
+    "everyone": "everyone"
+  },
+  "nav": {
+    "access": "Access",
+    "check": "Check",
+    "grants": "Grants",
+    "history": "History",
+    "home": "Home",
+    "people": "People and groups",
+    "roles": "Roles",
+    "services": "Services"
+  },
+  "palette": {
+    "actions": "Actions",
+    "check": "Check access…",
+    "connect": "Connect a service…",
+    "empty": "Nothing found",
+    "goto": "Go to",
+    "grant": "Give access…",
+    "groups": "Group",
+    "placeholder": "What do you want to do or open?",
+    "roles": "Role",
+    "services": "Service"
+  },
+  "people": {
+    "col": {
+      "composition": "Composition",
+      "grants": "Accesses",
+      "group": "Group",
+      "groups": "Groups",
+      "lastSeen": "Last seen",
+      "nestedIn": "Nested in",
+      "person": "Person",
+      "rules": "Direct accesses"
+    },
+    "create": "Create a group",
+    "empty": {
+      "hint": "A group unites people by a sign; an access given to a group is received by all its members.",
+      "tag": "empty",
+      "title": "No groups yet"
+    },
+    "findHint": "To look at someone who isn’t listed, open /people/<username>.",
+    "nameHelp": "Unique across the system. A group unites people by a sign — an access given to the group is received by all its members.",
+    "nameLabel": "Group name",
+    "namePlaceholder": "branch-managers",
+    "noMatch": "Nothing found",
+    "noPeople": "Nobody is named yet",
+    "noPeopleHint": "Open a person directly: /people/username.",
+    "registryOff": "The registry of people is off: only the people the rules and the history name are listed. Turn it on with SUBJECTS__ENABLED to see everyone who signs in, with their name and groups.",
+    "search": "Search by name or composition…",
+    "searchPeople": "Find a person by username…",
+    "tab": {
+      "groups": "Groups",
+      "people": "People"
+    }
+  },
+  "person": {
+    "attrsHint": "The claims of the person’s token, used to compute what they see. They are not stored.",
+    "attrs_few": "Attributes ({{count}})",
+    "attrs_many": "Attributes ({{count}})",
+    "attrs_one": "Attributes ({{count}})",
+    "attrs_other": "Attributes ({{count}})",
+    "check": "Check access…",
+    "groupsNote": "Groups defined by a condition are not listed here: they follow the attributes of the token.",
+    "how": "Why",
+    "howNamed": "named in the composition",
+    "inGroups": "Groups:",
+    "lastSeen": "Last seen: {{at}}",
+    "noDirect": "No direct accesses.",
+    "noGroups": "No membership names this person.",
+    "noGroupsHint": "Groups defined by a condition (department = sales) depend on the token, not on a record about the person.",
+    "noServices": "No services connected yet.",
+    "nothing": "Nothing is allowed in the service “{{service}}”.",
+    "nothingHint": "Give access to a group or to the person.",
+    "revokeAll": "Revoke direct accesses and memberships…",
+    "revokeBody": "This deletes {{direct}} direct accesses and {{groups}} membership entries that name the person.",
+    "revokeConfirm": "Revoke",
+    "revokeHelp": "Access comes from the attributes in the token: to revoke everything, change them at the identity provider or remove the person from the memberships. A token is trusted for up to 5 minutes; an answer is cached for up to 60 seconds.",
+    "revokeHelpTitle": "How to revoke everything",
+    "revokeTitle": "Revoke everything given by name?",
+    "revoked_few": "Revoked: {{count}}",
+    "revoked_many": "Revoked: {{count}}",
+    "revoked_one": "Revoked: {{count}}",
+    "revoked_other": "Revoked: {{count}}",
+    "service": "Service",
+    "tab": {
+      "direct_few": "Direct accesses ({{count}})",
+      "direct_many": "Direct accesses ({{count}})",
+      "direct_one": "Direct accesses ({{count}})",
+      "direct_other": "Direct accesses ({{count}})",
+      "effective": "Effective access",
+      "groups_few": "Groups ({{count}})",
+      "groups_many": "Groups ({{count}})",
+      "groups_one": "Groups ({{count}})",
+      "groups_other": "Groups ({{count}})"
+    }
+  },
+  "policy": {
+    "attention_few": "{{count}} need attention",
+    "attention_many": "{{count}} need attention",
+    "attention_one": "{{count}} needs attention",
+    "attention_other": "{{count}} need attention",
+    "doc": {
+      "applied": "The document is applied",
+      "apply": "Apply",
+      "applyBody": "The changes are made in one transaction and appear in the history.",
+      "applyTitle": "Apply the document?",
+      "badJson": "The text isn’t valid JSON",
+      "badShape": "This isn’t a policy document: “format” and “service” are missing",
+      "choose": "Choose a file",
+      "dry": "Show what will change",
+      "export": "Download the policy",
+      "hint": "The whole policy of the service as one file with names instead of ids: groups with their members, roles, level sets and accesses. It can be kept next to the code and applied to another environment.",
+      "import": "Apply a document",
+      "noChanges": "Nothing to change: the service already matches the document.",
+      "paste": "Or paste the document here",
+      "plan": "Created {{created}} · changed {{updated}} · deleted {{deleted}} · unchanged {{unchanged}}",
+      "prune": "Delete accesses the document doesn’t have",
+      "pruneWarn": "Accesses to be deleted: {{count}}. The changes are made in one transaction and appear in the history."
+    },
+    "expect": {
+      "allow": "allowed",
+      "deny": "denied"
+    },
+    "lint": {
+      "finding": "Finding",
+      "hint": "Rules that decide nothing, grant more than they seem to, duplicate each other, or nothing uses.",
+      "none": "No findings. The policy has no rules that decide nothing and no duplicates.",
+      "openGroup": "Open the group",
+      "openRole": "Open the role",
+      "openRule": "Open the access",
+      "recheck": "Check again",
+      "severity": "Severity"
+    },
+    "severity": {
+      "error": "Error",
+      "info": "Info",
+      "warning": "Warning"
+    },
+    "tab": {
+      "document": "Document",
+      "lint": "Findings ({{count}})",
+      "tests": "Tests"
+    },
+    "tests": {
+      "add": "Add a scenario",
+      "added_few": "Added: {{count}}",
+      "added_many": "Added: {{count}}",
+      "added_one": "Added: {{count}}",
+      "added_other": "Added: {{count}}",
+      "badFile": "The file isn’t a list of scenarios",
+      "col": {
+        "checks": "Checks",
+        "name": "Scenario"
+      },
+      "empty": {
+        "hint": "Describe what a person must (or must not) see, and run it after every change of the rules.",
+        "title": "No scenarios yet"
+      },
+      "expect": "Expected",
+      "failed": "Failed",
+      "got": "got: {{decision}}",
+      "load": "Load a file",
+      "local_few": "This browser holds {{count}} scenarios from before the server kept them.",
+      "local_many": "This browser holds {{count}} scenarios from before the server kept them.",
+      "local_one": "This browser holds {{count}} scenario from before the server kept them.",
+      "local_other": "This browser holds {{count}} scenarios from before the server kept them.",
+      "moveLocal": "Move to the server",
+      "namePlaceholder": "Sales read the documents",
+      "passed": "Passed",
+      "resourceEmpty": "Resource (empty — the type)",
+      "run": "Run all",
+      "save": "Save to a file",
+      "storage": "Scenarios are kept with the service, so everyone who manages it runs the same ones. “Save as a test” on the Check screen adds one; a file can be saved and loaded too.",
+      "summary": "Passed {{passed}} of {{total}} · coverage {{covered}} of {{rules}} rules"
+    }
+  },
+  "prefs": {
+    "language": "Language",
+    "theme": "Theme",
+    "themeDark": "Dark theme",
+    "themeDarkName": "Dark",
+    "themeLight": "Light theme",
+    "themeLightName": "Light",
+    "themeSystemName": "System"
+  },
+  "resources": {
+    "check": "Check for a person…",
+    "children": "Children",
+    "col": {
+      "attrs": "Attributes",
+      "name": "Name",
+      "parent": "Parent"
+    },
+    "count": "{{shown}} of {{total}}",
+    "grant": "Give access on this resource",
+    "inactive": "switched off",
+    "noSource": {
+      "hint": "Without a source there are no resources: access is given on the type as a whole.",
+      "title": "The type has no source"
+    },
+    "noType": "The type doesn’t exist",
+    "orphan": "no parent",
+    "orphans_few": "{{count}} without a parent",
+    "orphans_many": "{{count}} without a parent",
+    "orphans_one": "{{count}} without a parent",
+    "orphans_other": "{{count}} without a parent",
+    "refresh": "Refresh from the source",
+    "refreshFailed": "The source didn’t answer; the data stays as it was.",
+    "refreshed_few": "Refreshed: {{count}} resources",
+    "refreshed_many": "Refreshed: {{count}} resources",
+    "refreshed_one": "Refreshed: 1 resource",
+    "refreshed_other": "Refreshed: {{count}} resources",
+    "search": "Search by name, id or attribute",
+    "showInactive": "Switched off",
+    "switchedOff_few": "{{count}} switched off",
+    "switchedOff_many": "{{count}} switched off",
+    "switchedOff_one": "{{count}} switched off",
+    "switchedOff_other": "{{count}} switched off",
+    "title": "Resources of the type “{{type}}”",
+    "unresolvedHint": "The parent is not in the cache yet. Until it appears, a denial that could cover this resource applies to it.",
+    "unresolvedTag": "parent not found",
+    "unresolved_few": "{{count}} with a parent not found",
+    "unresolved_many": "{{count}} with a parent not found",
+    "unresolved_one": "{{count}} with a parent not found",
+    "unresolved_other": "{{count}} with a parent not found",
+    "view": {
+      "list": "List",
+      "tree": "Tree"
+    },
+    "zero": {
+      "hint": "An empty list is the source’s answer: every earlier resource of the type is switched off. Check the source.",
+      "title": "The source returned no resources"
+    }
+  },
+  "role": {
+    "col": {
+      "scope": "Resources"
+    },
+    "delete": {
+      "blocked": "Can’t delete the role: it is given by an access",
+      "blockedBy": "At least one access gives this role. Delete or change it first.",
+      "body": "Its permissions go with it.",
+      "title": "Delete the role “{{name}}”?"
+    },
+    "notFound": "The role doesn’t exist",
+    "perm": {
+      "add": "Add a permission",
+      "deleteImpact_few": "It affects {{count}} accesses that give this role.",
+      "deleteImpact_many": "It affects {{count}} accesses that give this role.",
+      "deleteImpact_one": "It affects {{count}} access that gives this role.",
+      "deleteImpact_other": "It affects {{count}} accesses that give this role.",
+      "deleteTitle": "Delete the permission?",
+      "edit": "Change the permission",
+      "empty": "The role has no permissions yet.",
+      "impactNote": "A change to the role acts at once on every access that gives it.",
+      "noWildcard": "“*” isn’t allowed in a role: denying everything is done with a separate denial."
+    },
+    "tab": {
+      "permissions": "Permissions ({{count}})",
+      "usage": "Where it is used ({{count}})"
+    },
+    "usage": {
+      "none": "The role isn’t given to anyone yet",
+      "noneHint": "Give the role to a group or a person."
+    }
+  },
+  "roles": {
+    "col": {
+      "name": "Name",
+      "perms": "Permissions",
+      "usage": "In use"
+    },
+    "empty": {
+      "hint": "A role is a set of permissions that can be given to a group.",
+      "title": "No roles yet"
+    },
+    "grant": "Give the role…",
+    "nameHelp": "Unique across the system. A role is a named set of permissions: add permissions, then give the role to a group or a person.",
+    "nameLabel": "Role name",
+    "namePlaceholder": "Document editor",
+    "new": "Create a role",
+    "usageCount_few": "{{count}} accesses",
+    "usageCount_many": "{{count}} accesses",
+    "usageCount_one": "{{count}} access",
+    "usageCount_other": "{{count}} accesses"
+  },
+  "rule": {
+    "allLevels": "every level",
+    "deleteBody": "People lose it at once. You can undo for 10 seconds, or later in the history.",
+    "deleteTitle_few": "Delete {{count}} accesses?",
+    "deleteTitle_many": "Delete {{count}} accesses?",
+    "deleteTitle_one": "Delete this access?",
+    "deleteTitle_other": "Delete {{count}} accesses?",
+    "deletedDone_few": "{{count}} rules deleted",
+    "deletedDone_many": "{{count}} rules deleted",
+    "deletedDone_one": "Rule deleted",
+    "deletedDone_other": "{{count}} rules deleted",
+    "deny": "Denial",
+    "disable": "Disable",
+    "disabledDone_few": "{{count}} rules disabled",
+    "disabledDone_many": "{{count}} rules disabled",
+    "disabledDone_one": "Rule disabled",
+    "disabledDone_other": "{{count}} rules disabled",
+    "enable": "Enable",
+    "enabledDone_few": "{{count}} rules enabled",
+    "enabledDone_many": "{{count}} rules enabled",
+    "enabledDone_one": "Rule enabled",
+    "enabledDone_other": "{{count}} rules enabled",
+    "everyone": "Everyone",
+    "exception": "Exception",
+    "from": "from {{date}}",
+    "fromClaim": "resource by the claim “{{claim}}”",
+    "guardGroup": "for group members only",
+    "kind": {
+      "condition": "by condition",
+      "everyone": "everyone",
+      "group": "group",
+      "person": "person"
+    },
+    "onlyIf": "only if {{cond}}",
+    "role": "Role: {{name}}",
+    "roleTarget": "Permissions of the role",
+    "status": {
+      "active": "Active",
+      "dead": "Has no effect",
+      "deadHint": "The rule points at a resource of a type that has no source, so it can’t apply.",
+      "disabled": "Disabled",
+      "expired": "Expired",
+      "expiring_few": "Expires in {{count}} days",
+      "expiring_many": "Expires in {{count}} days",
+      "expiring_one": "Expires in {{count}} day",
+      "expiring_other": "Expires in {{count}} days",
+      "scheduled": "Not started yet"
+    },
+    "subjectKind": {
+      "agent": "agent",
+      "group": "group",
+      "service": "service",
+      "user": "person"
+    },
+    "title": "{{who}}: {{what}} — {{where}}",
+    "unknownGroup": "(unknown group)",
+    "until": "until {{date}}",
+    "where": "resources where {{cond}}",
+    "wholeType": "all resources of the type"
+  },
+  "service": {
+    "allHistory": "Whole history →",
+    "appUrl": "Application URL",
+    "authUrl": "Authorization URL",
+    "danger": "Danger zone",
+    "delete": {
+      "action": "Delete the service",
+      "blocked": "Can’t delete the service",
+      "blockedBy": "It still has: {{what}}. Delete them first.",
+      "body": "Type its slug to confirm.",
+      "hint": "While the service has resource types, deletion is blocked.",
+      "mismatch": "The slug doesn’t match",
+      "title": "Delete the service “{{name}}”?",
+      "type": "Type the slug “{{slug}}”"
+    },
+    "edit": "Edit the connection",
+    "iconUrl": "Icon URL",
+    "incomplete": {
+      "cta": "Add types",
+      "hint": "The service has no resource types yet. Describe them, then connect a source.",
+      "title": "Setup is not finished"
+    },
+    "makePublic": "Make the client public (remove the secret, sign in with PKCE)",
+    "name": "Name",
+    "newSecret": "New client secret",
+    "notFound": {
+      "back": "To the services",
+      "hint": "It may have been deleted, or the address is wrong.",
+      "title": "The service doesn’t exist"
+    },
+    "recent": "Recent changes of the service",
+    "secretHelp": "The current secret is never shown.",
+    "secretKeep": "Leave empty to keep the current one",
+    "secretNone": "none — a public client (PKCE)",
+    "secretSet": "stored",
+    "secretStatus": "Client secret",
+    "signin": "Sign-in (provider)",
+    "state": "State",
+    "tab": {
+      "integration": "Integration",
+      "overview": "Overview",
+      "policy": "Policy",
+      "sources": "Sources",
+      "types": "Resource types"
+    },
+    "tokenUrl": "Token URL"
+  },
+  "services": {
+    "col": {
+      "rules": "Accesses",
+      "service": "Service",
+      "status": "Status",
+      "types": "Types"
+    },
+    "connect": "Connect a service",
+    "counts": "Types {{types}} · Accesses {{rules}}",
+    "countsFailed": "Couldn’t load the counts; the list may be incomplete.",
+    "empty": {
+      "hint": "Three steps: the sign-in provider, the resource types, the source of the resources.",
+      "title": "Connect your first service"
+    },
+    "filter": {
+      "all": "Status: all",
+      "status": "Status"
+    },
+    "noMatch": "No services match",
+    "open": "Open",
+    "search": "Search by name or slug…",
+    "shown": "Showing {{shown}} of {{total}}",
+    "status": {
+      "incomplete": "Setup incomplete",
+      "ready": "Ready"
+    },
+    "system": {
+      "hint": "Manages access to the platform itself. Changing it may lock you out."
+    },
+    "systemTag": "System",
+    "tab": {
+      "integration": "Integration"
+    },
+    "view": {
+      "cards": "Cards",
+      "table": "Table"
+    },
+    "viewLabel": "View"
+  },
+  "settings": {
+    "tab": {
+      "admins": "Administrators",
+      "logs": "Logs"
+    },
+    "title": "Settings"
+  },
+  "shell": {
+    "accessFailed": "Couldn’t load your permissions",
+    "mainNav": "Main navigation",
+    "roleAdmin": "Platform administrator",
+    "roleReader": "Limited access",
+    "search": "Search and commands",
+    "searchShort": "Search",
+    "skip": "Skip to content"
+  },
+  "sources": {
+    "addHeader": "Add a header",
+    "attrsNote": "Any other field of a resource becomes its attribute; accesses can then pick resources by it (for example owner = anna).",
+    "cache": "The list is kept for {{seconds}} s",
+    "cacheTtl": "Keep the list for",
+    "cacheTtlHelp": "Requests in this window don’t go to the source, so the data may lag it by as much. Empty — the default (10 s), 0 — no caching.",
+    "col": {
+      "source": "Source"
+    },
+    "connect": "Connect a source",
+    "delete": {
+      "body": "Accesses on individual resources of the type stop working; accesses on the type as a whole stay.",
+      "title": "Delete the source of “{{type}}”?"
+    },
+    "drawer": {
+      "title": "Source of the type “{{type}}”"
+    },
+    "dsn": "Connection string",
+    "dsnHelp": "PostgreSQL. Use an account that can only read. The password is never shown again; leave the masked one to keep it.",
+    "headerName": "Header name",
+    "headerValue": "Header value",
+    "headers": "Headers",
+    "headersHelp": "The values are secrets: they are never shown again. Leave ******** to keep a stored value.",
+    "hint": "A source tells Licetum which objects the service has. It is asked for the list; the list is kept and refreshed.",
+    "kind": "Kind of source",
+    "listQuery": "Query of all resources",
+    "listQueryHelp": "Columns id, name, parent_id; every other column becomes an attribute of the resource.",
+    "noTypes": {
+      "hint": "A source belongs to a resource type.",
+      "title": "Describe the types first"
+    },
+    "none": "No source — a permission without resources",
+    "parentsHelp": "Optional. Columns id, parent_type, parent_id: one row per link.",
+    "parentsList": "Parents of all resources (several parents)",
+    "parentsOne": "Parents of one resource by :id",
+    "probe": "Id of an existing resource",
+    "probeHelp": "Licetum asks the source for this resource before saving, to be sure it works.",
+    "query": "Query of one resource by :id",
+    "queryHelp": "The same columns; the parameter is written :id.",
+    "rawNote": "How a service’s code asks Licetum:",
+    "seconds": "seconds",
+    "test": {
+      "attrs": "Attributes of the resources",
+      "duplicates_few": "{{count}} ids come more than once; the last row wins.",
+      "duplicates_many": "{{count}} ids come more than once; the last row wins.",
+      "duplicates_one": "{{count}} id comes more than once; the last row wins.",
+      "duplicates_other": "{{count}} ids come more than once; the last row wins.",
+      "empty": "An empty list is taken as the truth: saving it would switch off every resource of the type.",
+      "failed": "The source didn’t answer.",
+      "hint": "Asks the source for its whole list with these settings and shows what Licetum would make of it. Nothing is saved.",
+      "noAttrs": "The source reports none besides the id, the name and the parent.",
+      "orphansHint": "Not in this answer and not in the cache of the parent type (it may not be synchronized yet). Until the parent appears, a denial that could cover them applies.",
+      "orphans_few": "{{count}} resources have a parent that is nowhere",
+      "orphans_many": "{{count}} resources have a parent that is nowhere",
+      "orphans_one": "{{count}} resource has a parent that is nowhere",
+      "orphans_other": "{{count}} resources have a parent that is nowhere",
+      "run": "Try the source",
+      "total_few": "The source returned {{count}} rows in {{ms}} ms.",
+      "total_many": "The source returned {{count}} rows in {{ms}} ms.",
+      "total_one": "The source returned {{count}} row in {{ms}} ms.",
+      "total_other": "The source returned {{count}} rows in {{ms}} ms.",
+      "unresolvable_few": "{{count}} parent links name no parent type of this type and are ignored.",
+      "unresolvable_many": "{{count}} parent links name no parent type of this type and are ignored.",
+      "unresolvable_one": "{{count}} parent link names no parent type of this type and is ignored.",
+      "unresolvable_other": "{{count}} parent links name no parent type of this type and are ignored."
+    },
+    "url": "Base URL",
+    "urlHelp": "{url} returns the list, {url}/{id} returns one resource."
+  },
+  "types": {
+    "add": "Add a type",
+    "addLevel": "Add a level",
+    "addParent": "Add a parent",
+    "blocker": {
+      "assignment_rule": "accesses",
+      "role_permission": "role permissions",
+      "synchronizer": "a source",
+      "type_resource": "child types"
+    },
+    "col": {
+      "levels": "Levels",
+      "name": "Type",
+      "parents": "Parents",
+      "source": "Source"
+    },
+    "delete": {
+      "blocked": "Can’t delete the type",
+      "blockedBy": "It is still used by: {{what}}.",
+      "body": "It must have no source, no child types and no accesses or role permissions.",
+      "title": "Delete the type “{{name}}”?"
+    },
+    "edit": "Change the type",
+    "empty": {
+      "hint": "A type is a kind of object access is given on: “Document”, “Project”. Add the first one.",
+      "title": "The service has no resource types yet"
+    },
+    "hint": "The kinds of objects access is given on. A type can have parents: access on a parent flows down to its children.",
+    "impliesHelp": "“write includes read”: granting write grants read, and denying read denies write.",
+    "includes": "Includes",
+    "inherit": "What flows down",
+    "inheritAll": "All levels",
+    "level": "Level",
+    "nameHelp": "Unique within the service. Services ask about the type by this name.",
+    "namePlaceholder": "Document",
+    "noSource": "No source",
+    "noSourceNote": "A type without a source is a “permission without resources”: access can be given on the type as a whole only. To give access on individual objects, connect a source.",
+    "parent": "Parent type",
+    "parentsHelp": "A parent may belong to another service: access given on a resource of the parent then reaches the resources of this type linked to it.",
+    "resources": "Resources"
+  },
+  "undo": {
+    "action": "Undo",
+    "done": "Undone",
+    "failed": "Couldn’t undo. See the history."
+  },
+  "user": {
+    "docs": "Documentation",
+    "logout": "Sign out",
+    "menu": "User menu",
+    "settings": "Settings"
+  },
+  "whohas": {
+    "assumed": "parent not known",
+    "col": {
+      "people": "Known people",
+      "via": "Where it comes from",
+      "what": "What",
+      "who": "Whom"
+    },
+    "decision": {
+      "allow": "Allows",
+      "deny": "Denies",
+      "except": "Exception"
+    },
+    "dynamicHint": "Whether they reach this resource depends on the token of whoever asks.",
+    "dynamic_few": "{{count}} rules find their resource by a claim",
+    "dynamic_many": "{{count}} rules find their resource by a claim",
+    "dynamic_one": "1 rule finds its resource by a claim",
+    "dynamic_other": "{{count}} rules find their resource by a claim",
+    "guarded": "with a guard",
+    "limited": "Only the most recent were tried.",
+    "more_few": "and {{count}} more",
+    "more_many": "and {{count}} more",
+    "more_one": "and {{count}} more",
+    "more_other": "and {{count}} more",
+    "none": "No rule gives access to this. Nobody has it, except through a rule that finds its resource by a claim.",
+    "note": "This is the list of rules; a denial may be lifted by an exception. To know what one person gets, use the check.",
+    "open": "Open",
+    "registryEmpty": "Nobody has been seen yet, so people are not listed; the rules are.",
+    "registryOff": "The registry of people is off, so people are not listed; the rules are. It is turned on with SUBJECTS__ENABLED.",
+    "registry_few": "People are taken from {{count}} known subjects.",
+    "registry_many": "People are taken from {{count}} known subjects.",
+    "registry_one": "People are taken from 1 known subject.",
+    "registry_other": "People are taken from {{count}} known subjects.",
+    "role": "role “{{name}}”",
+    "title": "Who has access",
+    "via": {
+      "ancestor": "a resource above",
+      "attribute": "by attributes",
+      "claim": "found by a claim",
+      "resource": "this resource",
+      "type": "the whole type"
+    }
+  },
+  "wizard": {
+    "back": "Back",
+    "check": {
+      "count_few": "{{count}} resources",
+      "count_many": "{{count}} resources",
+      "count_one": "{{count}} resource",
+      "count_other": "{{count}} resources",
+      "failed": "the source doesn’t answer",
+      "hint": "Licetum asked each source for its resources.",
+      "next": {
+        "body": "Give access to a group, then let your service ask Licetum:",
+        "title": "What next"
+      },
+      "noSource": "no source",
+      "zero": "no resources"
+    },
+    "discover": {
+      "fail": "Couldn’t detect them — enter the addresses by hand.",
+      "ok": "Found the addresses: authorization, token, JWKS."
+    },
+    "discoverBtn": "Detect automatically",
+    "done": "Done: open the service",
+    "hideUrls": "Hide the addresses",
+    "icon": {
+      "help": "Optional. An image address, shown next to the service; Licetum does not request it."
+    },
+    "issuer": "Provider address (issuer)",
+    "issuerHelp": "The address of the identity provider of your service, for example a Keycloak realm.",
+    "leave": "Leave the wizard",
+    "next": "Next",
+    "noRight": "You can’t connect services: it needs the right to change services.",
+    "secret": {
+      "help": "Optional: leave empty for a public client (sign-in with PKCE)."
+    },
+    "secretLabel": "Client secret",
+    "showUrls": "Show the addresses",
+    "signin": {
+      "done": "The service “{{slug}}” is created. Continue with its resource types."
+    },
+    "slug": {
+      "help": "A short name for addresses: lowercase Latin letters, digits, “-” and “_”. The check API accepts it instead of the id.",
+      "invalid": "Lowercase Latin letters, digits, “-” and “_”; start with a letter or digit"
+    },
+    "sources": {
+      "hint": "A source tells Licetum which objects the service has. Connect one for each type you want to give access on object by object; a type without a source is a permission on the type as a whole.",
+      "skip": "You can skip this step and connect sources later on the “Sources” tab."
+    },
+    "step": {
+      "check": "Check",
+      "signin": "Sign-in",
+      "source": "Source",
+      "types": "Resource types"
+    },
+    "title": "Connect a service",
+    "types": {
+      "add": "Add a type",
+      "existing": "Already there:",
+      "hint": "Describe the kinds of objects access will be given on. Pick a template and change it, or add types one by one. A type may have a parent: access on a folder then reaches its documents.",
+      "noParent": "No parent",
+      "order": "A parent must stand above its children in the list.",
+      "template": {
+        "one": "One type",
+        "tree": "Hierarchy: folders → documents"
+      }
+    },
+    "url": {
+      "help": "Optional. Shown in the interface; Licetum does not request it."
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# Every change is reviewed by the maintainers.
+*                       @Neko1313
+
+# Security-sensitive places: the permission engine, the admin checks, the CI and the deployment.
+/core/engine/           @Neko1313
+/admin-api/api/auth.go  @Neko1313
+/.github/               @Neko1313
+/core/Dockerfile        @Neko1313
+/admin-api/Dockerfile   @Neko1313
+/web/Dockerfile         @Neko1313

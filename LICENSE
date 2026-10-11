@@ -1,0 +1,8 @@
+Licetum is made of three parts, each with its own license. The license of a part applies to the files in its directory.
+
+- core/ — the engine, the check API, the database schema and the runtime: MIT License (see core/LICENSE).
+- admin-api/ — the admin API: GNU Affero General Public License v3.0 only (see admin-api/LICENSE).
+- web/ — the admin interface: GNU Affero General Public License v3.0 only (see web/LICENSE).
+
+The client libraries, the documentation, the Helm chart and the Terraform adapter are published in their own repositories
+under the MIT License. The names and logos of Licetum are not covered by these licenses (see TRADEMARKS.md).

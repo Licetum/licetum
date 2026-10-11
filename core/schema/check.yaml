@@ -1,0 +1,1260 @@
+components:
+  schemas:
+    Anchor:
+      additionalProperties: false
+      properties:
+        resource_id:
+          description: The resource the rule is anchored on; null — the whole type
+          type:
+            - string
+            - "null"
+        type:
+          description: Name of the resource type the rule is anchored on
+          type: string
+      required:
+        - type
+        - resource_id
+      type: object
+    AuthzenAction:
+      additionalProperties: false
+      properties:
+        name:
+          description: Access level
+          examples:
+            - write
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+      required:
+        - name
+      type: object
+    AuthzenEvaluationRequest:
+      additionalProperties: false
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level asked for
+        context:
+          additionalProperties: {}
+          description: "Optional; {\"explain\": true} adds the explanation of the decision to the response context"
+          type: object
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: What is accessed
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The caller
+      type: object
+    AuthzenEvaluationResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: "With explain: reason_admin holds the explanation"
+          type: object
+        decision:
+          description: Whether the access is granted
+          type: boolean
+      required:
+        - decision
+      type: object
+    AuthzenEvaluationsRequest:
+      additionalProperties: false
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: Default action
+        context:
+          additionalProperties: {}
+          description: Default context
+          type: object
+        evaluations:
+          description: The evaluations, up to 100
+          items:
+            $ref: "#/components/schemas/AuthzenEvaluationRequest"
+          maxItems: 100
+          minItems: 1
+          type:
+            - array
+            - "null"
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: Default resource
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: Default subject
+      required:
+        - evaluations
+      type: object
+    AuthzenEvaluationsResponse:
+      additionalProperties: false
+      properties:
+        evaluations:
+          description: Decisions in the order asked
+          items:
+            $ref: "#/components/schemas/AuthzenEvaluationResponse"
+          type: array
+      required:
+        - evaluations
+      type: object
+    AuthzenResource:
+      additionalProperties: false
+      properties:
+        id:
+          description: Resource id in the external system; empty — the type as a whole
+          examples:
+            - b1
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+        type:
+          description: Name of the resource type in the service
+          examples:
+            - branch
+          type: string
+      required:
+        - type
+      type: object
+    AuthzenSubject:
+      additionalProperties: false
+      properties:
+        id:
+          description: "Subject id: must be the subject of the bearer token (preferred_username, or sub)"
+          examples:
+            - alice
+          type: string
+        properties:
+          additionalProperties: {}
+          description: "Ignored: the claims of the token are used"
+          type: object
+        type:
+          description: Subject type (not interpreted)
+          examples:
+            - user
+          type: string
+      required:
+        - type
+        - id
+      type: object
+    CheckInput:
+      additionalProperties: true
+      properties:
+        checks:
+          description: Questions to answer, up to 100 per request
+          items:
+            $ref: "#/components/schemas/CheckRequest"
+          maxItems: 100
+          minItems: 1
+          type:
+            - array
+            - "null"
+        context:
+          additionalProperties: {}
+          description: Attributes of this request that the rules may read (conditions with source context). Claims come from the token; these are what the request itself carries, such as the client address or the channel
+          type:
+            - object
+            - "null"
+        explain:
+          description: "Return an explanation with every answer: which rules grant the level, which deny it, and which exceptions lift a denial"
+          type: boolean
+      required:
+        - checks
+      type: object
+    CheckRequest:
+      additionalProperties: false
+      properties:
+        action:
+          description: Access level asked for
+          examples:
+            - write
+          type: string
+        resource_id:
+          description: Resource id in the external system. Omit it to ask about the type as a whole — creating new resources, or a permission without resources (a not_sync type)
+          examples:
+            - b1
+          type:
+            - string
+            - "null"
+        type:
+          description: Name of the resource type in this service
+          examples:
+            - branch
+          type: string
+      required:
+        - type
+        - action
+      type: object
+    CheckResponse:
+      additionalProperties: false
+      properties:
+        results:
+          description: One answer per question, in the order asked
+          items:
+            $ref: "#/components/schemas/CheckResult"
+          type: array
+      required:
+        - results
+      type: object
+    CheckResult:
+      additionalProperties: false
+      properties:
+        allowed:
+          description: Whether the caller may do it
+          type: boolean
+        explanation:
+          $ref: "#/components/schemas/Explanation"
+          description: Present when explain was asked for
+      required:
+        - allowed
+      type: object
+    DelegatedCheckInput:
+      additionalProperties: true
+      properties:
+        checks:
+          description: Questions to answer, up to 100 per request
+          items:
+            $ref: "#/components/schemas/CheckRequest"
+          maxItems: 100
+          minItems: 1
+          type:
+            - array
+            - "null"
+        claims:
+          additionalProperties: {}
+          description: "The claims the person's own token would carry: the ones the rules of the service read (see GET /service/{id}/policy/claims in the admin API). preferred_username defaults to the subject. The caller vouches for them"
+          type:
+            - object
+            - "null"
+        context:
+          additionalProperties: {}
+          description: Attributes of the request the rules may read (conditions with source context)
+          type:
+            - object
+            - "null"
+        explain:
+          description: Return an explanation with every answer
+          type: boolean
+        subject:
+          description: The person, as the rules name them (their preferred_username, or sub). It must not look like a group (group:…)
+          examples:
+            - alice
+          maxLength: 256
+          minLength: 1
+          type: string
+      required:
+        - subject
+        - checks
+      type: object
+    DelegatedPermissionInput:
+      additionalProperties: true
+      properties:
+        access:
+          description: Only the resources (and types) that have this access level
+          type: string
+        after:
+          description: "The resource id after which the page starts: the next_after of the previous page"
+          type: string
+        claims:
+          additionalProperties: {}
+          description: The claims the person's own token would carry (see the check). preferred_username defaults to the subject
+          type:
+            - object
+            - "null"
+        context:
+          additionalProperties: {}
+          description: Attributes of the request the rules may read (conditions with source context)
+          type:
+            - object
+            - "null"
+        limit:
+          description: "At most this many resources of the type; needs type. Absent: all of them"
+          format: int64
+          maximum: 1000
+          minimum: 1
+          type: integer
+        subject:
+          description: The person, as the rules name them (their preferred_username, or sub). It must not look like a group (group:…)
+          examples:
+            - alice
+          maxLength: 256
+          minLength: 1
+          type: string
+        type:
+          description: Only this resource type
+          type: string
+      required:
+        - subject
+      type: object
+    DenialRef:
+      additionalProperties: false
+      properties:
+        level:
+          description: "The denied level that matched: the asked level, a level it includes, or the wildcard"
+          type: string
+        lifted_by:
+          description: Exceptions below the denial that lift it; a denial with none stands
+          items:
+            $ref: "#/components/schemas/RuleRef"
+          type: array
+        missing_attribute:
+          description: The denial applies because a condition reads an attribute the request does not carry, and the rule says to apply it then (on_missing_attribute = apply)
+          type: boolean
+        rule:
+          $ref: "#/components/schemas/RuleRef"
+          description: The denying rule
+        unresolved_parent:
+          description: The denial applies because the resource has a parent that is not in the cache, so the hierarchy above it is not fully known
+          type: boolean
+      required:
+        - rule
+        - level
+        - lifted_by
+        - unresolved_parent
+        - missing_attribute
+      type: object
+    Error:
+      additionalProperties: false
+      properties:
+        detail:
+          description: Human-readable error description in the language negotiated via Accept-Language
+          type: string
+        extra:
+          $ref: "#/components/schemas/Extra"
+          description: Machine-readable details
+      required:
+        - detail
+        - extra
+      type: object
+    Explanation:
+      additionalProperties: false
+      properties:
+        decision:
+          description: allowed; denied — a denial removes a granted level; no_access — no rule grants the level; resource_not_found and type_not_found — there is nothing to check
+          enum:
+            - allowed
+            - denied
+            - no_access
+            - resource_not_found
+            - type_not_found
+          type: string
+        denials:
+          description: Denials that apply to the level, lifted or not
+          items:
+            $ref: "#/components/schemas/DenialRef"
+          type: array
+        granted_by:
+          description: Rules that grant the level, including through the level hierarchy of the type
+          items:
+            $ref: "#/components/schemas/RuleRef"
+          type: array
+      required:
+        - decision
+        - granted_by
+        - denials
+      type: object
+    Extra:
+      additionalProperties: false
+      properties:
+        blocked_by:
+          description: "For type=blocked_by: which entities prevent the deletion"
+          examples:
+            - - assignment_rule
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        code:
+          description: Stable machine-readable error code, independent of the response language
+          examples:
+            - service_not_found
+          type: string
+        missing:
+          description: "For type=missing: which fields or sources are unavailable"
+          examples:
+            - - url
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        operation:
+          description: "For a batch: the index of the operation that failed; nothing of the batch was applied"
+          examples:
+            - 2
+          format: int64
+          type: integer
+        type:
+          description: Kind of error
+          enum:
+            - generic
+            - missing
+            - provider_unavailable
+            - blocked_by
+          type: string
+      required:
+        - type
+      type: object
+    HealthOutputBody:
+      additionalProperties: false
+      properties:
+        status:
+          description: Always ok while the process is responding
+          examples:
+            - ok
+          type: string
+      required:
+        - status
+      type: object
+    NotSyncTypePermission:
+      additionalProperties: false
+      properties:
+        access:
+          description: Access levels of the subject on the type
+          examples:
+            - - read
+              - write
+          items:
+            type: string
+          type: array
+        type:
+          description: "Type mode: the type has no synchronizer (no resources), access is granted to the type as a whole"
+          enum:
+            - not_sync
+          type: string
+      required:
+        - type
+        - access
+      type: object
+    ResourceAccess:
+      additionalProperties: false
+      properties:
+        access:
+          description: Access levels
+          examples:
+            - - read
+              - write
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        id:
+          description: Resource id in the external system
+          examples:
+            - b1
+          type: string
+        name:
+          description: Resource name
+          examples:
+            - Branch1
+          type: string
+      required:
+        - id
+        - name
+        - access
+      type: object
+    RuleRef:
+      additionalProperties: false
+      properties:
+        access:
+          description: Access levels of the rule
+          items:
+            type: string
+          type: array
+        anchor:
+          $ref: "#/components/schemas/Anchor"
+          description: Where the rule is anchored; it covers this resource through the hierarchy
+        applies_to:
+          description: "Why the rule applies to the caller: the subject, a group, a role, a claims predicate, or everyone"
+          examples:
+            - group 4e2c…
+          type: string
+        effect:
+          description: allow or deny
+          enum:
+            - allow
+            - deny
+          type: string
+        exception:
+          description: An allow rule that lifts the denials above it
+          type: boolean
+        rule_id:
+          description: Id of the assignment rule
+          format: uuid
+          type: string
+      required:
+        - rule_id
+        - effect
+        - exception
+        - access
+        - anchor
+        - applies_to
+      type: object
+    SyncTypePermission:
+      additionalProperties: false
+      properties:
+        next_after:
+          description: "Present when the answer is a page that is not the last: pass it as after to read the next page"
+          type: string
+        resources:
+          description: Resources of the type available to the subject, with access levels
+          items:
+            $ref: "#/components/schemas/ResourceAccess"
+          type: array
+        type:
+          description: "Type mode: the type has a synchronizer, access is granted per resource"
+          enum:
+            - sync
+          type: string
+      required:
+        - type
+        - resources
+      type: object
+  securitySchemes:
+    bearer:
+      bearerFormat: JWT
+      description: Access token issued by the IdP of the service whose permissions are being checked.
+      scheme: bearer
+      type: http
+info:
+  description: |
+    **Licetum** is a centralized authorization service for all of your company's services.
+    Access rights are stored in one place: instead of a separate role model in every application,
+    rules are defined and checked centrally.
+
+    ### Why
+
+    - **Single point of control.** User permissions for every system are granted, revoked and checked in one place.
+    - **Cross-service access.** Any entity of any service (a project, report, gallery, branch, etc.) can be
+    shared, and the same users and groups can be granted access to it across all systems.
+    - **Simpler maintenance.** Services don't implement authorization themselves; they ask Licetum:
+    "may user X perform action Y on object Z?"
+    - **Transparency and audit.** You can see who has which permissions and where they come from.
+
+    ### Errors
+
+    Every error is `{"detail": "text", "extra": {"type": "generic" | "missing" | "blocked_by", "code": "..."}}`.
+    `detail` is localized according to the `Accept-Language` header (en, ru, zh); `extra.code` is a stable
+    machine-readable code.
+  license:
+    identifier: MIT
+    name: MIT
+  title: Licetum — check
+  version: 1.0.0
+openapi: 3.1.0
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthOutputBody"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      summary: Liveness check
+      tags:
+        - System
+  /service/{service_id}/access/v1/evaluation:
+    post:
+      description: |-
+        Decides whether the subject may perform the action on the resource.
+
+        This is the access evaluation endpoint of the OpenID AuthZEN Authorization API 1.0, scoped to one service (the service is
+        in the path). resource.type is the name of a resource type of the service, resource.id the resource id in the external
+        system (empty — the type as a whole), action.name an access level. subject.id must be the subject of the bearer token
+        (preferred_username, or sub): Licetum decides for the caller only, and takes the claims from the token.
+      operationId: authzen_evaluation
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenEvaluationRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenEvaluationResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: AuthZEN access evaluation
+      tags:
+        - Check
+  /service/{service_id}/access/v1/evaluations:
+    post:
+      description: |-
+        Decides up to 100 evaluations in one request; subject, resource, action and context given at the top level are defaults for the evaluations that omit them.
+
+        This is the access evaluation endpoint of the OpenID AuthZEN Authorization API 1.0, scoped to one service (the service is
+        in the path). resource.type is the name of a resource type of the service, resource.id the resource id in the external
+        system (empty — the type as a whole), action.name an access level. subject.id must be the subject of the bearer token
+        (preferred_username, or sub): Licetum decides for the caller only, and takes the claims from the token.
+      operationId: authzen_evaluations
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenEvaluationsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenEvaluationsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: AuthZEN access evaluations (batch)
+      tags:
+        - Check
+  /service/{service_id}/check:
+    post:
+      description: |-
+        Answers up to 100 questions "may I do X with Y" in one request, for the subject of the token.
+
+        Every question names a resource type of the service, optionally a resource id, and an access level. Without a
+        resource id the question is about the type as a whole (creating resources, a permission without resources): only the
+        rules anchored on the type itself count, and a denial always wins there. With a resource id the rules covering the
+        resource through the hierarchy count.
+
+        With `explain` every answer carries an explanation: which rules grant the level, which denials apply, and which
+        exceptions lift them. The decision is the same as in GET /permission, only computed for the asked resources and not for
+        all of them.
+
+        Errors: 401 — the token is missing, invalid or expired; 424 — the service JWKS is unavailable.
+      operationId: check_access
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: Check access to resources
+      tags:
+        - Check
+  /service/{service_id}/on_behalf/check:
+    post:
+      description: |-
+        Answers up to 100 questions "may this person do X with Y" as POST /service/{id}/check does, for the person named in the body instead of the holder of the token.
+
+        The caller is a client application the service trusts (its azp, or client_id, is in the service's trusted_clients), and it
+        authenticates with its own token — from the same IdP and keys as a user's, typically a client-credentials token. The person is
+        named in the body, with the claims their token would carry: the caller vouches for them, so a trusted client has to send the
+        claims the rules of the service read (the admin API lists them: GET /service/{id}/policy/claims). preferred_username
+        defaults to the subject. Every call is recorded: who asked, for whom, when and how many questions were allowed.
+        A token of a trusted client may ask about anybody: trust a backend client, not the one your users sign in with.
+
+        Errors: 401 — the token is missing, invalid or expired; 403 — the client is not trusted by the service; 422 — the subject
+        or the claims are not acceptable; 424 — the service JWKS is unavailable.
+      operationId: delegated_check
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DelegatedCheckInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: Check access on behalf of a person
+      tags:
+        - Delegated
+  /service/{service_id}/on_behalf/permission:
+    post:
+      description: |-
+        What the person named in the body may do with the resources of the service, per resource type, as GET /service/{id}/permission answers it for the holder of a token. The filters and the paging are the same (type, access, limit, after), given in the body.
+
+        The caller is a client application the service trusts (its azp, or client_id, is in the service's trusted_clients), and it
+        authenticates with its own token — from the same IdP and keys as a user's, typically a client-credentials token. The person is
+        named in the body, with the claims their token would carry: the caller vouches for them, so a trusted client has to send the
+        claims the rules of the service read (the admin API lists them: GET /service/{id}/policy/claims). preferred_username
+        defaults to the subject. Every call is recorded: who asked, for whom, when and how many questions were allowed.
+        A token of a trusted client may ask about anybody: trust a backend client, not the one your users sign in with.
+
+        Errors: 401 — the token is missing, invalid or expired; 403 — the client is not trusted by the service; 422 — the subject
+        or the claims are not acceptable; 424 — the service JWKS is unavailable.
+      operationId: delegated_permission
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DelegatedPermissionInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  description: Access of the subject on a resource type; the shape depends on the type mode
+                  discriminator:
+                    mapping:
+                      not_sync: "#/components/schemas/NotSyncTypePermission"
+                      sync: "#/components/schemas/SyncTypePermission"
+                    propertyName: type
+                  oneOf:
+                    - $ref: "#/components/schemas/SyncTypePermission"
+                    - $ref: "#/components/schemas/NotSyncTypePermission"
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: A person's permissions in a service, asked on their behalf
+      tags:
+        - Delegated
+  /service/{service_id}/permission:
+    get:
+      description: |-
+        The token is verified against the service JWKS (signature, exp/nbf/iat, issuer). The subject is the
+        preferred_username claim, or sub if it is missing.
+
+        The response is keyed by resource type name, and the shape of each entry depends on the type mode, which is
+        derived from its synchronizer:
+
+        - `sync` — the type has a synchronizer: `{"type": "sync", "resources": [{id, name, access}]}` lists every resource
+          of the type the user has access to;
+        - `not_sync` — the type has no synchronizer (a permission without resources, e.g. a feature flag):
+          `{"type": "not_sync", "access": [...]}` are the access levels on the type as a whole.
+
+        A type without applicable rules is not in the response. Direct rules, claim-based rules, groups (transitively), roles and
+        grants cascading down the resource hierarchy — including from types of other services — are all taken into
+        account, and so are denials: a denial takes its access levels away from everything it covers unless an
+        exception below it lifts it. Rules outside their validity period do not count.
+
+        The result is cached for up to 60 seconds (less when a rule or a group membership starts or stops being in force
+        sooner) per subject and per the claims the rules look at; any change in the admin API resets the cache. Pass
+        consistency=higher to skip the cache.
+
+        Filters and paging: type keeps one resource type, access keeps the resources with one access level, and limit with
+        after pages the resources of that type, sorted by id. A page that is not the last carries next_after; pass it as after
+        to read the next one. Paging needs type.
+
+        Errors: 401 — the token is missing, invalid or expired; 424 — the service JWKS is unavailable.
+      operationId: get_permission
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Only this resource type
+          explode: false
+          in: query
+          name: type
+          schema:
+            description: Only this resource type
+            type: string
+        - description: Only the resources (and types) that have this access level
+          explode: false
+          in: query
+          name: access
+          schema:
+            description: Only the resources (and types) that have this access level
+            type: string
+        - description: "At most this many resources of the type; needs type. Absent: all of them"
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: "At most this many resources of the type; needs type. Absent: all of them"
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+        - description: "The resource id after which the page starts: the next_after of the previous page"
+          explode: false
+          in: query
+          name: after
+          schema:
+            description: "The resource id after which the page starts: the next_after of the previous page"
+            type: string
+        - description: The attributes of this request that the rules may read (conditions with source context), as a JSON object, e.g. {"ip":"10.0.0.7"}
+          explode: false
+          in: query
+          name: context
+          schema:
+            description: The attributes of this request that the rules may read (conditions with source context), as a JSON object, e.g. {"ip":"10.0.0.7"}
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  description: Access of the subject on a resource type; the shape depends on the type mode
+                  discriminator:
+                    mapping:
+                      not_sync: "#/components/schemas/NotSyncTypePermission"
+                      sync: "#/components/schemas/SyncTypePermission"
+                    propertyName: type
+                  oneOf:
+                    - $ref: "#/components/schemas/SyncTypePermission"
+                    - $ref: "#/components/schemas/NotSyncTypePermission"
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: User permissions in a service
+      tags:
+        - Permission
+tags:
+  - description: "Permission check: what the user holding this token may do with the service resources."
+    name: Permission
+  - description: Single access checks with explanations, and the AuthZEN access evaluation API.
+    name: Check
+  - description: The same questions asked on behalf of a person by a client application the service trusts, without the person's token. Every call is recorded.
+    name: Delegated
+  - description: Service endpoints.
+    name: System
+

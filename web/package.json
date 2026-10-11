@@ -1,0 +1,52 @@
+{
+  "name": "licetum-web",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "pnpm check:i18n && next build",
+    "start": "next start --port 3000",
+    "typecheck": "tsc --noEmit",
+    "knip": "knip",
+    "check:i18n": "node scripts/check-locales.mjs",
+    "orval": "orval",
+    "test": "vitest run",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@ant-design/nextjs-registry": "1.3.0",
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@tanstack/react-query": "5.104.1",
+    "antd": "6.6.5",
+    "dayjs": "1.11.23",
+    "i18next": "26.4.3",
+    "jose": "6.2.12",
+    "lucide-react": "1.55.0",
+    "next": "16.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-i18next": "17.0.16",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@types/node": "^22",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "agentation": "3.1.2",
+    "knip": "6.41.0",
+    "orval": "8.41.0",
+    "oxfmt": "0.72.0",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "packageManager": "pnpm@11.24.0"
+}
