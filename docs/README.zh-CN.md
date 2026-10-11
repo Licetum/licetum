@@ -1,151 +1,158 @@
 # Licetum
 
+[![CI](https://github.com/Licetum/licetum/actions/workflows/ci.yml/badge.svg)](https://github.com/Licetum/licetum/actions/workflows/ci.yml)
+![Go](https://img.shields.io/badge/Go-1.26-00ADD8)
+![License](https://img.shields.io/badge/license-MIT%20%2B%20AGPL--3.0-blue)
+
 ## 语言
 
 [English](../README.md) · [Русский](README.ru.md) · **简体中文**
 
-Licetum 是一个跨服务授权平台，为不同系统提供一种标准方式来询问用户可以访问哪些业务实体。
+**连接一次服务。提问一次。每个答案都能解释。**
 
-它的核心并不只是存储角色。Licetum 将权限与不同服务拥有的真实资源关联起来，并把最终的
-可见性提供给 API、用户界面、MCP、搜索、客服系统和数据访问层。
+Licetum 是面向微服务团队的中央授权服务。每个服务只需发布一次自己的资源。随后，任何使用方都可以提出一个问题——*这个用户能访问哪些实体？*——并获得一个可以直接应用于自身 API、界面或数据库查询的答案。每个答案都可以解释。名称来自拉丁语 *licet*，意为“允许”。
 
-## 问题
+## 为什么需要 Licetum
 
-一个业务实体通常由一个服务拥有，但其他多个系统也需要使用它。
+在微服务架构中，权限分散在各个数据库、配置文件和自研服务里。每个需要回答“这个用户能看到哪些项目？”的服务，最终都要实现自己的 endpoint、自己的导出格式，以及自己对规则的理解。这些副本会逐渐产生差异：一个服务展示的项目，另一个服务却会隐藏。
 
-例如：
+Licetum 用一份统一的契约取代这些副本：
 
-- 服务 A 拥有项目数据。
-- MCP 服务、搜索服务或报表系统只应向当前用户展示其有权访问的项目。
-- 私有数据服务需要过滤数据库行，让每个请求只返回被允许的实体 ID。
-- 客服系统可以只允许个人创建自己的工单，同时允许团队成员查看团队中任何成员创建的工单。
+- 资源所属服务保留自己的数据，并决定发布哪些资源。
+- Licetum 保存规则：谁可以对哪些资源执行什么操作、有哪些拒绝和例外，以及持续多长时间。
+- 使用方只提出一个问题，并应用答案：得到允许的 ID 列表，或是“是/否”的决策。
 
-没有统一契约时，每个使用方都必须实现自己的权限 endpoint、导出格式、同步任务和规则解释。
-这些实现会逐渐产生差异：一个系统可能展示另一个系统隐藏的项目，用户、群组和共享资源的
-相同逻辑也会在多个地方重复。
+Licetum 不保存业务记录，不替代身份提供方，也不代替您的服务执行访问控制。收到答案的服务仍然负责应用这个答案。
 
-核心问题是：
+## 工作方式
 
-> 如何让任何系统询问同一个用户对同一批业务实体的访问权限，而不必为每一对服务创建新的
-> 权限集成？
+```mermaid
+flowchart LR
+  S["资源所属服务<br/>发布自己的资源"]
+  C["使用方服务<br/>API、搜索、MCP、报表"]
+  L["Licetum<br/>规则与资源目录"]
+  DB[(PostgreSQL)]
+  R[(Redis)]
+  S -- "SQL 视图或 HTTP endpoint" --> L
+  C -- "GET /service/{id}/permission" --> L
+  L --- DB
+  L --- R
+```
 
-## 标准可见性契约
+使用方可以查询主体在已注册服务中的权限：
 
-使用方可以向 Licetum 询问当前主体在某个已注册服务中的权限：
+```http
+GET /service/{service_id}/permission
+Authorization: Bearer <user-token>
+```
 
-    GET /service/{service_id}/permission
-    Authorization: Bearer <user-token>
+响应列出主体可以访问的资源，以及每个资源上的访问级别：
 
-概念上的响应如下：
+```json
+{
+  "project": {
+    "type": "sync",
+    "resources": [
+      { "id": "1", "name": "Project 1", "access": ["read"] },
+      { "id": "2", "name": "Project 2", "access": ["read", "write"] }
+    ]
+  }
+}
+```
 
-    {
-      "project": {
-        "type": "sync",
-        "resources": [
-          { "id": "1", "name": "Project 1", "access": ["read"] },
-          { "id": "2", "name": "Project 2", "access": ["read", "write"] }
-        ]
-      }
-    }
+没有具体资源的类型，例如某个功能、操作或模式，会以 `"type": "not_sync"` 返回，并附带整个类型上的访问级别。
 
-实际响应也会描述没有具体资源的类型。此时返回的是整个类型的权限，适合没有行 ID 的全局
-能力，例如某个功能、操作或工作模式。
+如果只需要单个决策，可以逐项提问。一次请求最多包含 100 个问题：
 
-这个契约让所有使用方都能得到同一个答案：
+```http
+POST /service/{service_id}/check
+Authorization: Bearer <user-token>
+Content-Type: application/json
 
-> “你好，这个用户在该服务中可以访问哪些实体？”
+{
+  "checks": [
+    { "type": "project", "resource_id": "2", "action": "write" },
+    { "type": "project", "action": "create" }
+  ],
+  "explain": true
+}
+```
 
-使用方可以将返回的 ID 应用到自己的 API、界面、MCP 工具、搜索请求或数据库过滤器中。
-Licetum 不返回业务记录，也不接管 CRUD。
+设置 `explain` 后，每个答案都会说明哪些规则授予了访问级别、哪些拒绝生效，以及哪些例外取消了这些拒绝。
 
-## 资源如何发布
+## 功能
 
-资源所属服务负责决定哪些业务实体要作为授权资源发布，以及要提供哪些关系和元数据。
+- **统一的可见性契约。** 每个使用方都提出同样的问题，并得到同样的答案，无论是 API、搜索索引、MCP 工具还是报表任务。
+- **精确的资源 ID。** 响应以 ID 列出允许访问的资源，使用方可以把这些 ID 用于 `WHERE` 过滤条件，或行级安全（row-level security）策略。
+- **可解释的决策。** 每个答案都可以展示其依据：什么授予了访问，什么拒绝了访问，什么取消了拒绝。
+- **允许、拒绝与例外。** 拒绝规则优先于允许规则。位于拒绝规则之下的例外，会对其覆盖的资源取消该拒绝。
+- **跨服务层级。** 对父资源的权限会延伸到其下的资源，即使父资源和子资源属于不同服务。
+- **用户组与角色。** 用户组回答“谁”：可以相互嵌套，成员关系还可以依据令牌中的 claims（例如 `department`）判定。角色回答“能做什么”：一组命名的访问级别，可以授予用户、用户组，或授予所有符合 claims 的人。
+- **基于属性的规则。** 规则可以按资源来源发布的属性匹配资源，例如 `owner` 字段。条件可以读取令牌 claims、请求上下文或当天的时间。
+- **有时限的访问。** 规则和用户组成员关系都可以设置生效和过期时间，支持临时访问。
+- **策略即代码。** 可以用 linter 检查服务策略，对其运行测试场景，将其导出为 `licetum.policy/v1` 文档，并先以 dry run 方式预览导入结果。
+- **可回滚的历史。** 每次变更都会记录实体变更前后的状态。单个已记录的变更可以单独回滚，多个变更也可以作为一个批次回滚。
 
-Licetum 可以通过以下方式读取已发布的资源视图：
+## 适用对象
 
-- 提供给服务账号的只读 SQL view，包括数据库副本中的 view；
-- 资源 HTTP endpoint；
-- 持续更新共享资源目录的同步器。
+- **架构与平台团队**：获得跨服务的统一资源可见性契约。
+- **服务开发者**：只需一次调用，无需为每个使用方构建权限 endpoint。
+- **访问管理员**：可以在一处授予和撤销访问，并能看到某人拥有访问权限的原因。
+- **安全审核人员**：获得可以解释的答案，以及可以审计的变更历史。
 
-这样，每个使用方都不必实现自己的权限导出。源服务保留业务逻辑和数据所有权，Licetum
-为所有使用方提供统一的权限契约。
+## 快速开始
 
-公共资源和它们之间的关系也可以同步一次，并被多个服务复用。当同一个项目、组织、团队或
-客户出现在多个系统中时，这有助于保持一致的可见性。
+需要安装 Docker 和 [Task](https://taskfile.dev)。
 
-## Licetum 解决什么问题
+```bash
+task dev
+```
 
-Licetum 在仍由源服务拥有的资源之上构建统一的权限视图：
+该命令会启动 PostgreSQL、Redis、本地 Dex OIDC 提供方、检查 API、管理 API 和 Web 界面。Go 服务和 Web 界面都支持热重载。
 
-- **统一的可见性契约。** 使用方不必为每个系统实现“我的项目”或“权限导出” endpoint。
-- **准确的资源 ID。** 响应可以列出主体可访问的全部实体以及每个实体的权限级别。
-- **跨服务的一致可见性。** MCP、搜索、UI、报表、客服和私有数据系统可以使用同一个结果。
-- **适合数据库访问控制。** 应用可以在 WHERE 条件中使用这些 ID，或据此构建 row-level
-  security（RLS）策略。
-- **业务逻辑留在源服务。** 资源所属服务决定发布哪些资源和关系，Licetum 负责计算访问权限。
-- **减少重复集成。** 使用方不再需要针对每个上游服务单独实现契约、导出和同步。
+| 组件 | 地址 |
+|---|---|
+| Web 界面 | http://localhost:3000 |
+| 管理 API | http://localhost:8002 |
+| 检查 API | http://localhost:8001 |
 
-## 具体权限决策
+请在 http://localhost:3000 使用 `admin@example.com` 和密码 `password` 登录。这些凭据仅用于开发。
 
-如果服务不需要完整的可见性列表，也可以直接提问：
-
-- 该主体是否可以对项目 42 执行 write；
-- 该用户是否可以创建新的工单；
-- 该团队成员是否可以读取这个对话。
-
-Check API 支持一次请求发送多个问题，还可以解释决策：哪些规则授予权限、哪些拒绝生效，以及
-哪些更具体的例外取消了拒绝。
-
-## 用户组、角色、层级和规则
-
-统一的资源权限契约是核心价值。用户组、角色和其他策略功能让该契约更实用、更易理解：
-
-- **用户组**汇集人员。用户组本身就是一个 subject，可以相互嵌套，成员关系可以依据 claims（部门、区域或组织）判定；
-- **角色**是一组命名权限。角色回答“能做什么”（对资源类型、资源或通过 claim 找到的资源的访问级别），用户组回答
-  “是谁”。授权规则可以把角色授予用户、用户组或符合 claims 的所有人，因此同一角色可以在各处复用；
-- 资源类型可以引用同一服务或其他服务中的父类型：对父级的权限会级联到其下方的资源；
-- 允许、拒绝和更窄的例外覆盖常见及罕见的业务场景；
-- 生效时间和过期时间支持临时访问；
-- 不针对具体资源 ID 的全局类型权限覆盖无需资源 ID 的能力。
-
-例如，项目服务发布项目，团队服务发布团队成员关系，客服服务发布工单。“客服坐席”角色可以读取工单，授权规则把它授予
-“客服团队”用户组：新加入该组的成员立即获得权限。各个使用方不需要为每种情况发明不同的权限协议。
+如果要在不使用 Docker 的情况下运行 Go 二进制文件，请参阅 [core](../core/README.md) 和 [admin API](../admin-api/README.md) 指南。两者都可以在不启动服务的情况下输出 OpenAPI 规范：`licetum openapi check` 输出检查 API 的规范，`licetum-admin openapi admin` 输出管理 API 的规范。
 
 ## Licetum 不是什么
 
-- 它不是身份提供商。Licetum 使用 OAuth2/OIDC token 及其 claims。
-- 它不是业务数据库。源服务仍然保存自己的记录并负责 CRUD。
-- 它不是数据库 RLS 扩展。Licetum 返回允许的 ID 或决策，使用方负责将结果应用到自己的查询和
-  存储层。
+- 它不是身份提供方。Licetum 使用您的身份提供方签发的 OAuth2/OIDC 令牌及其 claims。
+- 它不是业务数据库。源服务保存自己的记录，并负责 CRUD。
+- 它不是数据库 RLS 扩展。Licetum 返回允许的 ID 或决策，由使用方将其应用到自己的查询和存储层。
 - 它不只是前端过滤器。后端和数据访问层必须强制执行结果。
 
-## 试用
+## 文档
 
-仓库包含 PostgreSQL、Redis、本地 Dex OIDC、Go 后端和管理界面：
-
-    task dev
-
-打开 http://localhost:3000，使用 admin@example.com / password 登录。这些账号仅用于开发。
-
-实现细节请参阅[core 指南](../core/README.md)、[admin API 指南](../admin-api/README.md)和[Web 指南](../web/README.md)。
+- [core/](../core/README.md)：引擎、检查 API、数据库结构与迁移（MIT）。
+- [admin-api/](../admin-api/README.md)：管理 API、策略工具和 `licetum-admin` 二进制文件（AGPL-3.0）。
+- [web/](../web/README.md)：管理界面（AGPL-3.0）。
 
 ## 仓库
 
 项目位于 [Licetum](https://github.com/Licetum) 组织：
 
-- [licetum](https://github.com/Licetum/licetum) — 本仓库：运行时和 admin API（Go），以及 Web 界面（Next.js）。
+- [licetum](https://github.com/Licetum/licetum)：本仓库，包含引擎、API 和 Web 界面。
 - [licetum-go-sdk](https://github.com/Licetum/licetum-go-sdk)、[licetum-ts-sdk](https://github.com/Licetum/licetum-ts-sdk)、
-  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk) — 检查 API 的客户端库（即将发布；各自带有自己的许可证文件）。
-- [licetum-helm](https://github.com/Licetum/licetum-helm) — Helm chart。
-- [licetum-docs](https://github.com/Licetum/licetum-docs) — 文档。
+  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk)：检查 API 的客户端库（尚待发布；每个库都会附带自己的许可证文件）。
+- [licetum-helm](https://github.com/Licetum/licetum-helm)：Helm chart。
+- [licetum-docs](https://github.com/Licetum/licetum-docs)：文档。
+
+## 参与贡献
+
+提交 pull request 前，请先阅读 [CONTRIBUTING.md](../CONTRIBUTING.md)。如需报告安全漏洞，请遵循 [SECURITY.md](../SECURITY.md)，不要公开提交 issue。
 
 ## 许可证
 
 Licetum 由三部分组成，每部分采用各自的许可证（见 [LICENSE](../LICENSE)）：
 
-- [`core/`](../core/LICENSE) — 引擎、检查 API、数据库结构和运行时：MIT 许可证。
-- [`admin-api/`](../admin-api/LICENSE) — 管理 API：仅 GNU Affero General Public License v3.0。
-- [`web/`](../web/LICENSE) — 管理界面：仅 GNU Affero General Public License v3.0。
+- [`core/`](../core/LICENSE)：引擎、检查 API、数据库结构和运行时。MIT 许可证。
+- [`admin-api/`](../admin-api/LICENSE)：管理 API。仅适用 GNU Affero General Public License v3.0。
+- [`web/`](../web/LICENSE)：管理界面。仅适用 GNU Affero General Public License v3.0。
 
 如果您将修改后的 `admin-api/` 或 `web/` 作为网络服务运行，AGPL 要求您向该服务的用户提供其源代码。Licetum 的名称和标志不受这些许可证覆盖（见 [TRADEMARKS.md](../TRADEMARKS.md)）。
