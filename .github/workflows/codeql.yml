@@ -27,9 +27,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Both Go modules (core and admin-api) are analysed from the source: no build is needed.
+          # Go has no "none" build mode: CodeQL traces the build of both modules (core, and admin-api, which
+          # replaces it with ../core), so the build is run explicitly between init and analyze.
           - language: go
-            build-mode: none
+            build-mode: manual
           - language: javascript-typescript
             build-mode: none
     steps:
@@ -40,6 +41,20 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended
+
+      - uses: actions/setup-go@v6
+        if: matrix.language == 'go'
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - name: Build the Go modules for CodeQL
+        if: matrix.language == 'go'
+        run: |
+          (cd core && go build ./...)
+          (cd admin-api && go build ./...)
 
       - uses: github/codeql-action/analyze@v4
         with:
