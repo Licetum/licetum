@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
@@ -313,15 +312,10 @@ func logAndRecover(app *engine.App, next http.Handler) http.Handler {
 	})
 }
 
-// logSafe makes a value that came from a client or a token safe for a log line: control characters, line
-// breaks included, are replaced, so one request cannot write a second log entry.
+// logSafe quotes a value that came from a client or a token: line breaks and control characters are escaped,
+// so one request cannot write a second log entry.
 func logSafe(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return '?'
-		}
-		return r
-	}, s)
+	return strconv.Quote(s)
 }
 
 func writeJSONError(w http.ResponseWriter, err *apperr.Error) {
