@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: core/go.mod
           cache-dependency-path: |
@@ -65,7 +65,7 @@ jobs:
       - name: Install golangci-lint
         run: curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b "$(go env GOPATH)/bin" "$GOLANGCI_LINT_VERSION"
 
-      - uses: arduino/setup-task@v2
+      - uses: arduino/setup-task@v3
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -81,14 +81,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: core/go.mod
           cache-dependency-path: |
             core/go.sum
             admin-api/go.sum
 
-      - uses: arduino/setup-task@v2
+      - uses: arduino/setup-task@v3
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -114,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
 
@@ -124,7 +124,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
-      - uses: arduino/setup-task@v2
+      - uses: arduino/setup-task@v3
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -159,7 +159,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
 
