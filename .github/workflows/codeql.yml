@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v6
 
       # Go is set up before init: the tracer of CodeQL wraps the go in PATH, and a later setup-go would replace it.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         if: matrix.language == 'go'
         with:
           go-version-file: core/go.mod
