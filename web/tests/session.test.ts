@@ -1,3 +1,4 @@
+import { beforeAll, describe, expect, it } from '@jest/globals';
 beforeAll(() => {
   process.env.SESSION_SECRET = 'x'.repeat(40);
   process.env.APP_BASE_URL = 'https://licetum.example';

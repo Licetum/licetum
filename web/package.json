@@ -34,9 +34,9 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@jest/globals": "30.5.2",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
-    "@types/jest": "^30.0.0",
     "@types/node": "^26",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -46,7 +46,7 @@
     "knip": "6.41.0",
     "orval": "8.41.0",
     "oxfmt": "0.72.0",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=20.9.0"
