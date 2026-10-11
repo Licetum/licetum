@@ -182,13 +182,7 @@ tasks:
       - task: web:knip
 
   web:test:
-    desc: Unit tests of the web interface (vitest)
+    desc: Unit and component tests of the web interface (Jest, with mocked API responses)
     dir: web
     cmds:
       - pnpm test
-
-  web:e2e:
-    desc: End-to-end tests against a running stack (E2E_BASE_URL, E2E_USER, E2E_PASSWORD; see web/README.md)
-    dir: web
-    cmds:
-      - pnpm e2e
