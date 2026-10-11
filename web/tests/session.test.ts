@@ -1,5 +1,3 @@
-import { beforeAll, describe, expect, it } from 'vitest';
-
 beforeAll(() => {
   process.env.SESSION_SECRET = 'x'.repeat(40);
   process.env.APP_BASE_URL = 'https://licetum.example';
