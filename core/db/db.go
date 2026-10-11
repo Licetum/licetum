@@ -38,6 +38,14 @@ func NormalizeDSN(dsn string) string {
 	return dsn
 }
 
+// int32Of returns v as the int32 a pool setting takes, or an error naming the setting when v does not fit.
+func int32Of(name string, v int64) (int32, error) {
+	if v > math.MaxInt32 || v < math.MinInt32 {
+		return 0, fmt.Errorf("%s does not fit in 32 bits", name)
+	}
+	return int32(v), nil
+}
+
 // Connect creates the pool. pool_size + max_overflow from the old settings are added up into
 // MaxConns — pgxpool does not distinguish "permanent" and "overflow" connections.
 func Connect(ctx context.Context, cfg config.Database) (*pgxpool.Pool, error) {
@@ -52,13 +60,18 @@ func Connect(ctx context.Context, cfg config.Database) (*pgxpool.Pool, error) {
 	if maxConns <= 0 {
 		maxConns = 10
 	}
-	if maxConns > math.MaxInt32 {
-		return nil, fmt.Errorf("DB__POOL_SIZE + DB__MAX_OVERFLOW must not exceed %d", math.MaxInt32)
+	maxConnsN, err := int32Of("DB__POOL_SIZE + DB__MAX_OVERFLOW", maxConns)
+	if err != nil {
+		return nil, err
 	}
-	poolCfg.MaxConns = int32(maxConns)
+	poolCfg.MaxConns = maxConnsN
 	if cfg.PoolSize > 0 {
 		poolCfg.MinConns = 0
-		poolCfg.MinIdleConns = int32(min(int64(cfg.PoolSize), maxConns))
+		minIdle, err := int32Of("DB__POOL_SIZE", min(int64(cfg.PoolSize), maxConns))
+		if err != nil {
+			return nil, err
+		}
+		poolCfg.MinIdleConns = minIdle
 	}
 	if cfg.PoolRecycle > 0 {
 		poolCfg.MaxConnLifetime = cfg.PoolRecycle
