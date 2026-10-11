@@ -71,7 +71,7 @@ cd web
 pnpm build
 pnpm typecheck
 pnpm format
-E2E_BASE_URL=http://localhost:3000 pnpm e2e   # against a running stack
+pnpm test
 ```
 
 `web/src/api` is generated and ignored by Git. Do not edit it manually. Run `task generate`
@@ -114,7 +114,7 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 - Put user-facing text in the locale dictionaries; English is the source locale.
 - `web/`: add matching keys and variables to `src/i18n/locales/en.json`, `ru.json` and `zh.json` (`pnpm check:i18n` checks them).
 - `web/`: call the API through the generated client and `/api/admin` (the server adds and renews the token).
-- Run `pnpm build` before submitting UI changes, and `pnpm e2e` when a flow changes.
+- Run `pnpm build` before submitting UI changes. Cover a changed screen with a Jest test that mocks the API responses.
 
 ### Tests and documentation
 

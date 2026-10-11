@@ -1,5 +1,3 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
 import {
   discoverQuerySchema,
   discoveryDocumentSchema,
@@ -97,14 +95,22 @@ describe('what a person uploads', () => {
   });
 });
 
+// Jest has no vi.stubEnv: the environment is replaced for each test and restored afterwards.
+const realEnv = process.env;
+const stubEnv = (name: string, value: string) => {
+  process.env = { ...process.env, [name]: value };
+};
+
 describe('settings', () => {
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    process.env = realEnv;
+  });
 
   it('falls back to the local development addresses and cuts trailing slashes', async () => {
     const { env } = await import('@/lib/env');
-    vi.stubEnv('ADMIN_API_URL', '');
-    vi.stubEnv('ADMIN_API_PUBLIC_URL', '');
-    vi.stubEnv('APP_BASE_URL', 'https://licetum.example.com//');
+    stubEnv('ADMIN_API_URL', '');
+    stubEnv('ADMIN_API_PUBLIC_URL', '');
+    stubEnv('APP_BASE_URL', 'https://licetum.example.com//');
     expect(env.adminApiUrl()).toBe('http://localhost:8002');
     expect(env.adminApiPublicUrl()).toBe('http://localhost:8002');
     expect(env.appBaseUrl()).toBe('https://licetum.example.com');
@@ -113,11 +119,11 @@ describe('settings', () => {
 
   it('refuses an address that is not http(s) and a short session secret', async () => {
     const { env } = await import('@/lib/env');
-    vi.stubEnv('ADMIN_API_URL', 'ftp://admin');
+    stubEnv('ADMIN_API_URL', 'ftp://admin');
     expect(() => env.adminApiUrl()).toThrow(/ADMIN_API_URL/);
-    vi.stubEnv('SESSION_SECRET', 'short');
+    stubEnv('SESSION_SECRET', 'short');
     expect(() => env.sessionSecret()).toThrow(/at least 32/);
-    vi.stubEnv('SESSION_SECRET', '');
+    stubEnv('SESSION_SECRET', '');
     expect(() => env.sessionSecret()).toThrow(/SESSION_SECRET/);
   });
 });

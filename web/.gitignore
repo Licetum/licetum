@@ -7,6 +7,4 @@ next-env.d.ts
 src/api
 .env
 .env.local
-test-results
-playwright-report
 .pnpm-store
