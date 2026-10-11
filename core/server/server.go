@@ -312,10 +312,10 @@ func logAndRecover(app *engine.App, next http.Handler) http.Handler {
 	})
 }
 
-// logSafe quotes a value that came from a client or a token: line breaks and control characters are escaped,
-// so one request cannot write a second log entry.
+// logSafe escapes the line breaks of a value that came from a client or a token, so one request cannot write a
+// second log entry. The JSON handler escapes everything else.
 func logSafe(s string) string {
-	return strconv.Quote(s)
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", `\n`), "\r", `\r`)
 }
 
 func writeJSONError(w http.ResponseWriter, err *apperr.Error) {
