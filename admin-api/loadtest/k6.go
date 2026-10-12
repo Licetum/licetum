@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,7 +106,11 @@ func (r *k6Runner) run(ctx context.Context, w window) (k6Result, error) {
 	if err != nil {
 		return k6Result{}, fmt.Errorf("create the k6 log: %w", err)
 	}
-	defer logFile.Close()
+	defer func() {
+		if err := logFile.Close(); err != nil {
+			slog.Warn("close the k6 log", "error", err)
+		}
+	}()
 
 	args := []string{"run", "--quiet", "--no-color", "--summary-export", summary}
 	if os.Getenv(k6RawEnv) != "" || w.rawEvery {

@@ -159,8 +159,11 @@ func appendJobSummary(summary string) {
 		slog.Warn("open the job summary", "error", err)
 		return
 	}
-	defer f.Close()
+	// The close is checked: on a file opened for writing, the error of the close can be the one that loses the data.
 	if _, err := f.WriteString(summary + "\n"); err != nil {
 		slog.Warn("write the job summary", "error", err)
+	}
+	if err := f.Close(); err != nil {
+		slog.Warn("close the job summary", "error", err)
 	}
 }

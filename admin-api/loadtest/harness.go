@@ -580,7 +580,9 @@ func startCheck(ctx context.Context, e *env, opts Options, index int) (*checkSer
 	cmd.Env = append(cmd.Env, "HTTP__ADDR="+addr)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
+		if cerr := logFile.Close(); cerr != nil {
+			slog.Warn("close the server log", "error", cerr)
+		}
 		return nil, fmt.Errorf("start %s: %w", opts.CheckBin, err)
 	}
 	cs := &checkServer{cmd: cmd, base: "http://" + addr, log: logFile, done: make(chan struct{})}

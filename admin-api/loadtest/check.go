@@ -3,6 +3,7 @@ package loadtest
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -56,7 +57,9 @@ func (c *checkServer) stop() {
 		_ = c.cmd.Process.Kill()
 		<-c.done
 	}
-	_ = c.log.Close()
+	if err := c.log.Close(); err != nil {
+		slog.Warn("close the check server log", "error", err)
+	}
 }
 
 // freeAddr is a loopback address nothing listens on yet.
