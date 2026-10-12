@@ -1,0 +1,28 @@
+# The PostgreSQL and Redis servers of the load test, on the loopback interface only. The harness creates a database of its
+# own in the PostgreSQL server for each run, so the server is shared between runs; scripts/baseline.sh restarts both
+# containers before each run, which is why their names are fixed.
+#
+#	docker compose -f admin-api/loadtest/compose.yml up -d
+#	export LICETUM_TEST_POSTGRES_URI="postgres://licetum:${LT_PG_PASSWORD:-licetum}@127.0.0.1:55432/postgres?sslmode=disable"
+#	export LICETUM_TEST_REDIS_URI="redis://127.0.0.1:56379/0"
+name: licetum-loadtest
+
+services:
+  lt-pg:
+    image: postgres:16-alpine
+    container_name: lt-pg
+    # pg_stat_statements gives the statements of each run (report: "top statements").
+    command: ["-c", "shared_preload_libraries=pg_stat_statements"]
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: licetum
+      POSTGRES_PASSWORD: ${LT_PG_PASSWORD:-licetum}
+    ports:
+      - "127.0.0.1:55432:5432"
+
+  lt-redis:
+    image: redis:7-alpine
+    container_name: lt-redis
+    command: ["redis-server"]
+    ports:
+      - "127.0.0.1:56379:6379"
