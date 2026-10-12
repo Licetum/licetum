@@ -23,6 +23,7 @@ var profiles = map[string]Profile{
 	"smoke":  {Name: "smoke", Users: 200, Groups: 10, Rules: 1_000, Resources: 10_000},
 	"medium": {Name: "medium", Users: 5_000, Groups: 50, Rules: 10_000, Resources: 100_000},
 	"large":  {Name: "large", Users: 50_000, Groups: 200, Rules: 100_000, Resources: 1_000_000},
+	"500k":   {Name: "500k", Users: 25_000, Groups: 100, Rules: 50_000, Resources: 500_000},
 }
 
 // ProfileNames lists the named sizes in order.
