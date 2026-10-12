@@ -144,7 +144,8 @@ jobs:
         run: pnpm build
 
   # The check API at the smoke volume (admin-api/loadtest): a gate against gross regressions, not a benchmark. The
-  # objectives are loose on purpose: the runners are shared, and the real numbers come from the nightly loadtest.yml.
+  # the steps are too short for a p99 (about 750 requests each), so the gate is the error rate and the rate asked; the
+  # runners are shared, and the real numbers come from the nightly loadtest.yml.
   loadtest-smoke:
     name: Load test (smoke volume)
     needs: changes
@@ -168,12 +169,12 @@ jobs:
 
       - uses: grafana/setup-k6-action@v1.2.2
         with:
-          k6-version: v2.2.0
+          k6-version: '2.2.0'
 
       - name: Load test at the smoke volume
         run: >
           task loadtest -- -profile smoke -rate-start 50 -rate-factor 2 -max-steps 3 -measure 15s
-          -slo-p99 150ms -require-rate 50 -out reports/loadtest
+          -require-rate 50 -out reports/loadtest
 
       - name: Upload the load test results
         if: always()

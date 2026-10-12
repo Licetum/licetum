@@ -44,7 +44,7 @@ jobs:
 
       - uses: grafana/setup-k6-action@v1.2.2
         with:
-          k6-version: v2.2.0
+          k6-version: '2.2.0'
 
       - name: Load test at the medium volume
         run: >
@@ -81,7 +81,7 @@ jobs:
 
       - uses: grafana/setup-k6-action@v1.2.2
         with:
-          k6-version: v2.2.0
+          k6-version: '2.2.0'
 
       - name: Load test at the large volume
         run: >
