@@ -1,0 +1,336 @@
+{
+  "started": "2026-10-12T23:32:55.302724793+10:00",
+  "finished": "2026-10-12T23:44:01.288584834+10:00",
+  "profile": {
+    "name": "smoke",
+    "users": 200,
+    "groups": 10,
+    "rules": 1000,
+    "resources": 10000
+  },
+  "settings": {
+    "profile": "smoke",
+    "mode": "warm",
+    "seed": 2,
+    "mix": "permission=2,check1=3,check10=1,authzen=2,authzen_batch=1,on_behalf=1",
+    "consistency": "minimize_latency",
+    "concurrency": 250,
+    "db_pool": 30,
+    "access_log": false,
+    "ramp": false,
+    "rate": 200,
+    "rate_start": 50,
+    "rate_factor": 2,
+    "warm_seconds": 60,
+    "measure_seconds": 600,
+    "slo_p99_ms": 100,
+    "max_error_rate": 0.01,
+    "oracle_rate": 5,
+    "k6_cpus": "10-11",
+    "check_cpus": "0-7",
+    "required_rate": 0,
+    "raw_points_kept": false
+  },
+  "machine": {
+    "cpus": 12,
+    "os": "linux",
+    "arch": "amd64",
+    "go_version": "go1.27.1-X:nodwarf5",
+    "k6": "k6 v2.2.0 (commit/00a9a1b7f5, go1.26.5, linux/amd64)"
+  },
+  "seeding": [
+    {
+      "name": "source tables",
+      "seconds": 0.093889639
+    },
+    {
+      "name": "service and types",
+      "seconds": 0.04446337
+    },
+    {
+      "name": "groups",
+      "seconds": 0.082741434
+    },
+    {
+      "name": "rules",
+      "seconds": 0.047627649
+    }
+  ],
+  "rules_written": 1000,
+  "warm_up": [
+    {
+      "name": "warm-up permission (first synchronization)",
+      "seconds": 1.9024696639999998
+    },
+    {
+      "name": "warm-up check1",
+      "seconds": 0.031875531
+    },
+    {
+      "name": "warm-up authzen",
+      "seconds": 0.003023562
+    },
+    {
+      "name": "warm-up authzen_batch",
+      "seconds": 0.002251658
+    },
+    {
+      "name": "warm-up on_behalf",
+      "seconds": 0.006541728
+    }
+  ],
+  "db_statements": true,
+  "top_statements": [
+    {
+      "query": "SELECT ar.id, ar.role_id, ar.type_resource_id, ar.resource_id, ar.resource_from_claim, ar.access, ar.subject, ar.predicate, ar.member_of_group_id, ar.enabled, a…",
+      "calls": 28945,
+      "total_ms": 80516.90650400009,
+      "mean_ms": 2.78172072910693
+    },
+    {
+      "query": "SELECT DISTINCT q.idx, anc.id, anc.type_resource_id, anc.external_id, anc.name FROM unnest($1::bigint[], $2::uuid[], $3::uuid[], $4::text[], $5::text[]) AS q(id…",
+      "calls": 28945,
+      "total_ms": 26629.608020000407,
+      "mean_ms": 0.920007186733474
+    },
+    {
+      "query": "SELECT c.type_resource_id, c.external_id, c.id FROM unnest($1::uuid[], $2::varchar[]) AS q(type_id, ext) JOIN resource_cache c ON c.type_resource_id = q.type_id…",
+      "calls": 57116,
+      "total_ms": 13969.653140000086,
+      "mean_ms": 0.24458388437565806
+    },
+    {
+      "query": "SELECT min(b) FROM ( -- a role assignment has no type of its own: its boundaries count for every type SELECT valid_from AS b FROM assignment_rule WHERE valid_fr…",
+      "calls": 28945,
+      "total_ms": 10243.970684999886,
+      "mean_ms": 0.3539115800656378
+    },
+    {
+      "query": "SELECT id, name, slug, url, icon, authorization_url, token_url, jwks_url, issuer, client_id, client_secret, trusted_clients FROM service WHERE id = $1 AND delet…",
+      "calls": 151942,
+      "total_ms": 9028.17505599999,
+      "mean_ms": 0.05941856139842828
+    },
+    {
+      "query": "SELECT id FROM service WHERE slug = $1 AND deleted_at IS NULL",
+      "calls": 122997,
+      "total_ms": 7822.8860409999415,
+      "mean_ms": 0.06360225079473436
+    },
+    {
+      "query": "INSERT INTO delegated_call (service_id, caller_client, caller_subject, subject, operation, questions, allowed, request_id) VALUES ($1, $2, NULLIF($3, $9), $4, $…",
+      "calls": 11913,
+      "total_ms": 2904.8563710000026,
+      "mean_ms": 0.24383919843868065
+    },
+    {
+      "query": "SELECT ar.id, ar.role_id, ar.type_resource_id, ar.resource_id, ar.resource_from_claim, ar.access, ar.subject, ar.predicate, ar.member_of_group_id, ar.enabled, a…",
+      "calls": 28945,
+      "total_ms": 2747.114383999991,
+      "mean_ms": 0.09490808029020524
+    }
+  ],
+  "storage": [
+    {
+      "table": "resource_cache",
+      "rows": 10000,
+      "total_bytes": 3268608,
+      "index_bytes": 1990656
+    },
+    {
+      "table": "resource_edge",
+      "rows": 9500,
+      "total_bytes": 2760704,
+      "index_bytes": 1261568
+    },
+    {
+      "table": "resource_ancestor",
+      "rows": 19500,
+      "total_bytes": 4251648,
+      "index_bytes": 2236416
+    },
+    {
+      "table": "assignment_rule",
+      "rows": 1000,
+      "total_bytes": 327680,
+      "index_bytes": 139264
+    },
+    {
+      "table": "group_member",
+      "rows": 10,
+      "total_bytes": 65536,
+      "index_bytes": 49152
+    },
+    {
+      "table": "user_group",
+      "rows": 10,
+      "total_bytes": 49152,
+      "index_bytes": 32768
+    },
+    {
+      "table": "type_resource",
+      "rows": 2,
+      "total_bytes": 65536,
+      "index_bytes": 49152
+    }
+  ],
+  "measurements": [
+    {
+      "mode": "warm",
+      "seed": 2,
+      "rate_asked": 200,
+      "window_seconds": 600,
+      "requests": 120001,
+      "answered_2xx": 120001,
+      "answered_other": 0,
+      "error_rate": 0,
+      "achieved_rps": 200.00166666666667,
+      "dropped_iterations": 0,
+      "decisions": 314248,
+      "allowed_share": 0.7991968127084341,
+      "operations": [
+        {
+          "name": "permission",
+          "requests": 23499,
+          "latency_ms": {
+            "samples": 23499,
+            "mean": 17.95333133890802,
+            "p50": 4.977597,
+            "p90": 54.90032720000001,
+            "p95": 74.32159129999995,
+            "p99": 125.51975114000001,
+            "p999": 254.53821297200568,
+            "max": 387.917268
+          }
+        },
+        {
+          "name": "check1",
+          "requests": 36210,
+          "latency_ms": {
+            "samples": 36210,
+            "mean": 16.093806928583206,
+            "p50": 4.032767,
+            "p90": 52.193383600000004,
+            "p95": 70.50701999999998,
+            "p99": 108.29766813999923,
+            "p999": 216.57518476900609,
+            "max": 339.35023
+          }
+        },
+        {
+          "name": "check10",
+          "requests": 12068,
+          "latency_ms": {
+            "samples": 12068,
+            "mean": 57.138488722571985,
+            "p50": 19.6180885,
+            "p90": 178.18128410000014,
+            "p95": 222.53561549999998,
+            "p99": 301.431889,
+            "p999": 396.015948419009,
+            "max": 464.074171
+          }
+        },
+        {
+          "name": "check100",
+          "requests": 0,
+          "latency_ms": {
+            "samples": 0,
+            "mean": 0,
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0,
+            "p999": 0,
+            "max": 0
+          }
+        },
+        {
+          "name": "authzen",
+          "requests": 24185,
+          "latency_ms": {
+            "samples": 24185,
+            "mean": 16.318823555550985,
+            "p50": 4.071897,
+            "p90": 53.403797,
+            "p95": 71.6685394,
+            "p99": 109.51469823999999,
+            "p999": 198.33105692800146,
+            "max": 356.169723
+          }
+        },
+        {
+          "name": "authzen_batch",
+          "requests": 12126,
+          "latency_ms": {
+            "samples": 12126,
+            "mean": 57.040936681180895,
+            "p50": 20.059873500000002,
+            "p90": 176.1924055,
+            "p95": 220.37061975,
+            "p99": 302.98263425,
+            "p999": 375.04605662500353,
+            "max": 448.182319
+          }
+        },
+        {
+          "name": "on_behalf",
+          "requests": 11913,
+          "latency_ms": {
+            "samples": 11913,
+            "mean": 23.154325544447204,
+            "p50": 7.260957,
+            "p90": 71.23263100000005,
+            "p95": 94.08788459999997,
+            "p99": 138.76622532,
+            "p999": 223.6234269520001,
+            "max": 389.378043
+          }
+        }
+      ],
+      "k6_cores": 2,
+      "k6_cpu_share": 0.06370999050073195,
+      "server": {
+        "cpu_cores": 0.42265065444116506,
+        "permission_cache_hit_ratio": 0.9664666581556662,
+        "check_cache_hit_ratio": 0.7163661581137309,
+        "permission_compute_avg_ms": 39.748751866925105,
+        "source_fetch_avg_ms": 37.261420799999996,
+        "operation_avg_ms": {
+          "authzen": 15.911884439032361,
+          "authzen_batch": 56.625250727280005,
+          "check1": 27.645636873932258,
+          "check10": 27.645636873932258,
+          "check100": 27.645636873932258,
+          "on_behalf": 22.74293395945606,
+          "permission": 17.541762987403622
+        },
+        "db_blocks_read_per_request": 0,
+        "db_buffer_hit_ratio": 1,
+        "db_commits_per_request": 5.568720260664494,
+        "db_statement_ms_per_request": 1.4264874015466573,
+        "db_calls_per_request": 5.551095407538271
+      },
+      "oracle": {
+        "checked": 2996,
+        "mismatches": 0,
+        "expected_granted": 2225
+      },
+      "latency_all_ms": {
+        "samples": 120001,
+        "mean": 25.469587670260886,
+        "p50": 6.845535,
+        "p90": 69.408617,
+        "p95": 111.87337,
+        "p99": 226.484336,
+        "p999": 334.3436250000032,
+        "max": 464.074171
+      },
+      "valid": true,
+      "passed": false
+    }
+  ],
+  "sustained_rps": 0,
+  "required_rps": 0,
+  "passed": true
+}

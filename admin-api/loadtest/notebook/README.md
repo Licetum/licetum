@@ -13,9 +13,24 @@ notebook shows the machine each run came from. To get the same charts for your o
 |---|---|
 | `licetum-loadtest.ipynb` | the charts; reads the directory named by `LICETUM_RESULTS` |
 | `requirements.txt` | the Python packages the notebook needs |
-| `results/` | the runs published with this notebook (`result.json` and `environment.json` per run) |
+| `results/` | the runs the notebook is built from: `result.json` and `environment.json` per run (see below) |
 | [`../compose.yml`](../compose.yml) | PostgreSQL 16 and Redis 7 for the runs, on the loopback interface |
 | [`../scripts/baseline.sh`](../scripts/baseline.sh) | the campaign: five runs per mode, a ramp, and the aggregate report |
+
+## Published results (preliminary)
+
+`results/` holds two series of the 10k profile, warm mode, 200 requests/s. Each run is a directory with its
+`result.json` and `environment.json`; nothing else is published.
+
+- `clean-0ff9a6b7/smoke-warm/run-1..4`: commit `0ff9a6b7`, a clean tree, the `performance` governor, no swap. Runs 1
+  and 2 are valid. Run 3 is invalid because the host swapped memory during it. Run 4 is invalid because it was stopped
+  by hand.
+- `dirty-3cd0b4c3/smoke-warm/run-1..5`: the first attempt, with uncommitted changes, the `powersave` governor and swap in
+  use. All five are valid by the rules, but they are here to show how far the state of the host moves the same code, not
+  as a result.
+
+Not measured yet: the 100k profile, the mixed, cold and ramp modes, writes during load, faults, and a second machine. Two
+valid windows on one laptop are not enough for an article's numbers.
 
 ## 1. Requirements
 

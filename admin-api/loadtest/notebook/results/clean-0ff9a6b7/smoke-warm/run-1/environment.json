@@ -1,0 +1,54 @@
+{
+  "collected_at": "2026-10-12T15:40:32.586448952Z",
+  "git_commit": "0ff9a6b7ff37a237ca7c84268066ce46d47c04c7",
+  "git_dirty": false,
+  "cpu_model": "12th Gen Intel(R) Core(TM) i5-12450H",
+  "logical_cpus": 12,
+  "memory_kib": 16064112,
+  "os": "CachyOS",
+  "kernel": "7.2.8-1-cachyos",
+  "cpu_governor": "performance",
+  "load_average_at_start": "0.09 0.61 1.94 3/1577 2793930",
+  "go_version": "go1.27.1-X:nodwarf5",
+  "k6_version": "k6 v2.2.0 (commit/00a9a1b7f5, go1.26.5, linux/amd64)",
+  "docker_version": "29.7.2",
+  "postgres_version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+  "postgres_settings": {
+    "autovacuum": "on",
+    "checkpoint_timeout": "300",
+    "effective_cache_size": "524288",
+    "jit": "on",
+    "maintenance_work_mem": "65536",
+    "max_connections": "100",
+    "max_wal_size": "1024",
+    "random_page_cost": "4",
+    "shared_buffers": "16384",
+    "synchronous_commit": "on",
+    "work_mem": "4096"
+  },
+  "redis_version": "7.4.11",
+  "check_binary": "../core/bin/licetum",
+  "check_binary_sha256": "ae780dd3d15bd7dd3fef6334d871c9225148335ff7532a80ddaf827c2e0460ba",
+  "check_server_env": {
+    "AUTH__STATE_SECRET": "***",
+    "DB__MAX_OVERFLOW": "0",
+    "DB__POOL_SIZE": "30",
+    "DB__URI": "postgres://licetum:%2A%2A%2A@127.0.0.1:55432/licetum_test_4f62fae8e6ba4c1ba6c6cc8b6347d05b?sslmode=disable",
+    "REDIS__URI": "redis://127.0.0.1:56379/0"
+  },
+  "harness_env": {
+    "AUTH__STATE_SECRET": "***",
+    "DB__URI": "postgres://licetum:%2A%2A%2A@127.0.0.1:55432/licetum_test_4f62fae8e6ba4c1ba6c6cc8b6347d05b?sslmode=disable",
+    "LICETUM_TEST_POSTGRES_URI": "postgres://licetum:%2A%2A%2A@127.0.0.1:55432/postgres?sslmode=disable",
+    "LICETUM_TEST_REDIS_URI": "redis://127.0.0.1:56379/0",
+    "REDIS__URI": "redis://127.0.0.1:56379/0"
+  },
+  "k6_cpus": "10-11",
+  "check_cpus": "0-7",
+  "containers": "testcontainers, no CPU or memory limits set by the harness (external servers when named by LICETUM_TEST_*)",
+  "stack_cpus": {
+    "lt-pg": "8-9",
+    "lt-redis": "8-9"
+  },
+  "check_db_pool_connections": 30
+}

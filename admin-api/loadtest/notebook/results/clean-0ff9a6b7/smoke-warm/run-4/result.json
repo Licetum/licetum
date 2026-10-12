@@ -1,0 +1,139 @@
+{
+  "started": "2026-10-13T02:13:48.846061165+10:00",
+  "finished": "2026-10-13T02:19:41.66922583+10:00",
+  "profile": {
+    "name": "smoke",
+    "users": 200,
+    "groups": 10,
+    "rules": 1000,
+    "resources": 10000
+  },
+  "settings": {
+    "profile": "smoke",
+    "mode": "warm",
+    "seed": 4,
+    "mix": "permission=2,check1=3,check10=1,authzen=2,authzen_batch=1,on_behalf=1",
+    "consistency": "minimize_latency",
+    "concurrency": 250,
+    "db_pool": 30,
+    "access_log": false,
+    "ramp": false,
+    "rate": 200,
+    "rate_start": 50,
+    "rate_factor": 2,
+    "warm_seconds": 60,
+    "measure_seconds": 600,
+    "slo_p99_ms": 100,
+    "max_error_rate": 0.01,
+    "oracle_rate": 5,
+    "k6_cpus": "10-11",
+    "writes_every_seconds": 0,
+    "check_cpus": "0-7",
+    "required_rate": 0,
+    "raw_points_kept": false
+  },
+  "machine": {
+    "cpus": 12,
+    "os": "linux",
+    "arch": "amd64",
+    "go_version": "go1.27.1-X:nodwarf5",
+    "k6": "k6 v2.2.0 (commit/00a9a1b7f5, go1.26.5, linux/amd64)"
+  },
+  "seeding": [
+    {
+      "name": "source tables",
+      "seconds": 0.086854207
+    },
+    {
+      "name": "service and types",
+      "seconds": 0.034879477
+    },
+    {
+      "name": "groups",
+      "seconds": 0.06347201
+    },
+    {
+      "name": "rules",
+      "seconds": 0.039736924
+    }
+  ],
+  "rules_written": 1000,
+  "warm_up": [
+    {
+      "name": "warm-up permission (first synchronization)",
+      "seconds": 1.716224934
+    },
+    {
+      "name": "warm-up check1",
+      "seconds": 0.028812885
+    },
+    {
+      "name": "warm-up authzen",
+      "seconds": 0.003910914
+    },
+    {
+      "name": "warm-up authzen_batch",
+      "seconds": 0.002086088
+    },
+    {
+      "name": "warm-up on_behalf",
+      "seconds": 0.006279217
+    }
+  ],
+  "db_statements": true,
+  "measurements": [
+    {
+      "mode": "warm",
+      "seed": 4,
+      "rate_asked": 200,
+      "window_seconds": 600,
+      "requests": 0,
+      "answered_2xx": 0,
+      "answered_other": 0,
+      "error_rate": 0,
+      "achieved_rps": 0,
+      "dropped_iterations": 0,
+      "decisions": 0,
+      "allowed_share": 0,
+      "operations": null,
+      "k6_cores": 0,
+      "k6_cpu_share": 0,
+      "server": {
+        "cpu_cores": 0,
+        "permission_cache_hit_ratio": 0,
+        "check_cache_hit_ratio": 0,
+        "permission_compute_avg_ms": 0,
+        "source_fetch_avg_ms": 0,
+        "operation_avg_ms": null,
+        "db_blocks_read_per_request": 0,
+        "db_buffer_hit_ratio": 0,
+        "db_commits_per_request": 0,
+        "db_statement_ms_per_request": 0,
+        "db_calls_per_request": 0
+      },
+      "oracle": {
+        "checked": 0,
+        "mismatches": 0,
+        "expected_granted": 0
+      },
+      "latency_all_ms": {
+        "samples": 0,
+        "mean": 0,
+        "p50": 0,
+        "p90": 0,
+        "p95": 0,
+        "p99": 0,
+        "p999": 0,
+        "max": 0
+      },
+      "host_swap_pages": 0,
+      "valid": false,
+      "invalid_reasons": [
+        "the window did not finish: k6 measure-01: signal: killed: "
+      ]
+    }
+  ],
+  "sustained_rps": 0,
+  "required_rps": 0,
+  "passed": false
+}
