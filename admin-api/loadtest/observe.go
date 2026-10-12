@@ -23,7 +23,7 @@ const clockTicks = 100
 // database. Its statements are measured only when the server preloads pg_stat_statements (see enableStatements).
 type observer struct {
 	pool       *pgxpool.Pool
-	check      *checkServer
+	checks     []*checkServer // the replicas of the check server: their CPU and metrics are summed
 	statements bool
 }
 
@@ -36,13 +36,21 @@ type counters struct {
 }
 
 func (o observer) read(ctx context.Context) (counters, error) {
-	cpu, err := procCPU(o.check.cmd.Process.Pid)
-	if err != nil {
-		return counters{}, err
-	}
-	series, err := scrape(ctx, o.check.base)
-	if err != nil {
-		return counters{}, err
+	var cpu float64
+	series := map[string]float64{}
+	for _, c := range o.checks {
+		used, err := procCPU(c.cmd.Process.Pid)
+		if err != nil {
+			return counters{}, err
+		}
+		cpu += used
+		one, err := scrape(ctx, c.base)
+		if err != nil {
+			return counters{}, err
+		}
+		for key, value := range one {
+			series[key] += value
+		}
 	}
 	db, err := databaseCounters(ctx, o.pool, o.statements)
 	if err != nil {

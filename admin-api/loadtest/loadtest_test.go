@@ -108,14 +108,14 @@ func TestJudgeMeasurement(t *testing.T) {
 func TestJudgeStep(t *testing.T) {
 	step := Measurement{RateAsked: 50, AchievedRPS: 49, ErrorRate: 0, Overall: Latency{P99: 40, Samples: 2000}, Valid: true}
 	step.judgeStep(0.01, 100*time.Millisecond)
-	if !step.Passed {
+	if !step.passes() {
 		t.Fatalf("a step within its objectives failed: %v", step.FailReasons)
 	}
 	slow := Measurement{RateAsked: 50, AchievedRPS: 49, Overall: Latency{P99: 250}, Valid: true}
 	slow.judgeStep(0.01, 100*time.Millisecond)
 	late := Measurement{RateAsked: 50, AchievedRPS: 30, ErrorRate: 0.05, Overall: Latency{P99: 40}, Valid: true}
 	late.judgeStep(0.01, 100*time.Millisecond)
-	if slow.Passed || late.Passed || len(late.FailReasons) != 2 {
+	if slow.passes() || late.passes() || len(late.FailReasons) != 2 {
 		t.Fatalf("slow %+v, late %+v: want both failed, the late one for errors and for the rate", slow, late)
 	}
 }

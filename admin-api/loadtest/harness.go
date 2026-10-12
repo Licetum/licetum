@@ -14,8 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 
+	adminsvc "github.com/licetum/licetum/admin-api/service"
 	"github.com/licetum/licetum/core/model"
 	support "github.com/licetum/licetum/core/testsupport"
 )
@@ -38,31 +40,36 @@ const (
 
 // Options are the settings of a run.
 type Options struct {
-	Profile      Profile
-	CheckBin     string        // the licetum binary that serves the check API
-	K6Bin        string        // the k6 binary that sends the traffic
-	OutDir       string        // where the results, the environment, the time series and the k6 logs are written
-	Mode         string        // warm (the caches answer), cold (every request is computed) or mix (a skewed traffic)
-	Seed         int64         // the seed of the choices of the traffic and of the oracle
-	Mix          Mix           // the share of each request
-	Consistency  string        // minimize_latency (caches allowed); the cold mode asks with higher
-	Rate         float64       // arrivals per second of a fixed-rate run
-	Ramp         bool          // ramp the rate instead: start at RateStart, multiply by RateFactor, up to MaxSteps
-	RateStart    float64       // the first rate of a ramp
-	RateFactor   float64       // the rate of the next step is this many times the last one
-	MaxSteps     int           // the ramp ends after this many steps
-	Warm         time.Duration // the warm-up window, outside the measurement (at least the TTL of the caches)
-	Measure      time.Duration // the measured window (each step of a ramp)
-	SLOP99       time.Duration // a ramp step passes while p99 stays within it
-	MaxErrorRate float64       // and the share of responses that are not 2xx stays within it
-	Concurrency  int           // the most virtual users k6 uses: the requests in flight
-	DBPool       int           // the most connections of the check server to PostgreSQL
-	AccessLog    bool          // whether the check server writes its access log (off: the decisions are measured, not the logs)
-	OracleRate   float64       // the answers per second the oracle checks against the expected decisions
-	K6CPUs       string        // the CPUs k6 is pinned to (taskset), empty for none
-	CheckCPUs    string        // the CPUs the check server is pinned to, empty for none
-	RawPoints    bool          // keep the points of every request (for the measurements that need timing per second)
-	RequireRate  float64       // a ramp run fails when the sustained rate is below it
+	Profile       Profile
+	CheckBin      string        // the licetum binary that serves the check API
+	K6Bin         string        // the k6 binary that sends the traffic
+	OutDir        string        // where the results, the environment, the time series and the k6 logs are written
+	Mode          string        // warm (the caches answer), cold (every request is computed) or mix (a skewed traffic)
+	Seed          int64         // the seed of the choices of the traffic and of the oracle
+	Mix           Mix           // the share of each request
+	Consistency   string        // minimize_latency (caches allowed); the cold mode asks with higher
+	Rate          float64       // arrivals per second of a fixed-rate run
+	Ramp          bool          // ramp the rate instead: start at RateStart, multiply by RateFactor, up to MaxSteps
+	RateStart     float64       // the first rate of a ramp
+	RateFactor    float64       // the rate of the next step is this many times the last one
+	MaxSteps      int           // the ramp ends after this many steps
+	Warm          time.Duration // the warm-up window, outside the measurement (at least the TTL of the caches)
+	Measure       time.Duration // the measured window (each step of a ramp)
+	SLOP99        time.Duration // a ramp step passes while p99 stays within it
+	MaxErrorRate  float64       // and the share of responses that are not 2xx stays within it
+	Concurrency   int           // the most virtual users k6 uses: the requests in flight
+	DBPool        int           // the most connections of the check server to PostgreSQL
+	AccessLog     bool          // whether the check server writes its access log (off: the decisions are measured, not the logs)
+	OracleRate    float64       // the answers per second the oracle checks against the expected decisions
+	K6CPUs        string        // the CPUs k6 is pinned to (taskset), empty for none
+	CheckCPUs     string        // the CPUs the check server is pinned to, empty for none
+	Replicas      int           // check servers sharing the database and the cache (the load is spread over them)
+	RawPoints     bool          // keep the points of every request (for the measurements that need timing per second)
+	WritesEvery   time.Duration // an admin write every this long during the measured window (0 for none)
+	ChaosRedisAt  time.Duration // the Redis container is paused this long into the measured window (0 for none)
+	ChaosRedisFor time.Duration // for this long
+	ChaosRedis    string        // the Redis container of the local test stack
+	RequireRate   float64       // a ramp run fails when the sustained rate is below it
 }
 
 // DefaultOptions are the settings of a run that the flags then change.
@@ -88,6 +95,8 @@ func DefaultOptions() Options {
 		Concurrency:  250,
 		DBPool:       30,
 		OracleRate:   5,
+		Replicas:     1,
+		ChaosRedis:   "lt-redis",
 	}
 }
 
@@ -142,28 +151,29 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		Started: time.Now(),
 		Profile: opts.Profile,
 		Settings: Settings{
-			Mode:          opts.Mode,
-			Seed:          opts.Seed,
-			Mix:           opts.Mix.String(),
-			Consistency:   opts.Consistency,
-			Concurrency:   opts.Concurrency,
-			DBPool:        opts.DBPool,
-			AccessLog:     opts.AccessLog,
-			Ramp:          opts.Ramp,
-			Rate:          opts.Rate,
-			RateStart:     opts.RateStart,
-			RateFactor:    opts.RateFactor,
-			WarmSeconds:   opts.Warm.Seconds(),
-			MeasureSecs:   opts.Measure.Seconds(),
-			SLOP99MS:      ms(opts.SLOP99),
-			MaxErrorRate:  opts.MaxErrorRate,
-			OracleRate:    opts.OracleRate,
-			K6CPUs:        opts.K6CPUs,
-			CheckCPUs:     opts.CheckCPUs,
-			RequiredRate:  opts.RequireRate,
-			ProfileName:   opts.Profile.Name,
-			ExtraSQL:      "",
-			RawPointsKept: opts.RawPoints,
+			Mode:           opts.Mode,
+			Seed:           opts.Seed,
+			Mix:            opts.Mix.String(),
+			Consistency:    opts.Consistency,
+			Concurrency:    opts.Concurrency,
+			DBPool:         opts.DBPool,
+			AccessLog:      opts.AccessLog,
+			Ramp:           opts.Ramp,
+			Rate:           opts.Rate,
+			RateStart:      opts.RateStart,
+			RateFactor:     opts.RateFactor,
+			WarmSeconds:    opts.Warm.Seconds(),
+			MeasureSecs:    opts.Measure.Seconds(),
+			SLOP99MS:       ms(opts.SLOP99),
+			MaxErrorRate:   opts.MaxErrorRate,
+			OracleRate:     opts.OracleRate,
+			K6CPUs:         opts.K6CPUs,
+			WritesEverySec: opts.WritesEvery.Seconds(),
+			CheckCPUs:      opts.CheckCPUs,
+			RequiredRate:   opts.RequireRate,
+			ProfileName:    opts.Profile.Name,
+			ExtraSQL:       "",
+			RawPointsKept:  opts.RawPoints,
 		},
 		Machine: machine(k6Version(k6Path)),
 	}
@@ -213,11 +223,16 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		return nil, fmt.Errorf("set the log settings of the check server: %w", err)
 	}
 
-	check, err := startCheck(ctx, e, opts)
+	checks, err := startReplicas(ctx, e, opts)
 	if err != nil {
 		return nil, err
 	}
-	defer check.stop()
+	defer func() {
+		for _, c := range checks {
+			c.stop()
+		}
+	}()
+	check := checks[0]
 
 	env, err := collectEnvironment(ctx, e, opts, opts.CheckBin)
 	if err != nil {
@@ -227,7 +242,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		return nil, err
 	}
 
-	obs := enableStatements(ctx, observer{pool: e.pool, check: check})
+	obs := enableStatements(ctx, observer{pool: e.pool, checks: checks})
 	rep.DBStatements = obs.statements
 
 	warm := warmer{
@@ -251,7 +266,12 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	if err != nil {
 		return finishRun(ctx, rep, e, opts, err, nil)
 	}
-	mr := measurer{runner: runner, check: check, obs: obs, opts: opts, tokens: tokens, outDir: opts.OutDir}
+	bases := make([]string, 0, len(checks))
+	for _, c := range checks {
+		bases = append(bases, c.base)
+	}
+	mr := measurer{runner: runner, check: check, obs: obs, opts: opts, tokens: tokens, outDir: opts.OutDir,
+		admin: e.admin, docType: fx.documentType, bases: bases}
 
 	// The warm-up window: the caches fill, and the synchronizations settle, before anything is measured.
 	if opts.Warm > 0 {
@@ -317,12 +337,15 @@ func finishRun(ctx context.Context, rep *Report, e *env, opts Options, runErr er
 // measurer runs the measured windows: each one reads the server, sends the traffic with k6, samples the oracle and the
 // time series during it, and reads the server again.
 type measurer struct {
-	runner *k6Runner
-	check  *checkServer
-	obs    observer
-	opts   Options
-	tokens []string
-	outDir string
+	runner  *k6Runner
+	check   *checkServer
+	obs     observer
+	opts    Options
+	tokens  []string
+	outDir  string
+	admin   *adminsvc.App
+	docType uuid.UUID
+	bases   []string
 }
 
 // window measures one window at a rate. A window kept apart from the measurement (the warm-up) is only sent.
@@ -337,7 +360,8 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 		preVUs:   preallocated(int(math.Round(rate)), m.opts.Concurrency),
 		maxVUs:   m.opts.Concurrency,
 		base:     m.check.base,
-		rawEvery: m.opts.RawPoints && measured,
+		bases:    m.bases,
+		rawEvery: (m.opts.RawPoints || m.opts.WritesEvery > 0 || m.opts.ChaosRedisFor > 0) && measured,
 	}
 	if !measured {
 		_, err := m.runner.run(ctx, w)
@@ -358,12 +382,59 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 		oracleDone <- runOracle(ctx, m.check.base, serviceSlug, m.opts.Profile, m.tokens, uint64(max(m.opts.Seed, 0)), m.opts.OracleRate, stopOracle)
 	}()
 
+	var wr *writer
+	stopWrites := make(chan struct{})
+	writesDone := make(chan struct{})
+	if m.opts.WritesEvery > 0 && measured {
+		wr = &writer{admin: m.admin, docType: m.docType}
+		go func() {
+			defer close(writesDone)
+			ticker := time.NewTicker(m.opts.WritesEvery)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopWrites:
+					return
+				case <-ticker.C:
+					wr.tick(ctx)
+				}
+			}
+		}()
+	} else {
+		close(writesDone)
+	}
+
+	var chaos ChaosEvent
+	chaosDone := make(chan struct{})
+	if m.opts.ChaosRedisFor > 0 && measured {
+		go func() {
+			defer close(chaosDone)
+			ev, err := injectRedisPause(ctx, m.opts.ChaosRedis, m.opts.ChaosRedisAt, m.opts.ChaosRedisFor)
+			if err != nil {
+				slog.Warn("inject the fault", "error", err)
+			}
+			chaos = ev
+		}()
+	} else {
+		close(chaosDone)
+	}
+
 	res, runErr := m.runner.run(ctx, w)
+	close(stopWrites)
+	<-writesDone
+	<-chaosDone
 	close(stopOracle)
 	oracle := <-oracleDone
 	stopSampler()
 	if runErr != nil {
-		return Measurement{}, runErr
+		// The window is kept with its reason: a window that did not finish is not a result, and not an empty record either.
+		return Measurement{
+			Mode:           w.mode,
+			Seed:           w.seed,
+			RateAsked:      float64(w.rate),
+			WindowSeconds:  float64(w.seconds),
+			InvalidReasons: []string{fmt.Sprintf("the window did not finish: %v", runErr)},
+		}, runErr
 	}
 	after, err := m.obs.read(ctx)
 	if err != nil {
@@ -372,6 +443,29 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 
 	meas := measurementFrom(res, w, cpuCores(m.opts.K6CPUs, m.opts.Concurrency))
 	meas.Oracle = oracle
+	if m.opts.ChaosRedisFor > 0 && measured {
+		meas.Chaos = []ChaosEvent{chaos}
+		if points, err := readRequestPoints(filepath.Join(m.outDir, name+".points.json.gz")); err == nil {
+			effect := chaosEffect(points, chaos)
+			meas.ChaosEffect = &effect
+		}
+		if err := writeChaos(m.outDir, name, meas.Chaos); err != nil {
+			slog.Warn("write the fault log", "error", err)
+		}
+	}
+	if wr != nil {
+		meas.Writes = wr.recorded
+		meas.WriteInterval = m.opts.WritesEvery.Seconds()
+		if points, err := readRequestPoints(filepath.Join(m.outDir, name+".points.json.gz")); err == nil {
+			effect := writeEffects(points, wr.recorded)
+			meas.WriteEffect = &effect
+		} else {
+			slog.Warn("read the points of the window", "error", err)
+		}
+		if err := writeJSON(writesFile(m.outDir, name), wr.recorded); err != nil {
+			slog.Warn("write the write log", "error", err)
+		}
+	}
 	meas.Server = serverSide(before, after, meas.Requests, res.elapsed)
 	meas.judgeMeasurement()
 	slog.Info("window", "name", name, "asked", rate, "answered", meas.AchievedRPS, "p99_ms", meas.p99(), "errors", meas.ErrorRate,
@@ -391,7 +485,7 @@ func (m measurer) ramp(ctx context.Context) ([]Measurement, error) {
 		}
 		meas.judgeStep(m.opts.MaxErrorRate, m.opts.SLOP99)
 		out = append(out, meas)
-		if !meas.Passed || ctx.Err() != nil {
+		if !meas.passes() || ctx.Err() != nil {
 			break
 		}
 		rate *= m.opts.RateFactor
@@ -458,12 +552,16 @@ func measurementFrom(res k6Result, w window, cores int) Measurement {
 
 // startCheck runs `licetum check` against the infrastructure of the run. Its pool is the one the options name, with no
 // overflow, so the number of connections to PostgreSQL is the setting under test. Its output goes to check.log.
-func startCheck(ctx context.Context, e *env, opts Options) (*checkServer, error) {
+func startCheck(ctx context.Context, e *env, opts Options, index int) (*checkServer, error) {
 	addr, err := freeAddr()
 	if err != nil {
 		return nil, err
 	}
-	logFile, err := os.Create(filepath.Join(opts.OutDir, "check.log"))
+	logName := "check.log"
+	if index > 0 {
+		logName = fmt.Sprintf("check-%d.log", index)
+	}
+	logFile, err := os.Create(filepath.Join(opts.OutDir, logName))
 	if err != nil {
 		return nil, fmt.Errorf("create the server log: %w", err)
 	}
@@ -548,4 +646,22 @@ func logSettings(accessLog bool) model.LogSettings {
 		SampleAllowed: 1,
 		Events:        model.LogEvents{Access: accessLog, Decision: false, Sync: true},
 	}
+}
+
+// startReplicas starts the check servers of the run, the given number of them, against the same database and cache. A
+// replica that fails to start stops the ones that did.
+func startReplicas(ctx context.Context, e *env, opts Options) ([]*checkServer, error) {
+	n := max(opts.Replicas, 1)
+	out := make([]*checkServer, 0, n)
+	for i := range n {
+		c, err := startCheck(ctx, e, opts, i)
+		if err != nil {
+			for _, started := range out {
+				started.stop()
+			}
+			return nil, fmt.Errorf("start replica %d: %w", i, err)
+		}
+		out = append(out, c)
+	}
+	return out, nil
 }

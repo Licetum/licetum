@@ -12,7 +12,8 @@ import exec from 'k6/execution';
 import { SharedArray } from 'k6/data';
 import { Counter, Rate, Trend } from 'k6/metrics';
 
-const base = __ENV.BASE_URL;
+// The check servers: one per replica. A request goes to one of them, drawn at random, so the replicas share the load.
+const bases = (__ENV.BASES || __ENV.BASE_URL).split(',');
 const service = __ENV.SERVICE || 'loadtest';
 const users = Number(__ENV.USERS);
 const groups = Number(__ENV.GROUPS);
@@ -83,6 +84,7 @@ export const options = {
 const warmPool = buildWarmPool();
 
 export default function () {
+  const base = bases.length === 1 ? bases[0] : bases[Math.floor(random() * bases.length)];
   const phase = exec.scenario.name === 'warmup' ? 'warmup' : 'measure';
   const m = metrics[phase];
 
@@ -116,13 +118,13 @@ export default function () {
       });
       break;
     case 'check1':
-      res = checkRequest(token, consistency, [doc]);
+      res = checkRequest(base, token, consistency, [doc]);
       break;
     case 'check10':
-      res = checkRequest(token, consistency, questions(subjectIndex, 10));
+      res = checkRequest(base, token, consistency, questions(subjectIndex, 10));
       break;
     case 'check100':
-      res = checkRequest(token, consistency, questions(subjectIndex, 100));
+      res = checkRequest(base, token, consistency, questions(subjectIndex, 100));
       break;
     case 'authzen':
       res = http.post(
@@ -162,7 +164,7 @@ export default function () {
 }
 
 // checkRequest asks the check API the given questions, each (document, read).
-function checkRequest(token, consistency, docs) {
+function checkRequest(base, token, consistency, docs) {
   const checks = docs.map((d) => `{"type":"document","resource_id":"${d}","action":"read"}`).join(',');
   return http.post(`${base}/service/${service}/check?consistency=${consistency}`, `{"checks":[${checks}]}`, {
     headers: jsonHeaders(token),

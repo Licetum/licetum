@@ -84,8 +84,9 @@ type window struct {
 	seconds  int // length of the window
 	preVUs   int
 	maxVUs   int
-	base     string // the check server
-	rawEvery bool   // keep the points of each request
+	base     string   // the first check server
+	bases    []string // every check server of the run (replicas); the base when empty
+	rawEvery bool     // keep the points of each request
 }
 
 // k6Result is what one k6 invocation left behind: its summary, and the CPU its process used.
@@ -108,7 +109,8 @@ func (r *k6Runner) run(ctx context.Context, w window) (k6Result, error) {
 
 	args := []string{"run", "--quiet", "--no-color", "--summary-export", summary}
 	if os.Getenv(k6RawEnv) != "" || w.rawEvery {
-		args = append(args, "--out", "json="+filepath.Join(r.outDir, w.name+".points.json"))
+		// The points are large: k6 gzips the file when its name ends in .gz.
+		args = append(args, "--out", "json="+filepath.Join(r.outDir, w.name+".points.json.gz"))
 	}
 	args = append(args, r.script)
 	bin, args := r.command(args)
@@ -116,6 +118,7 @@ func (r *k6Runner) run(ctx context.Context, w window) (k6Result, error) {
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // the binary is the one the run was asked to use
 	cmd.Env = append(append(os.Environ(), r.env...),
 		"BASE_URL="+w.base,
+		"BASES="+strings.Join(replicaBases(w), ","),
 		"MODE="+w.mode,
 		"SEED="+strconv.FormatInt(w.seed, 10),
 		"RATE="+strconv.Itoa(w.rate),
@@ -210,4 +213,12 @@ func tail(b []byte) string {
 		b = b[len(b)-n:]
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// replicaBases is the list of check servers a window sends to: all the replicas, or the one base.
+func replicaBases(w window) []string {
+	if len(w.bases) == 0 {
+		return []string{w.base}
+	}
+	return w.bases
 }

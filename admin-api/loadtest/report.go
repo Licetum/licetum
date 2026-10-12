@@ -55,27 +55,28 @@ type Server struct {
 
 // Settings are the options of the run that the numbers depend on.
 type Settings struct {
-	ProfileName   string  `json:"profile"`
-	Mode          string  `json:"mode"`
-	Seed          int64   `json:"seed"`
-	Mix           string  `json:"mix"`
-	Consistency   string  `json:"consistency"`
-	Concurrency   int     `json:"concurrency"`
-	DBPool        int     `json:"db_pool"`
-	AccessLog     bool    `json:"access_log"`
-	Ramp          bool    `json:"ramp"`
-	Rate          float64 `json:"rate"`
-	RateStart     float64 `json:"rate_start"`
-	RateFactor    float64 `json:"rate_factor"`
-	WarmSeconds   float64 `json:"warm_seconds"`
-	MeasureSecs   float64 `json:"measure_seconds"`
-	SLOP99MS      float64 `json:"slo_p99_ms"`
-	MaxErrorRate  float64 `json:"max_error_rate"`
-	OracleRate    float64 `json:"oracle_rate"`
-	K6CPUs        string  `json:"k6_cpus"`
-	CheckCPUs     string  `json:"check_cpus"`
-	RequiredRate  float64 `json:"required_rate"`
-	RawPointsKept bool    `json:"raw_points_kept"`
+	ProfileName    string  `json:"profile"`
+	Mode           string  `json:"mode"`
+	Seed           int64   `json:"seed"`
+	Mix            string  `json:"mix"`
+	Consistency    string  `json:"consistency"`
+	Concurrency    int     `json:"concurrency"`
+	DBPool         int     `json:"db_pool"`
+	AccessLog      bool    `json:"access_log"`
+	Ramp           bool    `json:"ramp"`
+	Rate           float64 `json:"rate"`
+	RateStart      float64 `json:"rate_start"`
+	RateFactor     float64 `json:"rate_factor"`
+	WarmSeconds    float64 `json:"warm_seconds"`
+	MeasureSecs    float64 `json:"measure_seconds"`
+	SLOP99MS       float64 `json:"slo_p99_ms"`
+	MaxErrorRate   float64 `json:"max_error_rate"`
+	OracleRate     float64 `json:"oracle_rate"`
+	K6CPUs         string  `json:"k6_cpus"`
+	WritesEverySec float64 `json:"writes_every_seconds"`
+	CheckCPUs      string  `json:"check_cpus"`
+	RequiredRate   float64 `json:"required_rate"`
+	RawPointsKept  bool    `json:"raw_points_kept"`
 	// ExtraSQL is the file applied after the warm-up, when the run is an experiment (empty otherwise).
 	ExtraSQL string `json:"extra_sql,omitempty"`
 }
@@ -117,7 +118,7 @@ func (r *Report) finish(required float64, ramp bool) {
 	r.SustainedRPS = 0
 	if ramp {
 		for _, m := range r.Measurements {
-			if m.Passed {
+			if m.passes() {
 				r.SustainedRPS = max(r.SustainedRPS, m.RateAsked)
 			}
 		}
@@ -226,7 +227,7 @@ func (m Measurement) markdown(b *strings.Builder, ramp bool) {
 		fmt.Fprintf(b, "- validity: **invalid**: %s\n", strings.Join(m.InvalidReasons, "; "))
 	}
 	if ramp {
-		if m.Passed {
+		if m.passes() {
 			b.WriteString("- step: pass\n")
 		} else {
 			fmt.Fprintf(b, "- step: **fail**: %s\n", strings.Join(m.FailReasons, "; "))

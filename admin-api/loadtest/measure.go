@@ -65,10 +65,22 @@ type Measurement struct {
 	Overall        Latency     `json:"latency_all_ms"`
 	Valid          bool        `json:"valid"`
 	InvalidReasons []string    `json:"invalid_reasons,omitempty"`
-	// Passed is the verdict of a ramp step: a valid window, the errors within the budget, p99 within the objective, and the
-	// answers keeping up with the rate. FailReasons says why a step failed.
-	Passed      bool     `json:"passed"`
+	// Writes and Chaos are the admin writes and the faults of the window (scenarios E and H), with their effect on the
+	// requests around them.
+	Writes        []WriteEvent `json:"writes,omitempty"`
+	WriteInterval float64      `json:"write_interval_seconds,omitempty"`
+	WriteEffect   *WriteEffect `json:"write_effect,omitempty"`
+	Chaos         []ChaosEvent `json:"faults,omitempty"`
+	ChaosEffect   *ChaosEffect `json:"fault_effect,omitempty"`
+	// Passed is the verdict of a ramp step, and nil for a window that is not a step: a valid window, the errors within the
+	// budget, p99 within the objective, and the answers keeping up with the rate. FailReasons says why a step failed.
+	Passed      *bool    `json:"passed,omitempty"`
 	FailReasons []string `json:"fail_reasons,omitempty"`
+}
+
+// passes is whether a ramp step passed. A window that is not a step has no verdict, so it did not pass.
+func (m Measurement) passes() bool {
+	return m.Passed != nil && *m.Passed
 }
 
 // maxGeneratorShare is the share of its cores the load generator may use. Above it, the arrivals are late for the
@@ -115,5 +127,6 @@ func (m *Measurement) judgeStep(maxErrorRate float64, sloP99 time.Duration) {
 	if m.AchievedRPS < 0.95*m.RateAsked {
 		m.FailReasons = append(m.FailReasons, fmt.Sprintf("%.0f answers/s, under 95%% of the %.0f asked", m.AchievedRPS, m.RateAsked))
 	}
-	m.Passed = len(m.FailReasons) == 0
+	passed := len(m.FailReasons) == 0
+	m.Passed = &passed
 }
