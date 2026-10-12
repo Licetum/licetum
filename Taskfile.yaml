@@ -144,7 +144,7 @@ tasks:
     deps: [loadtest:build]
     dir: admin-api
     cmds:
-      - go run ./cmd/licetum-loadtest -check-bin ../core/bin/licetum {{.CLI_ARGS}}
+      - go run ./cmd/licetum-loadtest run -check-bin ../core/bin/licetum {{.CLI_ARGS}}
 
   web:install:
     desc: pnpm install
