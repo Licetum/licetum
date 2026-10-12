@@ -131,6 +131,21 @@ tasks:
       - (cd core && go run ./cmd/licetum openapi check -yaml > schema/check.yaml)
       - (cd admin-api && go run ./cmd/licetum-admin openapi admin -yaml > schema/admin.yaml)
 
+  # Load test of the check API (admin-api/loadtest): builds the binary it measures and ramps the traffic up. The
+  # arguments follow `--`, e.g. `task loadtest -- -profile medium`. It needs Docker, or LICETUM_TEST_POSTGRES_URI.
+  loadtest:build:
+    desc: Build the licetum binary the load test measures (core/bin/licetum)
+    dir: core
+    cmds:
+      - go build -o bin/licetum ./cmd/licetum
+
+  loadtest:
+    desc: Load test of the check API at a policy size (-- -profile smoke|medium|large, see admin-api/loadtest)
+    deps: [loadtest:build]
+    dir: admin-api
+    cmds:
+      - go run ./cmd/licetum-loadtest -check-bin ../core/bin/licetum {{.CLI_ARGS}}
+
   web:install:
     desc: pnpm install
     dir: web

@@ -1,0 +1,97 @@
+name: Load test
+
+# The check API at the policy sizes of admin-api/loadtest, nightly and on demand. Each run ramps the traffic up until a
+# step misses its objective, and writes the result to the job summary and to the artifact. The runner is the same size
+# every night, so the numbers can be compared from one night to the next.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Size of the policy to measure
+        type: choice
+        options: [medium, large]
+        default: medium
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loadtest
+  cancel-in-progress: false
+
+jobs:
+  medium:
+    name: Load test (medium)
+    if: github.event_name == 'schedule' || inputs.profile == 'medium'
+    runs-on: ubuntu-latest-4-cores
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: grafana/setup-k6-action@v1.2.2
+        with:
+          k6-version: v2.2.0
+
+      - name: Load test at the medium volume
+        run: >
+          task loadtest -- -profile medium -rate-start 10 -rate-factor 2 -max-steps 6 -step 30s
+          -slo-p99 300ms -require-rate 10 -out reports/loadtest
+
+      - name: Upload the load test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: loadtest-medium
+          path: admin-api/reports/loadtest
+          if-no-files-found: ignore
+
+  large:
+    name: Load test (large)
+    if: github.event_name == 'schedule' || inputs.profile == 'large'
+    runs-on: ubuntu-latest-4-cores
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: grafana/setup-k6-action@v1.2.2
+        with:
+          k6-version: v2.2.0
+
+      - name: Load test at the large volume
+        run: >
+          task loadtest -- -profile large -rate-start 5 -rate-factor 2 -max-steps 6 -step 30s
+          -slo-p99 500ms -require-rate 1 -out reports/loadtest
+
+      - name: Upload the load test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: loadtest-large
+          path: admin-api/reports/loadtest
+          if-no-files-found: ignore
