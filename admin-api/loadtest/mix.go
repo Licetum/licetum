@@ -12,22 +12,25 @@ type op int
 
 const (
 	opPermission op = iota
-	opCheck
+	opCheck1
+	opCheck10
+	opCheck100
 	opAuthzen
 	opAuthzenBatch
 	opOnBehalf
 	numOps
 )
 
-var opNames = [numOps]string{"permission", "check", "authzen", "authzen_batch", "on_behalf"}
+// opNames are the names of the requests, as the mix spells them and as the k6 script names its metrics.
+var opNames = [numOps]string{"permission", "check1", "check10", "check100", "authzen", "authzen_batch", "on_behalf"}
 
 // Mix is the share of each request in the traffic: a request is drawn with probability weight/total (k6 draws them, see
 // k6/check.js, which reads the same spelling).
 type Mix [numOps]int
 
-// DefaultMix is the traffic of a service that asks for every decision it makes: the checks, the permission lists, the
-// AuthZEN evaluations (single and batched) and the calls on behalf of a person.
-const DefaultMix = "permission=2,check=3,authzen=3,authzen_batch=1,on_behalf=1"
+// DefaultMix is the traffic of a service that asks for every decision it makes: the permission lists, the checks of one
+// and of ten questions, the AuthZEN evaluations (single and batched) and the calls on behalf of a person.
+const DefaultMix = "permission=2,check1=3,check10=1,authzen=2,authzen_batch=1,on_behalf=1"
 
 // ParseMix reads "name=weight,..." over the names of the requests. A request left out has weight 0.
 func ParseMix(s string) (Mix, error) {

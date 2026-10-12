@@ -48,7 +48,7 @@ func (w warmer) warmUp(ctx context.Context) ([]phase, error) {
 		req  func() (*http.Request, error)
 		want func(decisions, allowed int) bool
 	}{
-		{opCheck, w.check, granted},
+		{opCheck1, w.check, granted},
 		{opAuthzen, w.authzen, granted},
 		{opAuthzenBatch, w.authzenBatch, granted},
 		{opOnBehalf, w.onBehalf, granted},

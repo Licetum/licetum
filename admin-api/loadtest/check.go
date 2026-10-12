@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
 	"time"
 )
 
@@ -19,43 +17,6 @@ type checkServer struct {
 	base string
 	log  *os.File
 	done chan struct{} // closed when the process has exited
-}
-
-// startCheck runs `licetum check` against the infrastructure of the run. Its pool is the one the options name, with no
-// overflow, so the number of connections to PostgreSQL is the setting under test. Its output goes to check.log.
-func startCheck(ctx context.Context, e *env, opts Options) (*checkServer, error) {
-	addr, err := freeAddr()
-	if err != nil {
-		return nil, err
-	}
-	logFile, err := os.Create(filepath.Join(opts.OutDir, "check.log"))
-	if err != nil {
-		return nil, fmt.Errorf("create the server log: %w", err)
-	}
-	cmd := exec.CommandContext(ctx, opts.CheckBin, "check") //nolint:gosec // the binary is the one the run was asked to measure
-	cmd.Env = append(os.Environ(),
-		"DB__URI="+e.dbURI,
-		"DB__POOL_SIZE="+strconv.Itoa(opts.DBPool),
-		"DB__MAX_OVERFLOW=0",
-		"REDIS__URI="+e.redisURI,
-		"AUTH__STATE_SECRET="+e.stateSecret,
-		"HTTP__ADDR="+addr,
-	)
-	cmd.Stdout, cmd.Stderr = logFile, logFile
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		return nil, fmt.Errorf("start %s: %w", opts.CheckBin, err)
-	}
-	cs := &checkServer{cmd: cmd, base: "http://" + addr, log: logFile, done: make(chan struct{})}
-	go func() {
-		_ = cmd.Wait()
-		close(cs.done)
-	}()
-	if err := cs.waitReady(ctx, time.Minute); err != nil {
-		cs.stop()
-		return nil, err
-	}
-	return cs, nil
 }
 
 // waitReady polls the health endpoint until the server answers, the process exits, or the time is up.

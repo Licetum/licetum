@@ -1,29 +1,33 @@
 package loadtest
 
 import (
+	"encoding/json"
+	"math"
+	"math/rand/v2"
 	"os"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 func TestParseMix(t *testing.T) {
-	m, err := ParseMix("permission=2, check=3")
+	m, err := ParseMix("permission=2, check1=3")
 	if err != nil {
 		t.Fatalf("ParseMix: %v", err)
 	}
-	if m[opPermission] != 2 || m[opCheck] != 3 || m[opAuthzen] != 0 {
+	if m[opPermission] != 2 || m[opCheck1] != 3 || m[opAuthzen] != 0 {
 		t.Fatalf("weights = %v", m)
 	}
-	if got := m.String(); got != "permission=2,check=3" {
+	if got := m.String(); got != "permission=2,check1=3" {
 		t.Fatalf("String = %q", got)
 	}
-	for _, bad := range []string{"nope=1", "check", "check=x", "check=-1", "check=0"} {
+	for _, bad := range []string{"nope=1", "check", "check1=x", "check1=-1", "check1=0"} {
 		if _, err := ParseMix(bad); err == nil {
 			t.Errorf("ParseMix(%q) accepted", bad)
 		}
+	}
+	if _, err := ParseMix(DefaultMix); err != nil {
+		t.Fatalf("the default mix does not parse: %v", err)
 	}
 }
 
@@ -70,46 +74,74 @@ not a sample
 	}
 }
 
-func TestJudge(t *testing.T) {
-	ok := Step{TargetRPS: 100, AchievedRPS: 99, Latency: Latency{P99: 40}}
-	ok.judge(0.01, 100*time.Millisecond)
-	if !ok.Passed {
-		t.Fatalf("a step within its objectives failed: %v", ok.Reasons)
-	}
-
-	slow := Step{TargetRPS: 100, AchievedRPS: 99, Latency: Latency{P99: 250}}
-	slow.judge(0.01, 100*time.Millisecond)
-	failing := Step{TargetRPS: 100, AchievedRPS: 80, ErrorRate: 0.05, Latency: Latency{P99: 40}}
-	failing.judge(0.01, 100*time.Millisecond)
-	for name, s := range map[string]Step{"slow": slow, "late and failing": failing} {
-		if s.Passed || len(s.Reasons) == 0 {
-			t.Errorf("%s step passed: %+v", name, s)
+// TestMinSamples pins the rule of the report: a quantile is published from 100/(1-q) samples.
+func TestMinSamples(t *testing.T) {
+	cases := map[float64]int{0.5: 200, 0.9: 1000, 0.95: 2000, 0.99: 10000, 0.999: 100000}
+	for q, want := range cases {
+		if got := MinSamples(q); got != want {
+			t.Errorf("MinSamples(%v) = %d, want %d", q, got, want)
 		}
 	}
-	if len(failing.Reasons) != 2 {
-		t.Errorf("reasons = %v, want the error budget and the late answers", failing.Reasons)
+	l := Latency{Samples: 9999, P99: 42}
+	if _, ok := l.Quantile(0.99, l.P99); ok {
+		t.Error("a p99 from 9,999 samples was published")
+	}
+	l.Samples = 10000
+	if v, ok := l.Quantile(0.99, l.P99); !ok || v != 42 {
+		t.Errorf("a p99 from 10,000 samples was not published: %v %v", v, ok)
 	}
 }
 
-func TestSince(t *testing.T) {
-	before := statementCounts{
-		1: {Query: "SELECT 1", Calls: 10, TotalMS: 100},
-		2: {Query: "SELECT 2", Calls: 5, TotalMS: 50},
+func TestJudgeMeasurement(t *testing.T) {
+	ok := Measurement{K6Cores: 2, K6CPUShare: 0.4}
+	ok.judgeMeasurement()
+	if !ok.Valid {
+		t.Fatalf("a window within its limits is not valid: %v", ok.InvalidReasons)
 	}
-	after := statementCounts{
-		1: {Query: "SELECT 1", Calls: 20, TotalMS: 400},
-		2: {Query: "SELECT 2", Calls: 5, TotalMS: 50},
-		3: {Query: "SELECT 3", Calls: 2, TotalMS: 30},
+	bad := Measurement{K6Cores: 2, K6CPUShare: 0.9, Dropped: 3, Oracle: Oracle{Checked: 10, Mismatches: 1}}
+	bad.judgeMeasurement()
+	if bad.Valid || len(bad.InvalidReasons) != 3 {
+		t.Fatalf("dropped, a busy generator and a wrong answer should each invalidate: %+v", bad)
 	}
-	got := since(before, after, 10)
-	if len(got) != 2 {
-		t.Fatalf("got %d statements, want the two that ran: %+v", len(got), got)
+}
+
+func TestJudgeStep(t *testing.T) {
+	step := Measurement{RateAsked: 50, AchievedRPS: 49, ErrorRate: 0, Overall: Latency{P99: 40, Samples: 2000}, Valid: true}
+	step.judgeStep(0.01, 100*time.Millisecond)
+	if !step.Passed {
+		t.Fatalf("a step within its objectives failed: %v", step.FailReasons)
 	}
-	if got[0].Query != "SELECT 1" || got[0].Calls != 10 || got[0].TotalMS != 300 || got[0].MeanMS != 30 {
-		t.Errorf("most expensive = %+v", got[0])
+	slow := Measurement{RateAsked: 50, AchievedRPS: 49, Overall: Latency{P99: 250}, Valid: true}
+	slow.judgeStep(0.01, 100*time.Millisecond)
+	late := Measurement{RateAsked: 50, AchievedRPS: 30, ErrorRate: 0.05, Overall: Latency{P99: 40}, Valid: true}
+	late.judgeStep(0.01, 100*time.Millisecond)
+	if slow.Passed || late.Passed || len(late.FailReasons) != 2 {
+		t.Fatalf("slow %+v, late %+v: want both failed, the late one for errors and for the rate", slow, late)
 	}
-	if got := since(before, after, 1); len(got) != 1 {
-		t.Errorf("limit ignored: %d statements", len(got))
+}
+
+func TestCPUCores(t *testing.T) {
+	cases := map[string]int{"": 0, "10-11": 2, "0,2-4": 4, "7": 1}
+	for set, want := range cases {
+		if set == "" {
+			continue
+		}
+		if got := cpuCores(set, 1); got != want {
+			t.Errorf("cpuCores(%q) = %d, want %d", set, got, want)
+		}
+	}
+}
+
+func TestPreallocated(t *testing.T) {
+	cases := []struct{ rate, maxVUs, want int }{
+		{5, 250, 10},   // the floor
+		{400, 250, 80}, // a fifth of the rate
+		{400, 50, 50},  // never more than the most users
+	}
+	for _, c := range cases {
+		if got := preallocated(c.rate, c.maxVUs); got != c.want {
+			t.Errorf("preallocated(%d, %d) = %d, want %d", c.rate, c.maxVUs, got, c.want)
+		}
 	}
 }
 
@@ -133,12 +165,48 @@ func TestProfileVolumes(t *testing.T) {
 	}
 }
 
-// TestRuleMix checks the policy each rule kind builds: the owner pattern first, then the mix of the rest.
+// TestExpectedAllowed checks the oracle on a policy small enough to work out by hand. Four subjects, two departments,
+// twenty rules and one folder: rules 0-9 belong to department 0, rules 10-19 to department 1, and every rule grants or
+// denies the single folder. Rule 0 is the owner pattern; rule 8 denies department 0 the folder; rule 18 denies
+// department 1; rule 9 (an exception for subject 1 on document 9) lifts the denial for that document.
+func TestExpectedAllowed(t *testing.T) {
+	p := Profile{Name: "hand", Users: 4, Groups: 2, Rules: 20, Resources: 20}
+	cases := []struct {
+		u, d int
+		want bool
+		why  string
+	}{
+		{0, 4, false, "owned by subject 0, but department 0 is denied the folder"},
+		{1, 0, false, "department 1 has grants on the folder, but it is denied and no exception names document 0"},
+		{1, 9, true, "the exception of rule 9 lifts the denial for subject 1 on document 9"},
+		{2, 2, false, "owned by subject 2, but department 0 is denied the folder"},
+	}
+	for _, c := range cases {
+		if got := p.expectedAllowed(c.u, c.d); got != c.want {
+			t.Errorf("subject %d, document %d: got %v, want %v (%s)", c.u, c.d, got, c.want, c.why)
+		}
+	}
+}
+
+// TestOracleSampleInRange checks that the sampled pairs name subjects and documents the policy has.
+func TestOracleSampleInRange(t *testing.T) {
+	p := Profile{Name: "range", Users: 50, Groups: 5, Rules: 300, Resources: 400}
+	rnd := rand.New(rand.NewPCG(1, 2))
+	for range 2000 {
+		u, d := p.oracleSample(rnd)
+		if u < 0 || u >= p.Users || d < 0 || d >= p.documents() {
+			t.Fatalf("pair (%d, %d) is outside the policy", u, d)
+		}
+	}
+}
+
+// TestRuleMix checks the policy each rule kind builds: the owner pattern first, then the mix of the rest, and each
+// department gets all the kinds (the department of a rule is taken from its block of ten).
 func TestRuleMix(t *testing.T) {
 	p := Profile{Users: 200, Groups: 10, Rules: 1_000, Resources: 10_000}
-	fx := &fixture{folders: p.folders(), documents: p.documents(), folderType: uuid.New(), documentType: uuid.New()}
+	fx := &fixture{folders: p.folders(), documents: p.documents(), folderType: [16]byte{1}, documentType: [16]byte{2}}
 	for range p.Groups {
-		fx.groups = append(fx.groups, uuid.New())
+		fx.groups = append(fx.groups, [16]byte{3})
 	}
 
 	owner := ruleFor(0, p, fx)
@@ -153,5 +221,34 @@ func TestRuleMix(t *testing.T) {
 	}
 	if grant := ruleFor(4, p, fx); grant.Subject == nil || *grant.Subject != "user-4" {
 		t.Errorf("rule 4 is not a grant to user-4: %+v", grant)
+	}
+	// Department 7 gets the group grants (kinds 0-3) as well, not only one kind: 1000 rules over 10 departments.
+	kinds := map[int]bool{}
+	for i := range p.Rules {
+		if i == 0 {
+			continue
+		}
+		if r := ruleFor(i, p, fx); r.MemberOfGroupID != nil && *r.MemberOfGroupID == fx.groups[7] {
+			kinds[i%10] = true
+		}
+	}
+	if len(kinds) < 3 {
+		t.Errorf("department 7 has rules of %d kinds, want the mix", len(kinds))
+	}
+}
+
+// TestMeasurementJSON checks that a window survives the round trip to result.json, with its samples.
+func TestMeasurementJSON(t *testing.T) {
+	m := Measurement{RateAsked: 10, Operations: []Operation{{Name: "check1", Requests: 5, Latency: Latency{Samples: 5, P50: 2}}}}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Measurement
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Operations[0].Latency.Samples != 5 || math.Abs(back.Operations[0].Latency.P50-2) > 1e-9 {
+		t.Fatalf("round trip lost the samples: %+v", back)
 	}
 }

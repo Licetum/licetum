@@ -1,7 +1,6 @@
 package loadtest
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,23 +24,20 @@ const (
 // serverOperation is the operation id each request kind carries in the server's metrics.
 var serverOperation = [numOps]string{
 	opPermission:   "get_permission",
-	opCheck:        "check_access",
+	opCheck1:       "check_access",
+	opCheck10:      "check_access",
+	opCheck100:     "check_access",
 	opAuthzen:      "authzen_evaluation",
 	opAuthzenBatch: "authzen_evaluations",
 	opOnBehalf:     "delegated_check",
 }
 
-// Latency is a distribution of request times, in milliseconds.
-type Latency struct {
-	P50  float64 `json:"p50"`
-	P90  float64 `json:"p90"`
-	P95  float64 `json:"p95"`
-	P99  float64 `json:"p99"`
-	Max  float64 `json:"max"`
-	Mean float64 `json:"mean"`
-}
+// Operation is the measured distribution of one kind of request. Its Latency says how many samples it has, and a
+// percentile is published only with enough of them (see Latency.Quantile).
+//
+// (The type itself is declared in measure.go.)
 
-// Server is what the check server and its database did during a step, read from their own counters. A figure with
+// Server is what the check server and its database did during a window, read from their own counters. A figure with
 // nothing to divide, or not measured, is -1.
 type Server struct {
 	CPUCores                float64            `json:"cpu_cores"`
@@ -57,36 +53,29 @@ type Server struct {
 	DBCallsPerRequest       float64            `json:"db_calls_per_request"`
 }
 
-// Step is one rate of the ramp: what was asked, what came back, what the server spent, and whether it met the targets.
-type Step struct {
-	TargetRPS    float64            `json:"target_rps"`
-	Seconds      float64            `json:"seconds"`
-	Requests     int                `json:"requests"`
-	OK           int                `json:"ok"`
-	ErrorRate    float64            `json:"error_rate"`
-	AchievedRPS  float64            `json:"achieved_rps"`
-	Dropped      int                `json:"dropped_iterations"`
-	Latency      Latency            `json:"latency_ms"`
-	ByOperation  map[string]Latency `json:"by_operation_ms"`
-	Decisions    int                `json:"decisions"`
-	AllowedShare float64            `json:"allowed_share"`
-	Server       Server             `json:"server"`
-	Passed       bool               `json:"passed"`
-	Reasons      []string           `json:"reasons,omitempty"`
-}
-
 // Settings are the options of the run that the numbers depend on.
 type Settings struct {
-	Mix          string  `json:"mix"`
-	Consistency  string  `json:"consistency"`
-	Concurrency  int     `json:"concurrency"`
-	DBPool       int     `json:"db_pool"`
-	AccessLog    bool    `json:"access_log"`
-	RateStart    float64 `json:"rate_start"`
-	RateFactor   float64 `json:"rate_factor"`
-	StepSeconds  float64 `json:"step_seconds"`
-	SLOP99MS     float64 `json:"slo_p99_ms"`
-	MaxErrorRate float64 `json:"max_error_rate"`
+	ProfileName   string  `json:"profile"`
+	Mode          string  `json:"mode"`
+	Seed          int64   `json:"seed"`
+	Mix           string  `json:"mix"`
+	Consistency   string  `json:"consistency"`
+	Concurrency   int     `json:"concurrency"`
+	DBPool        int     `json:"db_pool"`
+	AccessLog     bool    `json:"access_log"`
+	Ramp          bool    `json:"ramp"`
+	Rate          float64 `json:"rate"`
+	RateStart     float64 `json:"rate_start"`
+	RateFactor    float64 `json:"rate_factor"`
+	WarmSeconds   float64 `json:"warm_seconds"`
+	MeasureSecs   float64 `json:"measure_seconds"`
+	SLOP99MS      float64 `json:"slo_p99_ms"`
+	MaxErrorRate  float64 `json:"max_error_rate"`
+	OracleRate    float64 `json:"oracle_rate"`
+	K6CPUs        string  `json:"k6_cpus"`
+	CheckCPUs     string  `json:"check_cpus"`
+	RequiredRate  float64 `json:"required_rate"`
+	RawPointsKept bool    `json:"raw_points_kept"`
 	// ExtraSQL is the file applied after the warm-up, when the run is an experiment (empty otherwise).
 	ExtraSQL string `json:"extra_sql,omitempty"`
 }
@@ -101,74 +90,157 @@ type Machine struct {
 	K6        string `json:"k6"`
 }
 
-// Report is the result of a run. SustainedRPS is the highest rate whose step met the targets.
+// Report is the result of a run: the measured windows (one, or the steps of a ramp), with what the server and the
+// database did, and the verdict. SustainedRPS is the highest ramp step that passed.
 type Report struct {
-	Started       time.Time   `json:"started"`
-	Finished      time.Time   `json:"finished"`
-	Profile       Profile     `json:"profile"`
-	Settings      Settings    `json:"settings"`
-	Machine       Machine     `json:"machine"`
-	Seeding       []phase     `json:"seeding"`
-	RulesWritten  int         `json:"rules_written"`
-	WarmUp        []phase     `json:"warm_up"`
-	DBStatements  bool        `json:"db_statements"`
-	TopStatements []Statement `json:"top_statements,omitempty"`
-	Steps         []Step      `json:"steps"`
-	SustainedRPS  float64     `json:"sustained_rps"`
-	RequiredRPS   float64     `json:"required_rps"`
-	Passed        bool        `json:"passed"`
+	Started       time.Time     `json:"started"`
+	Finished      time.Time     `json:"finished"`
+	Profile       Profile       `json:"profile"`
+	Settings      Settings      `json:"settings"`
+	Machine       Machine       `json:"machine"`
+	Seeding       []phase       `json:"seeding"`
+	RulesWritten  int           `json:"rules_written"`
+	WarmUp        []phase       `json:"warm_up"`
+	DBStatements  bool          `json:"db_statements"`
+	TopStatements []Statement   `json:"top_statements,omitempty"`
+	Storage       []TableSize   `json:"storage,omitempty"`
+	Measurements  []Measurement `json:"measurements"`
+	SustainedRPS  float64       `json:"sustained_rps"`
+	RequiredRPS   float64       `json:"required_rps"`
+	Passed        bool          `json:"passed"`
 }
 
-// stepFromK6 turns the summary of a step into the step. target is the rate asked, dur the length of the step, and
-// before and after the readings of the server around it.
-func stepFromK6(s k6Summary, target float64, dur time.Duration, mix Mix, before, after counters) Step {
-	requests := s.value("http_reqs", "count")
-	// http_req_failed is a rate whose value is the share of the requests that failed (its passes and fails count the
-	// other way round, as k6 counts the true values).
-	errorRate := s.value("http_req_failed", "value")
-	ok := requests * (1 - errorRate)
-	decisions := s.value("decisions", "count")
-	allowed := s.value("allowed", "count")
-	step := Step{
-		TargetRPS:    target,
-		Seconds:      dur.Seconds(),
-		Requests:     int(requests + 0.5),
-		OK:           int(ok + 0.5),
-		ErrorRate:    errorRate,
-		AchievedRPS:  s.value("http_reqs", "rate") * (1 - errorRate),
-		Dropped:      int(s.value("dropped_iterations", "count") + 0.5),
-		Latency:      s.trend("http_req_duration"),
-		ByOperation:  map[string]Latency{},
-		Decisions:    int(decisions + 0.5),
-		AllowedShare: ratio(allowed, decisions),
-		Server:       serverSide(before, after, int(requests+0.5), dur),
+// finish sets the verdict. A fixed-rate run passes when its window is valid. A ramp passes when some step passed, the
+// highest of them is the sustained rate, and it reaches the required rate.
+func (r *Report) finish(required float64, ramp bool) {
+	r.RequiredRPS = required
+	r.SustainedRPS = 0
+	if ramp {
+		for _, m := range r.Measurements {
+			if m.Passed {
+				r.SustainedRPS = max(r.SustainedRPS, m.RateAsked)
+			}
+		}
+		r.Passed = r.SustainedRPS > 0 && r.SustainedRPS >= required
+	} else {
+		r.Passed = len(r.Measurements) == 1 && r.Measurements[0].Valid
 	}
-	for i, name := range opNames {
-		if mix[i] > 0 {
-			step.ByOperation[name] = s.trend("latency_" + name)
+	r.Finished = time.Now()
+}
+
+// write saves the report as result.json and summary.md in dir.
+func (r *Report) write(dir string) error {
+	if err := writeJSON(filepath.Join(dir, "result.json"), r); err != nil {
+		return fmt.Errorf("write result.json: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "summary.md"), []byte(r.Markdown()), 0o600); err != nil {
+		return fmt.Errorf("write summary.md: %w", err)
+	}
+	return nil
+}
+
+// Markdown is the summary of the run: the windows with their operations, the validity of each, and where the time went.
+func (r *Report) Markdown() string {
+	var b strings.Builder
+	p := r.Profile
+	fmt.Fprintf(&b, "# Load test: %s, %s mode, seed %d\n\n", p.Name, r.Settings.Mode, r.Settings.Seed)
+	fmt.Fprintf(&b, "Policy: %d subjects in %d groups, %d assignment rules, %d resources (%d folders, %d documents).\n",
+		p.Users, p.Groups, r.RulesWritten, p.Resources, p.folders(), p.documents())
+	fmt.Fprintf(&b, "Check server: DB pool %d connections, consistency `%s`, access log %s, CPUs `%s`. Requests: `%s`.\n",
+		r.Settings.DBPool, r.Settings.Consistency, onOff(r.Settings.AccessLog), cpuLabel(r.Settings.CheckCPUs), r.Settings.Mix)
+	fmt.Fprintf(&b, "Load generator: k6 %s, at most %d virtual users, CPUs `%s`. Machine: %d CPUs, %s/%s, %s.\n",
+		strings.TrimPrefix(r.Machine.K6, "k6 v"), r.Settings.Concurrency, cpuLabel(r.Settings.K6CPUs), r.Machine.CPUs, r.Machine.OS,
+		r.Machine.Arch, r.Machine.GoVersion)
+	fmt.Fprintf(&b, "Warm-up: %.0f s before the measurement. Measured window: %.0f s per window. Environment: `environment.json`.\n\n",
+		r.Settings.WarmSeconds, r.Settings.MeasureSecs)
+
+	verdict := "**Measured window is not valid.**"
+	if r.Passed && !r.Settings.Ramp {
+		verdict = "**Measured window is valid.**"
+	}
+	if r.Settings.Ramp {
+		verdict = "**Sustained: none.** The first step already missed its targets."
+		if r.SustainedRPS > 0 {
+			verdict = fmt.Sprintf("**Sustained: %.0f requests/s** (p99 within %.0f ms, errors within %.2f%%).",
+				r.SustainedRPS, r.Settings.SLOP99MS, 100*r.Settings.MaxErrorRate)
 		}
 	}
-	return step
+	fmt.Fprintf(&b, "%s\n\n", verdict)
+
+	b.WriteString("## Seeding and warm-up\n\n| phase | seconds |\n|---|---:|\n")
+	for _, ph := range append(append([]phase{}, r.Seeding...), r.WarmUp...) {
+		fmt.Fprintf(&b, "| %s | %.2f |\n", ph.Name, ph.Seconds)
+	}
+
+	for _, m := range r.Measurements {
+		b.WriteString("\n")
+		m.markdown(&b, r.Settings.Ramp)
+	}
+
+	if r.DBStatements && len(r.TopStatements) > 0 {
+		b.WriteString("\n## Statements with the most time during the measurement\n\n")
+		b.WriteString("| total ms | calls | mean ms | statement |\n|---:|---:|---:|---|\n")
+		for _, st := range r.TopStatements {
+			fmt.Fprintf(&b, "| %.0f | %d | %.2f | `%s` |\n", st.TotalMS, st.Calls, st.MeanMS, strings.ReplaceAll(st.Query, "|", `\|`))
+		}
+	}
+	if len(r.Storage) > 0 {
+		b.WriteString("\n## Storage after the run\n\n| table | rows | total bytes | index bytes |\n|---|---:|---:|---:|\n")
+		for _, t := range r.Storage {
+			fmt.Fprintf(&b, "| %s | %d | %d | %d |\n", t.Table, t.Rows, t.TotalBytes, t.IndexBytes)
+		}
+	}
+	return b.String()
 }
 
-// judge sets the verdict of the step. It passes when the errors stay in the budget, p99 stays within the objective, and
-// the answers keep up with the rate asked. Dropped iterations are the arrivals k6 could not start because every virtual
-// user was still waiting for an answer: the step is saturated, whatever its latency.
-func (s *Step) judge(maxErrorRate float64, sloP99 time.Duration) {
-	s.Reasons = nil
-	if s.ErrorRate > maxErrorRate {
-		s.Reasons = append(s.Reasons, fmt.Sprintf("errors %.2f%% above %.2f%%", 100*s.ErrorRate, 100*maxErrorRate))
+// markdown writes one measured window: its operations with their sample counts, the answers, the validity, and the
+// server's share of the time.
+func (m Measurement) markdown(b *strings.Builder, ramp bool) {
+	title := fmt.Sprintf("## Window at %.0f requests/s", m.RateAsked)
+	if !ramp {
+		title = fmt.Sprintf("## Measured window at %.0f requests/s", m.RateAsked)
 	}
-	if s.Latency.P99 > ms(sloP99) {
-		s.Reasons = append(s.Reasons, fmt.Sprintf("p99 %.1f ms above %v", s.Latency.P99, sloP99))
+	b.WriteString(title + "\n\n")
+	b.WriteString("| request | samples | mean ms | p50 ms | p90 ms | p95 ms | p99 ms | p99.9 ms | max ms |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	for _, op := range m.Operations {
+		if op.Requests == 0 {
+			continue
+		}
+		l := op.Latency
+		fmt.Fprintf(b, "| %s | %d | %s | %s | %s | %s | %s | %s | %s |\n", op.Name, l.Samples, num(l.Mean), num(l.P50),
+			num(l.P90), num(l.P95), publish(l, 0.99, l.P99), publish(l, 0.999, l.P999), num(l.Max))
 	}
-	if s.AchievedRPS < 0.95*s.TargetRPS {
-		s.Reasons = append(s.Reasons, fmt.Sprintf("%.0f answers/s, under 95%% of the %.0f asked", s.AchievedRPS, s.TargetRPS))
+	b.WriteString("\nA percentile is published only when its quantile has enough samples: p99 from 10,000, p99.9 from 100,000 (\"–\" below that).\n\n")
+	fmt.Fprintf(b, "- requests %d, answered 2xx %d, other %d (error rate %.2f%%), answered %.1f requests/s\n",
+		m.Requests, m.Answered2xx, m.AnsweredOther, 100*m.ErrorRate, m.AchievedRPS)
+	fmt.Fprintf(b, "- dropped iterations %d; allowed share of the decisions %s over %d decisions\n",
+		m.Dropped, pct(m.AllowedShare), m.Decisions)
+	fmt.Fprintf(b, "- load generator CPU %.0f%% of %d cores; server CPU %s cores; permission cache hit %s, check cache hit %s\n",
+		100*m.K6CPUShare, m.K6Cores, num(m.Server.CPUCores), pct(m.Server.PermissionCacheHit), pct(m.Server.CheckCacheHit))
+	fmt.Fprintf(b, "- oracle: %d answers checked (%d expected granted), %d mismatches\n",
+		m.Oracle.Checked, m.Oracle.Granted, m.Oracle.Mismatches)
+	if m.Valid {
+		b.WriteString("- validity: valid\n")
+	} else {
+		fmt.Fprintf(b, "- validity: **invalid**: %s\n", strings.Join(m.InvalidReasons, "; "))
 	}
-	if s.Dropped > 0 {
-		s.Reasons = append(s.Reasons, fmt.Sprintf("%d arrivals dropped: every virtual user was waiting", s.Dropped))
+	if ramp {
+		if m.Passed {
+			b.WriteString("- step: pass\n")
+		} else {
+			fmt.Fprintf(b, "- step: **fail**: %s\n", strings.Join(m.FailReasons, "; "))
+		}
 	}
-	s.Passed = len(s.Reasons) == 0
+}
+
+// publish is the value of a percentile, or "–" when its quantile has too few samples.
+func publish(l Latency, q, value float64) string {
+	v, ok := l.Quantile(q, value)
+	if !ok {
+		return "–"
+	}
+	return num(v)
 }
 
 // serverSide reads what the check server and its database did between two readings.
@@ -203,122 +275,6 @@ func serverSide(before, after counters, requests int, elapsed time.Duration) Ser
 		srv.DBCallsPerRequest = perRequest(delta(before.db, after.db, "calls"), requests)
 	}
 	return srv
-}
-
-// finish sets the sustained rate and the verdict of the run: the highest step that passed, and whether it reaches the
-// required rate. A run in which no step passed has no sustained rate and fails.
-func (r *Report) finish(required float64) {
-	r.RequiredRPS = required
-	r.SustainedRPS = 0
-	for _, s := range r.Steps {
-		if s.Passed {
-			r.SustainedRPS = max(r.SustainedRPS, s.TargetRPS)
-		}
-	}
-	r.Passed = r.SustainedRPS > 0 && r.SustainedRPS >= required
-	r.Finished = time.Now()
-}
-
-// write saves the report as result.json and summary.md in dir.
-func (r *Report) write(dir string) error {
-	raw, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode the report: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "result.json"), append(raw, '\n'), 0o600); err != nil {
-		return fmt.Errorf("write result.json: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "summary.md"), []byte(r.Markdown()), 0o600); err != nil {
-		return fmt.Errorf("write summary.md: %w", err)
-	}
-	return nil
-}
-
-// Markdown is the summary of the run: the volume, the ramp, and where the time went at the sustained rate (or at the
-// first rate, when none was sustained).
-func (r *Report) Markdown() string {
-	var b strings.Builder
-	p := r.Profile
-	fmt.Fprintf(&b, "# Load test: %s\n\n", p.Name)
-	fmt.Fprintf(&b, "Policy: %d subjects in %d groups, %d assignment rules, %d resources (%d folders, %d documents).\n",
-		p.Users, p.Groups, r.RulesWritten, p.Resources, p.folders(), p.documents())
-	fmt.Fprintf(&b, "Check server: DB pool %d connections, consistency `%s`, access log %s. Requests: `%s`.\n",
-		r.Settings.DBPool, r.Settings.Consistency, onOff(r.Settings.AccessLog), r.Settings.Mix)
-	fmt.Fprintf(&b, "Load generator: k6 %s, at most %d virtual users. Machine: %d CPUs, %s/%s, %s.\n\n",
-		strings.TrimPrefix(r.Machine.K6, "k6 v"), r.Settings.Concurrency, r.Machine.CPUs, r.Machine.OS, r.Machine.Arch,
-		r.Machine.GoVersion)
-
-	verdict := "**Sustained: none.** The first step already missed its targets."
-	if r.SustainedRPS > 0 {
-		verdict = fmt.Sprintf("**Sustained: %.0f requests/s** (p99 within %.0f ms, errors within %.2f%%).",
-			r.SustainedRPS, r.Settings.SLOP99MS, 100*r.Settings.MaxErrorRate)
-	}
-	fmt.Fprintf(&b, "%s\n\n", verdict)
-
-	b.WriteString("## Seeding and first synchronization\n\n| phase | seconds |\n|---|---:|\n")
-	for _, ph := range append(append([]phase{}, r.Seeding...), r.WarmUp...) {
-		fmt.Fprintf(&b, "| %s | %.2f |\n", ph.Name, ph.Seconds)
-	}
-
-	b.WriteString("\n## Ramp\n\n")
-	b.WriteString("| asked/s | answered/s | errors | dropped | allowed | p50 ms | p95 ms | p99 ms | max ms | server CPU (cores) | permission cache hit | check cache hit | verdict |\n")
-	b.WriteString("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
-	for _, s := range r.Steps {
-		verdict := "pass"
-		if !s.Passed {
-			verdict = "**" + strings.Join(s.Reasons, "; ") + "**"
-		}
-		fmt.Fprintf(&b, "| %.0f | %.0f | %.2f%% | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
-			s.TargetRPS, s.AchievedRPS, 100*s.ErrorRate, s.Dropped, pct(s.AllowedShare),
-			num(s.Latency.P50), num(s.Latency.P95), num(s.Latency.P99), num(s.Latency.Max),
-			num(s.Server.CPUCores), pct(s.Server.PermissionCacheHit), pct(s.Server.CheckCacheHit), verdict)
-	}
-
-	if at := r.breakdownStep(); at != nil {
-		fmt.Fprintf(&b, "\n## Where the time goes at %.0f requests/s\n\n", at.TargetRPS)
-		b.WriteString("| request | p50 ms | p99 ms | server avg ms |\n|---|---:|---:|---:|\n")
-		for _, name := range opNames {
-			lat, ok := at.ByOperation[name]
-			if !ok {
-				continue
-			}
-			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", name, num(lat.P50), num(lat.P99), num(at.Server.OperationMS[name]))
-		}
-		b.WriteString("\n")
-		fmt.Fprintf(&b, "- permission computed on a cache miss: %s ms on average\n", num(at.Server.PermissionComputeMS))
-		fmt.Fprintf(&b, "- source fetched per synchronization: %s ms on average\n", num(at.Server.SourceFetchMS))
-		fmt.Fprintf(&b, "- database: %s blocks read per request, buffer hit ratio %s, %s commits per request\n",
-			num(at.Server.DBBlocksReadPerRequest), pct(at.Server.DBBufferHitRatio), num(at.Server.DBCommitsPerRequest))
-		if r.DBStatements {
-			fmt.Fprintf(&b, "- database statements: %s ms of statement time and %s calls per request\n",
-				num(at.Server.DBStatementMSPerRequest), num(at.Server.DBCallsPerRequest))
-		} else {
-			b.WriteString("- database statements: not measured (the server does not preload pg_stat_statements)\n")
-		}
-	}
-
-	if r.DBStatements && len(r.TopStatements) > 0 {
-		b.WriteString("\n## Statements with the most time during the ramp\n\n")
-		b.WriteString("| total ms | calls | mean ms | statement |\n|---:|---:|---:|---|\n")
-		for _, st := range r.TopStatements {
-			fmt.Fprintf(&b, "| %.0f | %d | %.2f | `%s` |\n", st.TotalMS, st.Calls, st.MeanMS, strings.ReplaceAll(st.Query, "|", `\|`))
-		}
-	}
-	return b.String()
-}
-
-// breakdownStep is the step the breakdown describes: the highest one that passed, or the first when none did.
-func (r *Report) breakdownStep() *Step {
-	var best *Step
-	for i := range r.Steps {
-		if r.Steps[i].Passed {
-			best = &r.Steps[i]
-		}
-	}
-	if best == nil && len(r.Steps) > 0 {
-		best = &r.Steps[0]
-	}
-	return best
 }
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
@@ -376,4 +332,15 @@ func machine(k6 string) Machine {
 		GoVersion: runtime.Version(),
 		K6:        k6,
 	}
+}
+
+// runtimeCPUs is the number of logical CPUs of the host.
+func runtimeCPUs() int { return runtime.NumCPU() }
+
+// cpuLabel is the CPU list a process is pinned to, or "all" when it is not pinned.
+func cpuLabel(set string) string {
+	if set == "" {
+		return "all"
+	}
+	return set
 }

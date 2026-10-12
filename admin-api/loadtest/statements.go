@@ -50,6 +50,9 @@ func snapshotStatements(ctx context.Context, pool *pgxpool.Pool) (statementCount
 func since(before, after statementCounts, limit int) []Statement {
 	var out []Statement
 	for id, a := range after {
+		if isHarnessStatement(a.Query) {
+			continue
+		}
 		b := before[id]
 		calls := a.Calls - b.Calls
 		if calls <= 0 {
@@ -79,4 +82,11 @@ func shorten(q string, n int) string {
 		return q
 	}
 	return q[:n] + "…"
+}
+
+// isHarnessStatement is a statement the harness itself runs to read the server (the statistics, the sizes): it is not
+// part of the traffic, and the report leaves it out.
+func isHarnessStatement(query string) bool {
+	return strings.Contains(query, "pg_stat_statements") || strings.Contains(query, "pg_database") ||
+		strings.Contains(query, "pg_total_relation_size") || strings.Contains(query, "pg_settings")
 }
