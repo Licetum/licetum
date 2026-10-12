@@ -143,9 +143,10 @@ jobs:
         working-directory: web
         run: pnpm build
 
-  # The check API at the smoke volume (admin-api/loadtest): a gate against gross regressions, not a benchmark. The
-  # the steps are too short for a p99 (about 750 requests each), so the gate is the error rate and the rate asked; the
-  # runners are shared, and the real numbers come from the nightly loadtest.yml.
+  # The check API at the smoke volume (admin-api/loadtest): a ramp of three steps, a gate against gross regressions, not
+  # a benchmark. A step passes on a valid window, errors within 1 %, and at least 95 % of the rate asked answered; the p99
+  # of a 15-second step (about 750 requests) is not judged. The runners are shared, and the real numbers come from the
+  # nightly loadtest.yml.
   loadtest-smoke:
     name: Load test (smoke volume)
     needs: changes
@@ -173,7 +174,7 @@ jobs:
 
       - name: Load test at the smoke volume
         run: >
-          task loadtest -- -profile smoke -rate-start 50 -rate-factor 2 -max-steps 3 -measure 15s
+          task loadtest -- -profile smoke -ramp -rate-start 50 -rate-factor 2 -max-steps 3 -measure 15s
           -require-rate 50 -out reports/loadtest
 
       - name: Upload the load test results
