@@ -66,11 +66,23 @@ func AggregateReport(dirs []string) (string, error) {
 	return b.String(), nil
 }
 
-// configKey is what makes two runs comparable: the same policy, the same traffic, the same rate and window.
+// configKey is what makes two runs comparable: the same policy size (overrides included), the same server setup, the same
+// traffic, the same rate and window, and the same experiments applied to the run.
 func configKey(r Report) string {
-	s := r.Settings
-	return fmt.Sprintf("%s | mode %s | mix %s | consistency %s | rate %.0f | measure %.0f s | warm %.0f s | oracle %.0f/s",
-		r.Profile.Name, s.Mode, s.Mix, s.Consistency, s.Rate, s.MeasureSecs, s.WarmSeconds, s.OracleRate)
+	s, p := r.Settings, r.Profile
+	return fmt.Sprintf("%s (%d subjects, %d groups, %d rules, %d resources) | mode %s | mix %s | consistency %s | rate %.0f | "+
+		"measure %.0f s | warm %.0f s | oracle %.0f/s | db pool %d | access log %s | replicas %d | writes every %.0f s | "+
+		"redis paused %.0f s | extra SQL %s",
+		p.Name, p.Users, p.Groups, p.Rules, p.Resources, s.Mode, s.Mix, s.Consistency, s.Rate, s.MeasureSecs, s.WarmSeconds,
+		s.OracleRate, s.DBPool, onOff(s.AccessLog), s.Replicas, s.WritesEverySec, s.PauseRedisSecs, nameOrNone(s.ExtraSQL))
+}
+
+// nameOrNone is the name of a file, or "none" when there is none.
+func nameOrNone(name string) string {
+	if name == "" {
+		return "none"
+	}
+	return name
 }
 
 // writeGroup writes the table of one configuration: its runs, the validity of each, and the median and range of every
@@ -176,7 +188,7 @@ func writeLimitations(b *strings.Builder) {
 	b.WriteString("## How to reproduce\n\n")
 	b.WriteString("```bash\n")
 	b.WriteString("task loadtest:build\n")
-	b.WriteString("cd admin-api && go run ./cmd/licetum-loadtest run -profile 10k -mode warm -seed 1 -out reports/x/run-1\n")
+	b.WriteString("cd admin-api && go run ./cmd/licetum-loadtest run -profile smoke -mode warm -seed 1 -out reports/x/run-1\n")
 	b.WriteString("go run ./cmd/licetum-loadtest aggregate -out report.md reports/x/run-*\n")
 	b.WriteString("```\n")
 }

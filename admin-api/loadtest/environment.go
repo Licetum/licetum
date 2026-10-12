@@ -222,7 +222,6 @@ func readTrim(path string) string {
 	return strings.TrimSpace(string(raw))
 }
 
-// commandOutput is the trimmed output of a command, or "unknown" when it fails.
 // stackCPUs is the CPU set of each container of the test stack (admin-api/loadtest/compose.yml), as docker reports it: "all"
 // when the container is not pinned, or "unknown" when docker does not know it.
 func stackCPUs(ctx context.Context) map[string]string {
@@ -237,6 +236,7 @@ func stackCPUs(ctx context.Context) map[string]string {
 	return out
 }
 
+// commandOutput is the trimmed output of a command, or "unknown" when it fails.
 func commandOutput(ctx context.Context, name string, args ...string) string {
 	out, err := exec.CommandContext(ctx, name, args...).Output() //nolint:gosec // fixed tools, fixed arguments
 	if err != nil {

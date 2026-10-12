@@ -150,10 +150,10 @@ the k6 summaries and logs, and `check.log`. The tokens of the run are written to
 
 Docker runs PostgreSQL and Redis; a server named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI` is used
 instead. The containers preload `pg_stat_statements`; an external server needs it in `shared_preload_libraries` for the
-statement figures. The check server's pool is the product's default maximum (10 connections and 20 of overflow); a pool
-smaller than the traffic makes the requests wait for a connection, which shows as a tail of slow answers.
+statement figures. The check server's pool is `-db-pool` connections (30 by default, with no overflow, so the pool is
+the setting under test); a pool smaller than the traffic makes the requests wait for a connection, which shows as a tail of slow answers.
 
-Two switches for reading a run: `LICETUM_LOADTEST_K6_RAW=1` keeps the point of every request (`*.points.json`), and
+Two switches for reading a run: `LICETUM_LOADTEST_K6_RAW=1` keeps the point of every request (`*.points.json.gz`), and
 `LICETUM_LOADTEST_KEEP_DB=1` keeps the run's database on an external server, to read its query plans.
 
 The nightly run is `.github/workflows/loadtest.yml`; the smoke volume runs on pull requests that touch the Go code.

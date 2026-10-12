@@ -91,8 +91,6 @@ func parseSwapPages(vmstat string) float64 {
 }
 
 // enableStatements turns on the statistics of the statements the database runs. It works only when the server preloads
-
-// enableStatements turns on the statistics of the statements the database runs. It works only when the server preloads
 // the extension (shared_preload_libraries); without it the run still measures the server, and the database is a black
 // box in the report.
 func enableStatements(ctx context.Context, o observer) observer {

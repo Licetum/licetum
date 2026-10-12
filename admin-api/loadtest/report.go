@@ -32,11 +32,6 @@ var serverOperation = [numOps]string{
 	opOnBehalf:     "delegated_check",
 }
 
-// Operation is the measured distribution of one kind of request. Its Latency says how many samples it has, and a
-// percentile is published only with enough of them (see Latency.Quantile).
-//
-// (The type itself is declared in measure.go.)
-
 // Server is what the check server and its database did during a window, read from their own counters. A figure with
 // nothing to divide, or not measured, is -1.
 type Server struct {
@@ -77,6 +72,8 @@ type Settings struct {
 	CheckCPUs      string  `json:"check_cpus"`
 	RequiredRate   float64 `json:"required_rate"`
 	RawPointsKept  bool    `json:"raw_points_kept"`
+	Replicas       int     `json:"replicas"`
+	PauseRedisSecs float64 `json:"pause_redis_seconds"`
 	// ExtraSQL is the file applied after the warm-up, when the run is an experiment (empty otherwise).
 	ExtraSQL string `json:"extra_sql,omitempty"`
 }

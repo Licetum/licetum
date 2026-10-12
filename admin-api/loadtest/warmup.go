@@ -45,7 +45,7 @@ func (w warmer) warmUp(ctx context.Context) ([]phase, error) {
 
 	probes := []struct {
 		kind op
-		req  func() (*http.Request, error)
+		req  func(context.Context) (*http.Request, error)
 		want func(decisions, allowed int) bool
 	}{
 		{opCheck1, w.check, granted},
@@ -54,7 +54,7 @@ func (w warmer) warmUp(ctx context.Context) ([]phase, error) {
 		{opOnBehalf, w.onBehalf, granted},
 	}
 	for _, p := range probes {
-		req, err := p.req()
+		req, err := p.req(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -102,25 +102,25 @@ func (w warmer) synchronize(ctx context.Context) error {
 	}
 }
 
-func (w warmer) check() (*http.Request, error) {
-	return w.request(context.Background(), http.MethodPost, "/check", nil, w.tokens[warmSubject],
+func (w warmer) check(ctx context.Context) (*http.Request, error) {
+	return w.request(ctx, http.MethodPost, "/check", nil, w.tokens[warmSubject],
 		fmt.Sprintf(`{"checks":[{"type":"document","resource_id":%q,"action":"read"}]}`, warmDocument))
 }
 
-func (w warmer) authzen() (*http.Request, error) {
-	return w.request(context.Background(), http.MethodPost, "/access/v1/evaluation", nil, w.tokens[warmSubject],
+func (w warmer) authzen(ctx context.Context) (*http.Request, error) {
+	return w.request(ctx, http.MethodPost, "/access/v1/evaluation", nil, w.tokens[warmSubject],
 		fmt.Sprintf(`{"subject":{"type":"user","id":%q},"resource":{"type":"document","id":%q},"action":{"name":"read"}}`,
 			subjectName(warmSubject), warmDocument))
 }
 
-func (w warmer) authzenBatch() (*http.Request, error) {
-	return w.request(context.Background(), http.MethodPost, "/access/v1/evaluations", nil, w.tokens[warmSubject],
+func (w warmer) authzenBatch(ctx context.Context) (*http.Request, error) {
+	return w.request(ctx, http.MethodPost, "/access/v1/evaluations", nil, w.tokens[warmSubject],
 		fmt.Sprintf(`{"subject":{"type":"user","id":%q},"action":{"name":"read"},"evaluations":[{"resource":{"type":"document","id":%q}}]}`,
 			subjectName(warmSubject), warmDocument))
 }
 
-func (w warmer) onBehalf() (*http.Request, error) {
-	return w.request(context.Background(), http.MethodPost, "/on_behalf/check", nil, w.backend,
+func (w warmer) onBehalf(ctx context.Context) (*http.Request, error) {
+	return w.request(ctx, http.MethodPost, "/on_behalf/check", nil, w.backend,
 		fmt.Sprintf(`{"subject":%q,"claims":{"department":%q},"checks":[{"type":"document","resource_id":%q,"action":"read"}]}`,
 			subjectName(warmSubject), departmentName(warmSubject), warmDocument))
 }

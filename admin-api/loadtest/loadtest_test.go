@@ -130,12 +130,18 @@ func TestJudgeStep(t *testing.T) {
 	if !step.passes() {
 		t.Fatalf("a step within its objectives failed: %v", step.FailReasons)
 	}
-	slow := Measurement{RateAsked: 50, AchievedRPS: 49, Overall: Latency{P99: 250}, Valid: true}
+	slow := Measurement{RateAsked: 50, AchievedRPS: 49, Overall: Latency{P99: 250, Samples: 10000}, Valid: true}
 	slow.judgeStep(0.01, 100*time.Millisecond)
 	late := Measurement{RateAsked: 50, AchievedRPS: 30, ErrorRate: 0.05, Overall: Latency{P99: 40}, Valid: true}
 	late.judgeStep(0.01, 100*time.Millisecond)
 	if slow.passes() || late.passes() || len(late.FailReasons) != 2 {
 		t.Fatalf("slow %+v, late %+v: want both failed, the late one for errors and for the rate", slow, late)
+	}
+	// A short step (750 requests, as a 15-second step at 50 requests/s) has no published p99, so a high p99 does not fail it.
+	short := Measurement{RateAsked: 50, AchievedRPS: 49, Overall: Latency{P99: 250, Samples: 750}, Valid: true}
+	short.judgeStep(0.01, 100*time.Millisecond)
+	if !short.passes() {
+		t.Fatalf("a step without a published p99 was failed on it: %v", short.FailReasons)
 	}
 }
 
@@ -145,7 +151,7 @@ func TestCPUCores(t *testing.T) {
 		if set == "" {
 			continue
 		}
-		if got := cpuCores(set, 1); got != want {
+		if got := cpuCores(set); got != want {
 			t.Errorf("cpuCores(%q) = %d, want %d", set, got, want)
 		}
 	}

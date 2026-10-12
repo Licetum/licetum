@@ -19,7 +19,7 @@ notebook shows the machine each run came from. To get the same charts for your o
 
 ## Published results (preliminary)
 
-`results/` holds two series of the 10k profile, warm mode, 200 requests/s. Each run is a directory with its
+`results/` holds two series of the smoke profile (10k resources), warm mode, 200 requests/s. Each run is a directory with its
 `result.json` and `environment.json`; nothing else is published.
 
 - `clean-0ff9a6b7/smoke-warm/run-1..4`: commit `0ff9a6b7`, a clean tree, the `performance` governor, no swap. Runs 1

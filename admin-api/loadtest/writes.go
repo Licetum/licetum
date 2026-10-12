@@ -48,9 +48,9 @@ func (w *writer) tick(ctx context.Context) {
 	if w.ruleID == nil {
 		ev.Kind = "create"
 		in := &model.AssignmentRuleInput{
-			Subject:        ptrString(writerSubject),
+			Subject:        ptr(writerSubject),
 			TypeResourceID: &w.docType,
-			ResourceID:     ptrString("d-0"),
+			ResourceID:     ptr("d-0"),
 			Access:         []string{"read"},
 		}
 		if err := in.Validate(); err != nil {
@@ -63,16 +63,17 @@ func (w *writer) tick(ctx context.Context) {
 		}
 	} else {
 		ev.Kind = "delete"
+		// The probe rule is forgotten only when it is gone: a failed delete leaves it in the policy, and the next tick
+		// tries again instead of creating another one.
 		if _, err := w.admin.DeleteAssignmentRule(ctx, *w.ruleID); err != nil {
 			ev.Error = err.Error()
+		} else {
+			w.ruleID = nil
 		}
-		w.ruleID = nil
 	}
 	ev.Duration = ms(time.Since(start))
 	w.recorded = append(w.recorded, ev)
 }
-
-func ptrString(s string) *string { return &s }
 
 // WriteEffect is what one write did to the latency of the requests around it, from the raw points of k6: the baseline
 // is the median of the per-second p99 before the writes, and the recovery is the time until a second's p99 is back

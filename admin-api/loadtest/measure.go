@@ -126,8 +126,10 @@ func (m *Measurement) judgeStep(maxErrorRate float64, sloP99 time.Duration) {
 	if m.ErrorRate > maxErrorRate {
 		m.FailReasons = append(m.FailReasons, fmt.Sprintf("errors %.2f%% above %.2f%%", 100*m.ErrorRate, 100*maxErrorRate))
 	}
-	if m.p99() > ms(sloP99) {
-		m.FailReasons = append(m.FailReasons, fmt.Sprintf("p99 %.1f ms above %v", m.p99(), sloP99))
+	// The p99 is judged only where the report publishes it (from 10,000 samples, see Quantile). A step of a few seconds
+	// has too few requests for its p99 to mean anything: it is judged on its errors and on its rate.
+	if p99, ok := m.Overall.Quantile(0.99, m.p99()); ok && p99 > ms(sloP99) {
+		m.FailReasons = append(m.FailReasons, fmt.Sprintf("p99 %.1f ms above %v", p99, sloP99))
 	}
 	if m.AchievedRPS < 0.95*m.RateAsked {
 		m.FailReasons = append(m.FailReasons, fmt.Sprintf("%.0f answers/s, under 95%% of the %.0f asked", m.AchievedRPS, m.RateAsked))

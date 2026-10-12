@@ -174,6 +174,8 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			ProfileName:    opts.Profile.Name,
 			ExtraSQL:       "",
 			RawPointsKept:  opts.RawPoints,
+			Replicas:       max(opts.Replicas, 1),
+			PauseRedisSecs: opts.ChaosRedisFor.Seconds(),
 		},
 		Machine: machine(k6Version(k6Path)),
 	}
@@ -441,7 +443,7 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 		return Measurement{}, err
 	}
 
-	meas := measurementFrom(res, w, cpuCores(m.opts.K6CPUs, m.opts.Concurrency))
+	meas := measurementFrom(res, w, cpuCores(m.opts.K6CPUs))
 	meas.Oracle = oracle
 	if m.opts.ChaosRedisFor > 0 && measured {
 		meas.Chaos = []ChaosEvent{chaos}
@@ -482,6 +484,10 @@ func (m measurer) ramp(ctx context.Context) ([]Measurement, error) {
 	for i := range m.opts.MaxSteps {
 		meas, err := m.window(ctx, fmt.Sprintf("measure-%02d", i+1), rate, m.opts.Measure, true)
 		if err != nil {
+			// A window that did not finish is kept with its reason (see window); an error before the window is not one.
+			if len(meas.InvalidReasons) > 0 {
+				out = append(out, meas)
+			}
 			return out, err
 		}
 		meas.judgeStep(m.opts.MaxErrorRate, m.opts.SLOP99)
@@ -495,8 +501,7 @@ func (m measurer) ramp(ctx context.Context) ([]Measurement, error) {
 }
 
 // cpuCores is how many CPUs the generator may use: the pinned set, or every CPU of the host.
-func cpuCores(set string, concurrency int) int {
-	_ = concurrency
+func cpuCores(set string) int {
 	if set == "" {
 		return runtimeCPUs()
 	}
