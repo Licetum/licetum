@@ -467,6 +467,7 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 		}
 	}
 	meas.Server = serverSide(before, after, meas.Requests, res.elapsed)
+	meas.HostSwapPages = after.swap - before.swap
 	meas.judgeMeasurement()
 	slog.Info("window", "name", name, "asked", rate, "answered", meas.AchievedRPS, "p99_ms", meas.p99(), "errors", meas.ErrorRate,
 		"dropped", meas.Dropped, "k6_cpu", meas.K6CPUShare, "oracle_mismatches", oracle.Mismatches, "valid", meas.Valid)

@@ -33,6 +33,7 @@ type counters struct {
 	cpu    float64            // seconds of user and system CPU of the check process
 	series map[string]float64 // /metrics, keyed by the series as printed: name and labels
 	db     map[string]float64 // database counters, and the statements ones when measured
+	swap   float64            // pages the host swapped in and out since boot (see swapPages)
 }
 
 func (o observer) read(ctx context.Context) (counters, error) {
@@ -56,8 +57,40 @@ func (o observer) read(ctx context.Context) (counters, error) {
 	if err != nil {
 		return counters{}, err
 	}
-	return counters{at: time.Now(), cpu: cpu, series: series, db: db}, nil
+	swap, err := swapPages()
+	if err != nil {
+		return counters{}, err
+	}
+	return counters{at: time.Now(), cpu: cpu, series: series, db: db, swap: swap}, nil
 }
+
+// swapPages is the number of pages the host has swapped in and out since boot. A window during which it grows ran with
+// the host short of memory: its latencies belong to the host, not to the server, so it is not valid.
+func swapPages() (float64, error) {
+	raw, err := os.ReadFile("/proc/vmstat")
+	if err != nil {
+		return 0, fmt.Errorf("read the swap counters: %w", err)
+	}
+	return parseSwapPages(string(raw)), nil
+}
+
+// parseSwapPages adds the pswpin and pswpout lines of /proc/vmstat.
+func parseSwapPages(vmstat string) float64 {
+	var total float64
+	for line := range strings.SplitSeq(vmstat, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || (fields[0] != "pswpin" && fields[0] != "pswpout") {
+			continue
+		}
+		v, err := strconv.ParseFloat(fields[1], 64)
+		if err == nil {
+			total += v
+		}
+	}
+	return total
+}
+
+// enableStatements turns on the statistics of the statements the database runs. It works only when the server preloads
 
 // enableStatements turns on the statistics of the statements the database runs. It works only when the server preloads
 // the extension (shared_preload_libraries); without it the run still measures the server, and the database is a black

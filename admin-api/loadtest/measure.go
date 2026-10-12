@@ -63,6 +63,7 @@ type Measurement struct {
 	Server         Server      `json:"server"`
 	Oracle         Oracle      `json:"oracle"`
 	Overall        Latency     `json:"latency_all_ms"`
+	HostSwapPages  float64     `json:"host_swap_pages"`
 	Valid          bool        `json:"valid"`
 	InvalidReasons []string    `json:"invalid_reasons,omitempty"`
 	// Writes and Chaos are the admin writes and the faults of the window (scenarios E and H), with their effect on the
@@ -89,11 +90,15 @@ const maxGeneratorShare = 0.7
 
 // judgeMeasurement sets the validity of a measured window. A window is valid when the generator kept up with the rate
 // (no dropped iterations, a CPU share within maxGeneratorShare), when the answers were correct (no oracle mismatch),
-// and when the server answered: an error rate over the budget is recorded, and the step is failed by the ramp.
+// and when the server answered: an error rate over the budget is recorded, and the step is failed by the ramp. A window
+// during which the host swapped memory is not valid either: its latencies are the host's.
 func (m *Measurement) judgeMeasurement() {
 	m.InvalidReasons = nil
 	if m.Dropped > 0 {
 		m.InvalidReasons = append(m.InvalidReasons, fmt.Sprintf("%d iterations dropped: k6 could not send at the rate", m.Dropped))
+	}
+	if m.HostSwapPages > 0 {
+		m.InvalidReasons = append(m.InvalidReasons, fmt.Sprintf("the host swapped %.0f pages during the window: memory pressure", m.HostSwapPages))
 	}
 	if m.K6CPUShare > maxGeneratorShare {
 		m.InvalidReasons = append(m.InvalidReasons, fmt.Sprintf("the load generator used %.0f%% of its %d cores (limit %.0f%%)",

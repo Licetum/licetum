@@ -105,6 +105,25 @@ func TestJudgeMeasurement(t *testing.T) {
 	}
 }
 
+// TestSwapInvalidates checks that the pages the host swapped are read from /proc/vmstat, and that a window during which
+// they grew is not valid, with its reason.
+func TestSwapInvalidates(t *testing.T) {
+	const vmstat = "nr_free_pages 1000\npswpin 12\npswpout 30\npgpgin 99\n"
+	if got := parseSwapPages(vmstat); got != 42 {
+		t.Fatalf("parseSwapPages = %v, want 42", got)
+	}
+	swapped := Measurement{K6Cores: 2, HostSwapPages: 8}
+	swapped.judgeMeasurement()
+	if swapped.Valid || len(swapped.InvalidReasons) != 1 {
+		t.Fatalf("a window that swapped should be invalid with one reason: %+v", swapped)
+	}
+	quiet := Measurement{K6Cores: 2}
+	quiet.judgeMeasurement()
+	if !quiet.Valid {
+		t.Fatalf("a window that did not swap is not valid: %v", quiet.InvalidReasons)
+	}
+}
+
 func TestJudgeStep(t *testing.T) {
 	step := Measurement{RateAsked: 50, AchievedRPS: 49, ErrorRate: 0, Overall: Latency{P99: 40, Samples: 2000}, Valid: true}
 	step.judgeStep(0.01, 100*time.Millisecond)
