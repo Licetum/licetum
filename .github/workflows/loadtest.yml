@@ -48,7 +48,7 @@ jobs:
 
       - name: Load test at the medium volume
         run: >
-          task loadtest -- -profile medium -rate-start 10 -rate-factor 2 -max-steps 6 -step 30s
+          task loadtest -- -profile medium -rate-start 10 -rate-factor 2 -max-steps 6 -measure 30s
           -slo-p99 300ms -require-rate 10 -out reports/loadtest
 
       - name: Upload the load test results
@@ -85,7 +85,7 @@ jobs:
 
       - name: Load test at the large volume
         run: >
-          task loadtest -- -profile large -rate-start 5 -rate-factor 2 -max-steps 6 -step 30s
+          task loadtest -- -profile large -rate-start 5 -rate-factor 2 -max-steps 6 -measure 30s
           -slo-p99 500ms -require-rate 1 -out reports/loadtest
 
       - name: Upload the load test results

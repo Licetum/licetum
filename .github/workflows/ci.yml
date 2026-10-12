@@ -172,7 +172,7 @@ jobs:
 
       - name: Load test at the smoke volume
         run: >
-          task loadtest -- -profile smoke -rate-start 50 -rate-factor 2 -max-steps 3 -step 15s
+          task loadtest -- -profile smoke -rate-start 50 -rate-factor 2 -max-steps 3 -measure 15s
           -slo-p99 150ms -require-rate 50 -out reports/loadtest
 
       - name: Upload the load test results
