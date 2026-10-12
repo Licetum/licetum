@@ -159,8 +159,8 @@ func (r *Report) Markdown() string {
 	if r.Settings.Ramp {
 		verdict = "**Sustained: none.** The first step already missed its targets."
 		if r.SustainedRPS > 0 {
-			verdict = fmt.Sprintf("**Sustained: %.0f requests/s** (p99 within %.0f ms, errors within %.2f%%).",
-				r.SustainedRPS, r.Settings.SLOP99MS, 100*r.Settings.MaxErrorRate)
+			verdict = fmt.Sprintf("**Sustained: %.0f requests/s** (errors within %.2f%%; a p99 is judged only from 10,000 samples).",
+				r.SustainedRPS, 100*r.Settings.MaxErrorRate)
 		}
 	}
 	fmt.Fprintf(&b, "%s\n\n", verdict)
