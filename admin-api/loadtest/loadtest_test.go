@@ -134,9 +134,10 @@ func TestCPUCores(t *testing.T) {
 
 func TestPreallocated(t *testing.T) {
 	cases := []struct{ rate, maxVUs, want int }{
-		{5, 250, 10},   // the floor
-		{400, 250, 80}, // a fifth of the rate
-		{400, 50, 50},  // never more than the most users
+		{5, 250, 50},    // the floor
+		{120, 250, 120}, // the rate itself
+		{400, 250, 250}, // never more than the most users
+		{400, 50, 50},   // and never more than that either
 	}
 	for _, c := range cases {
 		if got := preallocated(c.rate, c.maxVUs); got != c.want {
