@@ -41,6 +41,7 @@ type Environment struct {
 	K6CPUs         string            `json:"k6_cpus"`
 	CheckCPUs      string            `json:"check_cpus"`
 	Containers     string            `json:"containers"`
+	StackCPUs      map[string]string `json:"stack_cpus"`
 	PoolConns      int               `json:"check_db_pool_connections"`
 }
 
@@ -66,6 +67,7 @@ func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin stri
 		K6CPUs:         cpuList(opts.K6CPUs, runtime.NumCPU()),
 		CheckCPUs:      cpuList(opts.CheckCPUs, runtime.NumCPU()),
 		Containers:     "testcontainers, no CPU or memory limits set by the harness (external servers when named by LICETUM_TEST_*)",
+		StackCPUs:      stackCPUs(ctx),
 		PoolConns:      opts.DBPool,
 		PostgresConfig: map[string]string{},
 		CheckEnv:       map[string]string{},
@@ -221,6 +223,20 @@ func readTrim(path string) string {
 }
 
 // commandOutput is the trimmed output of a command, or "unknown" when it fails.
+// stackCPUs is the CPU set of each container of the test stack (admin-api/loadtest/compose.yml), as docker reports it: "all"
+// when the container is not pinned, or "unknown" when docker does not know it.
+func stackCPUs(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	for _, name := range []string{"lt-pg", "lt-redis"} {
+		set := commandOutput(ctx, "docker", "inspect", "--format", "{{.HostConfig.CpusetCpus}}", name)
+		if set == "" {
+			set = "all"
+		}
+		out[name] = set
+	}
+	return out
+}
+
 func commandOutput(ctx context.Context, name string, args ...string) string {
 	out, err := exec.CommandContext(ctx, name, args...).Output() //nolint:gosec // fixed tools, fixed arguments
 	if err != nil {

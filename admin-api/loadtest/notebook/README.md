@@ -57,7 +57,8 @@ go build -o ../core/bin/licetum-loadtest ./cmd/licetum-loadtest
 `-profile` picks the size of the policy: `smoke` is 10,000 resources, `medium` 100,000, `500k` 500,000 and `large`
 1,000,000. `-users`, `-groups`, `-rules` and `-resources` override one value of the profile. `-mode` is `warm` (the
 caches answer), `cold` (every request is computed) or `mix` (skewed traffic). `-k6-cpus` and `-check-cpus` take the
-CPU lists of your machine (`nproc`, `lscpu -e`): the load generator and the check server must not share a CPU.
+CPU lists of your machine (`nproc`, `lscpu -e`): the check server, the load generator and the stack must not share a
+CPU. The stack runs on CPUs 8-9 (`cpuset` in `compose.yml`); `environment.json` records its CPU sets.
 
 A window is valid when no request was dropped, the load generator stayed under 70 % of its CPUs and the oracle found no
 wrong answer. An invalid window is written with its reasons; it is not hidden.
