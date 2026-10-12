@@ -143,6 +143,48 @@ jobs:
         working-directory: web
         run: pnpm build
 
+  # The check API at the smoke volume (admin-api/loadtest): a ramp of three steps, a gate against gross regressions, not
+  # a benchmark. A step passes on a valid window, errors within 1 %, and at least 95 % of the rate asked answered; the p99
+  # of a 15-second step (about 750 requests) is not judged. The runners are shared, and the real numbers come from the
+  # nightly loadtest.yml.
+  loadtest-smoke:
+    name: Load test (smoke volume)
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: grafana/setup-k6-action@v1.2.2
+        with:
+          k6-version: '2.2.0'
+
+      - name: Load test at the smoke volume
+        run: >
+          task loadtest -- -profile smoke -ramp -rate-start 50 -rate-factor 2 -max-steps 3 -measure 15s
+          -require-rate 50 -out reports/loadtest
+
+      - name: Upload the load test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: loadtest-smoke
+          path: admin-api/reports/loadtest
+          if-no-files-found: ignore
+
   dco:
     name: Developer Certificate of Origin
     if: github.event_name == 'pull_request'

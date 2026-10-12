@@ -1,0 +1,50 @@
+{
+  "collected_at": "2026-10-12T13:55:10.007237827Z",
+  "git_commit": "3cd0b4c393be47aada6eedd5fa6b458dace546ba",
+  "git_dirty": true,
+  "cpu_model": "12th Gen Intel(R) Core(TM) i5-12450H",
+  "logical_cpus": 12,
+  "memory_kib": 16064112,
+  "os": "CachyOS",
+  "kernel": "7.2.8-1-cachyos",
+  "cpu_governor": "powersave",
+  "load_average_at_start": "4.14 7.66 8.57 2/2632 2727252",
+  "go_version": "go1.27.1-X:nodwarf5",
+  "k6_version": "k6 v2.2.0 (commit/00a9a1b7f5, go1.26.5, linux/amd64)",
+  "docker_version": "29.7.2",
+  "postgres_version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+  "postgres_settings": {
+    "autovacuum": "on",
+    "checkpoint_timeout": "300",
+    "effective_cache_size": "524288",
+    "jit": "on",
+    "maintenance_work_mem": "65536",
+    "max_connections": "100",
+    "max_wal_size": "1024",
+    "random_page_cost": "4",
+    "shared_buffers": "16384",
+    "synchronous_commit": "on",
+    "work_mem": "4096"
+  },
+  "redis_version": "7.4.11",
+  "check_binary": "../core/bin/licetum",
+  "check_binary_sha256": "bba61c1ae6f6bd94a77da28c8f29d679b19d9be8856eab258c50f07c8a4bd268",
+  "check_server_env": {
+    "AUTH__STATE_SECRET": "***",
+    "DB__MAX_OVERFLOW": "0",
+    "DB__POOL_SIZE": "30",
+    "DB__URI": "postgres://licetum:%2A%2A%2A@127.0.0.1:55432/licetum_test_1f4dec4ff6b44df2a8eb0795122828a0?sslmode=disable",
+    "REDIS__URI": "redis://127.0.0.1:56379/0"
+  },
+  "harness_env": {
+    "AUTH__STATE_SECRET": "***",
+    "DB__URI": "postgres://licetum:%2A%2A%2A@127.0.0.1:55432/licetum_test_1f4dec4ff6b44df2a8eb0795122828a0?sslmode=disable",
+    "LICETUM_TEST_POSTGRES_URI": "postgres://licetum:%2A%2A%2A@127.0.0.1:55432/postgres?sslmode=disable",
+    "LICETUM_TEST_REDIS_URI": "redis://127.0.0.1:56379/0",
+    "REDIS__URI": "redis://127.0.0.1:56379/0"
+  },
+  "k6_cpus": "10-11",
+  "check_cpus": "0-7",
+  "containers": "testcontainers, no CPU or memory limits set by the harness (external servers when named by LICETUM_TEST_*)",
+  "check_db_pool_connections": 30
+}

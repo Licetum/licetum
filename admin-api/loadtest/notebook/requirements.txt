@@ -1,0 +1,8 @@
+# The packages of licetum-loadtest.ipynb, pinned to the versions the published charts were made with.
+jupyterlab==4.6.4
+ipykernel==7.4.0
+nbconvert==7.17.2
+nbformat==5.11.1
+numpy==2.5.4
+pandas==3.0.6
+matplotlib==3.11.2

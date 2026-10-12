@@ -1,0 +1,34 @@
+# The PostgreSQL and Redis servers of the load test, on the loopback interface only. The harness creates a database of its
+# own in the PostgreSQL server for each run, so the server is shared between runs; scripts/baseline.sh restarts both
+# containers before each run, which is why their names are fixed.
+#
+#	docker compose -f admin-api/loadtest/compose.yml up -d
+#	export LICETUM_TEST_POSTGRES_URI="postgres://licetum:${LT_PG_PASSWORD:-licetum}@127.0.0.1:55432/postgres?sslmode=disable"
+#	export LICETUM_TEST_REDIS_URI="redis://127.0.0.1:56379/0"
+#
+# The stack has its own CPUs (cpuset), apart from the check server (0-7) and the load generator (10-11) of the measured
+# runs, so that the servers of the policy do not compete with the check server for a core. The sets are recorded in
+# environment.json (stack_cpus). Change them with the CPU lists of your machine.
+name: licetum-loadtest
+
+services:
+  lt-pg:
+    image: postgres:16-alpine
+    container_name: lt-pg
+    cpuset: "8-9"
+    # pg_stat_statements gives the statements of each run (report: "top statements").
+    command: ["-c", "shared_preload_libraries=pg_stat_statements"]
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: licetum
+      POSTGRES_PASSWORD: ${LT_PG_PASSWORD:-licetum}
+    ports:
+      - "127.0.0.1:55432:5432"
+
+  lt-redis:
+    image: redis:7-alpine
+    container_name: lt-redis
+    cpuset: "8-9"
+    command: ["redis-server"]
+    ports:
+      - "127.0.0.1:56379:6379"

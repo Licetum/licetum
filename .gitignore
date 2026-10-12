@@ -4,6 +4,7 @@
 /core/tmp/
 /admin-api/tmp/
 /core/licetum
+/core/bin/
 /admin-api/licetum-admin
 *.test
 *.out

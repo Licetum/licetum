@@ -42,18 +42,23 @@ type externalDatabase struct {
 }
 
 func Start(ctx context.Context) (*Infrastructure, error) {
+	return StartWith(ctx)
+}
+
+// StartWith is Start with more options for the PostgreSQL container, such as the server arguments a benchmark needs
+// (the statistics extension). They do not apply to the servers named by EnvPostgresURI, which are configured already.
+func StartWith(ctx context.Context, postgresOptions ...testcontainers.ContainerCustomizer) (*Infrastructure, error) {
 	if adminURI := os.Getenv(EnvPostgresURI); adminURI != "" {
 		return startExternal(ctx, adminURI, os.Getenv(EnvRedisURI))
 	}
 
-	postgresContainer, err := postgres.Run(
-		ctx,
-		"postgres:16-alpine",
+	options := append([]testcontainers.ContainerCustomizer{
 		postgres.WithDatabase("licetum_test"),
 		postgres.WithUsername("licetum"),
 		postgres.WithPassword("licetum"),
 		postgres.BasicWaitStrategies(),
-	)
+	}, postgresOptions...)
+	postgresContainer, err := postgres.Run(ctx, "postgres:16-alpine", options...)
 	if err != nil {
 		return nil, fmt.Errorf("start postgres container: %w", err)
 	}
