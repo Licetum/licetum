@@ -3,6 +3,8 @@
 //	licetum-loadtest run -profile 10k -mode warm -seed 1          one measured window at a fixed rate
 //	licetum-loadtest run -profile 10k -ramp -rate-start 50        the steps of a ramp, until one misses its objectives
 //	licetum-loadtest aggregate -out report.md reports/x/run-*     the report of several runs of one configuration
+//	licetum-loadtest budget -budgets budgets.yaml reports/x/*     compare runs with their budgets (fails when one misses by over 15 %)
+//	licetum-loadtest budget -calibrate -out budgets.yaml reports/x/*   write the budgets from baseline runs
 //
 // A run seeds the policy, starts the check binary as its own process, warms it up, and then measures: k6 sends the
 // traffic at the rate, the harness reads the server's counters around each window, and an oracle checks sampled answers
@@ -37,6 +39,8 @@ func main() {
 		err = runCommand(os.Args[2:])
 	case "aggregate":
 		err = aggregateCommand(os.Args[2:])
+	case "budget":
+		err = budgetCommand(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -50,7 +54,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: licetum-loadtest run [flags] | aggregate [flags] DIR...")
+	fmt.Fprintln(os.Stderr, "usage: licetum-loadtest run [flags] | aggregate [flags] DIR... | budget [flags] DIR...")
 	os.Exit(2)
 }
 
@@ -84,6 +88,7 @@ func runCommand(args []string) error {
 	fs.BoolVar(&opts.RawPoints, "raw-points", opts.RawPoints, "keep the point of every request (a large file, for the timing of the answers)")
 	fs.DurationVar(&opts.ChaosRedisAt, "pause-redis-at", opts.ChaosRedisAt, "pause the Redis container this long into the measured window")
 	fs.DurationVar(&opts.ChaosRedisFor, "pause-redis-for", opts.ChaosRedisFor, "for this long (0 for none)")
+	fs.DurationVar(&opts.AddedLatency, "added-latency", opts.AddedLatency, "latency added to each round trip from the check servers to PostgreSQL and to Redis, through Toxiproxy, from the end of the warm-up (0 for none)")
 	fs.IntVar(&opts.Replicas, "replicas", opts.Replicas, "check servers sharing the database and the cache; the load is spread over them")
 	fs.DurationVar(&opts.WritesEvery, "writes-every", opts.WritesEvery, "an admin write (a rule created, then deleted) every this long during the window (0 for none)")
 	fs.Float64Var(&opts.RequireRate, "require-rate", 0, "a ramp run fails when the sustained rate is below this (for CI)")
@@ -139,6 +144,62 @@ func aggregateCommand(args []string) error {
 		return nil
 	}
 	return os.WriteFile(*out, []byte(text), 0o600)
+}
+
+func budgetCommand(args []string) error {
+	fs := flag.NewFlagSet("budget", flag.ExitOnError)
+	path := fs.String("budgets", "loadtest/budgets.yaml", "the budgets to compare the runs with")
+	calibrate := fs.Bool("calibrate", false, "write budgets from the runs instead of comparing them")
+	out := fs.String("out", "", "with -calibrate: the file to write (default: stdout)")
+	note := fs.String("note", "", "with -calibrate: where the figures come from (commit, machine), kept in each entry")
+	tolerance := fs.Float64("tolerance", loadtest.DefaultTolerance, "with -calibrate: the share a figure may be off its budget")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("budget: name the directories of the runs")
+	}
+	runs := map[string]loadtest.Report{}
+	for _, dir := range fs.Args() {
+		rep, err := loadtest.LoadReport(dir)
+		if err != nil {
+			return err
+		}
+		runs[dir] = rep
+	}
+
+	if *calibrate {
+		budgets := loadtest.Budgets{Tolerance: *tolerance}
+		for _, dir := range fs.Args() {
+			b, err := loadtest.Calibrate(runs[dir], *note)
+			if err != nil {
+				return fmt.Errorf("%s: %w", dir, err)
+			}
+			budgets.Budgets = append(budgets.Budgets, b)
+		}
+		raw, err := loadtest.BudgetsYAML(budgets)
+		if err != nil {
+			return err
+		}
+		if *out == "" {
+			fmt.Print(string(raw))
+			return nil
+		}
+		return os.WriteFile(*out, raw, 0o600)
+	}
+
+	budgets, err := loadtest.LoadBudgets(*path)
+	if err != nil {
+		return err
+	}
+	findings, ok := loadtest.CheckBudgets(budgets, runs)
+	summary := loadtest.BudgetMarkdown(findings, ok, budgets.Tolerance)
+	fmt.Println(summary)
+	appendJobSummary(summary)
+	if !ok {
+		return fmt.Errorf("the runs are outside their budgets")
+	}
+	return nil
 }
 
 // override replaces a value of the profile with the flag when the flag is set.

@@ -3,6 +3,15 @@ name: Load test
 # The check API at the policy sizes of admin-api/loadtest, nightly and on demand. Each run ramps the traffic up until a
 # step misses its objective, and writes the result to the job summary and to the artifact. The runner is the same size
 # every night, so the numbers can be compared from one night to the next.
+#
+# The medium profile runs in three modes (warm, cold, mix) with and without 100 ms added to every round trip to
+# PostgreSQL and to Redis (Toxiproxy), and each run is compared with its entry of admin-api/loadtest/budgets.yaml: a
+# figure more than 15 % on the wrong side fails the job (F0-5). With `baseline: true` the runs are not compared; the
+# budget each one would make is printed in the summary instead (how budgets.yaml is made, F0-6).
+#
+# A schedule fires only from the default branch. To measure another branch (the epic branch production-load-readiness
+# until it reaches main) start the workflow by hand with `ref`, or set the repository variable LOADTEST_REF, which the
+# scheduled runs check out.
 on:
   schedule:
     - cron: "23 2 * * *"
@@ -13,6 +22,14 @@ on:
         type: choice
         options: [medium, large]
         default: medium
+      ref:
+        description: Branch, tag or commit to measure (default, the one the workflow is started on)
+        type: string
+        default: ""
+      baseline:
+        description: Do not compare with budgets.yaml; print the budgets these runs would make
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,14 +38,33 @@ concurrency:
   group: loadtest
   cancel-in-progress: false
 
+env:
+  # The ref the runs measure: the input, else the repository variable (for the schedule), else the ref of the event.
+  MEASURE_REF: ${{ inputs.ref || vars.LOADTEST_REF || github.ref }}
+
 jobs:
   medium:
-    name: Load test (medium)
+    name: Load test (medium, ${{ matrix.mode }}, +${{ matrix.latency }})
     if: github.event_name == 'schedule' || inputs.profile == 'medium'
     runs-on: ubuntu-latest-4-cores
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # No added latency: the ramp passes 600 requests/s (50, 100, 200, 400, 800).
+          - { mode: warm, latency: 0ms, args: "-rate-start 50 -max-steps 5 -slo-p99 100ms -concurrency 250" }
+          - { mode: mix, latency: 0ms, args: "-rate-start 50 -max-steps 5 -slo-p99 100ms -concurrency 250" }
+          # Every request is computed: it saturates far below that.
+          - { mode: cold, latency: 0ms, args: "-rate-start 10 -max-steps 6 -slo-p99 1s -concurrency 250" }
+          # 100 ms on every round trip: a request waits half a second or more, so many more are in flight at once.
+          - { mode: warm, latency: 100ms, args: "-rate-start 20 -max-steps 6 -slo-p99 2s -concurrency 1000" }
+          - { mode: mix, latency: 100ms, args: "-rate-start 20 -max-steps 6 -slo-p99 2s -concurrency 1000" }
+          - { mode: cold, latency: 100ms, args: "-rate-start 5 -max-steps 6 -slo-p99 5s -concurrency 1000" }
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MEASURE_REF }}
 
       - uses: actions/setup-go@v7
         with:
@@ -48,15 +84,32 @@ jobs:
 
       - name: Load test at the medium volume
         run: >
-          task loadtest -- -profile medium -ramp -rate-start 10 -rate-factor 2 -max-steps 6 -measure 30s
-          -require-rate 10 -out reports/loadtest
+          task loadtest -- -profile medium -mode ${{ matrix.mode }} -ramp -rate-factor 2 -warm 60s -measure 60s
+          -added-latency ${{ matrix.latency }} ${{ matrix.args }} -require-rate 5
+          -out reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }}
+
+      - name: Compare the run with its budget
+        if: ${{ always() && !inputs.baseline }}
+        working-directory: admin-api
+        run: go run ./cmd/licetum-loadtest budget -budgets loadtest/budgets.yaml reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }}
+
+      - name: Print the budget this run would make
+        if: ${{ always() && inputs.baseline }}
+        working-directory: admin-api
+        run: |
+          {
+            echo '### Budget of medium, ${{ matrix.mode }}, +${{ matrix.latency }}'
+            echo '```yaml'
+            go run ./cmd/licetum-loadtest budget -calibrate -note "$GITHUB_SHA, ubuntu-latest-4-cores" reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | sed -n '/^budgets:/,$p'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the load test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: loadtest-medium
-          path: admin-api/reports/loadtest
+          name: loadtest-medium-${{ matrix.mode }}-${{ matrix.latency }}
+          path: admin-api/reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }}
           if-no-files-found: ignore
 
   large:
@@ -66,6 +119,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MEASURE_REF }}
 
       - uses: actions/setup-go@v7
         with:
