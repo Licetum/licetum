@@ -228,8 +228,8 @@ func (m Measurement) markdown(b *strings.Builder, ramp bool) {
 		100*m.K6CPUShare, m.K6Cores, num(m.Server.CPUCores), pct(m.Server.PermissionCacheHit), pct(m.Server.CheckCacheHit))
 	fmt.Fprintf(b, "- per request: %s database queries, %s Redis round trips (counted by the server)\n",
 		num2(m.Server.DBQueriesPerRequest), num2(m.Server.RedisRoundTripsPerRequest))
-	fmt.Fprintf(b, "- oracle: %d answers checked (%d expected granted), %d mismatches\n",
-		m.Oracle.Checked, m.Oracle.Granted, m.Oracle.Mismatches)
+	fmt.Fprintf(b, "- oracle: %d answers checked (%d expected granted), %d wrong answers, %d unanswered\n",
+		m.Oracle.Checked, m.Oracle.Granted, m.Oracle.Mismatches, m.Oracle.Unanswered)
 	if m.Valid {
 		b.WriteString("- validity: valid\n")
 	} else {

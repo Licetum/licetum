@@ -25,7 +25,7 @@ import (
 const (
 	// warmUpTimeout bounds the warm-up: the first permission of a type synchronizes the whole type.
 	warmUpTimeout = 30 * time.Minute
-	// requestTimeout ends a request of the oracle that got no answer: such a request counts as a mismatch.
+	// requestTimeout ends a request of the oracle that got no answer: such a request is counted as unanswered, not as a wrong answer.
 	requestTimeout = 10 * time.Second
 	// topStatementCount is how many statements the report names.
 	topStatementCount = 8

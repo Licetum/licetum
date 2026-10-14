@@ -179,11 +179,22 @@ func budgetCommand(args []string) error {
 
 	if *calibrate {
 		budgets := loadtest.Budgets{Tolerance: *tolerance}
+		// Several runs of one configuration make one budget, from the one that sustained the least: the budget is a floor
+		// a healthy run keeps, and the ramp steps are far apart, so a run at the edge of two steps lands on either.
+		chosen := map[string]int{}
 		for _, dir := range fs.Args() {
 			b, err := loadtest.Calibrate(runs[dir], *note)
 			if err != nil {
 				return fmt.Errorf("%s: %w", dir, err)
 			}
+			key := fmt.Sprintf("%s/%s/%v", b.Profile, b.Mode, b.AddedLatencyMS)
+			if i, seen := chosen[key]; seen {
+				if b.RPS < budgets.Budgets[i].RPS {
+					budgets.Budgets[i] = b
+				}
+				continue
+			}
+			chosen[key] = len(budgets.Budgets)
 			budgets.Budgets = append(budgets.Budgets, b)
 		}
 		raw, err := loadtest.BudgetsYAML(budgets)
