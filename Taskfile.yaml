@@ -115,7 +115,7 @@ tasks:
         for m in core admin-api; do (cd $m && go test -race -count=1 -tags integration ./tests/integration/...) || exit 1; done
 
   go:test:chaos:
-    desc: Fault injection tests (PostgreSQL and Redis behind Toxiproxy: latency, cut, black hole, read-only Redis); needs Docker
+    desc: Fault injection tests with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole, read-only Redis), needs Docker
     cmds:
       - |
         if [ -z "${DOCKER_HOST:-}" ]; then
