@@ -16,7 +16,7 @@ components:
         - resource_id
       type: object
     AuthzenAction:
-      additionalProperties: false
+      additionalProperties: true
       properties:
         name:
           description: Access level
@@ -204,7 +204,7 @@ components:
         - total
       type: object
     AuthzenResource:
-      additionalProperties: false
+      additionalProperties: true
       properties:
         id:
           description: Resource id in the external system; empty — the type as a whole. Ignored by the resource search
@@ -262,7 +262,7 @@ components:
           description: The subject; for the subject search only its type is used
       type: object
     AuthzenSubject:
-      additionalProperties: false
+      additionalProperties: true
       properties:
         id:
           description: Subject id. Required by evaluations and by the resource and action searches; omitted by the subject search, which returns it. It is the subject of the bearer token (preferred_username, or sub) unless the caller is a client application the service trusts

@@ -53,6 +53,8 @@ type authzenCaller struct {
 	trustChecked bool
 	client       string
 	trustErr     error
+	// loggedOnBehalf is set once the access log line names the first person asked about.
+	loggedOnBehalf bool
 
 	// The people asked about on behalf, in the order first met, with what was asked (the audit of delegated calls).
 	delegated []string
@@ -105,7 +107,8 @@ func (c *authzenCaller) speaker(ctx context.Context, s *model.AuthzenSubject) (s
 	if err != nil {
 		return speaker{}, badRequest(err)
 	}
-	if len(c.delegated) == 0 {
+	if !c.loggedOnBehalf {
+		c.loggedOnBehalf = true
 		SetRequestUser(ctx, "client:"+client)
 		SetOnBehalfOf(ctx, s.ID)
 	}
@@ -184,9 +187,13 @@ func (c *authzenCaller) prepare(ctx context.Context, e *evaluation, item model.A
 	if item.Subject == nil || item.Resource == nil || item.Action == nil {
 		return apperr.BadRequest(i18n.AuthzenIncomplete)
 	}
-	for name, empty := range map[string]bool{"subject.id": item.Subject.ID == "", "resource.type": item.Resource.Type == "", "action.name": item.Action.Name == ""} {
-		if empty {
-			return apperr.BadRequest(i18n.AuthzenFieldRequired, name)
+	// An ordered list, not a map: with several fields missing the same one is always reported.
+	for _, f := range []struct {
+		name  string
+		empty bool
+	}{{"subject.id", item.Subject.ID == ""}, {"resource.type", item.Resource.Type == ""}, {"action.name", item.Action.Name == ""}} {
+		if f.empty {
+			return apperr.BadRequest(i18n.AuthzenFieldRequired, f.name)
 		}
 	}
 	sp, aerr := c.speaker(ctx, item.Subject)

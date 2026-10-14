@@ -7,6 +7,7 @@ package model
 
 // AuthzenSubject is the subject of an evaluation or of a search.
 type AuthzenSubject struct {
+	_          struct{}       `additionalProperties:"true"`
 	Type       string         `json:"type" doc:"Subject type (not interpreted)" example:"user"`
 	ID         string         `json:"id" required:"false" doc:"Subject id. Required by evaluations and by the resource and action searches; omitted by the subject search, which returns it. It is the subject of the bearer token (preferred_username, or sub) unless the caller is a client application the service trusts" example:"alice"`
 	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The claims of a person other than the holder of the token, given by a trusted client; ignored for the holder of the token, whose claims come from the token"`
@@ -14,6 +15,7 @@ type AuthzenSubject struct {
 
 // AuthzenResource is the resource of an evaluation or of a search.
 type AuthzenResource struct {
+	_          struct{}       `additionalProperties:"true"`
 	Type       string         `json:"type" doc:"Name of the resource type in the service" example:"branch"`
 	ID         string         `json:"id,omitempty" required:"false" doc:"Resource id in the external system; empty — the type as a whole. Ignored by the resource search" example:"b1"`
 	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"Ignored in a request; the resource search returns the name of the resource here"`
@@ -21,6 +23,7 @@ type AuthzenResource struct {
 
 // AuthzenAction is the action of an evaluation or of a search.
 type AuthzenAction struct {
+	_          struct{}       `additionalProperties:"true"`
 	Name       string         `json:"name" doc:"Access level" example:"write"`
 	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"Ignored"`
 }

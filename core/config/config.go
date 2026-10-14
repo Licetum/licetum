@@ -175,8 +175,8 @@ func Load() (*Config, error) {
 	}
 	if u := cfg.HTTP.PublicURL; u != "" {
 		if parsed, err := url.Parse(u); err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" ||
-			parsed.RawQuery != "" || parsed.Fragment != "" {
-			e.errs = append(e.errs, fmt.Errorf("HTTP__PUBLIC_URL must be an http(s) URL without a query or a fragment, got %q", u))
+			parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			e.errs = append(e.errs, fmt.Errorf("HTTP__PUBLIC_URL must be an http(s) URL without a path, a query or a fragment, got %q", u))
 		}
 	}
 	if len(e.errs) > 0 {
