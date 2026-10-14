@@ -154,6 +154,7 @@ func budgetCommand(args []string) error {
 	out := fs.String("out", "", "with -calibrate: the file to write (default: stdout)")
 	note := fs.String("note", "", "with -calibrate: where the figures come from (commit, machine), kept in each entry")
 	steps := fs.Bool("steps", false, "print the table of the steps of each run (rate, validity, latency, queries and round trips per request) instead of comparing")
+	slack := fs.Float64("latency-slack", 5, "with -calibrate: milliseconds a latency may exceed its budget on top of the tolerance")
 	tolerance := fs.Float64("tolerance", loadtest.DefaultTolerance, "with -calibrate: the share a figure may be off its budget")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -178,23 +179,23 @@ func budgetCommand(args []string) error {
 	}
 
 	if *calibrate {
-		budgets := loadtest.Budgets{Tolerance: *tolerance}
-		// Several runs of one configuration make one budget, from the one that sustained the least: the budget is a floor
-		// a healthy run keeps, and the ramp steps are far apart, so a run at the edge of two steps lands on either.
-		chosen := map[string]int{}
+		budgets := loadtest.Budgets{Tolerance: *tolerance, LatencySlackMS: *slack}
+		// The runs of one configuration make one budget (see loadtest.CalibrateRuns).
+		groups := map[string][]loadtest.Report{}
+		var order []string
 		for _, dir := range fs.Args() {
-			b, err := loadtest.Calibrate(runs[dir], *note)
+			rep := runs[dir]
+			key := fmt.Sprintf("%s/%s/%v", rep.Settings.ProfileName, rep.Settings.Mode, rep.Settings.AddedLatencyMS)
+			if _, seen := groups[key]; !seen {
+				order = append(order, key)
+			}
+			groups[key] = append(groups[key], rep)
+		}
+		for _, key := range order {
+			b, err := loadtest.CalibrateRuns(groups[key], *note)
 			if err != nil {
-				return fmt.Errorf("%s: %w", dir, err)
+				return fmt.Errorf("%s: %w", key, err)
 			}
-			key := fmt.Sprintf("%s/%s/%v", b.Profile, b.Mode, b.AddedLatencyMS)
-			if i, seen := chosen[key]; seen {
-				if b.RPS < budgets.Budgets[i].RPS {
-					budgets.Budgets[i] = b
-				}
-				continue
-			}
-			chosen[key] = len(budgets.Budgets)
 			budgets.Budgets = append(budgets.Budgets, b)
 		}
 		raw, err := loadtest.BudgetsYAML(budgets)

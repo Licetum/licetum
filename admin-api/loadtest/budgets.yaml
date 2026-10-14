@@ -1,7 +1,8 @@
 # Budgets of the check API load test (admin-api/loadtest), see notebook/README.md.
 #
 # One entry per profile, mode and latency added to PostgreSQL and Redis. A nightly run is compared with its entry by
-# `licetum-loadtest budget`; a figure more than `tolerance` on the wrong side fails the workflow:
+# `licetum-loadtest budget`; a figure more than `tolerance` on the wrong side fails the workflow (a latency also gets
+# `latency_slack_ms` on top: a few milliseconds are jitter on a shared runner):
 #   rps                 the sustained rate (the highest ramp step that met its objectives): a floor
 #   reference_rps       the step the other figures belong to (the sustained step of the baseline)
 #   p50_ms, p99_ms      latency of all the requests of that step: ceilings (p99 0: the step had too few samples)
@@ -10,6 +11,7 @@
 # (`licetum-loadtest budget -calibrate`). A run that is better than its budget by more than the tolerance does not
 # fail; its report asks for the budget to be set again.
 tolerance: 0.15
+latency_slack_ms: 5
 budgets:
     - profile: medium
       mode: cold
@@ -18,19 +20,19 @@ budgets:
       reference_rps: 16
       p50_ms: 396.83
       p99_ms: 0
-      db_queries_per_request: 15.4
-      redis_round_trips_per_request: 5.54
-      note: lowest sustained of two baseline runs on ubuntu-latest (4 vCPU), commits b7859306 and 5abcc757, see loadtest/notebook/results
+      db_queries_per_request: 15.42
+      redis_round_trips_per_request: 5.65
+      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
     - profile: medium
       mode: cold
       added_latency_ms: 100
       rps: 8
       reference_rps: 8
-      p50_ms: 2245.25
+      p50_ms: 2268.97
       p99_ms: 0
       db_queries_per_request: 15.23
       redis_round_trips_per_request: 5.19
-      note: lowest sustained of two baseline runs on ubuntu-latest (4 vCPU), commits b7859306 and 5abcc757, see loadtest/notebook/results
+      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
     - profile: medium
       mode: mix
       added_latency_ms: 0
@@ -40,7 +42,7 @@ budgets:
       p99_ms: 0
       db_queries_per_request: 13.42
       redis_round_trips_per_request: 5.78
-      note: lowest sustained of two baseline runs on ubuntu-latest (4 vCPU), commits b7859306 and 5abcc757, see loadtest/notebook/results
+      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
     - profile: medium
       mode: mix
       added_latency_ms: 100
@@ -50,7 +52,7 @@ budgets:
       p99_ms: 0
       db_queries_per_request: 9.96
       redis_round_trips_per_request: 5.24
-      note: lowest sustained of two baseline runs on ubuntu-latest (4 vCPU), commits b7859306 and 5abcc757, see loadtest/notebook/results
+      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
     - profile: medium
       mode: warm
       added_latency_ms: 0
@@ -60,7 +62,7 @@ budgets:
       p99_ms: 0
       db_queries_per_request: 6.05
       redis_round_trips_per_request: 3.86
-      note: lowest sustained of two baseline runs on ubuntu-latest (4 vCPU), commits b7859306 and 5abcc757, see loadtest/notebook/results
+      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
     - profile: medium
       mode: warm
       added_latency_ms: 100
@@ -70,4 +72,4 @@ budgets:
       p99_ms: 0
       db_queries_per_request: 6.99
       redis_round_trips_per_request: 4.08
-      note: lowest sustained of two baseline runs on ubuntu-latest (4 vCPU), commits b7859306 and 5abcc757, see loadtest/notebook/results
+      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'

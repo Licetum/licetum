@@ -38,8 +38,11 @@ type Budget struct {
 
 // Budgets is the content of budgets.yaml.
 type Budgets struct {
-	Tolerance float64  `yaml:"tolerance"`
-	Budgets   []Budget `yaml:"budgets"`
+	Tolerance float64 `yaml:"tolerance"`
+	// LatencySlackMS is added to the ceiling of a latency (p50, p99) on top of the tolerance: a p50 of a few milliseconds moves by
+	// more than 15 % from one run to the next on a shared runner (2.7 to 6.9 ms at the same step), which is jitter, not a regression.
+	LatencySlackMS float64  `yaml:"latency_slack_ms"`
+	Budgets        []Budget `yaml:"budgets"`
 }
 
 func (b Budget) key() string {
@@ -58,6 +61,9 @@ func LoadBudgets(path string) (Budgets, error) {
 	}
 	if out.Tolerance == 0 {
 		out.Tolerance = DefaultTolerance
+	}
+	if out.LatencySlackMS < 0 {
+		return Budgets{}, fmt.Errorf("%s: latency_slack_ms is not negative", path)
 	}
 	if out.Tolerance < 0 || out.Tolerance >= 1 {
 		return Budgets{}, fmt.Errorf("%s: tolerance %v: want a share between 0 and 1", path, out.Tolerance)
@@ -138,6 +144,66 @@ func Calibrate(rep Report, note string) (Budget, error) {
 	return b, nil
 }
 
+// CalibrateRuns makes the budget of one configuration from several runs of it: the rate is the lowest any run sustained (a
+// floor a healthy run keeps; the steps of a ramp are far apart, so a run at the edge of two steps lands on either), and the
+// latencies and counts are the highest of the runs' windows at that rate (a ceiling a healthy run stays under).
+func CalibrateRuns(reps []Report, note string) (Budget, error) {
+	if len(reps) == 0 {
+		return Budget{}, fmt.Errorf("no runs")
+	}
+	rate := 0.0
+	for i, rep := range reps {
+		got := sustained(rep)
+		if got == 0 {
+			return Budget{}, fmt.Errorf("%s: the run sustained no rate", runName(rep))
+		}
+		if i == 0 || got < rate {
+			rate = got
+		}
+	}
+	var out Budget
+	for i, rep := range reps {
+		ref := rate
+		if !rep.Settings.Ramp {
+			ref = 0
+		}
+		step, ok := referenceStep(rep, ref)
+		if !ok {
+			return Budget{}, fmt.Errorf("%s: no window at %.0f requests/s", runName(rep), rate)
+		}
+		if !step.Valid || step.Oracle.Mismatches > 0 {
+			return Budget{}, fmt.Errorf("%s: the window at %.0f requests/s is not valid or has wrong answers", runName(rep), rate)
+		}
+		b := Budget{
+			Profile: rep.Settings.ProfileName, Mode: rep.Settings.Mode, AddedLatencyMS: rep.Settings.AddedLatencyMS,
+			RPS: rate, ReferenceRPS: step.RateAsked, P50MS: round2(step.Overall.P50),
+			DBQueriesPerRequest: round2(step.Server.DBQueriesPerRequest), RedisRoundTripsPerRequest: round2(step.Server.RedisRoundTripsPerRequest),
+			Note: note,
+		}
+		if p99, published := step.Overall.Quantile(0.99, step.Overall.P99); published {
+			b.P99MS = round2(p99)
+		} else {
+			b.P99MS = -1 // not published in this run: no p99 budget
+		}
+		if i == 0 {
+			out = b
+			continue
+		}
+		out.P50MS = max(out.P50MS, b.P50MS)
+		out.DBQueriesPerRequest = max(out.DBQueriesPerRequest, b.DBQueriesPerRequest)
+		out.RedisRoundTripsPerRequest = max(out.RedisRoundTripsPerRequest, b.RedisRoundTripsPerRequest)
+		if out.P99MS < 0 || b.P99MS < 0 {
+			out.P99MS = -1
+		} else {
+			out.P99MS = max(out.P99MS, b.P99MS)
+		}
+	}
+	if out.P99MS < 0 {
+		out.P99MS = 0
+	}
+	return out, nil
+}
+
 func round2(v float64) float64 { return float64(int(v*100+0.5)) / 100 }
 
 func runName(rep Report) string {
@@ -214,28 +280,28 @@ func CheckBudgets(budgets Budgets, runs map[string]Report) (findings []Finding, 
 			add(Finding{Figure: "reference step", Budget: budget.ReferenceRPS, Verdict: "miss", Detail: "the window is not valid: " + strings.Join(step.InvalidReasons, "; ")})
 			continue
 		}
-		ceiling := func(figure string, limit, got float64) {
+		ceiling := func(figure string, limit, got, slack float64) {
 			switch {
 			case limit <= 0:
 				add(Finding{Figure: figure, Verdict: "skipped", Detail: "no budget"})
 			case got < 0:
 				add(Finding{Figure: figure, Budget: limit, Measured: got, Verdict: "miss", Detail: "not measured"})
-			case got > limit*(1+tol):
-				add(Finding{Figure: figure, Budget: limit, Measured: got, Verdict: "miss", Detail: fmt.Sprintf("above %.2f", limit*(1+tol))})
-			case got < limit*(1-tol):
+			case got > limit*(1+tol)+slack:
+				add(Finding{Figure: figure, Budget: limit, Measured: got, Verdict: "miss", Detail: fmt.Sprintf("above %.2f", limit*(1+tol)+slack)})
+			case got < limit*(1-tol)-slack:
 				add(Finding{Figure: figure, Budget: limit, Measured: got, Verdict: "better", Detail: "set the budget again"})
 			default:
 				add(Finding{Figure: figure, Budget: limit, Measured: got, Verdict: "ok"})
 			}
 		}
-		ceiling("p50 ms", budget.P50MS, step.Overall.P50)
+		ceiling("p50 ms", budget.P50MS, step.Overall.P50, budgets.LatencySlackMS)
 		if p99, published := step.Overall.Quantile(0.99, step.Overall.P99); published {
-			ceiling("p99 ms", budget.P99MS, p99)
+			ceiling("p99 ms", budget.P99MS, p99, budgets.LatencySlackMS)
 		} else if budget.P99MS > 0 {
 			add(Finding{Figure: "p99 ms", Budget: budget.P99MS, Verdict: "skipped", Detail: fmt.Sprintf("%d samples, a p99 needs %d", step.Overall.Samples, MinSamples(0.99))})
 		}
-		ceiling("db queries per request", budget.DBQueriesPerRequest, step.Server.DBQueriesPerRequest)
-		ceiling("redis round trips per request", budget.RedisRoundTripsPerRequest, step.Server.RedisRoundTripsPerRequest)
+		ceiling("db queries per request", budget.DBQueriesPerRequest, step.Server.DBQueriesPerRequest, 0)
+		ceiling("redis round trips per request", budget.RedisRoundTripsPerRequest, step.Server.RedisRoundTripsPerRequest, 0)
 	}
 	return findings, ok
 }
@@ -256,7 +322,7 @@ func BudgetMarkdown(findings []Finding, ok bool, tolerance float64) string {
 	if !ok {
 		verdict = "**Outside the budgets.**"
 	}
-	fmt.Fprintf(&b, "# Load test budgets\n\n%s A figure fails when it is more than %.0f %% on the wrong side of its budget.\n\n", verdict, 100*tolerance)
+	fmt.Fprintf(&b, "# Load test budgets\n\n%s A figure fails when it is more than %.0f %% on the wrong side of its budget (a latency also gets the slack of the budgets file).\n\n", verdict, 100*tolerance)
 	b.WriteString("| configuration | figure | budget | measured | verdict | detail |\n|---|---|---:|---:|---|---|\n")
 	for _, f := range findings {
 		budget, measured := "–", "–"
@@ -281,7 +347,8 @@ func BudgetsYAML(budgets Budgets) ([]byte, error) {
 	header := "# Budgets of the check API load test (admin-api/loadtest), see notebook/README.md.\n" +
 		"#\n" +
 		"# One entry per profile, mode and latency added to PostgreSQL and Redis. A nightly run is compared with its entry by\n" +
-		"# `licetum-loadtest budget`; a figure more than `tolerance` on the wrong side fails the workflow:\n" +
+		"# `licetum-loadtest budget`; a figure more than `tolerance` on the wrong side fails the workflow (a latency also gets\n" +
+		"# `latency_slack_ms` on top: a few milliseconds are jitter on a shared runner):\n" +
 		"#   rps                 the sustained rate (the highest ramp step that met its objectives): a floor\n" +
 		"#   reference_rps       the step the other figures belong to (the sustained step of the baseline)\n" +
 		"#   p50_ms, p99_ms      latency of all the requests of that step: ceilings (p99 0: the step had too few samples)\n" +

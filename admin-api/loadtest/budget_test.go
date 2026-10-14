@@ -169,3 +169,45 @@ func TestStepsMarkdownListsEveryWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestCalibrateRunsTakesTheLowestRateAndTheHighestCosts(t *testing.T) {
+	// One run sustains 80 requests/s, the other only 40: the budget is at 40, with the worse of the two windows at 40.
+	a := run("medium", "warm", 0, 80, step(40, 3, 10, 2, 3), step(80, 4, 20, 2, 3))
+	b := run("medium", "warm", 0, 40, step(40, 5, 12, 2.5, 3.5))
+	got, err := CalibrateRuns([]Report{a, b}, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RPS != 40 || got.ReferenceRPS != 40 || got.P50MS != 5 || got.DBQueriesPerRequest != 2.5 || got.RedisRoundTripsPerRequest != 3.5 {
+		t.Fatalf("budget: %+v", got)
+	}
+	// A p99 is in the budget only when every run published one at that step.
+	if got.P99MS != 12 {
+		t.Fatalf("p99: %v", got.P99MS)
+	}
+	few := step(40, 5, 12, 2.5, 3.5)
+	few.Overall.Samples = 100
+	got, err = CalibrateRuns([]Report{a, run("medium", "warm", 0, 40, few)}, "n")
+	if err != nil || got.P99MS != 0 {
+		t.Fatalf("a p99 that one run could not publish: %+v %v", got, err)
+	}
+	if _, err := CalibrateRuns([]Report{a, run("medium", "warm", 0, 0, step(40, 1, 1, 1, 1))}, ""); err == nil {
+		t.Fatal("a run that sustained nothing made a budget")
+	}
+}
+
+func TestLatencySlackAbsorbsJitterButNotCounts(t *testing.T) {
+	b := baseline()
+	b.LatencySlackMS = 3
+	// p50 budget 4 ms: 15 % is 4.6 ms, the slack makes it 7.6 ms; 6.9 ms (the jitter seen on the runner) passes, 8 ms does not.
+	if _, ok := CheckBudgets(b, map[string]Report{"x": run("medium", "warm", 0, 800, step(800, 6.9, 20, 2, 3))}); !ok {
+		t.Error("jitter inside the slack failed")
+	}
+	if _, ok := CheckBudgets(b, map[string]Report{"x": run("medium", "warm", 0, 800, step(800, 8, 20, 2, 3))}); ok {
+		t.Error("a p50 past the slack passed")
+	}
+	// The slack is for latencies only: a count is held to the tolerance.
+	if _, ok := CheckBudgets(b, map[string]Report{"x": run("medium", "warm", 0, 800, step(800, 4, 20, 2.4, 3))}); ok {
+		t.Error("the slack covered a count")
+	}
+}
