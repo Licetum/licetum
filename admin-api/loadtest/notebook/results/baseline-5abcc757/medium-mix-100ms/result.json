@@ -1,0 +1,1337 @@
+{
+  "started": "2026-10-14T19:28:36.102954949Z",
+  "finished": "2026-10-14T19:44:24.303768247Z",
+  "profile": {
+    "name": "medium",
+    "users": 5000,
+    "groups": 50,
+    "rules": 10000,
+    "resources": 100000
+  },
+  "settings": {
+    "profile": "medium",
+    "mode": "mix",
+    "seed": 1,
+    "mix": "permission=2,check1=3,check10=1,authzen=2,authzen_batch=1,on_behalf=1",
+    "consistency": "minimize_latency",
+    "concurrency": 1000,
+    "db_pool": 30,
+    "access_log": false,
+    "ramp": true,
+    "rate": 50,
+    "rate_start": 10,
+    "rate_factor": 2,
+    "warm_seconds": 60,
+    "measure_seconds": 90,
+    "slo_p99_ms": 2000,
+    "max_error_rate": 0.01,
+    "oracle_rate": 5,
+    "k6_cpus": "",
+    "writes_every_seconds": 0,
+    "check_cpus": "",
+    "required_rate": 1,
+    "raw_points_kept": false,
+    "replicas": 1,
+    "pause_redis_seconds": 0,
+    "added_latency_ms": 100,
+    "ramp_through": true
+  },
+  "machine": {
+    "cpus": 4,
+    "os": "linux",
+    "arch": "amd64",
+    "go_version": "go1.26.0",
+    "k6": "k6 v2.2.0 (commit/00a9a1b7f5, go1.26.5, linux/amd64)"
+  },
+  "seeding": [
+    {
+      "name": "source tables",
+      "seconds": 0.547410372
+    },
+    {
+      "name": "service and types",
+      "seconds": 0.025063083
+    },
+    {
+      "name": "groups",
+      "seconds": 0.108150656
+    },
+    {
+      "name": "rules",
+      "seconds": 0.521625812
+    }
+  ],
+  "rules_written": 10000,
+  "warm_up": [
+    {
+      "name": "warm-up permission (first synchronization)",
+      "seconds": 41.223303796
+    },
+    {
+      "name": "warm-up check1",
+      "seconds": 0.186119353
+    },
+    {
+      "name": "warm-up authzen",
+      "seconds": 0.001969977
+    },
+    {
+      "name": "warm-up authzen_batch",
+      "seconds": 0.002123519
+    },
+    {
+      "name": "warm-up on_behalf",
+      "seconds": 0.005564823
+    }
+  ],
+  "db_statements": true,
+  "top_statements": [
+    {
+      "query": "SELECT ar.id, ar.role_id, ar.type_resource_id, ar.resource_id, ar.resource_from_claim, ar.access, ar.subject, ar.predicate, ar.member_of_group_id, ar.enabled, a…",
+      "calls": 13541,
+      "total_ms": 649940.3499809998,
+      "mean_ms": 47.99795805191639
+    },
+    {
+      "query": "SELECT min(b) FROM ( -- a role assignment has no type of its own: its boundaries count for every type SELECT valid_from AS b FROM assignment_rule WHERE valid_fr…",
+      "calls": 15293,
+      "total_ms": 89157.94023500002,
+      "mean_ms": 5.829983668018048
+    },
+    {
+      "query": "SELECT type_resource_id, count(*) FROM resource_cache WHERE active AND type_resource_id = ANY($1) GROUP BY type_resource_id",
+      "calls": 1860,
+      "total_ms": 81462.55235599985,
+      "mean_ms": 43.797071159139705
+    },
+    {
+      "query": "SELECT c.type_resource_id, c.external_id, c.id FROM unnest($1::uuid[], $2::varchar[]) AS q(type_id, ext) JOIN resource_cache c ON c.type_resource_id = q.type_id…",
+      "calls": 8462,
+      "total_ms": 3963.483834999996,
+      "mean_ms": 0.468386177617584
+    },
+    {
+      "query": "SELECT DISTINCT q.idx, anc.id, anc.type_resource_id, anc.external_id, anc.name FROM unnest($1::bigint[], $2::uuid[], $3::uuid[], $4::text[], $5::text[]) AS q(id…",
+      "calls": 4895,
+      "total_ms": 2814.214718000323,
+      "mean_ms": 0.5749161834525686
+    },
+    {
+      "query": "SELECT id, name, slug, url, icon, authorization_url, token_url, jwks_url, issuer, client_id, client_secret, trusted_clients FROM service WHERE id = $1 AND delet…",
+      "calls": 32602,
+      "total_ms": 2276.008545999979,
+      "mean_ms": 0.06981193012698543
+    },
+    {
+      "query": "SELECT q.ord, w.descendant_id, w.descendant_type_id, w.descendant_external_id, w.descendant_name, w.inherit FROM unnest($1::uuid[]) WITH ORDINALITY AS q(id, ord…",
+      "calls": 598,
+      "total_ms": 2077.533205999991,
+      "mean_ms": 3.474135795986607
+    },
+    {
+      "query": "SELECT id, name, folder_id AS parent_id, owner FROM lt_document",
+      "calls": 20,
+      "total_ms": 1797.6290580000002,
+      "mean_ms": 89.88145290000001
+    }
+  ],
+  "storage": [
+    {
+      "table": "resource_cache",
+      "rows": 100000,
+      "total_bytes": 32047104,
+      "index_bytes": 19668992
+    },
+    {
+      "table": "resource_edge",
+      "rows": 95000,
+      "total_bytes": 25837568,
+      "index_bytes": 11280384
+    },
+    {
+      "table": "resource_ancestor",
+      "rows": 195000,
+      "total_bytes": 42033152,
+      "index_bytes": 22265856
+    },
+    {
+      "table": "assignment_rule",
+      "rows": 10000,
+      "total_bytes": 2416640,
+      "index_bytes": 851968
+    },
+    {
+      "table": "group_member",
+      "rows": 50,
+      "total_bytes": 65536,
+      "index_bytes": 49152
+    },
+    {
+      "table": "user_group",
+      "rows": 50,
+      "total_bytes": 49152,
+      "index_bytes": 32768
+    },
+    {
+      "table": "type_resource",
+      "rows": 2,
+      "total_bytes": 65536,
+      "index_bytes": 49152
+    }
+  ],
+  "measurements": [
+    {
+      "mode": "mix",
+      "seed": 1,
+      "rate_asked": 10,
+      "window_seconds": 90,
+      "requests": 901,
+      "answered_2xx": 901,
+      "answered_other": 0,
+      "error_rate": 0,
+      "achieved_rps": 10.011111111111111,
+      "dropped_iterations": 0,
+      "decisions": 2603,
+      "allowed_share": 0.7986938148290434,
+      "operations": [
+        {
+          "name": "permission",
+          "requests": 179,
+          "latency_ms": {
+            "samples": 179,
+            "mean": 1031.5874325419,
+            "p50": 512.131115,
+            "p90": 1773.3209582,
+            "p95": 1786.2377526,
+            "p99": 1995.22891342,
+            "p999": 2024.9684028820004,
+            "max": 2027.476642
+          }
+        },
+        {
+          "name": "check1",
+          "requests": 251,
+          "latency_ms": {
+            "samples": 251,
+            "mean": 1203.072058884463,
+            "p50": 1658.967041,
+            "p90": 1873.395966,
+            "p95": 1897.257169,
+            "p99": 2002.9827645,
+            "p999": 2105.6745530000007,
+            "max": 2109.25037
+          }
+        },
+        {
+          "name": "check10",
+          "requests": 105,
+          "latency_ms": {
+            "samples": 105,
+            "mean": 1214.5036358190475,
+            "p50": 1658.276305,
+            "p90": 1874.4500238,
+            "p95": 1880.4129396,
+            "p99": 1981.11974176,
+            "p999": 1989.260862928,
+            "max": 1990.136524
+          }
+        },
+        {
+          "name": "check100",
+          "requests": 0,
+          "latency_ms": {
+            "samples": 0,
+            "mean": 0,
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0,
+            "p999": 0,
+            "max": 0
+          }
+        },
+        {
+          "name": "authzen",
+          "requests": 177,
+          "latency_ms": {
+            "samples": 177,
+            "mean": 1137.07939059887,
+            "p50": 1652.094494,
+            "p90": 1868.5341030000002,
+            "p95": 1877.0556036,
+            "p99": 1969.7212323600002,
+            "p999": 1975.063384712,
+            "max": 1975.376667
+          }
+        },
+        {
+          "name": "authzen_batch",
+          "requests": 104,
+          "latency_ms": {
+            "samples": 104,
+            "mean": 1223.8026173461542,
+            "p50": 1658.3601915,
+            "p90": 1872.1471665,
+            "p95": 1883.38639755,
+            "p99": 1973.91705072,
+            "p999": 2073.7585972290008,
+            "max": 2085.192355
+          }
+        },
+        {
+          "name": "on_behalf",
+          "requests": 85,
+          "latency_ms": {
+            "samples": 85,
+            "mean": 1356.4626462235294,
+            "p50": 1762.445682,
+            "p90": 1869.4740452,
+            "p95": 1871.3384508,
+            "p99": 1915.8090405199998,
+            "p999": 1957.9900015520006,
+            "max": 1962.676775
+          }
+        }
+      ],
+      "k6_cores": 4,
+      "k6_cpu_share": 0.004012984861027443,
+      "server": {
+        "cpu_cores": 0.33685864478565275,
+        "permission_cache_hit_ratio": 0.553072625698324,
+        "check_cache_hit_ratio": 0.41374837872892345,
+        "permission_compute_avg_ms": 997.4894770874996,
+        "source_fetch_avg_ms": 658.1222126666668,
+        "operation_avg_ms": {
+          "authzen": 1136.714060576271,
+          "authzen_batch": 1223.4403840384603,
+          "check1": 1288.96096585679,
+          "check10": 1288.96096585679,
+          "check100": 1288.96096585679,
+          "on_behalf": 1356.130500129412,
+          "permission": 1031.1603042513966
+        },
+        "db_blocks_read_per_request": 0.011098779134295227,
+        "db_buffer_hit_ratio": 0.9999883529702255,
+        "db_commits_per_request": 10.83906770255272,
+        "db_statement_ms_per_request": 14.630237238623316,
+        "db_calls_per_request": 10.612652608213097,
+        "db_queries_per_request": 9.96,
+        "redis_round_trips_per_request": 5.237894736842105
+      },
+      "oracle": {
+        "checked": 49,
+        "mismatches": 0,
+        "expected_granted": 33
+      },
+      "latency_all_ms": {
+        "samples": 901,
+        "mean": 1174.2352588623755,
+        "p50": 1575.247113,
+        "p90": 1869.811737,
+        "p95": 1880.64092,
+        "p99": 1988.470554,
+        "p999": 2096.3774288000022,
+        "max": 2109.25037
+      },
+      "host_swap_pages": 0,
+      "valid": true,
+      "passed": true
+    },
+    {
+      "mode": "mix",
+      "seed": 1,
+      "rate_asked": 20,
+      "window_seconds": 90,
+      "requests": 1736,
+      "answered_2xx": 1736,
+      "answered_other": 0,
+      "error_rate": 0,
+      "achieved_rps": 19.288888888888888,
+      "dropped_iterations": 65,
+      "decisions": 4848,
+      "allowed_share": 0.793523102310231,
+      "operations": [
+        {
+          "name": "permission",
+          "requests": 335,
+          "latency_ms": {
+            "samples": 335,
+            "mean": 3096.690055925372,
+            "p50": 3408.86089,
+            "p90": 5353.8944068,
+            "p95": 5600.1012474,
+            "p99": 5763.23804018,
+            "p999": 5995.178804132005,
+            "max": 6027.186292
+          }
+        },
+        {
+          "name": "check1",
+          "requests": 501,
+          "latency_ms": {
+            "samples": 501,
+            "mean": 4445.566452387224,
+            "p50": 4539.436349,
+            "p90": 6004.432746,
+            "p95": 6167.623975,
+            "p99": 6336.244562,
+            "p999": 6662.693524000012,
+            "max": 6769.226518
+          }
+        },
+        {
+          "name": "check10",
+          "requests": 188,
+          "latency_ms": {
+            "samples": 188,
+            "mean": 4406.843675164895,
+            "p50": 4508.805469,
+            "p90": 5865.9650467,
+            "p95": 6050.1205338,
+            "p99": 6249.98870193,
+            "p999": 6273.852000899999,
+            "max": 6276.732418
+          }
+        },
+        {
+          "name": "check100",
+          "requests": 0,
+          "latency_ms": {
+            "samples": 0,
+            "mean": 0,
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0,
+            "p999": 0,
+            "max": 0
+          }
+        },
+        {
+          "name": "authzen",
+          "requests": 345,
+          "latency_ms": {
+            "samples": 345,
+            "mean": 4455.946052768118,
+            "p50": 4513.011541,
+            "p90": 5942.7461696,
+            "p95": 6036.4326152,
+            "p99": 6391.98034396,
+            "p999": 7325.523902920065,
+            "max": 7677.02188
+          }
+        },
+        {
+          "name": "authzen_batch",
+          "requests": 195,
+          "latency_ms": {
+            "samples": 195,
+            "mean": 4466.791831938463,
+            "p50": 4577.408625,
+            "p90": 5927.6948334,
+            "p95": 6089.7543424000005,
+            "p99": 6268.45137476,
+            "p999": 6415.227992580002,
+            "max": 6443.153212
+          }
+        },
+        {
+          "name": "on_behalf",
+          "requests": 172,
+          "latency_ms": {
+            "samples": 172,
+            "mean": 4668.58619794186,
+            "p50": 4864.487467000001,
+            "p90": 6402.876835,
+            "p95": 6524.2750528,
+            "p99": 6677.630616569999,
+            "p999": 6830.206284941,
+            "max": 6842.709827
+          }
+        }
+      ],
+      "k6_cores": 4,
+      "k6_cpu_share": 0.006638225396919925,
+      "server": {
+        "cpu_cores": 0.925771984934873,
+        "permission_cache_hit_ratio": 0.32238805970149254,
+        "check_cache_hit_ratio": 0.018947368421052633,
+        "permission_compute_avg_ms": 2750.901796579187,
+        "source_fetch_avg_ms": 808.5068580000001,
+        "operation_avg_ms": {
+          "authzen": 4454.954496994206,
+          "authzen_batch": 4465.759124610258,
+          "check1": 4419.760753743342,
+          "check10": 4419.760753743342,
+          "check100": 4419.760753743342,
+          "on_behalf": 4667.7768058953525,
+          "permission": 3095.794329686565
+        },
+        "db_blocks_read_per_request": 0,
+        "db_buffer_hit_ratio": 1,
+        "db_commits_per_request": 15.35426267281106,
+        "db_statement_ms_per_request": 27.504166474078843,
+        "db_calls_per_request": 15.316820276497696,
+        "db_queries_per_request": 15.048863636363636,
+        "redis_round_trips_per_request": 6.271590909090909
+      },
+      "oracle": {
+        "checked": 24,
+        "mismatches": 0,
+        "expected_granted": 15
+      },
+      "latency_all_ms": {
+        "samples": 1736,
+        "mean": 4207.620503335829,
+        "p50": 4449.0527935,
+        "p90": 5920.7050555000005,
+        "p95": 6104.5203415,
+        "p99": 6489.129260050002,
+        "p999": 6788.966532185007,
+        "max": 7677.02188
+      },
+      "host_swap_pages": 0,
+      "valid": false,
+      "invalid_reasons": [
+        "65 iterations dropped: k6 could not send at the rate"
+      ],
+      "passed": false,
+      "fail_reasons": [
+        "the window is not valid"
+      ]
+    },
+    {
+      "mode": "mix",
+      "seed": 1,
+      "rate_asked": 40,
+      "window_seconds": 90,
+      "requests": 2372,
+      "answered_2xx": 1372,
+      "answered_other": 1000,
+      "error_rate": 0.42158516020236086,
+      "achieved_rps": 15.244444444444444,
+      "dropped_iterations": 953,
+      "decisions": 3611,
+      "allowed_share": 0.795624480753254,
+      "operations": [
+        {
+          "name": "permission",
+          "requests": 501,
+          "latency_ms": {
+            "samples": 501,
+            "mean": 17119.128977780427,
+            "p50": 13409.339906,
+            "p90": 37889.266506,
+            "p95": 38408.623749,
+            "p99": 38815.248483,
+            "p999": 39173.101466500004,
+            "max": 39191.883942
+          }
+        },
+        {
+          "name": "check1",
+          "requests": 680,
+          "latency_ms": {
+            "samples": 680,
+            "mean": 24323.87024260884,
+            "p50": 31722.3089555,
+            "p90": 38286.0598056,
+            "p95": 38560.32439175,
+            "p99": 39168.22213226,
+            "p999": 39359.503660783,
+            "max": 39361.198732
+          }
+        },
+        {
+          "name": "check10",
+          "requests": 266,
+          "latency_ms": {
+            "samples": 266,
+            "mean": 24777.898576921063,
+            "p50": 30789.0817085,
+            "p90": 38469.994435500004,
+            "p95": 38842.95143575,
+            "p99": 39117.1597782,
+            "p999": 39316.33022004001,
+            "max": 39370.530846
+          }
+        },
+        {
+          "name": "check100",
+          "requests": 0,
+          "latency_ms": {
+            "samples": 0,
+            "mean": 0,
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0,
+            "p999": 0,
+            "max": 0
+          }
+        },
+        {
+          "name": "authzen",
+          "requests": 447,
+          "latency_ms": {
+            "samples": 447,
+            "mean": 24760.57951213423,
+            "p50": 30616.099825,
+            "p90": 38275.8374348,
+            "p95": 38771.0757896,
+            "p99": 39240.64924212,
+            "p999": 39397.801440718,
+            "max": 39417.001503
+          }
+        },
+        {
+          "name": "authzen_batch",
+          "requests": 257,
+          "latency_ms": {
+            "samples": 257,
+            "mean": 26128.047342867692,
+            "p50": 33802.928917,
+            "p90": 38342.695883,
+            "p95": 38641.0048162,
+            "p99": 39125.156443320004,
+            "p999": 39159.330115704004,
+            "max": 39161.572891
+          }
+        },
+        {
+          "name": "on_behalf",
+          "requests": 221,
+          "latency_ms": {
+            "samples": 221,
+            "mean": 26595.034797022603,
+            "p50": 34936.22811,
+            "p90": 38295.938739,
+            "p95": 38656.069636,
+            "p99": 39037.130158800006,
+            "p999": 39176.03694138,
+            "max": 39187.249609
+          }
+        }
+      ],
+      "k6_cores": 4,
+      "k6_cpu_share": 0.013589680985981276,
+      "server": {
+        "cpu_cores": 1.012615420085627,
+        "permission_cache_hit_ratio": 0.332089552238806,
+        "check_cache_hit_ratio": 0.0832549388523048,
+        "permission_compute_avg_ms": 13969.449847901846,
+        "source_fetch_avg_ms": 681.8621959999999,
+        "operation_avg_ms": {
+          "authzen": 26426.75722737795,
+          "authzen_batch": 27241.170057492916,
+          "check1": 26039.51623279689,
+          "check10": 26039.51623279689,
+          "check100": 26039.51623279689,
+          "on_behalf": 27908.948793983873,
+          "permission": 18482.353162100753
+        },
+        "db_blocks_read_per_request": 0.002951096121416526,
+        "db_buffer_hit_ratio": 0.999998240413332,
+        "db_commits_per_request": 14.568718381112985,
+        "db_statement_ms_per_request": 37.56223621669483,
+        "db_calls_per_request": 14.02150084317032,
+        "db_queries_per_request": 12.477084898572501,
+        "redis_round_trips_per_request": 5.747182569496619
+      },
+      "oracle": {
+        "checked": 15,
+        "mismatches": 0,
+        "unanswered": 10,
+        "expected_granted": 11
+      },
+      "latency_all_ms": {
+        "samples": 2372,
+        "mean": 23342.42255627571,
+        "p50": 27414.136724,
+        "p90": 38282.195210000005,
+        "p95": 38607.5007012,
+        "p99": 39153.268650369995,
+        "p999": 39367.068631706,
+        "max": 39417.001503
+      },
+      "host_swap_pages": 0,
+      "valid": false,
+      "invalid_reasons": [
+        "953 iterations dropped: k6 could not send at the rate"
+      ],
+      "passed": false,
+      "fail_reasons": [
+        "the window is not valid",
+        "errors 42.16% above 1.00%",
+        "15 answers/s, under 95% of the 40 asked"
+      ]
+    },
+    {
+      "mode": "mix",
+      "seed": 1,
+      "rate_asked": 80,
+      "window_seconds": 90,
+      "requests": 2518,
+      "answered_2xx": 484,
+      "answered_other": 2034,
+      "error_rate": 0.8077839555202542,
+      "achieved_rps": 5.377777777777778,
+      "dropped_iterations": 4352,
+      "decisions": 902,
+      "allowed_share": 0.79490022172949,
+      "operations": [
+        {
+          "name": "permission",
+          "requests": 535,
+          "latency_ms": {
+            "samples": 535,
+            "mean": 25267.491627652325,
+            "p50": 29338.025859,
+            "p90": 39782.803049,
+            "p95": 40001.8341743,
+            "p99": 40514.85429696,
+            "p999": 40679.709324070005,
+            "max": 40764.708184
+          }
+        },
+        {
+          "name": "check1",
+          "requests": 741,
+          "latency_ms": {
+            "samples": 741,
+            "mean": 35139.076891993245,
+            "p50": 38802.850688,
+            "p90": 40150.46355,
+            "p95": 40235.259344,
+            "p99": 40466.8937522,
+            "p999": 40612.43289190001,
+            "max": 40711.804617
+          }
+        },
+        {
+          "name": "check10",
+          "requests": 281,
+          "latency_ms": {
+            "samples": 281,
+            "mean": 35316.54840250533,
+            "p50": 38743.824343,
+            "p90": 40147.133517,
+            "p95": 40292.41167,
+            "p99": 40538.549609999995,
+            "p999": 40587.72218768,
+            "max": 40591.657397
+          }
+        },
+        {
+          "name": "check100",
+          "requests": 0,
+          "latency_ms": {
+            "samples": 0,
+            "mean": 0,
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0,
+            "p999": 0,
+            "max": 0
+          }
+        },
+        {
+          "name": "authzen",
+          "requests": 462,
+          "latency_ms": {
+            "samples": 462,
+            "mean": 35882.30137451516,
+            "p50": 38847.323871500004,
+            "p90": 40054.8105954,
+            "p95": 40256.4762292,
+            "p99": 40467.566988670005,
+            "p999": 40611.03174305401,
+            "max": 40690.319772
+          }
+        },
+        {
+          "name": "authzen_batch",
+          "requests": 252,
+          "latency_ms": {
+            "samples": 252,
+            "mean": 35999.94072475395,
+            "p50": 38928.493739,
+            "p90": 40161.3835519,
+            "p95": 40379.5682505,
+            "p99": 40496.00192814,
+            "p999": 40634.407712929,
+            "max": 40666.290692
+          }
+        },
+        {
+          "name": "on_behalf",
+          "requests": 247,
+          "latency_ms": {
+            "samples": 247,
+            "mean": 36477.13630715384,
+            "p50": 38753.004567,
+            "p90": 40065.0214412,
+            "p95": 40148.8099342,
+            "p99": 40337.78147042,
+            "p999": 40550.343093018,
+            "max": 40566.093936
+          }
+        }
+      ],
+      "k6_cores": 4,
+      "k6_cpu_share": 0.013902695461064983,
+      "server": {
+        "cpu_cores": 1.1438654631986207,
+        "permission_cache_hit_ratio": 0.2465753424657534,
+        "check_cache_hit_ratio": 0.017127799736495388,
+        "permission_compute_avg_ms": 18910.244950979217,
+        "source_fetch_avg_ms": 1366.257826,
+        "operation_avg_ms": {
+          "authzen": 36212.59112162071,
+          "authzen_batch": 36300.79116644958,
+          "check1": 35519.77261520027,
+          "check10": 35519.77261520027,
+          "check100": 35519.77261520027,
+          "on_behalf": 36762.605422751716,
+          "permission": 26352.38614710625
+        },
+        "db_blocks_read_per_request": 0,
+        "db_buffer_hit_ratio": 1,
+        "db_commits_per_request": 13.369737887212073,
+        "db_statement_ms_per_request": 64.88286134710083,
+        "db_calls_per_request": 12.965448768864178,
+        "db_queries_per_request": 11.36674816625917,
+        "redis_round_trips_per_request": 5.281872162067761
+      },
+      "oracle": {
+        "checked": 14,
+        "mismatches": 0,
+        "unanswered": 11,
+        "expected_granted": 11
+      },
+      "latency_all_ms": {
+        "samples": 2518,
+        "mean": 33415.2402956299,
+        "p50": 38633.3648525,
+        "p90": 40079.9389122,
+        "p95": 40222.49726125,
+        "p99": 40496.31860903,
+        "p999": 40677.89673764,
+        "max": 40764.708184
+      },
+      "host_swap_pages": 0,
+      "valid": false,
+      "invalid_reasons": [
+        "4352 iterations dropped: k6 could not send at the rate"
+      ],
+      "passed": false,
+      "fail_reasons": [
+        "the window is not valid",
+        "errors 80.78% above 1.00%",
+        "5 answers/s, under 95% of the 80 asked"
+      ]
+    },
+    {
+      "mode": "mix",
+      "seed": 1,
+      "rate_asked": 160,
+      "window_seconds": 90,
+      "requests": 2609,
+      "answered_2xx": 278,
+      "answered_other": 2331,
+      "error_rate": 0.8934457646607896,
+      "achieved_rps": 3.088888888888889,
+      "dropped_iterations": 11357,
+      "decisions": 349,
+      "allowed_share": 0.7765042979942693,
+      "operations": [
+        {
+          "name": "permission",
+          "requests": 554,
+          "latency_ms": {
+            "samples": 554,
+            "mean": 29202.16391642781,
+            "p50": 35033.9897965,
+            "p90": 41097.517582500004,
+            "p95": 41638.59277895,
+            "p99": 42541.461116590006,
+            "p999": 42663.37261514701,
+            "max": 42706.935799
+          }
+        },
+        {
+          "name": "check1",
+          "requests": 769,
+          "latency_ms": {
+            "samples": 769,
+            "mean": 38125.58844964626,
+            "p50": 39058.439846,
+            "p90": 41449.101928000004,
+            "p95": 42383.5424022,
+            "p99": 42625.74655288,
+            "p999": 48240.59052465601,
+            "max": 48298.120566
+          }
+        },
+        {
+          "name": "check10",
+          "requests": 291,
+          "latency_ms": {
+            "samples": 291,
+            "mean": 38030.571209340196,
+            "p50": 39210.118913,
+            "p90": 41551.88069,
+            "p95": 42470.208598,
+            "p99": 43081.15236940004,
+            "p999": 48256.67764888,
+            "max": 48260.37913
+          }
+        },
+        {
+          "name": "check100",
+          "requests": 0,
+          "latency_ms": {
+            "samples": 0,
+            "mean": 0,
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0,
+            "p999": 0,
+            "max": 0
+          }
+        },
+        {
+          "name": "authzen",
+          "requests": 475,
+          "latency_ms": {
+            "samples": 475,
+            "mean": 38153.826755511596,
+            "p50": 39100.768187,
+            "p90": 41218.741296,
+            "p95": 42074.5637205,
+            "p99": 42579.30606262,
+            "p999": 45625.146103014384,
+            "max": 48310.738995
+          }
+        },
+        {
+          "name": "authzen_batch",
+          "requests": 258,
+          "latency_ms": {
+            "samples": 258,
+            "mean": 38254.0715930775,
+            "p50": 39151.816351,
+            "p90": 41350.4097602,
+            "p95": 41990.263398849995,
+            "p99": 42623.24437186,
+            "p999": 46856.58520912729,
+            "max": 48285.374419
+          }
+        },
+        {
+          "name": "on_behalf",
+          "requests": 262,
+          "latency_ms": {
+            "samples": 262,
+            "mean": 38571.70444116413,
+            "p50": 39085.8411595,
+            "p90": 41196.8171126,
+            "p95": 42256.239350849995,
+            "p99": 46731.21142144986,
+            "p999": 54319.58574865905,
+            "max": 54697.638841
+          }
+        }
+      ],
+      "k6_cores": 4,
+      "k6_cpu_share": 0.014989131191943117,
+      "server": {
+        "cpu_cores": 1.2652223056541287,
+        "permission_cache_hit_ratio": 0.1637239165329053,
+        "check_cache_hit_ratio": 0,
+        "permission_compute_avg_ms": 21963.281955485658,
+        "source_fetch_avg_ms": 2154.892146999999,
+        "operation_avg_ms": {
+          "authzen": 38257.31725838934,
+          "authzen_batch": 38364.01840557329,
+          "check1": 38017.57598220424,
+          "check10": 38017.57598220424,
+          "check100": 38017.57598220424,
+          "on_behalf": 38551.69056986795,
+          "permission": 30250.234213747994
+        },
+        "db_blocks_read_per_request": 0,
+        "db_buffer_hit_ratio": 1,
+        "db_commits_per_request": 12.324645458029897,
+        "db_statement_ms_per_request": 65.42256652855487,
+        "db_calls_per_request": 11.84515139900345,
+        "db_queries_per_request": 10.073904512753433,
+        "redis_round_trips_per_request": 4.042184434270765
+      },
+      "oracle": {
+        "checked": 14,
+        "mismatches": 0,
+        "unanswered": 12,
+        "expected_granted": 11
+      },
+      "latency_all_ms": {
+        "samples": 2609,
+        "mean": 36282.81996660174,
+        "p50": 38827.259215,
+        "p90": 41301.7188886,
+        "p95": 42169.7073972,
+        "p99": 42615.84321272,
+        "p999": 50244.113121377384,
+        "max": 54697.638841
+      },
+      "host_swap_pages": 0,
+      "valid": false,
+      "invalid_reasons": [
+        "11357 iterations dropped: k6 could not send at the rate"
+      ],
+      "passed": false,
+      "fail_reasons": [
+        "the window is not valid",
+        "errors 89.34% above 1.00%",
+        "3 answers/s, under 95% of the 160 asked"
+      ]
+    },
+    {
+      "mode": "mix",
+      "seed": 1,
+      "rate_asked": 320,
+      "window_seconds": 90,
+      "requests": 2732,
+      "answered_2xx": 6,
+      "answered_other": 2726,
+      "error_rate": 0.9978038067349927,
+      "achieved_rps": 0.06666666666666667,
+      "dropped_iterations": 25796,
+      "decisions": 0,
+      "allowed_share": -1,
+      "operations": [
+        {
+          "name": "permission",
+          "requests": 584,
+          "latency_ms": {
+            "samples": 584,
+            "mean": 36769.9463488288,
+            "p50": 38253.8003135,
+            "p90": 42947.063414799995,
+            "p95": 43463.51069635,
+            "p99": 44049.30170456,
+            "p999": 44274.179183106,
+            "max": 44317.618407
+          }
+        },
+        {
+          "name": "check1",
+          "requests": 798,
+          "latency_ms": {
+            "samples": 798,
+            "mean": 38603.265186180426,
+            "p50": 39480.906724,
+            "p90": 43392.4162374,
+            "p95": 43658.04345975,
+            "p99": 44220.18697137,
+            "p999": 44983.53768160922,
+            "max": 46913.157572
+          }
+        },
+        {
+          "name": "check10",
+          "requests": 306,
+          "latency_ms": {
+            "samples": 306,
+            "mean": 38542.67322569607,
+            "p50": 39632.278235,
+            "p90": 43454.435507999995,
+            "p95": 43674.6479655,
+            "p99": 44511.8412519,
+            "p999": 46978.567902185,
+            "max": 46995.696087
+          }
+        },
+        {
+          "name": "check100",
+          "requests": 0,
+          "latency_ms": {
+            "samples": 0,
+            "mean": 0,
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0,
+            "p999": 0,
+            "max": 0
+          }
+        },
+        {
+          "name": "authzen",
+          "requests": 490,
+          "latency_ms": {
+            "samples": 490,
+            "mean": 38727.72252500002,
+            "p50": 39239.743132999996,
+            "p90": 43414.0382349,
+            "p95": 43630.7566671,
+            "p99": 44276.654356830004,
+            "p999": 45810.32832083819,
+            "max": 46946.304787
+          }
+        },
+        {
+          "name": "authzen_batch",
+          "requests": 274,
+          "latency_ms": {
+            "samples": 274,
+            "mean": 38822.44108591244,
+            "p50": 39508.192320999995,
+            "p90": 43388.040189499996,
+            "p95": 43513.350701999996,
+            "p99": 44063.12538592,
+            "p999": 52712.47443949626,
+            "max": 54885.015223
+          }
+        },
+        {
+          "name": "on_behalf",
+          "requests": 280,
+          "latency_ms": {
+            "samples": 280,
+            "mean": 38974.88071224998,
+            "p50": 39775.493809,
+            "p90": 43382.5232604,
+            "p95": 43495.67597165,
+            "p99": 43669.98267697,
+            "p999": 55011.566249978,
+            "max": 55048.337897
+          }
+        }
+      ],
+      "k6_cores": 4,
+      "k6_cpu_share": 0.014958929031882633,
+      "server": {
+        "cpu_cores": 0.9504390624145833,
+        "permission_cache_hit_ratio": 0.009771986970684038,
+        "check_cache_hit_ratio": 0,
+        "permission_compute_avg_ms": -1,
+        "source_fetch_avg_ms": 1254.4114043333323,
+        "operation_avg_ms": {
+          "authzen": 38844.817059909234,
+          "authzen_batch": 38923.609015180555,
+          "check1": 38523.71315339043,
+          "check10": 38523.71315339043,
+          "check100": 38523.71315339043,
+          "on_behalf": 39037.18823953504,
+          "permission": 36906.92333087957
+        },
+        "db_blocks_read_per_request": 0,
+        "db_buffer_hit_ratio": 1,
+        "db_commits_per_request": 10.92349926793558,
+        "db_statement_ms_per_request": 59.79370076903316,
+        "db_calls_per_request": 10.451683748169838,
+        "db_queries_per_request": 9.462404769791322,
+        "redis_round_trips_per_request": 3.8953295793309044
+      },
+      "oracle": {
+        "checked": 14,
+        "mismatches": 0,
+        "unanswered": 12,
+        "expected_granted": 11
+      },
+      "latency_all_ms": {
+        "samples": 2732,
+        "mean": 38286.973567925015,
+        "p50": 39296.420016000004,
+        "p90": 43382.4011137,
+        "p95": 43600.7602634,
+        "p99": 44205.79869255,
+        "p999": 49117.92293458583,
+        "max": 55048.337897
+      },
+      "host_swap_pages": 0,
+      "valid": false,
+      "invalid_reasons": [
+        "25796 iterations dropped: k6 could not send at the rate"
+      ],
+      "passed": false,
+      "fail_reasons": [
+        "the window is not valid",
+        "errors 99.78% above 1.00%",
+        "0 answers/s, under 95% of the 320 asked"
+      ]
+    },
+    {
+      "mode": "mix",
+      "seed": 1,
+      "rate_asked": 640,
+      "window_seconds": 90,
+      "requests": 3003,
+      "answered_2xx": 0,
+      "answered_other": 3003,
+      "error_rate": 1,
+      "achieved_rps": 0,
+      "dropped_iterations": 54597,
+      "decisions": 0,
+      "allowed_share": -1,
+      "operations": [
+        {
+          "name": "permission",
+          "requests": 613,
+          "latency_ms": {
+            "samples": 613,
+            "mean": 36883.522681911905,
+            "p50": 37738.619647,
+            "p90": 40569.5129316,
+            "p95": 41136.0606778,
+            "p99": 46482.21638936,
+            "p999": 52165.75763209201,
+            "max": 52331.580537
+          }
+        },
+        {
+          "name": "check1",
+          "requests": 909,
+          "latency_ms": {
+            "samples": 909,
+            "mean": 38232.01953821238,
+            "p50": 39289.625055,
+            "p90": 40544.1331766,
+            "p95": 40970.79807379999,
+            "p99": 44338.225986279926,
+            "p999": 51658.95187460801,
+            "max": 51764.598786
+          }
+        },
+        {
+          "name": "check10",
+          "requests": 330,
+          "latency_ms": {
+            "samples": 330,
+            "mean": 37980.93197828787,
+            "p50": 39302.098599000004,
+            "p90": 40550.7172167,
+            "p95": 40870.10389485,
+            "p99": 42328.77671244998,
+            "p999": 48759.23052061545,
+            "max": 51750.968683
+          }
+        },
+        {
+          "name": "check100",
+          "requests": 0,
+          "latency_ms": {
+            "samples": 0,
+            "mean": 0,
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0,
+            "p999": 0,
+            "max": 0
+          }
+        },
+        {
+          "name": "authzen",
+          "requests": 539,
+          "latency_ms": {
+            "samples": 539,
+            "mean": 38294.200090502774,
+            "p50": 39341.647765,
+            "p90": 40596.1100024,
+            "p95": 40827.90786099999,
+            "p99": 43814.73498764001,
+            "p999": 52080.04086828405,
+            "max": 52330.489704
+          }
+        },
+        {
+          "name": "authzen_batch",
+          "requests": 299,
+          "latency_ms": {
+            "samples": 299,
+            "mean": 38232.490727949815,
+            "p50": 39396.388864,
+            "p90": 40616.6209866,
+            "p95": 41098.282976,
+            "p99": 41995.76972716,
+            "p999": 45849.55476525611,
+            "max": 46422.582937
+          }
+        },
+        {
+          "name": "on_behalf",
+          "requests": 313,
+          "latency_ms": {
+            "samples": 313,
+            "mean": 38310.74267675399,
+            "p50": 39339.538423,
+            "p90": 40393.660215200005,
+            "p95": 40533.715047800004,
+            "p99": 40793.2912972,
+            "p999": 48177.76121172047,
+            "max": 51460.04031
+          }
+        }
+      ],
+      "k6_cores": 4,
+      "k6_cpu_share": 0.016701813543269467,
+      "server": {
+        "cpu_cores": 0.7837621373182878,
+        "permission_cache_hit_ratio": 0,
+        "check_cache_hit_ratio": 0,
+        "permission_compute_avg_ms": -1,
+        "source_fetch_avg_ms": 636.4585243333339,
+        "operation_avg_ms": {
+          "authzen": 38289.14315787948,
+          "authzen_batch": 38228.05145998335,
+          "check1": 37897.98189684926,
+          "check10": 37897.98189684926,
+          "check100": 37897.98189684926,
+          "on_behalf": 38304.80199546959,
+          "permission": 36878.74915967381
+        },
+        "db_blocks_read_per_request": 0,
+        "db_buffer_hit_ratio": 1,
+        "db_commits_per_request": 9.786546786546786,
+        "db_statement_ms_per_request": 64.91769995404636,
+        "db_calls_per_request": 9.227106227106226,
+        "db_queries_per_request": 9.206165064633742,
+        "redis_round_trips_per_request": 3.4955253563142192
+      },
+      "oracle": {
+        "checked": 14,
+        "mismatches": 0,
+        "unanswered": 12,
+        "expected_granted": 11
+      },
+      "latency_all_ms": {
+        "samples": 3003,
+        "mean": 37948.57267777028,
+        "p50": 39136.17739,
+        "p90": 40559.7097176,
+        "p95": 40906.3790904,
+        "p99": 42656.97497226,
+        "p999": 52037.530411402084,
+        "max": 52331.580537
+      },
+      "host_swap_pages": 0,
+      "valid": false,
+      "invalid_reasons": [
+        "54597 iterations dropped: k6 could not send at the rate"
+      ],
+      "passed": false,
+      "fail_reasons": [
+        "the window is not valid",
+        "errors 100.00% above 1.00%",
+        "0 answers/s, under 95% of the 640 asked"
+      ]
+    }
+  ],
+  "sustained_rps": 10,
+  "required_rps": 1,
+  "passed": true
+}
