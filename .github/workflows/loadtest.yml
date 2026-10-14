@@ -9,6 +9,10 @@ name: Load test
 # figure more than 15 % on the wrong side fails the job (F0-5). With `baseline: true` the runs are not compared; the
 # budget each one would make is printed in the summary instead (how budgets.yaml is made, F0-6).
 #
+# The runner is `ubuntu-latest` unless the repository variable LOADTEST_RUNNER names another label (a larger runner): the
+# numbers are comparable from one night to the next only on the same runner, and the budgets are those of the runner they
+# were made on. (The label ubuntu-latest-4-cores of the first version was never served: its scheduled runs stayed queued.)
+#
 # A schedule fires only from the default branch. To measure another branch (the epic branch production-load-readiness
 # until it reaches main) start the workflow by hand with `ref`, or set the repository variable LOADTEST_REF, which the
 # scheduled runs check out.
@@ -35,7 +39,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: loadtest
+  # One run at a time per measured ref: a run of another ref does not wait behind it (or behind a queued scheduled run).
+  group: loadtest-${{ inputs.ref || vars.LOADTEST_REF || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -46,7 +51,7 @@ jobs:
   medium:
     name: Load test (medium, ${{ matrix.mode }}, +${{ matrix.latency }})
     if: github.event_name == 'schedule' || inputs.profile == 'medium'
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -100,7 +105,7 @@ jobs:
           {
             echo '### Budget of medium, ${{ matrix.mode }}, +${{ matrix.latency }}'
             echo '```yaml'
-            go run ./cmd/licetum-loadtest budget -calibrate -note "$GITHUB_SHA, ubuntu-latest-4-cores" reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | sed -n '/^budgets:/,$p'
+            go run ./cmd/licetum-loadtest budget -calibrate -note "$GITHUB_SHA, ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}" reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | sed -n '/^budgets:/,$p'
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -115,7 +120,7 @@ jobs:
   large:
     name: Load test (large)
     if: github.event_name == 'schedule' || inputs.profile == 'large'
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
