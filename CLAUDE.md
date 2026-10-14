@@ -69,6 +69,12 @@ format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite 
 (the Licetum service within itself, its policy types, their sources, the admin group) is seeded by `db.SeedPlatform`, run by
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
 
+Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` and every
+Redis client given to `engine.New` is counted (`licetum_db_*`, `licetum_redis_*` metrics, `engine.Trace.DBQueries()/RedisRoundTrips()` for
+tests); `harness.StartReplicas` builds several check replicas on one PostgreSQL and Redis; `core/testsupport` has the fake source, the
+fake IdP and the Toxiproxy `FaultProxy`; tests under the `chaos` build tag (`task go:test:chaos`, nightly `chaos.yml`) inject faults;
+`admin-api/loadtest/budgets.yaml` holds the budgets the nightly `loadtest.yml` compares runs with (`licetum-loadtest budget`).
+
 Web interface (run from `web/`, Next.js + antd; package manager pnpm — `packageManager` in `package.json`,
 lock `pnpm-lock.yaml`):
 ```

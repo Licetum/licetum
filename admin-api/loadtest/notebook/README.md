@@ -100,6 +100,22 @@ Redis are empty, and then seeds the policy again. On the test host the campaign 
 
 Use the same CPU lists, the same profile and the same settings for every run you compare.
 
+## 4a. Added latency, per-request counts and budgets
+
+- `-added-latency 100ms` puts Toxiproxy in front of PostgreSQL and Redis for the check servers and adds 100 ms to every
+  round trip (50 ms in each direction) from the end of the warm-up. The seeding and the warm-up run on the plain link.
+  The setting is in `result.json` (`settings.added_latency_ms`).
+- Each window reports what the server did per API request it served: database queries and Redis round trips, counted by
+  the server itself (`licetum_db_queries_total`, `licetum_redis_ops_total`), background work included.
+- `budgets.yaml` holds, per profile, mode and added latency, the sustained rate (a floor), the p50 and p99 and the queries
+  and round trips per request (ceilings), taken at the step the baseline sustained. `licetum-loadtest budget DIR...`
+  compares runs with it and fails when a figure is more than 15 % on the wrong side; a figure better by more than 15 % does
+  not fail, it asks for the budget to be set again. `budget -calibrate -out loadtest/budgets.yaml DIR...` writes budgets from
+  runs. The budgets are those of the runner they were made on: the nightly workflow `loadtest.yml` runs on
+  `ubuntu-latest` (or the label in the repository variable `LOADTEST_RUNNER`), and so must the numbers.
+- The nightly workflow runs the medium profile in warm, cold and mix mode, with and without 100 ms, a ramp each, and
+  compares every run with its budget. Start it by hand with `baseline: true` to print the budgets the runs would make.
+
 ## 5. Get the charts
 
 ```sh
