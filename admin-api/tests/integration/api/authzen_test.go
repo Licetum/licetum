@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -289,4 +290,64 @@ func TestAuthzenMetadata(t *testing.T) {
 	}
 	status, raw = w.do("GET", w.check.URL+"/.well-known/authzen-configuration/service/00000000-0000-0000-0000-000000000000", nil)
 	requireErrorCode(t, status, raw, http.StatusNotFound, "service_not_found")
+}
+
+func TestAuthzenSubjectSearchPagesWithoutSkippingOrRepeating(t *testing.T) {
+	w := newWorld(t)
+	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend"}})
+	people := []string{"p1", "p2", "p3", "p4", "p5"}
+	for _, p := range append([]string{"outsider"}, people...) {
+		if s, _ := w.env.permission(w.org, w.token(jwt.MapClaims{"preferred_username": p, "sub": p})); s != http.StatusOK {
+			t.Fatalf("permission as %s: %d", p, s)
+		}
+		if p != "outsider" {
+			w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": p, "access": []string{"read"}})
+		}
+	}
+	waitFor(t, "the people in the registry", func() bool {
+		s, raw := w.do("GET", w.admin.URL+"/subject", nil)
+		return s == http.StatusOK && decodeMap(t, raw)["total"].(float64) >= 6
+	})
+
+	trusted := jwt.MapClaims{"azp": "docs-backend", "sub": "svc-docs-backend"}
+	request := func(token any) map[string]any {
+		page := map[string]any{"limit": 2}
+		if token != nil {
+			page["token"] = token
+		}
+		return map[string]any{"subject": map[string]any{"type": "user"}, "resource": map[string]any{"type": "branch", "id": "B1"},
+			"action": map[string]any{"name": "read"}, "page": page}
+	}
+	var got []string
+	var token any
+	for pages := 0; ; pages++ {
+		if pages > 10 {
+			t.Fatalf("the pages never end: %v", got)
+		}
+		status, out := w.authzen("search/subject", request(token), trusted)
+		if status != http.StatusOK {
+			t.Fatalf("page %d: %d %v", pages, status, out)
+		}
+		page := out["page"].(map[string]any)
+		if _, known := page["total"]; known {
+			t.Fatalf("the subject search does not know the total: %v", page)
+		}
+		for _, r := range out["results"].([]any) {
+			got = append(got, r.(map[string]any)["id"].(string))
+		}
+		if page["next_token"] == "" {
+			break
+		}
+		token = page["next_token"]
+	}
+	if strings.Join(got, ",") != strings.Join(people, ",") {
+		t.Fatalf("every person with access once, in the order of their identifiers: %v", got)
+	}
+
+	// The token of the trusted client is a service account: it is not a person of the registry.
+	time.Sleep(500 * time.Millisecond)
+	list := w.must("GET", "/subject?search=svc-docs-backend", nil)
+	if list["total"] != float64(0) {
+		t.Fatalf("a trusted client is not noted: %v", list)
+	}
 }

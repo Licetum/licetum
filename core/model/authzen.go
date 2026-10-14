@@ -88,7 +88,7 @@ type AuthzenPageRequest struct {
 type AuthzenPageResponse struct {
 	NextToken string `json:"next_token" doc:"Pass it as page.token to read the next page; empty on the last page"`
 	Count     int    `json:"count" doc:"The number of results on this page"`
-	Total     int    `json:"total" doc:"The number of results of the whole search at the time of the request"`
+	Total     *int   `json:"total,omitempty" required:"false" doc:"The number of results of the whole search at the time of the request; absent when the search does not know it (the subject search)"`
 }
 
 // AuthzenSearchRequest is the request of the subject, resource and action searches. The entity searched for is
@@ -106,7 +106,7 @@ type AuthzenSearchRequest struct {
 // AuthzenSubjectSearchResponse lists the subjects that are allowed.
 type AuthzenSubjectSearchResponse struct {
 	Page    *AuthzenPageResponse `json:"page,omitempty" doc:"Paging of the results"`
-	Context map[string]any       `json:"context,omitempty" doc:"Extra information; limited is true when the search went through only part of the known subjects"`
+	Context map[string]any       `json:"context,omitempty" doc:"Extra information; subjects_registry is disabled while the registry of known subjects is off"`
 	Results []AuthzenSubject     `json:"results" nullable:"false" doc:"The subjects that may do the action on the resource"`
 }
 

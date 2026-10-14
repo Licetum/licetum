@@ -195,13 +195,12 @@ components:
           description: Pass it as page.token to read the next page; empty on the last page
           type: string
         total:
-          description: The number of results of the whole search at the time of the request
+          description: The number of results of the whole search at the time of the request; absent when the search does not know it (the subject search)
           format: int64
           type: integer
       required:
         - next_token
         - count
-        - total
       type: object
     AuthzenResource:
       additionalProperties: true
@@ -286,7 +285,7 @@ components:
       properties:
         context:
           additionalProperties: {}
-          description: Extra information; limited is true when the search went through only part of the known subjects
+          description: Extra information; subjects_registry is disabled while the registry of known subjects is off
           type: object
         page:
           $ref: "#/components/schemas/AuthzenPageResponse"
@@ -1215,7 +1214,7 @@ paths:
   /service/{service_id}/access/v1/search/subject:
     post:
       description: |-
-        Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a client application the service trusts may ask. The subjects are the known ones — the people whose tokens Licetum has verified, kept while SUBJECTS__ENABLED is on — so a person who was never seen is not listed; at most 1000 of the most recently seen are decided (context.limited says when there were more).
+        Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a client application the service trusts may ask. The subjects are the known ones — the people whose tokens Licetum has verified, kept while SUBJECTS__ENABLED is on — so a person who was never seen is not listed; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given).
 
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.

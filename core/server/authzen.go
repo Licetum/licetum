@@ -11,7 +11,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -34,8 +33,11 @@ const authzenTag = "AuthZEN"
 const (
 	// authzenPageMax is the most results of one page of a search.
 	authzenPageMax = 1000
-	// authzenSubjectScan bounds how many known subjects the subject search goes through.
+	// authzenSubjectScan bounds how many known subjects one request of the subject search goes through; the page token
+	// continues from where it stopped.
 	authzenSubjectScan = 1000
+	// authzenScanBatch is how many known subjects are read and decided at a time.
+	authzenScanBatch = 100
 	// authzenScanWorkers is how many known subjects are decided at the same time.
 	authzenScanWorkers = 8
 )
@@ -80,8 +82,13 @@ func newAuthzenCaller(ctx context.Context, app *engine.App, serviceID uuid.UUID,
 		return nil, err
 	}
 	SetRequestUser(ctx, subject)
-	app.NoteSubject(subject, claims)
-	return &authzenCaller{app: app, serviceID: serviceID, svc: svc, subject: subject, claims: claims, tally: map[string]*delegatedTally{}}, nil
+	c := &authzenCaller{app: app, serviceID: serviceID, svc: svc, subject: subject, claims: claims, tally: map[string]*delegatedTally{}}
+	// The token of a trusted client application is a service account, not a person: the delegated endpoints do not note it
+	// either, and the subject search would otherwise list it.
+	if _, err := c.trusted(); err != nil {
+		app.NoteSubject(subject, claims)
+	}
+	return c, nil
 }
 
 // trusted returns the client application of the token when the service trusts it.
@@ -400,9 +407,11 @@ func pageOf[T any](items []T, key func(T) string, after string, limit int, sum s
 	return page, next
 }
 
-func pageInfo(count, total int, next string) *model.AuthzenPageResponse {
+func pageInfo(count int, total *int, next string) *model.AuthzenPageResponse {
 	return &model.AuthzenPageResponse{NextToken: next, Count: count, Total: total}
 }
+
+func intPtr(n int) *int { return &n }
 
 // search is a search request, checked.
 type search struct {
@@ -490,7 +499,7 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 	}
 	slices.SortFunc(all, func(a, b model.ResourceAccess) int { return strings.Compare(a.ID, b.ID) })
 	page, next := pageOf(all, func(r model.ResourceAccess) string { return r.ID }, s.after, s.limit, s.sum)
-	out := &model.AuthzenResourceSearchResponse{Page: pageInfo(len(page), len(all), next), Results: make([]model.AuthzenResource, len(page))}
+	out := &model.AuthzenResourceSearchResponse{Page: pageInfo(len(page), intPtr(len(all)), next), Results: make([]model.AuthzenResource, len(page))}
 	for i, r := range page {
 		out.Results[i] = model.AuthzenResource{Type: in.Resource.Type, ID: r.ID, Properties: map[string]any{"name": r.Name}}
 	}
@@ -518,7 +527,7 @@ func (c *authzenCaller) searchActions(ctx context.Context, consistency engine.Co
 	slices.Sort(levels)
 	levels = slices.Compact(levels)
 	page, next := pageOf(levels, func(l string) string { return l }, s.after, s.limit, s.sum)
-	out := &model.AuthzenActionSearchResponse{Page: pageInfo(len(page), len(levels), next), Results: make([]model.AuthzenAction, len(page))}
+	out := &model.AuthzenActionSearchResponse{Page: pageInfo(len(page), intPtr(len(levels)), next), Results: make([]model.AuthzenAction, len(page))}
 	for i, l := range page {
 		out.Results[i] = model.AuthzenAction{Name: l}
 	}
@@ -588,54 +597,55 @@ func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.C
 	SetRequestUser(ctx, "client:"+client)
 
 	out := &model.AuthzenSubjectSearchResponse{Results: []model.AuthzenSubject{}}
-	var found []engine.KnownSubject
-	scanned := 0
 	if !c.app.Cfg.Subjects.Enabled {
 		out.Context = map[string]any{"subjects_registry": "disabled"}
-	} else {
-		known, err := c.app.LoadKnownSubjects(ctx, authzenSubjectScan+1)
+		out.Page = pageInfo(0, nil, "")
+		return out, nil
+	}
+	question := []model.CheckRequest{{Type: in.Resource.Type, Action: in.Action.Name}}
+	if in.Resource.ID != "" {
+		id := in.Resource.ID
+		question[0].ResourceID = &id
+	}
+
+	// The registry is read in the order of the subjects, a batch at a time from the cursor, and every subject of a batch
+	// is decided (the decisions are cached like any other, so a repeated page costs little) until the page is full or
+	// the request has gone through authzenSubjectScan subjects. The cursor is the last subject the page covers: the order
+	// does not depend on who was seen last, so no page skips or repeats a person.
+	var found []engine.KnownSubject
+	scanned, cursor, exhausted := 0, s.after, false
+scan:
+	for scanned < authzenSubjectScan && len(found) < s.limit {
+		batch, err := c.app.LoadKnownSubjectsAfter(ctx, cursor, min(authzenScanBatch, authzenSubjectScan-scanned))
 		if err != nil {
 			return nil, err
 		}
-		if len(known) > authzenSubjectScan {
-			known = known[:authzenSubjectScan]
-			out.Context = map[string]any{"limited": true}
-		}
-		scanned = len(known)
-		question := []model.CheckRequest{{Type: in.Resource.Type, Action: in.Action.Name}}
-		if in.Resource.ID != "" {
-			id := in.Resource.ID
-			question[0].ResourceID = &id
-		}
-		var mu sync.Mutex
-		eg, ectx := errgroup.WithContext(ctx)
-		eg.SetLimit(authzenScanWorkers)
-		for _, k := range known {
-			eg.Go(func() error {
-				claims, err := engine.PrepareDelegated(k.Subject, k.Claims)
-				if err != nil {
-					return nil // a subject that cannot be asked about (it looks like a group) is not an answer
-				}
-				answers, err := c.app.CheckAccess(ectx, c.serviceID, k.Subject, engine.NewEnv(claims, s.attrs), question, false, consistency)
-				if err != nil {
-					return err
-				}
-				if answers[0].Allowed {
-					mu.Lock()
-					found = append(found, k)
-					mu.Unlock()
-				}
-				return nil
-			})
-		}
-		if err := eg.Wait(); err != nil {
+		allowed, err := c.decideKnown(ctx, consistency, batch, question, s.attrs)
+		if err != nil {
 			return nil, err
 		}
+		for i, k := range batch {
+			scanned++
+			cursor = k.Subject
+			if allowed[i] {
+				found = append(found, k)
+				if len(found) == s.limit {
+					break scan
+				}
+			}
+		}
+		if len(batch) < authzenScanBatch {
+			exhausted = true
+			break
+		}
 	}
-	slices.SortFunc(found, func(a, b engine.KnownSubject) int { return strings.Compare(a.Subject, b.Subject) })
-	page, next := pageOf(found, func(k engine.KnownSubject) string { return k.Subject }, s.after, s.limit, s.sum)
-	out.Page = pageInfo(len(page), len(found), next)
-	for _, k := range page {
+	next := ""
+	if !exhausted {
+		next = encodeCursor(cursor, s.sum)
+	}
+	// The number of all the results is not known without going through the whole registry.
+	out.Page = pageInfo(len(found), nil, next)
+	for _, k := range found {
 		subject := model.AuthzenSubject{Type: in.Subject.Type, ID: k.Subject}
 		if k.Name != nil {
 			subject.Properties = map[string]any{"name": *k.Name}
@@ -646,6 +656,29 @@ func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.C
 	c.delegated = append(c.delegated, "*")
 	c.tally["*"] = &delegatedTally{questions: scanned, allowed: len(found)}
 	return out, nil
+}
+
+// decideKnown says, for each known subject of a batch, whether the question is allowed to them. A subject that cannot be
+// asked about (it looks like a group) is not an answer.
+func (c *authzenCaller) decideKnown(ctx context.Context, consistency engine.Consistency, batch []engine.KnownSubject, question []model.CheckRequest, attrs model.RequestContext) ([]bool, error) {
+	allowed := make([]bool, len(batch))
+	eg, ectx := errgroup.WithContext(ctx)
+	eg.SetLimit(authzenScanWorkers)
+	for i, k := range batch {
+		eg.Go(func() error {
+			claims, err := engine.PrepareDelegated(k.Subject, k.Claims)
+			if err != nil {
+				return nil
+			}
+			answers, err := c.app.CheckAccess(ectx, c.serviceID, k.Subject, engine.NewEnv(claims, attrs), question, false, consistency)
+			if err != nil {
+				return err
+			}
+			allowed[i] = answers[0].Allowed
+			return nil
+		})
+	}
+	return allowed, eg.Wait()
 }
 
 // ---------- routes ----------
@@ -832,7 +865,7 @@ there are more results; send it back as page.token with the same request. The re
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/access/v1/search/subject",
 		Summary:     "AuthZEN subject search",
-		Description: "Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a client application the service trusts may ask. The subjects are the known ones — the people whose tokens Licetum has verified, kept while SUBJECTS__ENABLED is on — so a person who was never seen is not listed; at most 1000 of the most recently seen are decided (context.limited says when there were more)." + searchNote + note,
+		Description: "Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a client application the service trusts may ask. The subjects are the known ones — the people whose tokens Licetum has verified, kept while SUBJECTS__ENABLED is on — so a person who was never seen is not listed; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given)." + searchNote + note,
 		Tags:        []string{authzenTag},
 		Security:    security,
 		Errors:      errs,

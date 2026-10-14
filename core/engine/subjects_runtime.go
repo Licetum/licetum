@@ -149,11 +149,12 @@ type KnownSubject struct {
 	Claims  Claims
 }
 
-// LoadKnownSubjects reads up to limit subjects of the registry, the most recently seen first. It is empty while the
-// registry is off (SUBJECTS__ENABLED).
-func (a *App) LoadKnownSubjects(ctx context.Context, limit int) ([]KnownSubject, error) {
+// LoadKnownSubjectsAfter reads up to limit subjects of the registry whose identifier sorts after the given one, in that
+// order (the primary key serves it): a stable order that does not move when a person is seen again, so a cursor over it
+// neither skips nor repeats anybody. Empty after starts from the beginning. It is empty while the registry is off.
+func (a *App) LoadKnownSubjectsAfter(ctx context.Context, after string, limit int) ([]KnownSubject, error) {
 	rows, err := a.DB.Query(ctx,
-		`SELECT subject, display_name, claims FROM known_subject ORDER BY last_seen DESC, subject LIMIT $1`, limit)
+		`SELECT subject, display_name, claims FROM known_subject WHERE subject > $1 ORDER BY subject LIMIT $2`, after, limit)
 	if err != nil {
 		return nil, err
 	}

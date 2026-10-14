@@ -466,7 +466,10 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   into `context.reason_admin`; the other context keys are the request attributes. Resource search lists the resources of the type with the action
   (sorted by id, `properties.name` is the name; a `not_sync` type has none); action search lists the levels on a resource (or on the type as a whole:
   the candidates are the levels the person has on some resource of the type, each decided by `CheckAccess`); subject search (trusted clients only)
-  decides the known subjects of the registry (`SUBJECTS__ENABLED`, at most 1000 most recently seen, `context.limited`) with their stored claims.
+  decides the known subjects of the registry (`SUBJECTS__ENABLED`) with their stored claims, in the order of their identifiers
+  (`LoadKnownSubjectsAfter`, keyset): batches of 100 from the cursor until the page is full or 1000 subjects were gone through, the page token is the
+  last subject covered (no `page.total`), so no page skips or repeats a person; the decisions are the cached `CheckAccess` ones. The token of a
+  trusted client is not noted in the registry (as the delegated endpoints do not).
 - **Calls on behalf of a person** (`service/delegation.go`, `api/check.go`): `POST /service/{id}/on_behalf/check` and `…/permission` answer
   as the check and the permission do, for the `subject` and the `claims` named in the body instead of the holder of the token. The caller
   sends its own token (same IdP and keys as a user's, typically client-credentials); `AuthorizeDelegate` takes its client from `azp`, then
