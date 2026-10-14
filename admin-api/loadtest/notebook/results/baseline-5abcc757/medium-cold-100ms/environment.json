@@ -1,14 +1,14 @@
 {
-  "collected_at": "2026-10-14T18:51:58.227291766Z",
-  "git_commit": "471049bd6f67faf4393b96300ebba55a7cc26ad3",
+  "collected_at": "2026-10-14T19:28:55.329434685Z",
+  "git_commit": "5abcc7575cc442f7a53092d3a970b76cec3482f7",
   "git_dirty": false,
-  "cpu_model": "AMD EPYC 9V45 96-Core Processor",
+  "cpu_model": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
   "logical_cpus": 4,
-  "memory_kib": 16373452,
+  "memory_kib": 16372440,
   "os": "Ubuntu 24.04.5 LTS",
   "kernel": "6.17.0-1022-azure",
-  "cpu_governor": "unknown",
-  "load_average_at_start": "1.53 0.43 0.15 2/409 2891",
+  "cpu_governor": "performance",
+  "load_average_at_start": "1.24 0.36 0.12 2/412 3000",
   "go_version": "go1.26.0",
   "k6_version": "k6 v2.2.0 (commit/00a9a1b7f5, go1.26.5, linux/amd64)",
   "docker_version": "28.0.4",
@@ -28,13 +28,13 @@
   },
   "redis_version": "7.4.11",
   "check_binary": "../core/bin/licetum",
-  "check_binary_sha256": "5d4762395a51e8c5e6ca479a7dfc07333baabcd7b548c5ce7b1c43275dc331c2",
+  "check_binary_sha256": "36904e916b59fb70d26535775d4b620b7d567cea4aa17f84b2d11db84783de78",
   "check_server_env": {
     "AUTH__STATE_SECRET": "***",
     "DB__MAX_OVERFLOW": "0",
     "DB__POOL_SIZE": "30",
-    "DB__URI": "postgres://licetum:%2A%2A%2A@127.0.0.1:39853/licetum_test?sslmode=disable",
-    "REDIS__URI": "redis://127.0.0.1:40917"
+    "DB__URI": "postgres://licetum:%2A%2A%2A@127.0.0.1:38849/licetum_test?sslmode=disable",
+    "REDIS__URI": "redis://127.0.0.1:41887"
   },
   "harness_env": {
     "AUTH__STATE_SECRET": "***",

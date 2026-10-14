@@ -29,7 +29,17 @@ notebook shows the machine each run came from. To get the same charts for your o
   use. All five are valid by the rules, but they are here to show how far the state of the host moves the same code, not
   as a result.
 
-Not measured yet: the 100k profile, the mixed, cold and ramp modes, writes during load, faults, and a second machine. Two
+- `baseline-b7859306/` and `baseline-5abcc757/`: the baseline of block F0 of the production-load plan (#32), the medium
+  profile (100k resources) on a GitHub-hosted `ubuntu-latest` runner (4 vCPUs shared by the load generator, the server,
+  PostgreSQL and Redis), before any block changes the engine. Per run (`medium-<mode>-<added latency>/`): `warm`, `cold` and
+  `mix`, each with no added latency and with 100 ms added to every round trip to PostgreSQL and Redis; a ramp from 2 to 1024
+  or from 10 to 640 requests/s with 90-second windows, going on after a failed step (`-ramp-through`). The table of the
+  steps of any run is `licetum-loadtest budget -steps DIR`; the issue #32 has the summary. `budgets.yaml` is made from the
+  lowest sustained rate of the two runs. A p99 is not in the budgets: the steps the runner sustains have under 10,000
+  samples. In every window of both runs the oracle found 0 wrong answers; under overload some questions get no answer
+  (`unanswered`), which is a failure of availability, not a wrong answer.
+
+Not measured yet: writes during load, faults, replicas, a larger runner, and a second machine. Two
 valid windows on one laptop are not enough for an article's numbers.
 
 ## 1. Requirements
