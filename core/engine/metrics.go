@@ -22,6 +22,10 @@ type metrics struct {
 	breakerOpen       *prometheus.CounterVec // dependency: source | jwks | token_endpoint
 	httpRequests      *prometheus.CounterVec // operation, status
 	httpDuration      *prometheus.HistogramVec
+	dbQueries         *prometheus.CounterVec   // operation, result
+	dbQueryDuration   *prometheus.HistogramVec // operation
+	redisOps          *prometheus.CounterVec   // operation, commands, result
+	redisOpDuration   *prometheus.HistogramVec // operation
 }
 
 func newMetrics() *metrics {
@@ -70,7 +74,28 @@ func newMetrics() *metrics {
 		Buckets: prometheus.ExponentialBuckets(0.001, 2, 14),
 	}, []string{"operation"})
 
+	m.dbQueries = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_db_queries_total",
+		Help: "Statements sent to PostgreSQL by the first SQL keyword (operation) and result (ok | error).",
+	}, []string{"operation", "result"})
+	m.dbQueryDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "licetum_db_query_seconds",
+		Help:    "Time a PostgreSQL statement took, by the first SQL keyword.",
+		Buckets: prometheus.ExponentialBuckets(0.0002, 2, 16),
+	}, []string{"operation"})
+	m.redisOps = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_redis_ops_total",
+		Help: "Round trips to Redis by command (\"pipeline\" for a pipeline: one round trip), the number of commands it carried " +
+			"(commands) and result (ok | error).",
+	}, []string{"operation", "commands", "result"})
+	m.redisOpDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "licetum_redis_op_seconds",
+		Help:    "Time a round trip to Redis took, by command (\"pipeline\" for a pipeline).",
+		Buckets: prometheus.ExponentialBuckets(0.0002, 2, 16),
+	}, []string{"operation"})
+
 	for _, c := range []prometheus.Collector{
+		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
 		m.permissionCompute, m.permissionCache, m.checkCache, m.checks, m.syncFetch, m.syncResults, m.breakerOpen,
 		m.httpRequests, m.httpDuration,
 	} {

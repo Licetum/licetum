@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"strings"
 
@@ -79,9 +78,9 @@ func Connect(ctx context.Context, cfg config.Database) (*pgxpool.Pool, error) {
 	if cfg.StatementCacheSize > 0 {
 		poolCfg.ConnConfig.StatementCacheCapacity = cfg.StatementCacheSize
 	}
-	if cfg.Echo {
-		poolCfg.ConnConfig.Tracer = echoTracer{}
-	}
+	// The tracer is always there: it counts statements for the metrics and for the tests (see Observe); DB__ECHO
+	// only adds the log of every SQL text.
+	poolCfg.ConnConfig.Tracer = &Tracer{echo: cfg.Echo}
 
 	connectCtx := ctx
 	if cfg.PoolTimeout > 0 {
@@ -118,13 +117,3 @@ func IsPrimaryKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.HasSuffix(pgErr.ConstraintName, "_pkey")
 }
-
-// echoTracer mirrors SQLAlchemy echo=True: it logs every SQL query.
-type echoTracer struct{}
-
-func (echoTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	slog.DebugContext(ctx, "sql", "query", data.SQL, "args", data.Args)
-	return ctx
-}
-
-func (echoTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
