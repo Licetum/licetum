@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -96,6 +97,9 @@ type HTTP struct {
 	// Addr is the address the HTTP server listens on. Empty means the app's own default
 	// (:8000 for admin, :8001 for check).
 	Addr string
+	// PublicURL is the address clients reach the check API at, without a trailing slash (https://licetum.example.com).
+	// The AuthZEN discovery document is built from it; without it the document is not served.
+	PublicURL string
 }
 
 type Config struct {
@@ -165,8 +169,15 @@ func Load() (*Config, error) {
 			AuditRetentionDays: e.int("DELEGATION__AUDIT_RETENTION_DAYS", 365),
 		},
 		HTTP: HTTP{
-			Addr: e.str("HTTP__ADDR", ""),
+			Addr:      e.str("HTTP__ADDR", ""),
+			PublicURL: strings.TrimRight(e.str("HTTP__PUBLIC_URL", ""), "/"),
 		},
+	}
+	if u := cfg.HTTP.PublicURL; u != "" {
+		if parsed, err := url.Parse(u); err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" ||
+			parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			e.errs = append(e.errs, fmt.Errorf("HTTP__PUBLIC_URL must be an http(s) URL without a path, a query or a fragment, got %q", u))
+		}
 	}
 	if len(e.errs) > 0 {
 		return nil, errors.Join(e.errs...)

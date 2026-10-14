@@ -162,6 +162,9 @@ const (
 	TokenNoSubject            Key = "token_no_subject"
 	AuthzenIncomplete         Key = "authzen_incomplete"
 	AuthzenSubjectMismatch    Key = "authzen_subject_mismatch"
+	AuthzenFieldRequired      Key = "authzen_field_required"
+	AuthzenPageInvalid        Key = "authzen_page_invalid"
+	AuthzenMetadataDisabled   Key = "authzen_metadata_disabled"
 )
 
 var catalog = map[Key]Text{
@@ -853,8 +856,23 @@ var catalog = map[Key]Text{
 		ZH: "评估需要主体、资源和操作（在评估中或作为默认值给出）",
 	},
 	AuthzenSubjectMismatch: {
-		EN: "subject.id must be the subject of the bearer token: Licetum decides for the caller only",
-		RU: "subject.id должен совпадать с субъектом bearer-токена: Licetum решает только для вызывающего",
-		ZH: "subject.id 必须是 Bearer 令牌的主体：Licetum 只为调用者做出决定",
+		EN: "subject.id must be the subject of the bearer token, unless the token belongs to a client application the service trusts",
+		RU: "subject.id должен совпадать с субъектом bearer-токена, если токен не принадлежит клиентскому приложению, которому доверяет сервис",
+		ZH: "subject.id 必须是 Bearer 令牌的主体，除非该令牌属于服务所信任的客户端应用",
+	},
+	AuthzenFieldRequired: {
+		EN: "%s is required",
+		RU: "Поле %s обязательно",
+		ZH: "%s 为必填项",
+	},
+	AuthzenPageInvalid: {
+		EN: "The page token is not valid, or the request differs from the one that gave it",
+		RU: "Токен страницы недействителен, или запрос отличается от того, что его выдал",
+		ZH: "分页令牌无效，或请求与签发该令牌的请求不一致",
+	},
+	AuthzenMetadataDisabled: {
+		EN: "The AuthZEN discovery document is not available: HTTP__PUBLIC_URL is not set",
+		RU: "Документ обнаружения AuthZEN недоступен: не задан HTTP__PUBLIC_URL",
+		ZH: "AuthZEN 发现文档不可用：未设置 HTTP__PUBLIC_URL",
 	},
 }
