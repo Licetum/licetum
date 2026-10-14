@@ -451,9 +451,22 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   `explain: true` adds `{decision: allowed|denied|no_access|resource_not_found|type_not_found,
   granted_by, denials[{rule, level, lifted_by, unresolved_parent}]}`. It decides only for the asked
   resources (`coversOf`, the questions of one request are read together: `decideChecks`), with the same engine as `/permission`.
-- `POST /service/{id}/access/v1/evaluation(s)`: OpenID AuthZEN 1.0 access evaluation scoped to the
-  service; `subject.id` must equal the token's subject (403 otherwise), `context.explain` puts the
-  explanation into `context.reason_admin`.
+- **AuthZEN** (`core/server/authzen.go`, `core/model/authzen.go`, tag `AuthZEN`): the OpenID AuthZEN Authorization API 1.0 scoped to a service
+  (the service, by id or slug, is in the path, so the "PDP" is `<public url>/service/<ref>` and the default paths of the spec are appended to it).
+  `POST …/access/v1/evaluation` and `…/evaluations` (defaults at the top level, `options.evaluations_semantic` = `execute_all` | `deny_on_first_deny`
+  | `permit_on_first_permit`: the batch is decided as a whole and cut at the stopping evaluation; without `evaluations` it is one evaluation and the
+  answer is `{decision}`; an evaluation that cannot be decided in a batch is `decision: false` with `context.error {status, message}`, the single
+  endpoint answers the HTTP error); `POST …/access/v1/search/{subject,resource,action}` (`page.limit` up to 1000, `page.token` is an opaque cursor with
+  a digest of the request, a changed request is 400 `authzen_page_invalid`); `GET /.well-known/authzen-configuration/service/{ref}` (the discovery
+  document, from `HTTP__PUBLIC_URL`; 404 `authzen_metadata_disabled` without it). A request that is not valid is a 400, not Huma's 422 (the
+  `NewErrorWithContext` hook maps it for the `AuthZEN` tag; `badRequest` does it for errors of the handlers). `subject.id` is the token's subject
+  and the claims come from the token; any other subject needs a client the service trusts (`trusted_clients`, as for the calls on behalf of a
+  person; else 403 `authzen_subject_mismatch`), which gives the person's claims in `subject.properties` (`PrepareDelegated`); such calls are audited
+  in `delegated_call` (evaluations and subject search as `check`, resource and action searches as `permission`). `context.explain` puts the explanation
+  into `context.reason_admin`; the other context keys are the request attributes. Resource search lists the resources of the type with the action
+  (sorted by id, `properties.name` is the name; a `not_sync` type has none); action search lists the levels on a resource (or on the type as a whole:
+  the candidates are the levels the person has on some resource of the type, each decided by `CheckAccess`); subject search (trusted clients only)
+  decides the known subjects of the registry (`SUBJECTS__ENABLED`, at most 1000 most recently seen, `context.limited`) with their stored claims.
 - **Calls on behalf of a person** (`service/delegation.go`, `api/check.go`): `POST /service/{id}/on_behalf/check` and `…/permission` answer
   as the check and the permission do, for the `subject` and the `claims` named in the body instead of the holder of the token. The caller
   sends its own token (same IdP and keys as a user's, typically client-credentials); `AuthorizeDelegate` takes its client from `azp`, then

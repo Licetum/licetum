@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,10 @@ func init() {
 		lang := i18n.Default
 		if ctx != nil {
 			lang = i18n.FromContext(ctx.Context())
+			// The AuthZEN specification knows no 422: a request that is not valid is a 400.
+			if status == http.StatusUnprocessableEntity && ctx.Operation() != nil && slices.Contains(ctx.Operation().Tags, authzenTag) {
+				status = http.StatusBadRequest
+			}
 		}
 		return newHumaError(status, msg, errs...).Localize(lang)
 	}

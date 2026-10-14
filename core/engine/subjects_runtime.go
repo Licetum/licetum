@@ -141,3 +141,34 @@ func (a *App) pruneSubjects(ctx context.Context) {
 		slog.WarnContext(ctx, "failed to apply the retention of known subjects", "error", err)
 	}
 }
+
+// KnownSubject is a registry row: a person seen by a verified token, with the claims the policy reads.
+type KnownSubject struct {
+	Subject string
+	Name    *string
+	Claims  Claims
+}
+
+// LoadKnownSubjects reads up to limit subjects of the registry, the most recently seen first. It is empty while the
+// registry is off (SUBJECTS__ENABLED).
+func (a *App) LoadKnownSubjects(ctx context.Context, limit int) ([]KnownSubject, error) {
+	rows, err := a.DB.Query(ctx,
+		`SELECT subject, display_name, claims FROM known_subject ORDER BY last_seen DESC, subject LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KnownSubject
+	for rows.Next() {
+		var s KnownSubject
+		var raw []byte
+		if err := rows.Scan(&s.Subject, &s.Name, &raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &s.Claims); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}

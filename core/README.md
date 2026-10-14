@@ -42,6 +42,23 @@ go run ./cmd/licetum openapi check -yaml > check.openapi.yaml   # -lang ru|zh fo
 Logs are JSON on stdout. `LOG__LEVEL=debug` enables debug logs, and `DB__ECHO=true` adds the SQL.
 The address is set with `-addr :9000` or `HTTP__ADDR`.
 
+## AuthZEN
+
+The check API implements the [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html)
+for every service, under `/service/{id or slug}/access/v1/`: `evaluation`, `evaluations` (with
+`options.evaluations_semantic`), `search/subject`, `search/resource` and `search/action`. The Policy Decision Point of
+a service is `<HTTP__PUBLIC_URL>/service/{id or slug}`; its metadata is at
+`/.well-known/authzen-configuration/service/{id or slug}` (served only when `HTTP__PUBLIC_URL` is set).
+
+- The resource type is a resource type of the service, the resource id its id in the external system (empty: the type as a whole),
+  the action an access level. `context` holds the attributes of the request the rules read; `{"explain": true}` returns the
+  explanation in `context.reason_admin`.
+- The subject is the holder of the bearer token. A client application listed in the service's `trusted_clients` may ask about any
+  person, giving the person's claims in `subject.properties`; these calls are recorded like the calls on behalf of a person.
+- The subject search is for trusted clients only and decides the known subjects (`SUBJECTS__ENABLED`).
+- A request that is not valid is a 400; a missing or invalid token a 401; a subject the caller may not ask about a 403. Errors keep
+  Licetum's usual JSON body (`{"detail": …, "extra": {"code": …}}`), which carries the message the specification asks for.
+
 ## Full stack
 
 `task dev` (= `docker compose up`) from the repository root starts PostgreSQL, Redis, a local Dex OIDC provider,
@@ -66,7 +83,7 @@ lists accept a JSON array or a comma-separated string.
 | `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT` |
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person) |
-| `HTTP__ADDR` | the listen address |
+| `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address; the address clients reach the check API at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
 | `LOG__LEVEL` | `debug` for debug logs |
 
 ## Tests

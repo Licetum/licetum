@@ -97,3 +97,21 @@ func TestKnownSubjectsAreOffUnlessAskedFor(t *testing.T) {
 		t.Errorf("set: %+v", cfg.Subjects)
 	}
 }
+
+func TestLoadPublicURL(t *testing.T) {
+	t.Setenv("HTTP__PUBLIC_URL", "https://licetum.example.com/")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HTTP.PublicURL != "https://licetum.example.com" {
+		t.Errorf("the trailing slash must go: %q", cfg.HTTP.PublicURL)
+	}
+
+	for _, bad := range []string{"licetum.example.com", "ftp://x", "https://x/?a=1", "https://x/#f"} {
+		t.Setenv("HTTP__PUBLIC_URL", bad)
+		if _, err := config.Load(); err == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+}

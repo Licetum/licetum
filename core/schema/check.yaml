@@ -30,29 +30,47 @@ components:
       required:
         - name
       type: object
-    AuthzenEvaluationRequest:
+    AuthzenActionSearchResponse:
       additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The access levels the subject has on the resource
+          items:
+            $ref: "#/components/schemas/AuthzenAction"
+          type: array
+      required:
+        - results
+      type: object
+    AuthzenEvaluationRequest:
+      additionalProperties: true
       properties:
         action:
           $ref: "#/components/schemas/AuthzenAction"
           description: The access level asked for
         context:
           additionalProperties: {}
-          description: "Optional; {\"explain\": true} adds the explanation of the decision to the response context"
+          description: "The attributes of the request that the rules may read (conditions with source context); {\"explain\": true} adds the explanation of the decision to the response context"
           type: object
         resource:
           $ref: "#/components/schemas/AuthzenResource"
           description: What is accessed
         subject:
           $ref: "#/components/schemas/AuthzenSubject"
-          description: The caller
+          description: The person asked about
       type: object
     AuthzenEvaluationResponse:
       additionalProperties: false
       properties:
         context:
           additionalProperties: {}
-          description: "With explain: reason_admin holds the explanation"
+          description: "With explain: reason_admin holds the explanation. In a batch, error holds the status and the message of an evaluation that could not be decided (the decision is then false); a short-circuited batch names the semantic in reason"
           type: object
         decision:
           description: Whether the access is granted
@@ -61,7 +79,7 @@ components:
         - decision
       type: object
     AuthzenEvaluationsRequest:
-      additionalProperties: false
+      additionalProperties: true
       properties:
         action:
           $ref: "#/components/schemas/AuthzenAction"
@@ -71,45 +89,131 @@ components:
           description: Default context
           type: object
         evaluations:
-          description: The evaluations, up to 100
+          description: "The evaluations, up to 100. Absent or empty: the top-level subject, resource, action and context are one evaluation, and the answer is a single decision"
           items:
             $ref: "#/components/schemas/AuthzenEvaluationRequest"
           maxItems: 100
-          minItems: 1
           type:
             - array
             - "null"
+        options:
+          $ref: "#/components/schemas/AuthzenOptions"
+          description: How the evaluations are executed
         resource:
           $ref: "#/components/schemas/AuthzenResource"
           description: Default resource
         subject:
           $ref: "#/components/schemas/AuthzenSubject"
           description: Default subject
-      required:
-        - evaluations
       type: object
     AuthzenEvaluationsResponse:
       additionalProperties: false
       properties:
+        context:
+          additionalProperties: {}
+          description: "With explain: reason_admin holds the explanation of the decision of a request without evaluations"
+          type: object
+        decision:
+          description: The decision of a request without evaluations; absent when evaluations were given
+          type: boolean
         evaluations:
-          description: Decisions in the order asked
+          description: Decisions in the order asked (fewer when the semantic stopped the batch)
           items:
             $ref: "#/components/schemas/AuthzenEvaluationResponse"
-          type: array
+          type:
+            - array
+            - "null"
+      type: object
+    AuthzenMetadata:
+      additionalProperties: false
+      properties:
+        access_evaluation_endpoint:
+          description: URL of the Access Evaluation API
+          type: string
+        access_evaluations_endpoint:
+          description: URL of the Access Evaluations API
+          type: string
+        policy_decision_point:
+          description: "The identifier of the Policy Decision Point: the base URL of the service, which is also where the default paths of the API are appended"
+          examples:
+            - https://licetum.example.com/service/orders
+          type: string
+        search_action_endpoint:
+          description: URL of the Action Search API
+          type: string
+        search_resource_endpoint:
+          description: URL of the Resource Search API
+          type: string
+        search_subject_endpoint:
+          description: URL of the Subject Search API
+          type: string
       required:
-        - evaluations
+        - policy_decision_point
+        - access_evaluation_endpoint
+        - access_evaluations_endpoint
+        - search_subject_endpoint
+        - search_action_endpoint
+        - search_resource_endpoint
+      type: object
+    AuthzenOptions:
+      additionalProperties: true
+      properties:
+        evaluations_semantic:
+          description: execute_all (the default) answers every evaluation; deny_on_first_deny stops after the first denial or error; permit_on_first_permit stops after the first permit. The evaluations after the one that stops the batch are not answered
+          enum:
+            - execute_all
+            - deny_on_first_deny
+            - permit_on_first_permit
+          type: string
+      type: object
+    AuthzenPageRequest:
+      additionalProperties: true
+      properties:
+        limit:
+          description: At most this many results; absent or 0 — the most the service gives in one page (1000)
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+        token:
+          description: The next_token of the previous page. The subject, resource, action, context and limit must be the same as in the request that gave it
+          type: string
+      type: object
+    AuthzenPageResponse:
+      additionalProperties: false
+      properties:
+        count:
+          description: The number of results on this page
+          format: int64
+          type: integer
+        next_token:
+          description: Pass it as page.token to read the next page; empty on the last page
+          type: string
+        total:
+          description: The number of results of the whole search at the time of the request
+          format: int64
+          type: integer
+      required:
+        - next_token
+        - count
+        - total
       type: object
     AuthzenResource:
       additionalProperties: false
       properties:
         id:
-          description: Resource id in the external system; empty — the type as a whole
+          description: Resource id in the external system; empty — the type as a whole. Ignored by the resource search
           examples:
             - b1
           type: string
         properties:
           additionalProperties: {}
-          description: Ignored
+          description: Ignored in a request; the resource search returns the name of the resource here
           type: object
         type:
           description: Name of the resource type in the service
@@ -119,17 +223,55 @@ components:
       required:
         - type
       type: object
+    AuthzenResourceSearchResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The resources the subject may do the action on; properties.name is the name of the resource
+          items:
+            $ref: "#/components/schemas/AuthzenResource"
+          type: array
+      required:
+        - results
+      type: object
+    AuthzenSearchRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level; not used by the action search
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The resource; for the resource search only its type is used
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The subject; for the subject search only its type is used
+      type: object
     AuthzenSubject:
       additionalProperties: false
       properties:
         id:
-          description: "Subject id: must be the subject of the bearer token (preferred_username, or sub)"
+          description: Subject id. Required by evaluations and by the resource and action searches; omitted by the subject search, which returns it. It is the subject of the bearer token (preferred_username, or sub) unless the caller is a client application the service trusts
           examples:
             - alice
           type: string
         properties:
           additionalProperties: {}
-          description: "Ignored: the claims of the token are used"
+          description: The claims of a person other than the holder of the token, given by a trusted client; ignored for the holder of the token, whose claims come from the token
           type: object
         type:
           description: Subject type (not interpreted)
@@ -138,7 +280,24 @@ components:
           type: string
       required:
         - type
-        - id
+      type: object
+    AuthzenSubjectSearchResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information; limited is true when the search went through only part of the known subjects
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The subjects that may do the action on the resource
+          items:
+            $ref: "#/components/schemas/AuthzenSubject"
+          type: array
+      required:
+        - results
       type: object
     CheckInput:
       additionalProperties: true
@@ -548,6 +707,56 @@ info:
   version: 0.1.0
 openapi: 3.1.0
 paths:
+  /.well-known/authzen-configuration/service/{service_id}:
+    get:
+      description: The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, "Policy Decision Point Metadata"). The Policy Decision Point of a service is <public url>/service/<id or slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from HTTP__PUBLIC_URL, and is not served (404) without it.
+      operationId: authzen_metadata
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenMetadata"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      summary: AuthZEN Policy Decision Point metadata
+      tags:
+        - AuthZEN
   /healthz:
     get:
       operationId: healthz
@@ -590,10 +799,15 @@ paths:
       description: |-
         Decides whether the subject may perform the action on the resource.
 
-        This is the access evaluation endpoint of the OpenID AuthZEN Authorization API 1.0, scoped to one service (the service is
-        in the path). resource.type is the name of a resource type of the service, resource.id the resource id in the external
-        system (empty — the type as a whole), action.name an access level. subject.id must be the subject of the bearer token
-        (preferred_username, or sub): Licetum decides for the caller only, and takes the claims from the token.
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
+        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
+        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
+        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
+        explain are the attributes of the request that the rules may read.
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
       operationId: authzen_evaluation
       parameters:
         - description: Service id or slug
@@ -682,16 +896,21 @@ paths:
         - bearer: []
       summary: AuthZEN access evaluation
       tags:
-        - Check
+        - AuthZEN
   /service/{service_id}/access/v1/evaluations:
     post:
       description: |-
-        Decides up to 100 evaluations in one request; subject, resource, action and context given at the top level are defaults for the evaluations that omit them.
+        Decides up to 100 evaluations in one request; subject, resource, action and context given at the top level are defaults for the evaluations that omit them. options.evaluations_semantic chooses between answering all of them (execute_all, the default), stopping at the first denial (deny_on_first_deny) and stopping at the first permit (permit_on_first_permit). An evaluation that cannot be decided is a denial with context.error holding its status and message. Without evaluations the top-level fields are one evaluation, and the answer is its decision.
 
-        This is the access evaluation endpoint of the OpenID AuthZEN Authorization API 1.0, scoped to one service (the service is
-        in the path). resource.type is the name of a resource type of the service, resource.id the resource id in the external
-        system (empty — the type as a whole), action.name an access level. subject.id must be the subject of the bearer token
-        (preferred_username, or sub): Licetum decides for the caller only, and takes the claims from the token.
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
+        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
+        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
+        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
+        explain are the attributes of the request that the rules may read.
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
       operationId: authzen_evaluations
       parameters:
         - description: Service id or slug
@@ -780,7 +999,325 @@ paths:
         - bearer: []
       summary: AuthZEN access evaluations (batch)
       tags:
-        - Check
+        - AuthZEN
+  /service/{service_id}/access/v1/search/action:
+    post:
+      description: |-
+        Lists the actions (access levels) the subject may perform on the resource; without resource.id the resource is the type as a whole. The request has no action.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
+        there are more results; send it back as page.token with the same request. The results are sorted.
+
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
+        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
+        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
+        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
+        explain are the attributes of the request that the rules may read.
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
+      operationId: authzen_search_action
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenActionSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: AuthZEN action search
+      tags:
+        - AuthZEN
+  /service/{service_id}/access/v1/search/resource:
+    post:
+      description: |-
+        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. A type without resources has none to list.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
+        there are more results; send it back as page.token with the same request. The results are sorted.
+
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
+        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
+        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
+        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
+        explain are the attributes of the request that the rules may read.
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
+      operationId: authzen_search_resource
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenResourceSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: AuthZEN resource search
+      tags:
+        - AuthZEN
+  /service/{service_id}/access/v1/search/subject:
+    post:
+      description: |-
+        Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a client application the service trusts may ask. The subjects are the known ones — the people whose tokens Licetum has verified, kept while SUBJECTS__ENABLED is on — so a person who was never seen is not listed; at most 1000 of the most recently seen are decided (context.limited says when there were more).
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
+        there are more results; send it back as page.token with the same request. The results are sorted.
+
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
+        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
+        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
+        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
+        explain are the attributes of the request that the rules may read.
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
+      operationId: authzen_search_subject
+      parameters:
+        - description: Service id or slug
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id or slug
+            type: string
+        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+          explode: false
+          in: query
+          name: consistency
+          schema:
+            default: minimize_latency
+            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
+            enum:
+              - minimize_latency
+              - higher
+            type: string
+        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+          explode: false
+          in: query
+          name: at_least_as_fresh
+          schema:
+            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
+            format: int64
+            minimum: 0
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenSubjectSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: AuthZEN subject search
+      tags:
+        - AuthZEN
   /service/{service_id}/check:
     post:
       description: |-
@@ -1251,8 +1788,10 @@ paths:
 tags:
   - description: "Permission check: what the user holding this token may do with the service resources."
     name: Permission
-  - description: Single access checks with explanations, and the AuthZEN access evaluation API.
+  - description: Single access checks with explanations.
     name: Check
+  - description: "The OpenID AuthZEN Authorization API 1.0 of a service: access evaluation and evaluations, the subject, resource and action searches, and the discovery document."
+    name: AuthZEN
   - description: The same questions asked on behalf of a person by a client application the service trusts, without the person's token. Every call is recorded.
     name: Delegated
   - description: Service endpoints.
