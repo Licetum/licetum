@@ -89,6 +89,7 @@ func runCommand(args []string) error {
 	fs.DurationVar(&opts.ChaosRedisAt, "pause-redis-at", opts.ChaosRedisAt, "pause the Redis container this long into the measured window")
 	fs.DurationVar(&opts.ChaosRedisFor, "pause-redis-for", opts.ChaosRedisFor, "for this long (0 for none)")
 	fs.DurationVar(&opts.AddedLatency, "added-latency", opts.AddedLatency, "latency added to each round trip from the check servers to PostgreSQL and to Redis, through Toxiproxy, from the end of the warm-up (0 for none)")
+	fs.BoolVar(&opts.RampThrough, "ramp-through", opts.RampThrough, "with -ramp: go on after a step fails, up to -max-steps, to see the server above its limit")
 	fs.IntVar(&opts.Replicas, "replicas", opts.Replicas, "check servers sharing the database and the cache; the load is spread over them")
 	fs.DurationVar(&opts.WritesEvery, "writes-every", opts.WritesEvery, "an admin write (a rule created, then deleted) every this long during the window (0 for none)")
 	fs.Float64Var(&opts.RequireRate, "require-rate", 0, "a ramp run fails when the sustained rate is below this (for CI)")
@@ -152,6 +153,7 @@ func budgetCommand(args []string) error {
 	calibrate := fs.Bool("calibrate", false, "write budgets from the runs instead of comparing them")
 	out := fs.String("out", "", "with -calibrate: the file to write (default: stdout)")
 	note := fs.String("note", "", "with -calibrate: where the figures come from (commit, machine), kept in each entry")
+	steps := fs.Bool("steps", false, "print the table of the steps of each run (rate, validity, latency, queries and round trips per request) instead of comparing")
 	tolerance := fs.Float64("tolerance", loadtest.DefaultTolerance, "with -calibrate: the share a figure may be off its budget")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -166,6 +168,13 @@ func budgetCommand(args []string) error {
 			return err
 		}
 		runs[dir] = rep
+	}
+
+	if *steps {
+		for _, dir := range fs.Args() {
+			fmt.Println(loadtest.StepsMarkdown(runs[dir]))
+		}
+		return nil
 	}
 
 	if *calibrate {

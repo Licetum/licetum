@@ -291,3 +291,25 @@ func BudgetsYAML(budgets Budgets) ([]byte, error) {
 		"# fail; its report asks for the budget to be set again.\n"
 	return append([]byte(header), body...), nil
 }
+
+// StepsMarkdown is the table of the windows of a run: what the baseline publishes (rate asked and answered, validity,
+// latency of all the requests, and what the server counted per request).
+func StepsMarkdown(rep Report) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "#### %s, sustained %.0f requests/s\n\n", runName(rep), rep.SustainedRPS)
+	b.WriteString("| asked rps | answered rps | valid | step | p50 ms | p99 ms | errors | dropped | db queries / request | Redis round trips / request | oracle wrong |\n")
+	b.WriteString("|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|\n")
+	for _, m := range rep.Measurements {
+		p99 := "–"
+		if v, ok := m.Overall.Quantile(0.99, m.Overall.P99); ok {
+			p99 = fmt.Sprintf("%.1f", v)
+		}
+		verdict := "pass"
+		if !m.passes() {
+			verdict = "fail"
+		}
+		fmt.Fprintf(&b, "| %.0f | %.1f | %t | %s | %.1f | %s | %.2f%% | %d | %s | %s | %d |\n", m.RateAsked, m.AchievedRPS, m.Valid, verdict,
+			m.Overall.P50, p99, 100*m.ErrorRate, m.Dropped, num2(m.Server.DBQueriesPerRequest), num2(m.Server.RedisRoundTripsPerRequest), m.Oracle.Mismatches)
+	}
+	return b.String()
+}

@@ -34,6 +34,10 @@ on:
         description: Do not compare with budgets.yaml; print the budgets these runs would make
         type: boolean
         default: false
+      publish:
+        description: Push result.json, environment.json and summary.md of each run to a branch named loadtest-results-<run id>-<mode>-<latency>
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -53,6 +57,8 @@ jobs:
     if: github.event_name == 'schedule' || inputs.profile == 'medium'
     runs-on: ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 90
+    permissions:
+      contents: write # only for `publish`: pushing the summary branch
     strategy:
       fail-fast: false
       matrix:
@@ -91,9 +97,14 @@ jobs:
 
       - name: Load test at the medium volume
         run: >
-          task loadtest -- -profile medium -mode ${{ matrix.mode }} -ramp -rate-factor 2 -warm 60s -measure 60s
+          task loadtest -- -profile medium -mode ${{ matrix.mode }} -ramp -rate-factor 2 -warm 60s -measure 90s -ramp-through
           -added-latency ${{ matrix.latency }} ${{ matrix.args }} -require-rate 1
           -out reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }}
+
+      - name: Steps of the run
+        if: always()
+        working-directory: admin-api
+        run: go run ./cmd/licetum-loadtest budget -steps reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Compare the run with its budget
         if: ${{ always() && !inputs.baseline }}
@@ -110,6 +121,20 @@ jobs:
             go run ./cmd/licetum-loadtest budget -calibrate -note "$GITHUB_SHA, ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}" reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | sed -n '/^budgets:/,$p'
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the summary of the run
+        if: ${{ always() && inputs.publish }}
+        run: |
+          name=medium-${{ matrix.mode }}-${{ matrix.latency }}
+          dir=admin-api/loadtest/notebook/results/baseline-${GITHUB_SHA::8}/$name
+          mkdir -p "$dir"
+          cp admin-api/reports/loadtest/$name/{result.json,environment.json,summary.md} "$dir"/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b "loadtest-results-${GITHUB_RUN_ID}-${{ matrix.mode }}-${{ matrix.latency }}"
+          git add -f "$dir"
+          git commit -q -s -m "loadtest: results of $name at ${GITHUB_SHA::8}"
+          git push -q origin HEAD
 
       - name: Upload the load test results
         if: always()

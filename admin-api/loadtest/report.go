@@ -80,6 +80,8 @@ type Settings struct {
 	PauseRedisSecs float64 `json:"pause_redis_seconds"`
 	// AddedLatencyMS is the latency added to each round trip to PostgreSQL and Redis (0: none).
 	AddedLatencyMS float64 `json:"added_latency_ms"`
+	// RampThrough: the ramp went on after a failed step (see Options.RampThrough).
+	RampThrough bool `json:"ramp_through,omitempty"`
 	// ExtraSQL is the file applied after the warm-up, when the run is an experiment (empty otherwise).
 	ExtraSQL string `json:"extra_sql,omitempty"`
 }
@@ -120,10 +122,12 @@ func (r *Report) finish(required float64, ramp bool) {
 	r.RequiredRPS = required
 	r.SustainedRPS = 0
 	if ramp {
+		// The highest step before the first one that failed: a step that passes above a failed one is luck, not capacity.
 		for _, m := range r.Measurements {
-			if m.passes() {
-				r.SustainedRPS = max(r.SustainedRPS, m.RateAsked)
+			if !m.passes() {
+				break
 			}
+			r.SustainedRPS = max(r.SustainedRPS, m.RateAsked)
 		}
 		r.Passed = r.SustainedRPS > 0 && r.SustainedRPS >= required
 	} else {

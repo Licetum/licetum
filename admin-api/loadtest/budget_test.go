@@ -148,3 +148,24 @@ func TestSumDelta(t *testing.T) {
 		t.Fatalf("filtered sum = %v, want 3", got)
 	}
 }
+
+func TestSustainedIsTheHighestStepBeforeTheFirstFailure(t *testing.T) {
+	failed := step(40, 1, 1, 1, 1)
+	no := false
+	failed.Passed = &no
+	rep := Report{Settings: Settings{Ramp: true}, Measurements: []Measurement{step(10, 1, 1, 1, 1), step(20, 1, 1, 1, 1), failed, step(80, 1, 1, 1, 1)}}
+	rep.finish(0, true)
+	if rep.SustainedRPS != 20 {
+		t.Fatalf("a step that passes above a failed one is not capacity: sustained %v, want 20", rep.SustainedRPS)
+	}
+}
+
+func TestStepsMarkdownListsEveryWindow(t *testing.T) {
+	rep := run("medium", "warm", 0, 20, step(10, 1, 2, 3, 4), step(20, 5, 6, 7, 8))
+	md := StepsMarkdown(rep)
+	for _, want := range []string{"medium/warm/+0ms, sustained 20", "| 10 |", "| 20 |", "| 3.00 | 4.00 |"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("steps table lacks %q:\n%s", want, md)
+		}
+	}
+}

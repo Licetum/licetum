@@ -73,6 +73,10 @@ type Options struct {
 	// AddedLatency is added to every round trip from the check servers to PostgreSQL and to Redis (through Toxiproxy),
 	// from the end of the warm-up on: half in each direction. 0 puts nothing in the way.
 	AddedLatency time.Duration
+	// RampThrough keeps the ramp climbing after a step fails, up to MaxSteps, so the report also shows what the server does
+	// above its limit (the baseline asks for at least 600 requests/s measured, whether or not they are sustained). The
+	// sustained rate is still the highest step before the first one that failed.
+	RampThrough bool
 }
 
 // DefaultOptions are the settings of a run that the flags then change.
@@ -182,6 +186,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			Replicas:       max(opts.Replicas, 1),
 			PauseRedisSecs: opts.ChaosRedisFor.Seconds(),
 			AddedLatencyMS: ms(opts.AddedLatency),
+			RampThrough:    opts.RampThrough,
 		},
 		Machine: machine(k6Version(k6Path)),
 	}
@@ -510,7 +515,7 @@ func (m measurer) ramp(ctx context.Context) ([]Measurement, error) {
 		}
 		meas.judgeStep(m.opts.MaxErrorRate, m.opts.SLOP99)
 		out = append(out, meas)
-		if !meas.passes() || ctx.Err() != nil {
+		if ctx.Err() != nil || (!meas.passes() && !m.opts.RampThrough) {
 			break
 		}
 		rate *= m.opts.RateFactor
