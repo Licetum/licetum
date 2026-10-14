@@ -35,7 +35,7 @@ on:
         type: boolean
         default: false
       publish:
-        description: Push result.json, environment.json and summary.md of each run to a branch named loadtest-results-<run id>-<mode>-<latency>
+        description: Push result.json, environment.json and summary.md of each run to the branch loadtest-results (one commit per run)
         type: boolean
         default: false
 
@@ -68,12 +68,12 @@ jobs:
           # No added latency: the ramp reaches 640 requests/s (10, 20, ... 640), past the 600 the plan asks for.
           - { mode: warm, latency: 0ms, args: "-rate-start 10 -max-steps 7 -slo-p99 100ms -concurrency 250" }
           - { mode: mix, latency: 0ms, args: "-rate-start 10 -max-steps 7 -slo-p99 100ms -concurrency 250" }
-          # Every request is computed: it saturates far below that.
-          - { mode: cold, latency: 0ms, args: "-rate-start 2 -max-steps 8 -slo-p99 1s -concurrency 250" }
+          # Every request is computed: it saturates far below that (2, 4, ... 1024: the steps past 600 show what overload does).
+          - { mode: cold, latency: 0ms, args: "-rate-start 2 -max-steps 10 -slo-p99 1s -concurrency 250" }
           # 100 ms on every round trip: a request waits half a second or more, so many more are in flight at once.
           - { mode: warm, latency: 100ms, args: "-rate-start 10 -max-steps 7 -slo-p99 2s -concurrency 1000" }
           - { mode: mix, latency: 100ms, args: "-rate-start 10 -max-steps 7 -slo-p99 2s -concurrency 1000" }
-          - { mode: cold, latency: 100ms, args: "-rate-start 2 -max-steps 8 -slo-p99 5s -concurrency 1000" }
+          - { mode: cold, latency: 100ms, args: "-rate-start 2 -max-steps 10 -slo-p99 5s -concurrency 1000" }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -131,10 +131,16 @@ jobs:
           cp admin-api/reports/loadtest/$name/{result.json,environment.json,summary.md} "$dir"/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -q -b "loadtest-results-${GITHUB_RUN_ID}-${{ matrix.mode }}-${{ matrix.latency }}"
-          git add -f "$dir"
-          git commit -q -s -m "loadtest: results of $name at ${GITHUB_SHA::8}"
-          git push -q origin HEAD
+          # All the runs of the matrix push to one branch, one commit each; a push that loses the race is retried.
+          for attempt in 1 2 3 4 5 6; do
+            git fetch -q origin loadtest-results 2>/dev/null && git checkout -q -B loadtest-results FETCH_HEAD || git checkout -q -B loadtest-results "$GITHUB_SHA"
+            mkdir -p "$dir"
+            cp admin-api/reports/loadtest/$name/{result.json,environment.json,summary.md} "$dir"/
+            git add -f "$dir"
+            git commit -q -s -m "loadtest: results of $name at ${GITHUB_SHA::8}"
+            git push -q origin loadtest-results && break
+            sleep $((attempt * 3))
+          done
 
       - name: Upload the load test results
         if: always()
