@@ -83,11 +83,9 @@ func newAuthzenCaller(ctx context.Context, app *engine.App, serviceID uuid.UUID,
 	}
 	SetRequestUser(ctx, subject)
 	c := &authzenCaller{app: app, serviceID: serviceID, svc: svc, subject: subject, claims: claims, tally: map[string]*delegatedTally{}}
-	// The token of a trusted client application is a service account, not a person: the delegated endpoints do not note it
-	// either, and the subject search would otherwise list it.
-	if _, err := c.trusted(); err != nil {
-		app.NoteSubject(subject, claims)
-	}
+	// The caller is a subject like any other, a trusted client application included: rules may grant a service account
+	// access by the attributes of its claims, so it belongs to the registry as well.
+	app.NoteSubject(subject, claims)
 	return c, nil
 }
 

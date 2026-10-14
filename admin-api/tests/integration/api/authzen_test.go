@@ -7,9 +7,9 @@ package api_test
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -344,10 +344,11 @@ func TestAuthzenSubjectSearchPagesWithoutSkippingOrRepeating(t *testing.T) {
 		t.Fatalf("every person with access once, in the order of their identifiers: %v", got)
 	}
 
-	// The token of the trusted client is a service account: it is not a person of the registry.
-	time.Sleep(500 * time.Millisecond)
-	list := w.must("GET", "/subject?search=svc-docs-backend", nil)
-	if list["total"] != float64(0) {
-		t.Fatalf("a trusted client is not noted: %v", list)
+	// The caller is a subject like any other, a trusted client included: rules may grant a service account access by its claims.
+	waitFor(t, "the trusted client in the registry", func() bool {
+		return w.must("GET", "/subject?search=svc-docs-backend", nil)["total"] == float64(1)
+	})
+	if slices.Contains(got, "svc-docs-backend") {
+		t.Fatalf("the client has no access to B1: %v", got)
 	}
 }
