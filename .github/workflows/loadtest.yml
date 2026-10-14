@@ -3,6 +3,19 @@ name: Load test
 # The check API at the policy sizes of admin-api/loadtest, nightly and on demand. Each run ramps the traffic up until a
 # step misses its objective, and writes the result to the job summary and to the artifact. The runner is the same size
 # every night, so the numbers can be compared from one night to the next.
+#
+# The medium profile runs in three modes (warm, cold, mix) with and without 100 ms added to every round trip to
+# PostgreSQL and to Redis (Toxiproxy), and each run is compared with its entry of admin-api/loadtest/budgets.yaml: a
+# figure more than 15 % on the wrong side fails the job (F0-5). With `baseline: true` the runs are not compared; the
+# budget each one would make is printed in the summary instead (how budgets.yaml is made, F0-6).
+#
+# The runner is `ubuntu-latest` unless the repository variable LOADTEST_RUNNER names another label (a larger runner): the
+# numbers are comparable from one night to the next only on the same runner, and the budgets are those of the runner they
+# were made on. (The label ubuntu-latest-4-cores of the first version was never served: its scheduled runs stayed queued.)
+#
+# A schedule fires only from the default branch. To measure another branch (the epic branch production-load-readiness
+# until it reaches main) start the workflow by hand with `ref`, or set the repository variable LOADTEST_REF, which the
+# scheduled runs check out.
 on:
   schedule:
     - cron: "23 2 * * *"
@@ -13,22 +26,64 @@ on:
         type: choice
         options: [medium, large]
         default: medium
+      ref:
+        description: Branch, tag or commit to measure (default, the one the workflow is started on)
+        type: string
+        default: ""
+      baseline:
+        description: Do not compare with budgets.yaml; print the budgets these runs would make
+        type: boolean
+        default: false
+      publish:
+        description: Push result.json, environment.json and summary.md of each run to the branch loadtest-results (one commit per run)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: loadtest
+  # One run at a time per measured ref: a run of another ref does not wait behind it (or behind a queued scheduled run).
+  group: loadtest-${{ inputs.ref || vars.LOADTEST_REF || github.ref }}
   cancel-in-progress: false
+
+env:
+  # The ref the runs measure: the input, else the repository variable (for the schedule), else the ref of the event.
+  MEASURE_REF: ${{ inputs.ref || vars.LOADTEST_REF || github.ref }}
 
 jobs:
   medium:
-    name: Load test (medium)
+    name: Load test (medium, ${{ matrix.mode }}, +${{ matrix.latency }})
     if: github.event_name == 'schedule' || inputs.profile == 'medium'
-    runs-on: ubuntu-latest-4-cores
-    timeout-minutes: 60
+    runs-on: ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    permissions:
+      contents: write # only for `publish`: pushing the summary branch
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The ramps start low and double: a shared 4-CPU runner (the generator, the server, PostgreSQL and Redis on it)
+          # may fail the first step of the mixed traffic at 50 requests/s, and then there is no baseline at all.
+          # No added latency: the ramp reaches 640 requests/s (10, 20, ... 640), past the 600 the plan asks for.
+          - { mode: warm, latency: 0ms, args: "-rate-start 10 -max-steps 7 -slo-p99 100ms -concurrency 250" }
+          - { mode: mix, latency: 0ms, args: "-rate-start 10 -max-steps 7 -slo-p99 100ms -concurrency 250" }
+          # Every request is computed: it saturates far below that (2, 4, ... 1024: the steps past 600 show what overload does).
+          - { mode: cold, latency: 0ms, args: "-rate-start 2 -max-steps 10 -slo-p99 1s -concurrency 250" }
+          # 100 ms on every round trip: a request waits half a second or more, so many more are in flight at once.
+          - { mode: warm, latency: 100ms, args: "-rate-start 10 -max-steps 7 -slo-p99 2s -concurrency 1000" }
+          - { mode: mix, latency: 100ms, args: "-rate-start 10 -max-steps 7 -slo-p99 2s -concurrency 1000" }
+          - { mode: cold, latency: 100ms, args: "-rate-start 2 -max-steps 10 -slo-p99 5s -concurrency 1000" }
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MEASURE_REF }}
+          # The code of the measured ref runs in this job: the token is not left on disk for it; the publish step passes it itself.
+          persist-credentials: false
+
+      # GITHUB_SHA is the commit the workflow was started on, not the one measured when `ref` or LOADTEST_REF names another.
+      - name: Name the measured commit
+        run: echo "MEASURED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@v7
         with:
@@ -48,24 +103,71 @@ jobs:
 
       - name: Load test at the medium volume
         run: >
-          task loadtest -- -profile medium -ramp -rate-start 10 -rate-factor 2 -max-steps 6 -measure 30s
-          -require-rate 10 -out reports/loadtest
+          task loadtest -- -profile medium -mode ${{ matrix.mode }} -ramp -rate-factor 2 -warm 60s -measure 90s -ramp-through
+          -added-latency ${{ matrix.latency }} ${{ matrix.args }} -require-rate 1
+          -out reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }}
+
+      - name: Steps of the run
+        if: always()
+        working-directory: admin-api
+        run: go run ./cmd/licetum-loadtest budget -steps reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Compare the run with its budget
+        if: ${{ always() && !inputs.baseline }}
+        working-directory: admin-api
+        run: go run ./cmd/licetum-loadtest budget -budgets loadtest/budgets.yaml reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }}
+
+      - name: Print the budget this run would make
+        if: ${{ always() && inputs.baseline }}
+        working-directory: admin-api
+        run: |
+          {
+            echo '### Budget of medium, ${{ matrix.mode }}, +${{ matrix.latency }}'
+            echo '```yaml'
+            go run ./cmd/licetum-loadtest budget -calibrate -note "$MEASURED_SHA, ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}" reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | sed -n '/^budgets:/,$p'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the summary of the run
+        if: ${{ always() && inputs.publish }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          name=medium-${{ matrix.mode }}-${{ matrix.latency }}
+          dir=admin-api/loadtest/notebook/results/baseline-${MEASURED_SHA::8}/$name
+          mkdir -p "$dir"
+          cp admin-api/reports/loadtest/$name/{result.json,environment.json,summary.md} "$dir"/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # All the runs of the matrix push to one branch, one commit each; a push that loses the race is retried.
+          for attempt in 1 2 3 4 5 6; do
+            git fetch -q "$remote" loadtest-results 2>/dev/null && git checkout -q -B loadtest-results FETCH_HEAD || git checkout -q -B loadtest-results "$MEASURED_SHA"
+            mkdir -p "$dir"
+            cp admin-api/reports/loadtest/$name/{result.json,environment.json,summary.md} "$dir"/
+            git add -f "$dir"
+            git commit -q -s -m "loadtest: results of $name at ${MEASURED_SHA::8}"
+            git push -q "$remote" loadtest-results && break
+            sleep $((attempt * 3))
+          done
 
       - name: Upload the load test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: loadtest-medium
-          path: admin-api/reports/loadtest
+          name: loadtest-medium-${{ matrix.mode }}-${{ matrix.latency }}
+          path: admin-api/reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }}
           if-no-files-found: ignore
 
   large:
     name: Load test (large)
     if: github.event_name == 'schedule' || inputs.profile == 'large'
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.MEASURE_REF }}
 
       - uses: actions/setup-go@v7
         with:

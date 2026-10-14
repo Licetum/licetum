@@ -29,7 +29,17 @@ notebook shows the machine each run came from. To get the same charts for your o
   use. All five are valid by the rules, but they are here to show how far the state of the host moves the same code, not
   as a result.
 
-Not measured yet: the 100k profile, the mixed, cold and ramp modes, writes during load, faults, and a second machine. Two
+- `baseline-b7859306/` and `baseline-5abcc757/`: the baseline of block F0 of the production-load plan (#32), the medium
+  profile (100k resources) on a GitHub-hosted `ubuntu-latest` runner (4 vCPUs shared by the load generator, the server,
+  PostgreSQL and Redis), before any block changes the engine. Per run (`medium-<mode>-<added latency>/`): `warm`, `cold` and
+  `mix`, each with no added latency and with 100 ms added to every round trip to PostgreSQL and Redis; a ramp from 2 to 1024
+  or from 10 to 640 requests/s with 90-second windows, going on after a failed step (`-ramp-through`). The table of the
+  steps of any run is `licetum-loadtest budget -steps DIR`; the issue #32 has the summary. `budgets.yaml` is made from the
+  lowest sustained rate of the two runs. A p99 is not in the budgets: the steps the runner sustains have under 10,000
+  samples. In every window of both runs the oracle found 0 wrong answers; under overload some questions get no answer
+  (`unanswered`), which is a failure of availability, not a wrong answer.
+
+Not measured yet: writes during load, faults, replicas, a larger runner, and a second machine. Two
 valid windows on one laptop are not enough for an article's numbers.
 
 ## 1. Requirements
@@ -99,6 +109,22 @@ Redis are empty, and then seeds the policy again. On the test host the campaign 
 `MEASURE=120s` for a first pass: it takes about an hour, the ramp included.
 
 Use the same CPU lists, the same profile and the same settings for every run you compare.
+
+## 4a. Added latency, per-request counts and budgets
+
+- `-added-latency 100ms` puts Toxiproxy in front of PostgreSQL and Redis for the check servers and adds 100 ms to every
+  round trip (50 ms in each direction) from the end of the warm-up. The seeding and the warm-up run on the plain link.
+  The setting is in `result.json` (`settings.added_latency_ms`).
+- Each window reports what the server did per API request it served: database queries and Redis round trips, counted by
+  the server itself (`licetum_db_queries_total`, `licetum_redis_ops_total`), background work included.
+- `budgets.yaml` holds, per profile, mode and added latency, the sustained rate (a floor), the p50 and p99 and the queries
+  and round trips per request (ceilings), taken at the step the baseline sustained. `licetum-loadtest budget DIR...`
+  compares runs with it and fails when a figure is more than 15 % on the wrong side; a figure better by more than 15 % does
+  not fail, it asks for the budget to be set again. `budget -calibrate -out loadtest/budgets.yaml DIR...` writes budgets from
+  runs. The budgets are those of the runner they were made on: the nightly workflow `loadtest.yml` runs on
+  `ubuntu-latest` (or the label in the repository variable `LOADTEST_RUNNER`), and so must the numbers.
+- The nightly workflow runs the medium profile in warm, cold and mix mode, with and without 100 ms, a ramp each, and
+  compares every run with its budget. Start it by hand with `baseline: true` to print the budgets the runs would make.
 
 ## 5. Get the charts
 

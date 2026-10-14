@@ -66,7 +66,7 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 	adapter := synchronizer.NewAdapter(rdb)
 	adapter.DefaultFetchTTL = cfg.Sync.FetchTTL
 	adapter.OnBreakerOpen = func() { m.breakerOpen.WithLabelValues("source").Inc() }
-	return &App{
+	app := &App{
 		DB:      pool,
 		Redis:   rdb,
 		Sync:    adapter,
@@ -74,6 +74,11 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 		HTTP:    &http.Client{},
 		metrics: m,
 	}
+	// Every statement and every Redis round trip of the process is counted: in the metrics, and in the Trace of the
+	// request that made it. A pool not made by db.Connect has no tracer and is not counted.
+	db.Observe(pool, observer{app})
+	redisx.Observe(rdb, observer{app})
+	return app
 }
 
 // Close stops new background work, waits for the work in progress (a little while), then closes the connections

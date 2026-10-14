@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"maps"
 	"sync"
 )
 
@@ -13,12 +14,19 @@ type Trace struct {
 	requestID string
 	actor     string
 	revision  int64
+	// What the request cost: statements sent to PostgreSQL and round trips to Redis, in total and by kind.
+	dbQueries, redisTrips int
+	dbOps, redisOps       map[string]int
 }
 
 type traceKey struct{}
 
-// WithTrace returns ctx carrying a fresh Trace, and the Trace.
+// WithTrace returns ctx carrying a Trace, and the Trace. A ctx that already carries one keeps it, so a test (or a
+// middleware in front of the API) can create the Trace itself and read what the request did afterwards.
 func WithTrace(ctx context.Context) (context.Context, *Trace) {
+	if t := TraceFrom(ctx); t != nil {
+		return ctx, t
+	}
 	t := &Trace{}
 	return context.WithValue(ctx, traceKey{}, t), t
 }
@@ -92,4 +100,54 @@ func WithMinRevision(ctx context.Context, v int64) context.Context {
 func minRevisionFrom(ctx context.Context) int64 {
 	v, _ := ctx.Value(minRevisionKey{}).(int64)
 	return v
+}
+
+// DBQueries is how many statements the request sent to PostgreSQL (a statement of a batch counts one each; the
+// BEGIN and COMMIT of a transaction are statements too). Work the request left running after its answer (the write
+// of a cache entry, a refresh in the background) is not part of it; the Prometheus counters include it.
+func (t *Trace) DBQueries() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.dbQueries
+}
+
+// DBQueryOps is DBQueries by kind of statement (the first SQL keyword: "select", "insert", ...).
+func (t *Trace) DBQueryOps() map[string]int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return maps.Clone(t.dbOps)
+}
+
+// RedisRoundTrips is how many round trips the request made to Redis: a pipeline is one, whatever its size.
+func (t *Trace) RedisRoundTrips() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.redisTrips
+}
+
+// RedisOps is RedisRoundTrips by command ("get", "set", ...; "pipeline" for a pipeline).
+func (t *Trace) RedisOps() map[string]int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return maps.Clone(t.redisOps)
+}
+
+func (t *Trace) addDB(operation string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.dbOps == nil {
+		t.dbOps = map[string]int{}
+	}
+	t.dbQueries++
+	t.dbOps[operation]++
+}
+
+func (t *Trace) addRedis(operation string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.redisOps == nil {
+		t.redisOps = map[string]int{}
+	}
+	t.redisTrips++
+	t.redisOps[operation]++
 }
