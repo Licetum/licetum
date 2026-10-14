@@ -89,6 +89,9 @@ func (t *Tracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 	if t.echo {
 		slog.DebugContext(ctx, "sql", "query", data.SQL, "args", data.Args)
 	}
+	if t.observer.Load() == nil {
+		return ctx // nobody counts this pool: no context value, no clock, no parsing of the statement
+	}
 	return context.WithValue(ctx, queryStartKey{}, &queryStart{at: time.Now(), operation: Operation(data.SQL)})
 }
 
@@ -108,6 +111,9 @@ type batchKey struct{}
 type batchState struct{ last time.Time }
 
 func (t *Tracer) TraceBatchStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+	if t.observer.Load() == nil {
+		return ctx
+	}
 	return context.WithValue(ctx, batchKey{}, &batchState{last: time.Now()})
 }
 
@@ -128,6 +134,9 @@ func (t *Tracer) TraceBatchQuery(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 func (t *Tracer) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}
 
 func (t *Tracer) TraceCopyFromStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceCopyFromStartData) context.Context {
+	if t.observer.Load() == nil {
+		return ctx
+	}
 	return context.WithValue(ctx, queryStartKey{}, &queryStart{at: time.Now(), operation: "copy"})
 }
 

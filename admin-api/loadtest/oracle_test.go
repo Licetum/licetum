@@ -35,3 +35,16 @@ func TestOracleSeparatesWrongAnswersFromUnanswered(t *testing.T) {
 		t.Fatalf("a server that denies everything is wrong exactly where access is expected: %+v", denyAll)
 	}
 }
+
+func TestOracleThatVerifiedNothingMakesTheWindowInvalid(t *testing.T) {
+	m := Measurement{Valid: true, Oracle: Oracle{Checked: 20, Unanswered: 20}}
+	m.judgeMeasurement()
+	if m.Valid {
+		t.Fatal("a window whose oracle got no answer to any question is valid")
+	}
+	m = Measurement{Oracle: Oracle{Checked: 20, Unanswered: 3}}
+	m.judgeMeasurement()
+	if !m.Valid {
+		t.Fatalf("some unanswered questions under load are the error rate's to judge: %v", m.InvalidReasons)
+	}
+}

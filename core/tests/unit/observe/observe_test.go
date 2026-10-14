@@ -265,3 +265,21 @@ func TestWithTraceKeepsTheTraceOfTheContext(t *testing.T) {
 		t.Fatal("WithTrace replaced the Trace the context carries")
 	}
 }
+
+func TestConnectionSetupIsTrafficButNotTheCostOfARequest(t *testing.T) {
+	// A client on database 2 sends SELECT (inside a pipeline of its own) when it opens a connection, with the context of the
+	// request that needed the connection. That is in the metrics as connection_setup and not in the Trace.
+	rdb := redis.NewClient(&redis.Options{Addr: fakeRedis(t), Protocol: 2, DisableIdentity: true, DB: 2, ClientName: "licetum-test"})
+	t.Cleanup(func() { _ = rdb.Close() })
+	app := engine.New(nil, rdb, &config.Config{})
+	ctx, trace := engine.WithTrace(context.Background())
+	if err := rdb.Set(ctx, "k", "v", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got := trace.RedisRoundTrips(); got != 1 || trace.RedisOps()["set"] != 1 {
+		t.Fatalf("the Trace of a request that opened a connection: %d %v, want only the SET", got, trace.RedisOps())
+	}
+	if body := scrape(t, app); !strings.Contains(body, `operation="connection_setup"`) {
+		t.Errorf("the setup traffic is not in /metrics:\n%s", body)
+	}
+}

@@ -113,35 +113,10 @@ func sustained(rep Report) float64 {
 	return 0
 }
 
-// Calibrate makes the budget of a run: its sustained rate, and the latencies and counts of the step it sustained. It
-// is how budgets.yaml is made from a baseline; a run that sustained nothing, or whose oracle found a wrong answer, makes
-// no budget.
+// Calibrate makes the budget of one run: CalibrateRuns of a single run. A run that sustained nothing, or whose window
+// is not valid or has a wrong answer, makes no budget.
 func Calibrate(rep Report, note string) (Budget, error) {
-	rate := sustained(rep)
-	if rate == 0 {
-		return Budget{}, fmt.Errorf("%s: the run sustained no rate", runName(rep))
-	}
-	ref := rate
-	if !rep.Settings.Ramp {
-		ref = 0
-	}
-	step, ok := referenceStep(rep, ref)
-	if !ok {
-		return Budget{}, fmt.Errorf("%s: no window at %.0f requests/s", runName(rep), ref)
-	}
-	if step.Oracle.Mismatches > 0 {
-		return Budget{}, fmt.Errorf("%s: the oracle found %d wrong answers", runName(rep), step.Oracle.Mismatches)
-	}
-	b := Budget{
-		Profile: rep.Settings.ProfileName, Mode: rep.Settings.Mode, AddedLatencyMS: rep.Settings.AddedLatencyMS,
-		RPS: rate, ReferenceRPS: step.RateAsked, P50MS: round2(step.Overall.P50),
-		DBQueriesPerRequest: round2(step.Server.DBQueriesPerRequest), RedisRoundTripsPerRequest: round2(step.Server.RedisRoundTripsPerRequest),
-		Note: note,
-	}
-	if p99, ok := step.Overall.Quantile(0.99, step.Overall.P99); ok {
-		b.P99MS = round2(p99)
-	}
-	return b, nil
+	return CalibrateRuns([]Report{rep}, note)
 }
 
 // CalibrateRuns makes the budget of one configuration from several runs of it: the rate is the lowest any run sustained (a

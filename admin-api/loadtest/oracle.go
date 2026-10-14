@@ -150,11 +150,10 @@ func runOracle(ctx context.Context, base, service string, p Profile, tokens []st
 		if unanswered {
 			out.Unanswered++
 		}
-		if unanswered || got != expected {
-			if !unanswered {
-				out.Mismatches++
-			}
-			if !unanswered && len(out.Examples) < 10 {
+		wrong := !unanswered && got != expected
+		if wrong {
+			out.Mismatches++
+			if len(out.Examples) < 10 {
 				out.Examples = append(out.Examples, Mismatch{
 					Subject: fmt.Sprintf("user-%d", u), Document: fmt.Sprintf("d-%d", d),
 					Expected: expected, Got: got, Status: status,

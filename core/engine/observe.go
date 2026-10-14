@@ -4,6 +4,8 @@ import (
 	"context"
 	"strconv"
 	"time"
+
+	"github.com/licetum/licetum/core/redisx"
 )
 
 // observer feeds what the database pool and the Redis client report into the metrics of the App and into the
@@ -20,20 +22,17 @@ func (o observer) ObserveQuery(ctx context.Context, operation string, took time.
 	}
 }
 
+// ObserveRedis counts a round trip in the metrics and, unless it is connection setup (redisx.Setup: traffic, not what the
+// request asked for), in the Trace of its request.
 func (o observer) ObserveRedis(ctx context.Context, operation string, commands int, took time.Duration, err error) {
 	if m := o.a.metrics; m != nil {
 		m.redisOps.WithLabelValues(operation, commandsLabel(commands), resultOf(err)).Inc()
 		m.redisOpDuration.WithLabelValues(operation).Observe(took.Seconds())
 	}
-	if t := TraceFrom(ctx); t != nil && !connectionSetup[operation] {
+	if t := TraceFrom(ctx); t != nil && operation != redisx.Setup {
 		t.addRedis(operation)
 	}
 }
-
-// connectionSetup are the commands the Redis client sends by itself when it opens a connection. They run with the
-// context of whichever request needed the connection, but they are not what the request asked for, so the Trace does
-// not count them (the metrics do: they are traffic).
-var connectionSetup = map[string]bool{"hello": true, "auth": true, "select": true, "client": true, "readonly": true}
 
 func resultOf(err error) string {
 	if err != nil {

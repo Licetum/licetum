@@ -78,6 +78,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.MEASURE_REF }}
+          # The code of the measured ref runs in this job: the token is not left on disk for it; the publish step passes it itself.
+          persist-credentials: false
+
+      # GITHUB_SHA is the commit the workflow was started on, not the one measured when `ref` or LOADTEST_REF names another.
+      - name: Name the measured commit
+        run: echo "MEASURED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@v7
         with:
@@ -118,27 +124,30 @@ jobs:
           {
             echo '### Budget of medium, ${{ matrix.mode }}, +${{ matrix.latency }}'
             echo '```yaml'
-            go run ./cmd/licetum-loadtest budget -calibrate -note "$GITHUB_SHA, ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}" reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | sed -n '/^budgets:/,$p'
+            go run ./cmd/licetum-loadtest budget -calibrate -note "$MEASURED_SHA, ${{ vars.LOADTEST_RUNNER || 'ubuntu-latest' }}" reports/loadtest/medium-${{ matrix.mode }}-${{ matrix.latency }} | sed -n '/^budgets:/,$p'
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Publish the summary of the run
         if: ${{ always() && inputs.publish }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
+          remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           name=medium-${{ matrix.mode }}-${{ matrix.latency }}
-          dir=admin-api/loadtest/notebook/results/baseline-${GITHUB_SHA::8}/$name
+          dir=admin-api/loadtest/notebook/results/baseline-${MEASURED_SHA::8}/$name
           mkdir -p "$dir"
           cp admin-api/reports/loadtest/$name/{result.json,environment.json,summary.md} "$dir"/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # All the runs of the matrix push to one branch, one commit each; a push that loses the race is retried.
           for attempt in 1 2 3 4 5 6; do
-            git fetch -q origin loadtest-results 2>/dev/null && git checkout -q -B loadtest-results FETCH_HEAD || git checkout -q -B loadtest-results "$GITHUB_SHA"
+            git fetch -q "$remote" loadtest-results 2>/dev/null && git checkout -q -B loadtest-results FETCH_HEAD || git checkout -q -B loadtest-results "$MEASURED_SHA"
             mkdir -p "$dir"
             cp admin-api/reports/loadtest/$name/{result.json,environment.json,summary.md} "$dir"/
             git add -f "$dir"
-            git commit -q -s -m "loadtest: results of $name at ${GITHUB_SHA::8}"
-            git push -q origin loadtest-results && break
+            git commit -q -s -m "loadtest: results of $name at ${MEASURED_SHA::8}"
+            git push -q "$remote" loadtest-results && break
             sleep $((attempt * 3))
           done
 

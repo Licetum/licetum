@@ -22,6 +22,22 @@ type Observer interface {
 // Pipeline is the operation name of a round trip that carried several commands.
 const Pipeline = "pipeline"
 
+// Setup is the operation name of the commands the client sends by itself when it opens a connection (HELLO, AUTH, SELECT,
+// CLIENT SETNAME, READONLY), alone or as the pipeline go-redis makes of them. They run with the context of whichever request
+// needed the connection but are not what the request asked for.
+const Setup = "connection_setup"
+
+var setupCommands = map[string]bool{"hello": true, "auth": true, "select": true, "client": true, "readonly": true}
+
+func isSetup(cmds ...redis.Cmder) bool {
+	for _, c := range cmds {
+		if !setupCommands[strings.ToLower(c.Name())] {
+			return false
+		}
+	}
+	return len(cmds) > 0
+}
+
 type hook struct{ observer atomic.Pointer[observerBox] }
 
 type observerBox struct{ o Observer }
@@ -51,7 +67,11 @@ func (h *hook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 		start := time.Now()
 		err := next(ctx, cmd)
 		if box := h.observer.Load(); box != nil {
-			box.o.ObserveRedis(ctx, strings.ToLower(cmd.Name()), 1, time.Since(start), failure(err))
+			operation := strings.ToLower(cmd.Name())
+			if isSetup(cmd) {
+				operation = Setup
+			}
+			box.o.ObserveRedis(ctx, operation, 1, time.Since(start), failure(err))
 		}
 		return err
 	}
@@ -62,7 +82,11 @@ func (h *hook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Process
 		start := time.Now()
 		err := next(ctx, cmds)
 		if box := h.observer.Load(); box != nil {
-			box.o.ObserveRedis(ctx, Pipeline, len(cmds), time.Since(start), failure(err))
+			operation := Pipeline
+			if isSetup(cmds...) {
+				operation = Setup
+			}
+			box.o.ObserveRedis(ctx, operation, len(cmds), time.Since(start), failure(err))
 		}
 		return err
 	}
