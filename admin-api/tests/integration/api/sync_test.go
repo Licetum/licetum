@@ -119,6 +119,17 @@ func (e *env) newApp(role engine.Role, tune func(*config.Config)) *engine.App {
 	e.t.Cleanup(func() { _ = rdb.Close() })
 	app := engine.New(pool, rdb, &cfg)
 	app.Role = role
+	if role == engine.RoleWorker {
+		// The worker applies on its own pool of DB__SYNC_POOL_SIZE connections, as the binary does.
+		c := cfg.DB
+		c.PoolSize, c.MaxOverflow = max(cfg.DB.SyncPoolSize, 1), 0
+		syncPool, err := db.Connect(ctx, c)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		e.t.Cleanup(syncPool.Close)
+		app.SyncDB = syncPool
+	}
 	e.t.Cleanup(app.Close)
 	return app
 }
