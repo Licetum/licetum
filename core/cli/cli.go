@@ -101,6 +101,7 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 		slog.WarnContext(ctx, "the stored log settings are not applied, the defaults stay in force", "error", err)
 	}
 	go app.WatchLogSettings(ctx)
+	go app.WatchRevision(ctx)
 
 	srv := &http.Server{
 		Addr:              *addr,

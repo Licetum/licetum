@@ -57,7 +57,7 @@ type Cluster struct {
 	PostgresFault, RedisFault *support.FaultProxy
 
 	// LastRevision is the revision (X-Authz-Revision) of the last write made through AdminDo or Must. The replicas
-	// follow the revision with a delay of up to SNAPSHOT__REVISION_POLL; Replica.Permission asks for at least this one, so
+	// follow the revision with a delay of up to REVISION__POLL_INTERVAL; Replica.Permission asks for at least this one, so
 	// that it sees the writes of the test, as a client that passes at_least_as_fresh does.
 	LastRevision atomic.Int64
 

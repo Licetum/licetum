@@ -121,7 +121,7 @@ func TestLoadFastReadPathSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Snapshot.MaxBytes != 256<<20 || cfg.Snapshot.RevisionPoll != 250*time.Millisecond || cfg.Snapshot.MaxAge != time.Minute ||
+	if cfg.Snapshot.MaxBytes != 256<<20 || cfg.Revision.PollInterval != 250*time.Millisecond || cfg.Revision.WaitMax != 500*time.Millisecond || cfg.Snapshot.MaxAge != time.Minute ||
 		cfg.Auth.TokenL1Size != 50_000 || cfg.Cache.AnswerL1Size != 50_000 ||
 		cfg.Auth.JWKSTTL != 10*time.Minute || cfg.Auth.JWKSMinRefresh != 30*time.Second || cfg.Auth.InvalidTokenTTL != 10*time.Second ||
 		cfg.Background.Workers != 16 || cfg.Background.Queue != 1024 || cfg.Redis.HotTimeout != 50*time.Millisecond {
@@ -129,7 +129,9 @@ func TestLoadFastReadPathSettings(t *testing.T) {
 	}
 
 	t.Setenv("SNAPSHOT__MAX_BYTES", "1048576")
-	t.Setenv("SNAPSHOT__REVISION_POLL", "100ms")
+	t.Setenv("REVISION__POLL_INTERVAL", "100ms")
+	t.Setenv("REVISION__WAIT_MAX", "1s")
+	t.Setenv("COMPUTE__CONCURRENCY", "3")
 	t.Setenv("AUTH__JWKS_TTL", "300") // a bare number is seconds, as in the other settings
 	t.Setenv("AUTH__JWKS_MIN_REFRESH", "5s")
 	t.Setenv("AUTH__INVALID_TOKEN_TTL", "2s")
@@ -142,7 +144,7 @@ func TestLoadFastReadPathSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Snapshot.MaxBytes != 1<<20 || cfg.Snapshot.RevisionPoll != 100*time.Millisecond || cfg.Auth.JWKSTTL != 5*time.Minute ||
+	if cfg.Snapshot.MaxBytes != 1<<20 || cfg.Revision.PollInterval != 100*time.Millisecond || cfg.Revision.WaitMax != time.Second || cfg.Compute.Concurrency != 3 || cfg.Auth.JWKSTTL != 5*time.Minute ||
 		cfg.Auth.JWKSMinRefresh != 5*time.Second || cfg.Auth.InvalidTokenTTL != 2*time.Second ||
 		cfg.Auth.TokenL1Size != 10 || cfg.Cache.AnswerL1Size != 20 ||
 		cfg.Background.Workers != 4 || cfg.Background.Queue != 8 || cfg.Redis.HotTimeout != 75*time.Millisecond {

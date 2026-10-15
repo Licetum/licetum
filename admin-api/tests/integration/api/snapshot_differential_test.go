@@ -390,8 +390,6 @@ func TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath(t *testing.T) {
 	// so that what is compared is the policy and not the moment of a synchronization.
 	warm := func() {
 		t.Helper()
-		// The admin writes bump the revision in the Redis database of the snapshot path; the query path has its own.
-		legacy.BumpVersion(ctx)
 		for _, c := range cases {
 			env := engine.NewEnv(c.claims, c.context)
 			for service, checks := range services {

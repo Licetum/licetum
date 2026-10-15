@@ -16,6 +16,7 @@ const (
 	defaultInvalidTokenTTL = 10 * time.Second
 	defaultSnapshotMax     = 256 << 20
 	defaultRevisionPoll    = 250 * time.Millisecond
+	defaultRevisionWait    = 500 * time.Millisecond
 	defaultSnapshotMaxAge  = time.Minute
 	defaultWorkers         = 16
 	defaultQueue           = 1024
@@ -30,11 +31,12 @@ const (
 // tuning is the effective value of the settings of the fast read path: a zero in the configuration took the default,
 // a negative value turned the feature off (0 here).
 type tuning struct {
-	tokenL1Size, answerL1Size                int
-	jwksTTL, jwksMinRefresh, invalidTokenTTL time.Duration
-	snapshotMaxBytes                         int64
-	revisionPoll, snapshotMaxAge             time.Duration
-	workers, queue                           int
+	tokenL1Size, answerL1Size                  int
+	jwksTTL, jwksMinRefresh, invalidTokenTTL   time.Duration
+	snapshotMaxBytes                           int64
+	revisionPoll, revisionWait, snapshotMaxAge time.Duration
+	computeConcurrency                         int
+	workers, queue                             int
 }
 
 func newTuning(cfg *config.Config) tuning {
@@ -62,7 +64,8 @@ func newTuning(cfg *config.Config) tuning {
 		jwksTTL:         span(cfg.Auth.JWKSTTL, defaultJWKSTTL),
 		jwksMinRefresh:  span(cfg.Auth.JWKSMinRefresh, defaultJWKSMinRefresh),
 		invalidTokenTTL: span(cfg.Auth.InvalidTokenTTL, defaultInvalidTokenTTL),
-		revisionPoll:    span(cfg.Snapshot.RevisionPoll, defaultRevisionPoll),
+		revisionPoll:    span(cfg.Revision.PollInterval, defaultRevisionPoll),
+		revisionWait:    span(cfg.Revision.WaitMax, defaultRevisionWait),
 		snapshotMaxAge:  span(cfg.Snapshot.MaxAge, defaultSnapshotMaxAge),
 		workers:         size(cfg.Background.Workers, defaultWorkers),
 		queue:           size(cfg.Background.Queue, defaultQueue),
@@ -72,6 +75,13 @@ func newTuning(cfg *config.Config) tuning {
 		t.snapshotMaxBytes = defaultSnapshotMax
 	case v > 0:
 		t.snapshotMaxBytes = v
+	}
+	t.computeConcurrency = cfg.Compute.Concurrency
+	if t.computeConcurrency <= 0 {
+		t.computeConcurrency = max(1, cfg.DB.PoolSize/2)
+		if cfg.DB.PoolSize <= 0 {
+			t.computeConcurrency = 5 // half of the default pool
+		}
 	}
 	if t.workers == 0 {
 		t.workers = 1
