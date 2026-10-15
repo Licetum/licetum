@@ -82,6 +82,11 @@ func (f *FastFail) record(err error, probe bool) {
 	if probe {
 		f.probing = false
 	}
+	if errors.Is(err, context.Canceled) {
+		// The caller gave up: nothing was learnt about Redis. It neither proves it healthy (a canceled probe must not close
+		// the breaker) nor counts as a failure.
+		return
+	}
 	switch {
 	case !failed:
 		f.consecutive = 0

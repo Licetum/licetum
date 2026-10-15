@@ -483,9 +483,6 @@ func (s *snapshot) String() string {
 
 // logTooLarge reports once per process that the policy does not fit.
 func (a *App) logSnapshotFallback(revision int64, err error) {
-	if a.metrics != nil {
-		a.metrics.snapshotFallback.Inc()
-	}
 	a.snapshotWarn.Do(func() {
 		slog.Warn("the policy is not kept in memory: the queries read it for every answer that is not cached; "+
 			"raise SNAPSHOT__MAX_BYTES to keep it", "revision", revision, "max_bytes", a.tuningOrDefault().snapshotMaxBytes, "reason", err)

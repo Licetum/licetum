@@ -103,8 +103,9 @@ func (a *App) readCacheState(ctx context.Context) cacheState {
 
 // forConsistency is the state a request of the given consistency decides from. consistency=higher asks for the freshest
 // answer there is: it reads the policy from the database, as it reads the sources again, and not from the snapshot.
-func (s cacheState) forConsistency(c Consistency) cacheState {
-	if c.fresh() {
+func (s cacheState) forConsistency(ctx context.Context, c Consistency) cacheState {
+	// A request that asks for a revision the view has not reached cannot be decided from the snapshot of the view either.
+	if c.fresh() || minRevisionFrom(ctx) > s.version {
 		s.snap = nil
 	}
 	return s

@@ -73,7 +73,7 @@ func (a *App) GetPermission(ctx context.Context, serviceID uuid.UUID, subject st
 // GetPermissionData is GetPermission with what the self-service needs too: the denials, and the levels
 // on each type as a whole.
 func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, consistency Consistency) (*permissionData, error) {
-	state := a.cacheState(ctx).forConsistency(consistency)
+	state := a.cacheState(ctx).forConsistency(ctx, consistency)
 	key := fmt.Sprintf("authz:permission:%s:v%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env))
 	return cachedAnswer(ctx, a, key, state, consistency, a.metrics.permissionCache,

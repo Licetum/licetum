@@ -164,7 +164,8 @@ func (a *App) renewView(ctx context.Context) *localView {
 	for attempt := range 2 {
 		got, _, _ := a.local.renewFlight.Do("view", func() (any, error) { return a.readView(ctx), nil })
 		v, _ = got.(*localView)
-		if v == nil || asked <= v.state.version || attempt == 1 {
+		// A reading that began before a write of this process (its epoch is older) does not show that write: read again.
+		if v == nil || (asked <= v.state.version && v.epoch == a.local.epoch.Load()) || attempt == 1 {
 			break
 		}
 		a.local.renewFlight.Forget("view")
