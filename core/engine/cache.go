@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/licetum/licetum/core/db"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/redisx"
 )
 

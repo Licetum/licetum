@@ -56,3 +56,16 @@ Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in
 The replicas follow the revision with a delay of up to `REVISION__POLL_INTERVAL`: `Replica.Permission` asks for at least the revision
 of the last write made through `AdminDo`/`Must`; use `Replica.Do` for a plain request. Run the packages one at a time (`-p 1`) when they
 share one Redis (`LICETUM_TEST_REDIS_URI`).
+
+## The revision in PostgreSQL (F2)
+
+| test | what it proves |
+|---|---|
+| `cluster/f2_test.go` `TestF2_1`, `_2` | a write and its revision commit together (a failed write or batch leaves it, a batch is +1), and the revisions of 20 concurrent writers are strictly increasing without gaps |
+| `TestF2_3`, `_4`, `_5` | `at_least_as_fresh` gives read-your-writes on every replica (100 iterations); an answer for a revision the replica cannot confirm is computed from the data and not kept; a deny rule reaches every replica within a second without any revision asked for |
+| `TestF2_6` | 50 synchronizations of service A leave every answer of service B a hit, while A's follow its data |
+| `TestF2_8`, `_9`, `_10` | `FLUSHALL` while serving changes no answer; the Redis counters of the previous release are still bumped and the answer keys have the new format; the poller costs 4 statements a second at rest |
+| `chaos/f2_test.go` `TestF2_7` | a revision bump under 1 500 hot keys at 600 rps: no failure, the pool never over its size |
+
+Not covered yet: the read replica that lags by two seconds (F2-3, F2-4 in full) needs the read pool of F6; F2-11 (stage 2, scoped
+bumps) is a separate pull request.

@@ -175,6 +175,7 @@ func TestF1_9_ASlowRedisDoesNotAccumulateWorkUnderLoad(t *testing.T) {
 	runtime.ReadMemStats(&before)
 	goroutinesBefore := runtime.NumGoroutine()
 
+	revBefore, dataBefore := c.Revision(), c.DataRevision(p.ServiceID)
 	c.RedisFault.Latency(5*time.Second, 0)
 
 	var (
@@ -227,6 +228,11 @@ load:
 		}
 	}
 	wg.Wait()
+	// The cache of the synchronization state is unreachable: a synchronization that finds the rows as they are must not
+	// move the revision of the data, or every answer would be recomputed again and again.
+	if revNow, dataNow := c.Revision(), c.DataRevision(p.ServiceID); revNow != revBefore || dataNow != dataBefore {
+		t.Errorf("the revisions moved with nothing written: rules %d -> %d, data %d -> %d", revBefore, revNow, dataBefore, dataNow)
+	}
 	c.RedisFault.Reset()
 
 	slices.Sort(latencies)

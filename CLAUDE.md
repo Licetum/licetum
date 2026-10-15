@@ -72,13 +72,24 @@ format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite 
 Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `jwks.go`, `background.go`, `tuning.go`; `core/redisx/fastfail.go`;
 settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TOKEN_TTL`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`,
 `REDIS__HOT_TIMEOUT`; the numbers are in `core/README.md`):
-- The check path decides from `cacheState` (`App.cacheState`), not from Redis reads of its own. In a process with the snapshot on
-  (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revision, the data versions and the claim names last
-  read from Redis, with the `snapshot` of that revision. A request uses the view; the view is renewed in the background every
-  `SNAPSHOT__REVISION_POLL` while requests come, in the request when it is older than `staleLimit` (2 s or 8 polls), after a write of this
-  process (`invalidateView`, from `BumpVersion` and `recordDataChange`) and when the request asks for `at_least_as_fresh` a newer revision.
+- **The revision lives in PostgreSQL** (`revision_state`, migration `00002`, `db.BumpRevision` / `db.LoadRevisions`, `core/db/revision.go`):
+  scope `rules` numbers every write that can change a decision (rules, memberships, groups, roles and items, access groups, services, types,
+  synchronizers), scope `data:<service id>` numbers the resource data of a service. A write bumps `rules` **in its own transaction**
+  (`mutate`, once per batch in `RunBatch`, `RestoreAdminAccess`, the seed), a synchronization that changed data bumps `data:<service>` in the
+  transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
+  `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision`), invalidates the view and, for the replicas of the
+  previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`, `authz:sync_epoch`);
+  this release does not read the first two. Answer keys are `authz:permission:t7:r<rules>:…` / `authz:check:t3:r<rules>:…`.
+- The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
+  (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
+  (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
+  (started by `cli.Serve`) and by the requests every `REVISION__POLL_INTERVAL` (`singleflight`, so never twice at once), in the request when it
+  is older than `staleLimit` (2 s or 8 polls), after a write of this process (`invalidateView`, from `AfterWrite` and the synchronizations)
+  and when the request asks for `at_least_as_fresh` a newer revision: `renewView` then waits for the revision for at most
+  `REVISION__WAIT_MAX`, and if it does not come the answer is computed from the data and **not kept** (`cachedAnswer`, `store`).
+  Cache misses queue for `COMPUTE__CONCURRENCY` slots (`computeSlots`, default half of `DB__POOL_SIZE`).
   A write made through another replica is therefore seen within the poll interval, not at once: a client that needs it at once passes the
-  `X-Authz-Revision` of its write as `at_least_as_fresh`. When Redis cannot be read, the last view is served for `SNAPSHOT__MAX_AGE` and marked
+  `X-Authz-Revision` of its write as `at_least_as_fresh`. When the revisions cannot be read, the last view is served for `SNAPSHOT__MAX_AGE` and marked
   `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
 - The snapshot holds what a decision reads: services (without `client_secret`: `ServiceCheckColumns`), the type graph, the enabled
   memberships and rules *with* their validity windows (compared with the clock per request, `ruleActive`/`memberActive`), the role items, the
@@ -163,8 +174,8 @@ Errors: return `*apperr.Error` from the service layer, created from an i18n cata
 `apperr.FailedDependency(...)` for upstream/circuit-breaker failures). It implements
 `huma.StatusError` and is itself the error body `{"detail": ..., "extra": {"type":
 "generic"|"missing"|"blocked_by", "code": "<catalog key>"}}`; `huma.NewErrorWithContext` is overridden
-(`internal/api/server.go`) so Huma's own validation errors use the same shape. Any other error becomes a logged 500 without details. Admin writes that affect permissions call
-`App.bumpVersion` to invalidate the permission cache. A 401 carries `WWW-Authenticate` (RFC 6750):
+(`internal/api/server.go`) so Huma's own validation errors use the same shape. Any other error becomes a logged 500 without details. Admin writes that affect permissions bump the revision of
+the rules in their own transaction (`mutate`) and call `App.AfterWrite`. A 401 carries `WWW-Authenticate` (RFC 6750):
 `apperr.Unauthorized` — no usable credentials (`Bearer`), `apperr.InvalidToken` — a malformed,
 expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHeader` adds others.
 
@@ -256,7 +267,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   names (`model.ValidMetaKey`: `[A-Za-z0-9_-]{1,63}`, not `id`/`name`/`parent_id`/`parents`/`meta`),
   over 32 attributes, values over 1024 characters and lists over 64 items are dropped). Attributes
   are part of the sync digest, so a change is written by the next sync, which also bumps the data version
-  of the service that owns the type (`authz:data_versions`, see item 7 of the permission computation). The admin list
+  of the service that owns the type (`revision_state`, scope `data:<service>`, see item 7 of the permission computation). The admin list
   (`GET /type_resource/{id}/resource`) also brings the parent types up to date, so a link is `resolved: false` only when its
   parent is really missing; a resource gone from its source stays with `active: false` and is listed with
   `?include_inactive=true`.
@@ -384,7 +395,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    the touched nodes and their descendants (`rebuildClosureSQL`, bottom-up recursive CTE). A source that
    did not answer is skipped; an answer with no resources is the source's truth: it switches off every resource of the type. `consistency=minimize_latency` (default) also throttles re-fetching a
    type to once per 30 s per sync epoch (`authz:resource_sync:last:…`, the epoch `authz:sync_epoch` is bumped
-   with every admin write, see `bumpVersion`). A type synchronized before is not waited for once its throttle has run out:
+   with every admin write, see `AfterWrite`). A type synchronized before is not waited for once its throttle has run out:
    its data as of the last synchronization answers, and the refresh runs in a goroutine (`refreshInBackground`); a type
    never synchronized is synchronized in the request. `consistency=higher` skips the result cache, the throttle, the
    background refresh and the cached source lists. The planning reads (`planSync`) take two Redis round trips and no lock.
@@ -400,18 +411,17 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    on a `not_sync` type with `sync` descendants still cascades to their resources). Response:
    `{name: {"type": "sync", "resources": [...]} | {"type": "not_sync", "access": [...]}}`; a `not_sync` type
    without rules is absent, on a name collision `sync` wins.
-7. Cached in Redis per `(service, subject, claims fingerprint, rules version)`: key
-   `authz:permission:t6:v<version>:<service>:<subject>:<fingerprint>` (bump `t6` when the format changes; the
-   fingerprint covers only the claims and the request-context attributes the rules and the role items look at, kept under
-   `authz:claim_attrs:t4` as
-   `{version, attrs}`). TTL = min(60 s, the next moment a rule, a role item's assignment or a membership starts/stops
-   being in force). Admin writes bump the global version key (`redisx.VersionKey`). A cached entry also records the
-   data versions of the services whose resource data it read (`authz:data_versions`, a hash service → version,
-   bumped by synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one
-   service leaves the answers that do not read it in place. The whole computation runs through `cachedAnswer`
-   (`service/cache.go`): one round trip reads the versions and claim names (`readCacheState`), concurrent misses for
-   the same key share one computation (singleflight), and the entry is written in the background. `POST /check`
-   answers are cached the same way (`authz:check:t2:…`, keyed by a hash of the questions and of `explain`).
+7. Cached in memory and in Redis per `(service, subject, claims fingerprint, revision of the rules)`: key
+   `authz:permission:t7:r<revision>:<service>:<subject>:<fingerprint>` (bump `t7` when the format changes; the
+   fingerprint covers only the claims and the request-context attributes the rules and the role items look at, which the snapshot
+   knows — a process without it remembers them per revision, `attrsMemo`). TTL = min(60 s, the next moment a rule, a role item's
+   assignment or a membership starts/stops being in force). Admin writes bump the revision of the rules in `revision_state`. A cached
+   entry also records the revisions of the data of the services whose resource data it read (scope `data:<service>`, bumped by
+   synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one service leaves the answers that
+   do not read it in place. The whole computation runs through `cachedAnswer` (`engine/cache.go`): the revisions come from the view
+   (`readCacheState`), concurrent misses for the same key share one computation (singleflight) and queue for a computation slot, and the
+   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t3:…`, keyed by a hash of the
+   questions and of `explain`).
 
 ### Decision semantics (deny wins, explicit exceptions)
 

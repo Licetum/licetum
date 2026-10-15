@@ -79,7 +79,9 @@ lists accept a JSON array or a comma-separated string.
 |---|---|
 | `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE`, `DB__POOL_TIMEOUT`, …), `DB__ECHO` |
 | `REDIS__` | `REDIS__URI`: the permission cache, the synchronization locks, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the check API's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
-| `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__REVISION_POLL` (default `250ms`: how soon a write made through another replica is seen), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
+| `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
+| `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `at_least_as_fresh` waits for its revision before the answer is computed from the data) |
+| `COMPUTE__` | `COMPUTE__CONCURRENCY`: answers computed at once (default half of `DB__POOL_SIZE`); the rest of a wave of cache misses queues |
 | `AUTH__` | `AUTH__STATE_SECRET`, `AUTH__STATE_TTL`; the token and key caches: `AUTH__TOKEN_L1_SIZE` (verified tokens kept in memory, default 50 000), `AUTH__JWKS_TTL` (default `10m`), `AUTH__JWKS_MIN_REFRESH` (default `30s`: an unknown key id refetches the key set at most this often), `AUTH__INVALID_TOKEN_TTL` (default `10s`) |
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
@@ -96,14 +98,15 @@ A request to the check API that finds its token and its answer in memory sends n
 Redis. The pieces, all per process:
 
 - **The policy snapshot** (`engine/snapshot.go`): the services, the type graph, the memberships, the rules, the role items
-  and the access groups, built in one read-only transaction for one revision of the policy (`authz:cache_version`) and
+  and the access groups, built in one read-only transaction for one revision of the policy (`revision_state`, scope `rules`) and
   replaced as a whole when the revision moves. The validity windows of rules and memberships are compared with the clock
   at every request, never built into the snapshot. A policy that does not fit `SNAPSHOT__MAX_BYTES` is not copied: the
   queries read it (`licetum_snapshot_fallback_total`), as does `consistency=higher`, which asks for the freshest answer.
-- **The view** (`engine/localstate.go`): the revision and the data versions of the services as read from Redis, with the
-  snapshot of that revision. It is renewed in the background every `SNAPSHOT__REVISION_POLL` while requests come, and
-  at once after a write made through the process or a request that asks for `at_least_as_fresh` a newer revision. When
-  Redis cannot be read the last view is served for up to `SNAPSHOT__MAX_AGE`, and answers are kept in memory only.
+- **The view** (`engine/localstate.go`): the revision of the rules and of the data of each service as read from PostgreSQL
+  (one statement), with the snapshot of that revision. It is renewed every `REVISION__POLL_INTERVAL` (`WatchRevision`, and
+  the requests), and at once after a write made through the process or a request that asks for `at_least_as_fresh` a newer
+  revision. When the revisions cannot be read the last view is served for up to `SNAPSHOT__MAX_AGE`, and answers are kept in
+  memory only. The revision and the data change in one transaction, so a replica never sees a revision before its data.
 - **Answers and tokens** are kept in memory first (`CACHE__ANSWER_L1_SIZE`, ten seconds at most; `AUTH__TOKEN_L1_SIZE`, a
   minute at most) and in Redis second: a request that finds its answer only in Redis makes one round trip.
 - **Key sets** of the identity providers are kept per URL (`AUTH__JWKS_TTL`), fetched once for all the requests that wait

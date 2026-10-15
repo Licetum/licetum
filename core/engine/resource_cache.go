@@ -382,6 +382,7 @@ func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, 
 		changed = append(changed, changedType{typeID: typeID, rows: rows, digest: digest, touchAll: storedGraph != newGraph})
 	}
 
+	dataMoved := false
 	if len(changed) > 0 {
 		writeStarted := time.Now()
 		err = db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
@@ -389,23 +390,33 @@ func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, 
 				return err
 			}
 			touched := map[uuid.UUID]struct{}{}
-			changedTypes := make([]uuid.UUID, 0, len(changed))
+			var changedTypes []uuid.UUID
 			for _, c := range changed {
-				if err := applyType(ctx, tx, c.typeID, c.rows, c.touchAll, false, touched, nil); err != nil {
+				// A hash that differs does not mean the rows do (the hash is lost with Redis): the database says what changed.
+				var rowsChanged bool
+				if err := applyType(ctx, tx, c.typeID, c.rows, c.touchAll, false, touched, &rowsChanged); err != nil {
 					return fmt.Errorf("sync type %s: %w", c.typeID, err)
 				}
-				changedTypes = append(changedTypes, c.typeID)
+				// (A change of the type graph, which makes touchAll, is an admin write: it moved the revision of the rules.)
+				if rowsChanged {
+					changedTypes = append(changedTypes, c.typeID)
+				}
 			}
 			if err := rebuildClosure(ctx, tx, touched); err != nil {
 				return err
 			}
-			// The revision of the data of these services moves in the transaction that moved the data.
+			// The revision of the data of these services moves in the transaction that moved the data, and only when
+			// the data moved: an answer that read it is stale from then on, and a synchronization that finds nothing
+			// new (after a Redis restart, say) must not make every cached answer so.
+			dataMoved = len(changedTypes) > 0
 			return bumpDataRevisions(ctx, tx, g, changedTypes)
 		})
 		if err != nil {
 			return syncOutcome{}, err
 		}
-		a.invalidateView() // the data revisions moved: the next request reads them again
+		if dataMoved {
+			a.invalidateView() // the data revisions moved: the next request reads them again
+		}
 		slog.InfoContext(ctx, "resource graph synchronized", "changed", len(changed), "types", len(due),
 			"fetch_ms", fetchDuration.Milliseconds(), "write_ms", time.Since(writeStarted).Milliseconds())
 	}
