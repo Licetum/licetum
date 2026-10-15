@@ -112,7 +112,7 @@ tasks:
         if [ -z "${DOCKER_HOST:-}" ]; then
           export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
         fi
-        for m in core admin-api; do (cd $m && go test -race -count=1 -tags integration ./tests/integration/...) || exit 1; done
+        for m in core admin-api; do (cd $m && go test -race -count=1 -timeout 30m -tags integration ./tests/integration/...) || exit 1; done
 
   go:test:chaos:
     desc: Fault injection tests with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole, read-only Redis), needs Docker
@@ -121,7 +121,7 @@ tasks:
         if [ -z "${DOCKER_HOST:-}" ]; then
           export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
         fi
-        cd admin-api && go test -race -count=1 -tags chaos ./tests/integration/...
+        cd admin-api && go test -race -count=1 -timeout 30m -tags chaos ./tests/integration/...
 
   go:coverage:
     desc: Coverage profiles and HTML reports of both modules (unit and integration)
@@ -131,7 +131,7 @@ tasks:
           export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
         fi
         for m in core admin-api; do
-          (cd $m && mkdir -p reports && go test -race -count=1 -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./redisx/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
+          (cd $m && mkdir -p reports && go test -race -count=1 -timeout 30m -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./redisx/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
         done
 
   go:schema:

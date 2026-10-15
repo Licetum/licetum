@@ -1,7 +1,14 @@
 package engine
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/licetum/licetum/core/db"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -19,6 +26,10 @@ type metrics struct {
 	checks            *prometheus.CounterVec // decision: allowed | denied
 	syncFetch         prometheus.Histogram
 	syncResults       *prometheus.CounterVec // result: changed | unchanged | unanswered
+	syncJobs          *prometheus.CounterVec // state: done | failed | requeued | lease_lost
+	syncJobSeconds    prometheus.Histogram
+	syncLeaseLost     prometheus.Counter
+	sourceCalls       *prometheus.CounterVec // type, outcome: ok | error
 	breakerOpen       *prometheus.CounterVec // dependency: source | jwks | token_endpoint
 	httpRequests      *prometheus.CounterVec // operation, status
 	httpDuration      *prometheus.HistogramVec
@@ -64,6 +75,23 @@ func newMetrics() *metrics {
 		Name: "licetum_source_sync_total",
 		Help: "Synchronizations of a resource type: changed (written), unchanged, or unanswered (the source did not answer).",
 	}, []string{"result"})
+	m.syncJobs = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_sync_jobs_finished_total",
+		Help: "Synchronization jobs a worker finished, by how they ended: done, failed, requeued (waited too long for a lock) or lease_lost.",
+	}, []string{"state"})
+	m.syncJobSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "licetum_sync_job_seconds",
+		Help:    "Time a worker spends on one synchronization job: fetching the sources and applying the result.",
+		Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
+	})
+	m.syncLeaseLost = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "licetum_sync_lease_lost_total",
+		Help: "Times an executor found that it no longer owned its job (the lease ran out): its result was dropped.",
+	})
+	m.sourceCalls = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_source_calls_total",
+		Help: "Calls that asked the source of a resource type for its list, by type and outcome.",
+	}, []string{"type", "outcome"})
 	m.breakerOpen = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_breaker_open_total",
 		Help: "Calls skipped because the circuit breaker of a dependency was open.",
@@ -116,9 +144,9 @@ func newMetrics() *metrics {
 	}, []string{"result"})
 
 	for _, c := range []prometheus.Collector{
+		m.permissionCompute, m.permissionCache, m.checkCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls, m.breakerOpen,
 		m.backgroundDropped, m.snapshotFallback, m.l1Cache, m.jwksFetches,
 		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
-		m.permissionCompute, m.permissionCache, m.checkCache, m.checks, m.syncFetch, m.syncResults, m.breakerOpen,
 		m.httpRequests, m.httpDuration,
 	} {
 		factory(c)
@@ -144,6 +172,52 @@ func (a *App) ObserveHTTP(operation, status string, seconds float64) {
 	}
 	a.metrics.httpRequests.WithLabelValues(operation, status).Inc()
 	a.metrics.httpDuration.WithLabelValues(operation).Observe(seconds)
+}
+
+// syncQueueCollector reports the synchronization queue as the database sees it, at every scrape: the jobs waiting and
+// running, and the age of the oldest job waiting. The age keeps growing in a process that serves requests when every
+// worker is down, which is what an alert needs.
+type syncQueueCollector struct{ app *App }
+
+var (
+	syncJobsDesc = prometheus.NewDesc("licetum_sync_jobs",
+		"Synchronization jobs in the queue, by state (queued, running).", []string{"state"}, nil)
+	syncQueueAgeDesc = prometheus.NewDesc("licetum_sync_queue_age_seconds",
+		"Age of the oldest synchronization job that is still waiting for a worker.", nil, nil)
+)
+
+func (c *syncQueueCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- syncJobsDesc
+	ch <- syncQueueAgeDesc
+}
+
+func (c *syncQueueCollector) Collect(ch chan<- prometheus.Metric) {
+	if c.app == nil || c.app.DB == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(db.Uncounted(context.Background()), 2*time.Second)
+	defer cancel()
+	var queued, running int64
+	var age float64
+	var err error
+	if c.app.useDBOS() {
+		err = c.app.DB.QueryRow(ctx, fmt.Sprintf(`
+			SELECT count(*) FILTER (WHERE status = 'ENQUEUED'), count(*) FILTER (WHERE status = 'PENDING'),
+			       COALESCE((EXTRACT(EPOCH FROM now()) * 1000 - min(created_at) FILTER (WHERE status = 'ENQUEUED')) / 1000, 0)::float8
+			FROM %s.workflow_status WHERE queue_name = $1 AND status IN ('ENQUEUED', 'PENDING')`,
+			pgx.Identifier{c.app.dbosSchema()}.Sanitize()), dbosQueue).Scan(&queued, &running, &age)
+	} else {
+		err = c.app.DB.QueryRow(ctx, `
+			SELECT count(*) FILTER (WHERE state = 'queued'), count(*) FILTER (WHERE state = 'running'),
+			       COALESCE(EXTRACT(EPOCH FROM now() - min(created_at) FILTER (WHERE state = 'queued')), 0)::float8
+			FROM sync_job WHERE state IN ('queued', 'running')`).Scan(&queued, &running, &age)
+	}
+	if err != nil {
+		return
+	}
+	ch <- prometheus.MustNewConstMetric(syncJobsDesc, prometheus.GaugeValue, float64(queued), "queued")
+	ch <- prometheus.MustNewConstMetric(syncJobsDesc, prometheus.GaugeValue, float64(running), "running")
+	ch <- prometheus.MustNewConstMetric(syncQueueAgeDesc, prometheus.GaugeValue, age)
 }
 
 // l1Lookup counts a lookup in an in-process cache (nil-safe).

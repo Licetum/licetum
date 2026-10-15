@@ -32,6 +32,13 @@ import (
 type App struct {
 	DB    *pgxpool.Pool
 	Redis *redis.Client
+	// SyncDB is the pool of the synchronization transactions (DB__SYNC_POOL_SIZE connections), apart from the request pool,
+	// so that a synchronization waiting for a lock never takes a connection a request needs. Nil: DB is used.
+	SyncDB *pgxpool.Pool
+	// Role is what this process does with the synchronization (see Role). Only a worker applies it.
+	Role Role
+	// Hooks are for the tests that stop an executor at a chosen point.
+	Hooks SyncHooks
 	Sync  *synchronizer.Adapter
 	Cfg   *config.Config
 	// Logs is the process logger the log settings are applied to (see log_settings.go). Nil when the process logs
@@ -39,13 +46,19 @@ type App struct {
 	Logs *logx.Switch
 	// logVersion is the version of the log settings this process applied (see WatchLogSettings).
 	logVersion atomic.Int64
-	// syncFlights collapses the concurrent synchronizations of the same set of types inside this process
-	// (see syncTypesOnce); across replicas the Redis lock does it.
-	syncFlights singleflight.Group
+	// jobFlights makes one poller of a synchronization job serve all the waiters of the job in this process.
+	jobFlights singleflight.Group
+	// syncAsked remembers when this process last asked for the refresh of a type (see requestInBackground).
+	syncAsked sync.Map
+	// dbos is the DBOS handle of the process (engine dbos).
+	dbos dbosState
+	// workerWake wakes the workers of this process when a job is queued (the other processes get a NOTIFY).
+	workerWake chan struct{}
+	// doneMu guards doneCh, which is closed when a job ends in this process.
+	doneMu sync.Mutex
+	doneCh chan struct{}
 	// answers collapses the concurrent computations of the same answer (see cachedAnswer).
 	answers singleflight.Group
-	// refreshing names the sets of types a background refresh runs for (see refreshInBackground).
-	refreshing sync.Map
 	// delegationPruned is when the retention of the delegated-call audit was last applied (unix nanoseconds).
 	delegationPruned atomic.Int64
 	// subjectNotes remembers which subjects were written to the registry lately (see NoteSubject).
@@ -95,6 +108,7 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 		answersL1:     newLRU[any](t.answerL1Size),
 		invalidTokens: newLRU[error](invalidTokenCacheSize),
 		computeSlots:  make(chan struct{}, t.computeConcurrency),
+		workerWake:    make(chan struct{}, 1),
 	}
 	if t.invalidTokenTTL <= 0 {
 		app.invalidTokens = nil
@@ -107,6 +121,7 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 		Name: "licetum_redis_skipped_total",
 		Help: "Redis commands not sent because the fast-fail was open after repeated errors or timeouts.",
 	}, func() float64 { return float64(redisx.Skipped(rdb)) }))
+	m.registry.MustRegister(&syncQueueCollector{app: app})
 	return app
 }
 
@@ -116,6 +131,7 @@ func (a *App) Close() {
 	if !a.background().close(closeWait) {
 		slog.Warn("background work did not finish before the shutdown", "wait", closeWait)
 	}
+	a.closeDBOS()
 	if a.Sync != nil {
 		a.Sync.Close()
 	}
@@ -123,9 +139,9 @@ func (a *App) Close() {
 
 // AfterWrite is called once a write that can change a decision has committed, with the revision the write took
 // (db.BumpRevision, in the write's own transaction): it is the revision of the write for the caller (X-Authz-Revision),
-// it makes this process read the revisions again at once, and it ends the throttle of the source synchronization (an
-// admin write may change what a synchronization produces: types, synchronizers, and the entities the platform types are
-// made of). The replicas of the previous release follow the Redis counter, which is bumped for them while a rolling
+// it makes this process read the revisions again at once, and it makes the types of the platform itself due for synchronization (the
+// entities they are made of were just written, and a write must show at once; the data of the other services is not
+// touched: a change of a type or of a synchronizer changes its structure signature instead). The replicas of the previous release follow the Redis counter, which is bumped for them while a rolling
 // update lasts. The write is committed by now, so a Redis failure is not turned into a request error.
 func (a *App) AfterWrite(ctx context.Context, revision int64) {
 	if t := TraceFrom(ctx); t != nil {
@@ -135,8 +151,8 @@ func (a *App) AfterWrite(ctx context.Context, revision int64) {
 	if _, err := redisx.BumpVersion(ctx, a.Redis); err != nil {
 		logRedis(ctx, slog.LevelWarn, "failed to bump the cache version of the previous release", err)
 	}
-	if err := a.Redis.Incr(ctx, syncEpochKey).Err(); err != nil {
-		logRedis(ctx, slog.LevelError, "failed to bump the sync epoch", err)
+	if err := a.invalidatePlatformSync(ctx); err != nil {
+		slog.ErrorContext(ctx, "failed to make the platform types due for synchronization", "error", err)
 	}
 }
 

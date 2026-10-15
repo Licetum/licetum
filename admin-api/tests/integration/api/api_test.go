@@ -22,6 +22,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,6 +60,14 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// syncEngine is the engine of the synchronization the suite runs against: LICETUM_SYNC_ENGINE=postgres, or dbos (the default).
+func syncEngine() string {
+	if v := os.Getenv("LICETUM_SYNC_ENGINE"); v != "" {
+		return v
+	}
+	return "dbos"
+}
+
 type env struct {
 	t     *testing.T
 	admin *httptest.Server
@@ -70,6 +79,28 @@ type env struct {
 	cfg   *config.Config
 	// adminToken is sent to the admin API by default (see do).
 	adminToken string
+	// stopWorker stops the worker the test process runs (a test that needs the jobs to wait calls it).
+	stopWorker func()
+}
+
+// startWorker runs a synchronization worker on app until the returned function is called or the test ends.
+func startWorker(t *testing.T, app *engine.App) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = app.RunWorker(ctx)
+	}()
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func setup(t *testing.T) *env {
@@ -117,6 +148,8 @@ func setup(t *testing.T) *env {
 		DB:   config.Database{URI: u.String(), PoolSize: 5},
 		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Cors: config.Cors{AllowOrigins: []string{"http://localhost:5173"}},
+		// Tests that ask for higher consistency in a loop must not be spaced out to one source call per second.
+		Sync: config.Sync{FreshMinInterval: time.Millisecond, Engine: syncEngine(), DBOSSchema: "dbos_" + schema},
 		// The registry of known subjects is on, as by default.
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
@@ -147,6 +180,8 @@ func setup(t *testing.T) *env {
 
 	app := service.New(engine.New(pool, rdb, cfg))
 	t.Cleanup(app.Close)
+	// The synchronization jobs are executed by a worker; the test process runs one next to the APIs it serves.
+	e.stopWorker = startWorker(t, app.App)
 	e.app = app
 	e.pool = pool
 	e.cfg = cfg

@@ -89,6 +89,14 @@ func newEnv(ctx context.Context, infra *support.Infrastructure) (*env, error) {
 	e.closers = append(e.closers, rdb.Close)
 	e.app = engine.New(pool, rdb, cfg)
 	e.closers = append(e.closers, func() error { e.app.Close(); return nil })
+	// The synchronization jobs are executed by a worker: the harness runs one in-process next to the APIs under test.
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		_ = e.app.RunWorker(workerCtx)
+	}()
+	e.closers = append(e.closers, func() error { stopWorker(); <-workerDone; return nil })
 	e.admin = adminsvc.New(e.app)
 
 	e.idp, err = newIdentityProvider()

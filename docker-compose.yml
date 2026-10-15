@@ -91,6 +91,22 @@ services:
     depends_on:
       postgres_init:
         condition: service_completed_successfully
+  worker:
+    <<: [*conf-go, *core]
+    container_name: licetum_worker
+    working_dir: /src/core
+    # The synchronization worker: the check and admin APIs queue the jobs that fetch the resource sources, this one runs
+    # them (metrics on :8002 inside the network).
+    command:
+      - air
+      - --tmp_dir=/tmp/air
+      - --build.cmd=go build -o /tmp/air/licetum ./cmd/licetum
+      - --build.entrypoint=/tmp/air/licetum
+      - --build.args_bin=worker
+      - --build.exclude_dir=schema,tmp
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
   admin:
     <<: [*conf-go, *admin]
     container_name: licetum_admin

@@ -176,7 +176,10 @@ func TestIntegrationHierarchyCascade(t *testing.T) {
 	}
 	// The hash of every synchronized source is kept, so an unchanged source is not written again.
 	for _, name := range []string{"division", "rrs", "branch", "item"} {
-		n, err := w.app.Redis.Exists(context.Background(), "authz:resource_sync:hash:"+w.typeByName[name]).Result()
+		var n int
+		err := w.pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM sync_state WHERE type_resource_id = $1 AND data_hash <> '' AND applied_at IS NOT NULL`,
+			w.typeByName[name]).Scan(&n)
 		if err != nil || n != 1 {
 			t.Fatalf("no sync hash for %s: %d %v", name, n, err)
 		}

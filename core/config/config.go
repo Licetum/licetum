@@ -23,6 +23,9 @@ type Database struct {
 	PoolRecycle        time.Duration
 	Echo               bool
 	StatementCacheSize int
+	// SyncPoolSize is the size of the pool the synchronization transactions run on (the worker only): it is separate
+	// from the request pool, so waiting synchronizations never starve the requests.
+	SyncPoolSize int
 }
 
 type Auth struct {
@@ -127,11 +130,34 @@ type Sync struct {
 	// FetchTTL is how long a fetched list of a source's resources is kept in Redis, so that requests
 	// in this window do not go to the source. A synchronizer's own cache_ttl overrides it; 0 — no cache.
 	FetchTTL time.Duration
-	// LockTTL is when a replica's Redis lock on a synchronization expires if its holder died.
-	LockTTL time.Duration
-	// LockWait is how long a replica waits for another replica's synchronization of the same types
-	// before it does the work itself.
-	LockWait time.Duration
+	// DBOSPoolSize is the size of the connection pool of the DBOS client of a process (engine dbos); it is outside DB__POOL_SIZE.
+	DBOSPoolSize int
+
+	// Engine runs the synchronization jobs: "dbos" (default: DBOS workflows and queue) or "postgres" (the sync_job table).
+	Engine string
+	// DBOSSchema is the schema of the DBOS system tables (engine dbos).
+	DBOSSchema string
+
+	// Lease is how long a worker owns a synchronization job without renewing it; it renews every Lease/3. A job whose
+	// lease ran out is taken over by another worker.
+	Lease time.Duration
+	// RequestWait is how long a request waits for a synchronization it needs (a type never synchronized, a platform type
+	// after a write) before it answers from the data that exists.
+	RequestWait time.Duration
+	// AdminWait is the same for the admin paths (resource lists, refresh): they wait for the worker longer.
+	AdminWait time.Duration
+	// StatementTimeout bounds each statement of a synchronization transaction; the lock timeout is 5 s.
+	StatementTimeout time.Duration
+	// ScheduleTick is how often the worker looks for the types that are due.
+	ScheduleTick time.Duration
+	// KeepWarm makes the worker refresh every type with a source when it is due, whether or not anybody asked lately.
+	KeepWarm bool
+	// DemandWindow is how long after a request for a type the worker keeps it fresh on its schedule.
+	DemandWindow time.Duration
+	// FreshMinInterval is the least time between two source calls for one type that the fresh requests cause.
+	FreshMinInterval time.Duration
+	// Concurrency is how many jobs a worker executes at once (default: the size of the synchronization pool).
+	Concurrency int
 }
 
 // Subjects tunes the registry of known subjects (see service.NoteSubject).
@@ -187,6 +213,7 @@ func Load() (*Config, error) {
 			PoolRecycle:        e.seconds("DB__POOL_RECYCLE", 3600),
 			Echo:               e.bool("DB__ECHO", false),
 			StatementCacheSize: e.int("DB__STATEMENT_CACHE_SIZE", 100),
+			SyncPoolSize:       e.int("DB__SYNC_POOL_SIZE", 4),
 		},
 		Auth: Auth{
 			StateSecret: e.str("AUTH__STATE_SECRET", ""),
@@ -239,9 +266,19 @@ func Load() (*Config, error) {
 			AdminClaimValues: e.list("PLATFORM__ADMIN_CLAIM_VALUES", nil),
 		},
 		Sync: Sync{
-			FetchTTL: e.seconds("SYNC__FETCH_TTL", 10),
-			LockTTL:  e.seconds("SYNC__LOCK_TTL", 60),
-			LockWait: e.seconds("SYNC__LOCK_WAIT", 30),
+			FetchTTL:         e.seconds("SYNC__FETCH_TTL", 10),
+			DBOSPoolSize:     e.int("SYNC__DBOS_POOL_SIZE", 20),
+			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "dbos")),
+			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
+			Lease:            e.seconds("SYNC__LEASE", 30),
+			RequestWait:      e.seconds("SYNC__REQUEST_WAIT", 5),
+			AdminWait:        e.seconds("SYNC__ADMIN_WAIT", 30),
+			StatementTimeout: e.seconds("SYNC__STATEMENT_TIMEOUT", 120),
+			ScheduleTick:     e.seconds("SYNC__SCHEDULE_TICK", 5),
+			KeepWarm:         e.bool("SYNC__KEEP_WARM", false),
+			DemandWindow:     e.seconds("SYNC__DEMAND_WINDOW", 600),
+			FreshMinInterval: e.seconds("SYNC__FRESH_MIN_INTERVAL", 1),
+			Concurrency:      e.int("SYNC__CONCURRENCY", 0),
 		},
 		Subjects: Subjects{
 			Enabled:       e.bool("SUBJECTS__ENABLED", false),
@@ -261,6 +298,9 @@ func Load() (*Config, error) {
 			e.errs = append(e.errs, fmt.Errorf("HTTP__PUBLIC_URL must be an http(s) URL without a path, a query or a fragment, got %q", u))
 		}
 	}
+	if cfg.Sync.Engine != "postgres" && cfg.Sync.Engine != "dbos" {
+		e.errs = append(e.errs, fmt.Errorf("SYNC__ENGINE must be postgres or dbos, got %q", cfg.Sync.Engine))
+	}
 	if len(e.errs) > 0 {
 		return nil, errors.Join(e.errs...)
 	}
@@ -279,6 +319,18 @@ func (c *Config) RequireRedis() error {
 		return errors.New("environment variable REDIS__URI is not set")
 	}
 	return nil
+}
+
+// DeprecatedSettings names the settings that are set but no longer have an effect: the Redis lock of the synchronization
+// was replaced by the job table (SYNC__LEASE). They are still read for one release; the processes log a warning.
+func DeprecatedSettings() []string {
+	var out []string
+	for _, name := range []string{"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT"} {
+		if _, ok := lookup(name); ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func (c *Config) RequireAuth() error {

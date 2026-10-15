@@ -77,8 +77,8 @@ lists accept a JSON array or a comma-separated string.
 
 | Prefix | Variables |
 |---|---|
-| `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE`, `DB__POOL_TIMEOUT`, …), `DB__ECHO` |
-| `REDIS__` | `REDIS__URI`: the permission cache, the synchronization locks, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the check API's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
+| `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE`, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO` |
+| `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the check API's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
 | `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
 | `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `at_least_as_fresh` waits for its revision before the answer is computed from the data) |
 | `COMPUTE__` | `COMPUTE__CONCURRENCY`: answers computed at once (default half of `DB__POOL_SIZE`); the rest of a wave of cache misses queues |
@@ -86,13 +86,13 @@ lists accept a JSON array or a comma-separated string.
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
 | `PLATFORM__` | the self-service: its OAuth2 client (`PLATFORM__CLIENT_ID`, `PLATFORM__CLIENT_SECRET`, the authorization, token and JWKS URLs, the issuer) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`) |
-| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT` |
+| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__ENGINE` (`dbos`, the default, or `postgres`), `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, outside `DB__POOL_SIZE`), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person) |
 | `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address; the address clients reach the check API at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
 | `LOG__LEVEL` | `debug` for debug logs |
 
-### The fast read path
+## Synchronization pipeline
 
 A request to the check API that finds its token and its answer in memory sends no query to PostgreSQL and no command to
 Redis. The pieces, all per process:
@@ -112,6 +112,66 @@ Redis. The pieces, all per process:
 - **Key sets** of the identity providers are kept per URL (`AUTH__JWKS_TTL`), fetched once for all the requests that wait
   for them, and fetched again for an unknown key id at most once per `AUTH__JWKS_MIN_REFRESH`; a token that failed
   verification is remembered for `AUTH__INVALID_TOKEN_TTL`.
+
+## Synchronization worker
+
+The resource sources are synchronized by a separate process: `licetum worker`. The check API (`licetum check`) and the admin
+API only *ask* for a synchronization (a row in `sync_job`) and wait for it for a bounded time; they never write the resource
+graph. The state of the synchronization (`sync_state`: what was applied, when a type is due again, the backoff of a source that
+fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
+
+- A job is claimed with `FOR UPDATE SKIP LOCKED` under a lease (`SYNC__LEASE`, 30 s) that the executor renews every lease/3. The
+  transaction that applies the result ends with an update of the job conditioned on the lease token: an executor that lost its
+  lease applies nothing (`licetum_sync_lease_lost_total`).
+- Requests for the same type, in any process, share one job (a unique index on its key); `consistency=higher` has its own job,
+  and the source of a type is asked by fresh jobs at most once per `SYNC__FRESH_MIN_INTERVAL` (1 s).
+- A request that needs the data of a type that was never synchronized waits `SYNC__REQUEST_WAIT` (5 s) for the job. When the
+  time passes it answers from what exists — the type contributes no resources — and sets `X-Authz-Sync: pending`. The admin
+  paths (resource lists, refresh) wait `SYNC__ADMIN_WAIT` (30 s). A type whose throttle (30 s) ran out is refreshed in the
+  background; the request answers from the data as of the last synchronization.
+- A `consistency=higher` request that arrives while a fresh job of the type is already running shares it, so its source call may have started before the request: the source is asked once per `SYNC__FRESH_MIN_INTERVAL`, not once per request. A client that must see a write it has just made at the source asks again after the response (or waits the interval).
+- A source that does not answer is put in backoff for the whole cluster: `min(30 s · 2^attempts, 10 min)`; nobody asks it
+  until the backoff ends, and the data stays.
+- Writing the graph takes an advisory lock per connected component of the type graph (so unrelated types do not wait for each
+  other), with `lock_timeout` 5 s and `statement_timeout` `SYNC__STATEMENT_TIMEOUT` (120 s), on its own pool
+  (`DB__SYNC_POOL_SIZE`). A job that cannot get the lock in time is queued again.
+- The worker puts the types that are due on a schedule (`SYNC__SCHEDULE_TICK`, 5 s) when somebody asked for them within
+  `SYNC__DEMAND_WINDOW` (10 min), or always with `SYNC__KEEP_WARM`. `SYNC__CONCURRENCY` jobs run at once (default
+  `DB__SYNC_POOL_SIZE`).
+- The worker holds the whole list of a type in memory while it applies it; the check and admin processes never do. Measured
+  (`LICETUM_SYNC_MEMORY=1 go test -tags integration -run TestSyncWorkerMemory`, a source of 1 000 000 resources with three
+  fields): peak RSS of the worker 1.42 GiB, about 1.5 KB per resource. Documented limit: **2 GiB of memory for the worker per
+  1 000 000 resources in its largest type** (the worker applies `SYNC__CONCURRENCY` types at once, so add up the largest types
+  that can be applied together).
+- The database role of the check pods needs `SELECT` on everything, `INSERT`/`UPDATE` on `sync_job`, and no `INSERT`,
+  `UPDATE` or `DELETE` on `resource_cache`, `resource_edge`, `resource_ancestor` and `sync_state`.
+
+Metrics: `licetum_sync_jobs{state}`, `licetum_sync_queue_age_seconds` (read from the database at every scrape, so it grows in
+the check and admin processes when every worker is down), `licetum_sync_job_seconds`, `licetum_sync_jobs_finished_total{state}`,
+`licetum_sync_lease_lost_total`, `licetum_source_calls_total{type,outcome}`.
+
+### The DBOS engine
+
+`SYNC__ENGINE=dbos` (the default; `postgres` selects the `sync_job` table) runs the same pipeline on [DBOS Transact](https://github.com/dbos-inc/dbos-transact-golang)
+instead of the `sync_job` table: a database-backed queue `licetum-sync`, a workflow `SyncType` per type, and the DBOS
+deduplication id ("return existing") as the shared job. The system tables are in the schema `SYNC__DBOS_SCHEMA` (default `dbos`)
+of the same database, created by the first worker; the check and admin processes talk to it through a DBOS client and answer
+from the existing data until it is ready. Fetch and apply are one step, so a checkpoint is a few dozen bytes whatever the size
+of the type. All workers must run the same `SYNC__ENGINE`.
+
+What the spike found, and what the engine does about it:
+
+- DBOS Go does not give the interrupted workflows of a crashed executor to a live one (the Conductor service, or a restart under
+  the same executor id, does). Every executor writes a heartbeat to `sync_executor`; each worker cancels the workflows of an
+  executor whose heartbeat is older than `SYNC__LEASE` and queues a replacement under `<id>+r`, which the waiters follow.
+- The fence of the apply transaction is the status of the workflow row, read `FOR SHARE`: a workflow that was taken over applies
+  nothing (`licetum_sync_lease_lost_total`), and the cancel of a takeover waits for a commit in flight.
+- The DBOS client holds a connection per waiting `GetResult`, and its pool has 20: the waiters of one workflow share a single
+  poller per process, and `pool_max_conns` is set to 20 unless the URI says otherwise.
+- Through a link with a round trip of 150 ms an enqueue takes about 4 round trips (0.6 s) and the whole call about 1.4 s more than
+  on a local network: put the workers and the check processes in the region of the database.
+- PgBouncer in transaction mode was not tried: DBOS listens for notifications and needs session connections. Use direct
+  connections or session pooling for the check, admin and worker processes.
 
 ## Tests
 

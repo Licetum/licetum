@@ -78,6 +78,14 @@ func Operation(sql string) string {
 	return strings.ToLower(s[:end])
 }
 
+type uncountedKey struct{}
+
+// Uncounted returns ctx for a statement that is not part of the work of a request and must not be counted: the reading of
+// a gauge at a scrape of /metrics (the scrape itself is not counted).
+func Uncounted(ctx context.Context) context.Context {
+	return context.WithValue(ctx, uncountedKey{}, true)
+}
+
 type queryStartKey struct{}
 
 type queryStart struct {
@@ -89,8 +97,8 @@ func (t *Tracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 	if t.echo {
 		slog.DebugContext(ctx, "sql", "query", data.SQL, "args", data.Args)
 	}
-	if t.observer.Load() == nil {
-		return ctx // nobody counts this pool: no context value, no clock, no parsing of the statement
+	if t.observer.Load() == nil || ctx.Value(uncountedKey{}) != nil {
+		return ctx // nobody counts this pool, or the statement is not to be counted: no context value, no clock, no parsing
 	}
 	return context.WithValue(ctx, queryStartKey{}, &queryStart{at: time.Now(), operation: Operation(data.SQL)})
 }

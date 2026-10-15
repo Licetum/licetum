@@ -220,6 +220,9 @@ func (s *statusRecorder) WriteHeader(code int) {
 		if rev := s.trace.Revision(); rev > 0 {
 			s.Header().Set(revisionHeader, strconv.FormatInt(rev, 10))
 		}
+		if s.trace.SyncPending() {
+			s.Header().Set(syncHeader, "pending")
+		}
 	}
 	s.ResponseWriter.WriteHeader(code)
 }
@@ -263,6 +266,10 @@ const requestIDHeader = "X-Request-ID"
 
 // revisionHeader carries the revision of a write: pass it back as at_least_as_fresh to get answers that reflect the write.
 const revisionHeader = "X-Authz-Revision"
+
+// syncHeader says "pending" when the answer lacks the resources of a type whose synchronization had not finished in time
+// (SYNC__REQUEST_WAIT): such a type contributes no resources.
+const syncHeader = "X-Authz-Sync"
 
 // requestID keeps the caller's X-Request-ID when it is a sane token (up to 128 characters of letters, digits,
 // '.', '_' and '-') and generates one otherwise, so that a request can be followed through the logs.
