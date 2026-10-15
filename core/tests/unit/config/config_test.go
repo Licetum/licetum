@@ -116,6 +116,49 @@ func TestLoadPublicURL(t *testing.T) {
 	}
 }
 
+func TestLoadFastReadPathSettings(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Snapshot.MaxBytes != 256<<20 || cfg.Revision.PollInterval != 250*time.Millisecond || cfg.Revision.WaitMax != 500*time.Millisecond || cfg.Snapshot.MaxAge != time.Minute ||
+		cfg.Auth.TokenL1Size != 50_000 || cfg.Cache.AnswerL1Size != 50_000 ||
+		cfg.Auth.JWKSTTL != 10*time.Minute || cfg.Auth.JWKSMinRefresh != 30*time.Second || cfg.Auth.InvalidTokenTTL != 10*time.Second ||
+		cfg.Background.Workers != 16 || cfg.Background.Queue != 1024 || cfg.Redis.HotTimeout != 50*time.Millisecond {
+		t.Errorf("wrong defaults: %+v %+v %+v %+v %+v", cfg.Snapshot, cfg.Auth, cfg.Cache, cfg.Background, cfg.Redis)
+	}
+
+	t.Setenv("SNAPSHOT__MAX_BYTES", "1048576")
+	t.Setenv("REVISION__POLL_INTERVAL", "100ms")
+	t.Setenv("REVISION__WAIT_MAX", "1s")
+	t.Setenv("COMPUTE__CONCURRENCY", "3")
+	t.Setenv("AUTH__JWKS_TTL", "300") // a bare number is seconds, as in the other settings
+	t.Setenv("AUTH__JWKS_MIN_REFRESH", "5s")
+	t.Setenv("AUTH__INVALID_TOKEN_TTL", "2s")
+	t.Setenv("AUTH__TOKEN_L1_SIZE", "10")
+	t.Setenv("CACHE__ANSWER_L1_SIZE", "20")
+	t.Setenv("BACKGROUND__WORKERS", "4")
+	t.Setenv("BACKGROUND__QUEUE", "8")
+	t.Setenv("REDIS__HOT_TIMEOUT", "75ms")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Snapshot.MaxBytes != 1<<20 || cfg.Revision.PollInterval != 100*time.Millisecond || cfg.Revision.WaitMax != time.Second || cfg.Compute.Concurrency != 3 || cfg.Auth.JWKSTTL != 5*time.Minute ||
+		cfg.Auth.JWKSMinRefresh != 5*time.Second || cfg.Auth.InvalidTokenTTL != 2*time.Second ||
+		cfg.Auth.TokenL1Size != 10 || cfg.Cache.AnswerL1Size != 20 ||
+		cfg.Background.Workers != 4 || cfg.Background.Queue != 8 || cfg.Redis.HotTimeout != 75*time.Millisecond {
+		t.Errorf("wrong values: %+v %+v %+v %+v %+v", cfg.Snapshot, cfg.Auth, cfg.Cache, cfg.Background, cfg.Redis)
+	}
+}
+
+func TestLoadRejectsABadDuration(t *testing.T) {
+	t.Setenv("REDIS__HOT_TIMEOUT", "fast")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("a duration that is not one must be refused")
+	}
+}
+
 func TestLoadSyncPipelineSettings(t *testing.T) {
 	cfg, err := config.Load()
 	if err != nil {

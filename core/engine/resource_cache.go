@@ -989,16 +989,23 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 				if err := applyType(ctx, tx, typeResourceID, normalized, false, true, touched, &changed); err != nil {
 					return err
 				}
-				return rebuildClosure(ctx, tx, touched)
+				if err := rebuildClosure(ctx, tx, touched); err != nil {
+					return err
+				}
+				if changed {
+					return bumpDataRevisions(ctx, tx, g, []uuid.UUID{typeResourceID})
+				}
+				return nil
 			})
 			if err != nil {
 				return nil, err
 			}
 			if changed {
+				a.invalidateView()
 				pipe := a.Redis.Pipeline()
 				recordDataChange(ctx, pipe, g, []uuid.UUID{typeResourceID})
 				if _, err := pipe.Exec(ctx); err != nil {
-					slog.ErrorContext(ctx, "failed to record the resource data change", "error", err)
+					logRedis(ctx, slog.LevelWarn, "failed to record the resource data change for the previous release", err)
 				}
 			}
 		}

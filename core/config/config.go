@@ -31,10 +31,65 @@ type Database struct {
 type Auth struct {
 	StateSecret string
 	StateTTL    time.Duration
+	// TokenL1Size is how many verified tokens a process keeps in memory (the first level of the token cache; the second
+	// is Redis). Zero takes the default, a negative value turns the level off.
+	TokenL1Size int
+	// JWKSTTL is how long the key set of a service is kept before it is fetched again.
+	JWKSTTL time.Duration
+	// JWKSMinRefresh is the shortest time between two fetches of the same key set: a token that names an unknown key
+	// triggers a fetch at most this often per key set URL.
+	JWKSMinRefresh time.Duration
+	// InvalidTokenTTL is how long a token that failed verification is remembered, so that the same bad token does not
+	// reach the identity provider again.
+	InvalidTokenTTL time.Duration
 }
 
 type Redis struct {
 	URI string
+	// HotTimeout is the read and write timeout of the Redis client of the check API (no retries): a slow Redis costs a
+	// request at most this much. After a few failures in a row Redis is skipped for a while (see redisx.FastFail).
+	HotTimeout time.Duration
+}
+
+// Cache tunes the in-process caches in front of Redis.
+type Cache struct {
+	// AnswerL1Size is how many computed answers a process keeps in memory. Zero takes the default, a negative value
+	// turns the level off.
+	AnswerL1Size int
+}
+
+// Snapshot tunes the in-memory copy of the policy (see engine.snapshot).
+type Snapshot struct {
+	// MaxBytes bounds the memory of the copy: a policy that would not fit is not copied, and the queries read it. Zero
+	// takes the default, a negative value turns the copy off.
+	MaxBytes int64
+	// MaxAge is the age after which the copy is read again even when the revision did not move (a change made outside
+	// the admin API does not bump it). Zero takes the default, a negative value never reads it again by age.
+	MaxAge time.Duration
+}
+
+// Revision tunes how a process follows the revision of the policy, which lives in PostgreSQL (revision_state).
+type Revision struct {
+	// PollInterval is how often a process reads the revisions: a write made through another replica reaches this process
+	// within this time.
+	PollInterval time.Duration
+	// WaitMax is how long a request that asks for at least a revision (at_least_as_fresh) waits for this process to reach
+	// it before it computes the answer from the data.
+	WaitMax time.Duration
+}
+
+// Compute tunes the computation of answers that are not cached.
+type Compute struct {
+	// Concurrency bounds the computations running at once, so that a wave of cache misses queues instead of exhausting
+	// the database pool. Zero is half of DB__POOL_SIZE.
+	Concurrency int
+}
+
+// Background tunes the work done after a request has been answered (writing the cache, refreshing a source).
+type Background struct {
+	// Workers is how many tasks run at once; Queue is how many wait. A task that finds the queue full is dropped.
+	Workers int
+	Queue   int
 }
 
 type Cors struct {
@@ -135,6 +190,11 @@ type Config struct {
 	Subjects   Subjects
 	Delegation Delegation
 	HTTP       HTTP
+	Cache      Cache
+	Snapshot   Snapshot
+	Background Background
+	Revision   Revision
+	Compute    Compute
 }
 
 // Load reads the whole environment. Required variables are checked only for the sections the
@@ -155,9 +215,31 @@ func Load() (*Config, error) {
 		Auth: Auth{
 			StateSecret: e.str("AUTH__STATE_SECRET", ""),
 			StateTTL:    e.seconds("AUTH__STATE_TTL", 300),
+
+			TokenL1Size:     e.int("AUTH__TOKEN_L1_SIZE", 50_000),
+			JWKSTTL:         e.duration("AUTH__JWKS_TTL", 10*time.Minute),
+			JWKSMinRefresh:  e.duration("AUTH__JWKS_MIN_REFRESH", 30*time.Second),
+			InvalidTokenTTL: e.duration("AUTH__INVALID_TOKEN_TTL", 10*time.Second),
 		},
 		Redis: Redis{
-			URI: e.str("REDIS__URI", ""),
+			URI:        e.str("REDIS__URI", ""),
+			HotTimeout: e.duration("REDIS__HOT_TIMEOUT", 50*time.Millisecond),
+		},
+		Cache: Cache{
+			AnswerL1Size: e.int("CACHE__ANSWER_L1_SIZE", 50_000),
+		},
+		Snapshot: Snapshot{
+			MaxBytes: int64(e.int("SNAPSHOT__MAX_BYTES", 256<<20)),
+			MaxAge:   e.duration("SNAPSHOT__MAX_AGE", time.Minute),
+		},
+		Revision: Revision{
+			PollInterval: e.duration("REVISION__POLL_INTERVAL", 250*time.Millisecond),
+			WaitMax:      e.duration("REVISION__WAIT_MAX", 500*time.Millisecond),
+		},
+		Compute: Compute{Concurrency: e.int("COMPUTE__CONCURRENCY", 0)},
+		Background: Background{
+			Workers: e.int("BACKGROUND__WORKERS", 16),
+			Queue:   e.int("BACKGROUND__QUEUE", 1024),
 		},
 		Cors: Cors{
 			AllowOrigins:     e.list("CORS__ALLOW_ORIGINS", nil),
@@ -289,6 +371,24 @@ func (e *envReader) int(name string, def int) int {
 		return def
 	}
 	return n
+}
+
+// duration reads a Go duration ("50ms", "10m"); a bare integer is a number of seconds, as in the settings above.
+func (e *envReader) duration(name string, def time.Duration) time.Duration {
+	v, ok := lookup(name)
+	v = strings.TrimSpace(v)
+	if !ok || v == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(n) * time.Second
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		e.errs = append(e.errs, fmt.Errorf("%s: expected a duration such as 50ms or 10m, got %q", name, v))
+		return def
+	}
+	return d
 }
 
 func (e *envReader) seconds(name string, def int) time.Duration {

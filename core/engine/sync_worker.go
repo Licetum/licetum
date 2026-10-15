@@ -495,14 +495,25 @@ func (a *App) executeJob(ctx context.Context, job syncJob) (map[uuid.UUID]bool, 
 		keys = ComponentKeys(g, changedIDs)
 	}
 	writeStarted := time.Now()
+	var movedTypes []uuid.UUID
 	err = a.syncTx(ctx, keys, func(tx pgx.Tx) error {
 		touched := map[uuid.UUID]struct{}{}
+		movedTypes = nil
 		for _, c := range changed {
-			if err := applyType(ctx, tx, c.typeID, c.rows, c.touchAll, false, touched, nil); err != nil {
+			// A hash that differs does not mean the rows do: the database says what changed.
+			var rowsChanged bool
+			if err := applyType(ctx, tx, c.typeID, c.rows, c.touchAll, false, touched, &rowsChanged); err != nil {
 				return fmt.Errorf("sync type %s: %w", c.typeID, err)
+			}
+			if rowsChanged {
+				movedTypes = append(movedTypes, c.typeID)
 			}
 		}
 		if err := rebuildClosure(ctx, tx, touched); err != nil {
+			return err
+		}
+		// The revision of the data of these services moves in the transaction that moved the data, and only when it moved.
+		if err := bumpDataRevisions(ctx, tx, g, movedTypes); err != nil {
 			return err
 		}
 		for _, st := range settled {
@@ -540,12 +551,14 @@ func (a *App) executeJob(ctx context.Context, job syncJob) (map[uuid.UUID]bool, 
 	if len(changed) > 0 {
 		slog.InfoContext(ctx, "resource graph synchronized", "job", job.ID, "changed", len(changed), "types", len(due),
 			"fetch_ms", fetchDuration.Milliseconds(), "write_ms", time.Since(writeStarted).Milliseconds())
-		// The answers that read the data of these services are stale from now on. The commit is behind us; if the
-		// process dies right here the cached answers live until their TTL (60 s) at most.
+	}
+	if len(movedTypes) > 0 {
+		a.invalidateView() // the data revisions moved: the next request reads them again
+		// The replicas of the previous release follow the data versions in Redis.
 		pipe := a.Redis.Pipeline()
-		recordDataChange(ctx, pipe, g, changedIDs)
+		recordDataChange(ctx, pipe, g, movedTypes)
 		if _, err := pipe.Exec(ctx); err != nil {
-			slog.ErrorContext(ctx, "failed to record the resource data change", "error", err)
+			logRedis(ctx, slog.LevelWarn, "failed to record the resource data change for the previous release", err)
 		}
 	}
 	return unanswered, nil

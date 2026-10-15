@@ -25,7 +25,7 @@ import (
 const (
 	// warmUpTimeout bounds the warm-up: the first permission of a type synchronizes the whole type.
 	warmUpTimeout = 30 * time.Minute
-	// requestTimeout ends a request of the oracle that got no answer: such a request counts as a mismatch.
+	// requestTimeout ends a request of the oracle that got no answer: such a request is counted as unanswered, not as a wrong answer.
 	requestTimeout = 10 * time.Second
 	// topStatementCount is how many statements the report names.
 	topStatementCount = 8
@@ -70,6 +70,13 @@ type Options struct {
 	ChaosRedisFor time.Duration // for this long
 	ChaosRedis    string        // the Redis container of the local test stack
 	RequireRate   float64       // a ramp run fails when the sustained rate is below it
+	// AddedLatency is added to every round trip from the check servers to PostgreSQL and to Redis (through Toxiproxy),
+	// from the end of the warm-up on: half in each direction. 0 puts nothing in the way.
+	AddedLatency time.Duration
+	// RampThrough keeps the ramp climbing after a step fails, up to MaxSteps, so the report also shows what the server does
+	// above its limit (the baseline asks for at least 600 requests/s measured, whether or not they are sustained). The
+	// sustained rate is still the highest step before the first one that failed.
+	RampThrough bool
 }
 
 // DefaultOptions are the settings of a run that the flags then change.
@@ -119,6 +126,8 @@ func (o Options) validate() error {
 		return fmt.Errorf("the warm-up is not negative")
 	case o.Concurrency < 1 || o.DBPool < 1:
 		return fmt.Errorf("concurrency and the database pool are at least 1")
+	case o.AddedLatency < 0:
+		return fmt.Errorf("the added latency is not negative")
 	case o.SLOP99 <= 0 || o.MaxErrorRate < 0:
 		return fmt.Errorf("the p99 objective is above 0 and the error budget is not negative")
 	}
@@ -176,6 +185,8 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			RawPointsKept:  opts.RawPoints,
 			Replicas:       max(opts.Replicas, 1),
 			PauseRedisSecs: opts.ChaosRedisFor.Seconds(),
+			AddedLatencyMS: ms(opts.AddedLatency),
+			RampThrough:    opts.RampThrough,
 		},
 		Machine: machine(k6Version(k6Path)),
 	}
@@ -225,6 +236,11 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		return nil, fmt.Errorf("set the log settings of the check server: %w", err)
 	}
 
+	if opts.AddedLatency > 0 {
+		if err := e.insertLinks(); err != nil {
+			return nil, err
+		}
+	}
 	checks, err := startReplicas(ctx, e, opts)
 	if err != nil {
 		return nil, err
@@ -260,6 +276,12 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 	slog.Info("warmed up", "phases", rep.WarmUp)
 
+	if opts.AddedLatency > 0 {
+		if err := e.addLatency(opts.AddedLatency); err != nil {
+			return finishRun(ctx, rep, e, opts, err, nil)
+		}
+		slog.Info("added latency to PostgreSQL and Redis", "round_trip", opts.AddedLatency)
+	}
 	if err := applyExtraSQL(ctx, e, &rep.Settings); err != nil {
 		return finishRun(ctx, rep, e, opts, err, nil)
 	}
@@ -493,7 +515,7 @@ func (m measurer) ramp(ctx context.Context) ([]Measurement, error) {
 		}
 		meas.judgeStep(m.opts.MaxErrorRate, m.opts.SLOP99)
 		out = append(out, meas)
-		if !meas.passes() || ctx.Err() != nil {
+		if ctx.Err() != nil || (!meas.passes() && !m.opts.RampThrough) {
 			break
 		}
 		rate *= m.opts.RateFactor

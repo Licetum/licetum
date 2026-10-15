@@ -140,6 +140,8 @@ func setup(t *testing.T) *env {
 		DB:   config.Database{URI: u.String(), PoolSize: 5},
 		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Cors: config.Cors{AllowOrigins: []string{"http://localhost:5173"}},
+		// Tests that ask for higher consistency in a loop must not be spaced out to one source call per second.
+		Sync: config.Sync{FreshMinInterval: time.Millisecond},
 		// The registry of known subjects is on, as by default.
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
@@ -181,6 +183,17 @@ func setup(t *testing.T) *env {
 	t.Cleanup(e.check.Close)
 	e.adminToken = e.token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
 	return e
+}
+
+// externalChange tells the app about a change made to the policy by other means than the admin API (SQL in a test, or
+// restore-admin in another process): the revision is bumped as every write does, and the app reads it again at once.
+func (e *env) externalChange(ctx context.Context) {
+	e.t.Helper()
+	revision, err := db.BumpRevision(ctx, e.pool, db.ScopeRules)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.app.AfterWrite(ctx, revision)
 }
 
 func newTestServer(t *testing.T, handler http.Handler) *httptest.Server {

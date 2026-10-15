@@ -52,10 +52,11 @@ func currentBatch(ctx context.Context) *batchRun {
 	return run
 }
 
-// mutate runs a write in one transaction together with its change-log record, then invalidates the cached
-// answers. fn does its statements through q (the transaction) and returns the change it made. The cache
-// version is bumped only after the commit: an answer computed after the bump sees the write. Inside a batch
-// the write joins the batch's transaction instead, and the batch bumps the version once it has committed.
+// mutate runs a write in one transaction together with its change-log record and the bump of the revision of the rules
+// (db.BumpRevision): the revision commits with the write, so it cannot reach a replica before the data does. fn does its
+// statements through q (the transaction) and returns the change it made. Once the transaction has committed, the process
+// and the previous release are told (App.AfterWrite). Inside a batch the write joins the batch's transaction instead, and
+// the batch bumps the revision once.
 func (a *App) mutate(ctx context.Context, fn func(q db.Querier) (change, error)) error {
 	if run := currentBatch(ctx); run != nil {
 		c, err := fn(run.tx)
@@ -67,6 +68,7 @@ func (a *App) mutate(ctx context.Context, fn func(q db.Querier) (change, error))
 		}
 		return recordChange(ctx, run.tx, c)
 	}
+	var revision int64
 	err := db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
 		c, err := fn(tx)
 		if err != nil {
@@ -77,12 +79,16 @@ func (a *App) mutate(ctx context.Context, fn func(q db.Querier) (change, error))
 				return err
 			}
 		}
-		return recordChange(ctx, tx, c)
+		if err := recordChange(ctx, tx, c); err != nil {
+			return err
+		}
+		revision, err = db.BumpRevision(ctx, tx, db.ScopeRules)
+		return err
 	})
 	if err != nil {
 		return err
 	}
-	a.BumpVersion(ctx)
+	a.AfterWrite(ctx, revision)
 	return nil
 }
 

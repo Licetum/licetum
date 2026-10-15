@@ -21,7 +21,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 const hierarchySubject = "user-1"
@@ -316,9 +315,7 @@ func TestIntegrationTypeModes(t *testing.T) {
 
 	// The check API returns the typed shape. The result cache is keyed by subject, not by claims, so
 	// reset it after the cashier computation above.
-	if _, err := redisx.BumpVersion(context.Background(), w.app.Redis); err != nil {
-		t.Fatal(err)
-	}
+	w.externalChange(context.Background())
 	token := w.token(jwt.MapClaims{"preferred_username": hierarchySubject, "position": "manager"})
 	status, perm := w.env.permission(w.appSvc, token)
 	if status != http.StatusOK {

@@ -156,7 +156,12 @@ func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) e
 		if len(created) == 0 {
 			return nil
 		}
-		return seedAdminGroup(ctx, tx, p)
+		if err := seedAdminGroup(ctx, tx, p); err != nil {
+			return err
+		}
+		// New policies and an admin group: the replicas that run already must read the rules again.
+		_, err := BumpRevision(ctx, tx, ScopeRules)
+		return err
 	})
 	if err != nil {
 		return fmt.Errorf("seed self-service: %w", err)

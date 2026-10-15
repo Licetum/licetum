@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
@@ -61,15 +61,31 @@ type App struct {
 	delegationPruned atomic.Int64
 	// subjectNotes remembers which subjects were written to the registry lately (see NoteSubject).
 	subjectNotes subjectNotes
-	// inflight counts the background work (cache writes, refreshes); Close waits for it.
-	inflight sync.WaitGroup
-	// closeMu guards closed: once Close has begun, no background work starts (see background).
-	closeMu sync.Mutex
-	closed  bool
+	// bg runs the background work (cache writes, refreshes) on a bounded pool, started on first use; Close waits for it.
+	bg     *backgroundPool
+	bgOnce sync.Once
 	// HTTP is the client for outgoing requests (IdP, JWKS).
 	// Timeouts are set by the context of each call.
 	HTTP    *http.Client
 	metrics *metrics
+
+	// tune is the effective value of the settings of the fast read path.
+	tune tuning
+	// tokensL1 and answersL1 are the in-process levels of the token and the answer caches; invalidTokens remembers the
+	// tokens that failed verification (see VerifyToken). Nil on an App built by hand: they keep nothing.
+	tokensL1      *lruCache[Claims]
+	answersL1     *lruCache[any]
+	invalidTokens *lruCache[error]
+	// jwks holds the key sets of the identity providers (see jwksKeyFor).
+	jwks jwksCache
+	// local keeps the revision of the policy and its snapshot in memory (see localView).
+	local viewState
+	// attrsMemo is the attribute names of the last revision read, for a process without the snapshot.
+	attrsMemo atomic.Pointer[attrsMemo]
+	// computeSlots bounds the computations of answers that are not cached (see cachedAnswer).
+	computeSlots chan struct{}
+	// snapshotWarn logs once that the policy does not fit in memory.
+	snapshotWarn sync.Once
 }
 
 func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
@@ -77,50 +93,60 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 	adapter := synchronizer.NewAdapter(rdb)
 	adapter.DefaultFetchTTL = cfg.Sync.FetchTTL
 	adapter.OnBreakerOpen = func() { m.breakerOpen.WithLabelValues("source").Inc() }
-	a := &App{
-		DB:         pool,
-		Redis:      rdb,
-		Sync:       adapter,
-		Cfg:        cfg,
-		HTTP:       &http.Client{},
-		metrics:    m,
-		workerWake: make(chan struct{}, 1),
+	t := newTuning(cfg)
+	app := &App{
+		DB:            pool,
+		Redis:         rdb,
+		Sync:          adapter,
+		Cfg:           cfg,
+		HTTP:          &http.Client{},
+		metrics:       m,
+		tune:          t,
+		tokensL1:      newLRU[Claims](t.tokenL1Size),
+		answersL1:     newLRU[any](t.answerL1Size),
+		invalidTokens: newLRU[error](invalidTokenCacheSize),
+		computeSlots:  make(chan struct{}, t.computeConcurrency),
+		workerWake:    make(chan struct{}, 1),
 	}
-	m.registry.MustRegister(&syncQueueCollector{app: a})
-	return a
+	if t.invalidTokenTTL <= 0 {
+		app.invalidTokens = nil
+	}
+	// Every statement and every Redis round trip of the process is counted: in the metrics, and in the Trace of the
+	// request that made it. A pool not made by db.Connect has no tracer and is not counted.
+	db.Observe(pool, observer{app})
+	redisx.Observe(rdb, observer{app})
+	m.registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "licetum_redis_skipped_total",
+		Help: "Redis commands not sent because the fast-fail was open after repeated errors or timeouts.",
+	}, func() float64 { return float64(redisx.Skipped(rdb)) }))
+	m.registry.MustRegister(&syncQueueCollector{app: app})
+	return app
 }
 
 // Close stops new background work, waits for the work in progress (a little while), then closes the connections
 // to the SQL sources.
 func (a *App) Close() {
-	const closeWait = 10 * time.Second
-	a.closeMu.Lock()
-	a.closed = true
-	a.closeMu.Unlock()
-	done := make(chan struct{})
-	go func() {
-		a.inflight.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(closeWait):
+	if !a.background().close(closeWait) {
 		slog.Warn("background work did not finish before the shutdown", "wait", closeWait)
 	}
-	a.Sync.Close()
+	if a.Sync != nil {
+		a.Sync.Close()
+	}
 }
 
-// BumpVersion invalidates the permission cache and makes the types of the platform itself due for synchronization (the
-// entities they are made of were just written, and a write must show at once). The data of the other services is not
-// touched: a change of a type or of a synchronizer changes its structure signature, which is what makes it due. The DB
-// write has already been committed by now, so a failure here is not turned into a request error — at worst the cache
-// lives until its TTL expires.
-func (a *App) BumpVersion(ctx context.Context) {
-	version, err := redisx.BumpVersion(ctx, a.Redis)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to bump the permission cache version", "error", err)
-	} else if t := TraceFrom(ctx); t != nil {
-		t.setRevision(version)
+// AfterWrite is called once a write that can change a decision has committed, with the revision the write took
+// (db.BumpRevision, in the write's own transaction): it is the revision of the write for the caller (X-Authz-Revision),
+// it makes this process read the revisions again at once, and it makes the types of the platform itself due for synchronization (the
+// entities they are made of were just written, and a write must show at once; the data of the other services is not
+// touched: a change of a type or of a synchronizer changes its structure signature instead). The replicas of the previous release follow the Redis counter, which is bumped for them while a rolling
+// update lasts. The write is committed by now, so a Redis failure is not turned into a request error.
+func (a *App) AfterWrite(ctx context.Context, revision int64) {
+	if t := TraceFrom(ctx); t != nil {
+		t.setRevision(revision)
+	}
+	a.invalidateView()
+	if _, err := redisx.BumpVersion(ctx, a.Redis); err != nil {
+		logRedis(ctx, slog.LevelWarn, "failed to bump the cache version of the previous release", err)
 	}
 	if err := a.invalidatePlatformSync(ctx); err != nil {
 		slog.ErrorContext(ctx, "failed to make the platform types due for synchronization", "error", err)
@@ -144,12 +170,25 @@ func (a *App) ServiceIDByRef(ctx context.Context, ref string) (uuid.UUID, error)
 	if id, err := uuid.Parse(ref); err == nil {
 		return id, nil
 	}
+	if snap := a.policySnapshot(ctx); snap != nil {
+		return snap.serviceID(ref)
+	}
 	var id uuid.UUID
 	err := a.DB.QueryRow(ctx, `SELECT id FROM service WHERE slug = $1 AND deleted_at IS NULL`, ref).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, apperr.NotFound(i18n.ServiceNotFound, ref)
 	}
 	return id, err
+}
+
+// serviceExists checks that the service is live, from the snapshot of the state when there is one.
+func (a *App) serviceExists(ctx context.Context, state cacheState, serviceID uuid.UUID) error {
+	if state.snap != nil {
+		_, err := state.snap.service(serviceID)
+		return err
+	}
+	_, err := a.GetExistingService(ctx, a.DB, serviceID)
+	return err
 }
 
 func (a *App) GetExistingService(ctx context.Context, q db.Querier, serviceID uuid.UUID) (*model.Service, error) {

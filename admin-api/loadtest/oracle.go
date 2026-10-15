@@ -15,8 +15,12 @@ import (
 // Oracle is the correctness check of a measured window: a sample of the answers the check API gave during the load,
 // compared with the decisions the generated policy must give.
 type Oracle struct {
-	Checked    int        `json:"checked"`
-	Mismatches int        `json:"mismatches"`
+	Checked int `json:"checked"`
+	// Mismatches are the answers the server gave (HTTP 200) that differ from the expected decision: wrong answers.
+	Mismatches int `json:"mismatches"`
+	// Unanswered are the questions that got no decision: a transport error, a timeout, or a status other than 200. They are
+	// failures of availability, which the error rate and the latency of the window show, not wrong answers.
+	Unanswered int        `json:"unanswered,omitempty"`
 	Granted    int        `json:"expected_granted"`
 	Examples   []Mismatch `json:"examples,omitempty"`
 }
@@ -142,7 +146,12 @@ func runOracle(ctx context.Context, base, service string, p Profile, tokens []st
 		if expected {
 			out.Granted++
 		}
-		if err != nil || status != http.StatusOK || got != expected {
+		unanswered := err != nil || status != http.StatusOK
+		if unanswered {
+			out.Unanswered++
+		}
+		wrong := !unanswered && got != expected
+		if wrong {
 			out.Mismatches++
 			if len(out.Examples) < 10 {
 				out.Examples = append(out.Examples, Mismatch{

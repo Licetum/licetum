@@ -72,6 +72,57 @@ format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite 
 (the Licetum service within itself, its policy types, their sources, the admin group) is seeded by `db.SeedPlatform`, run by
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
 
+Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `jwks.go`, `background.go`, `tuning.go`; `core/redisx/fastfail.go`;
+settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TOKEN_TTL`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`,
+`REDIS__HOT_TIMEOUT`; the numbers are in `core/README.md`):
+- **The revision lives in PostgreSQL** (`revision_state`, migration `00002`, `db.BumpRevision` / `db.LoadRevisions`, `core/db/revision.go`):
+  scope `rules` numbers every write that can change a decision (rules, memberships, groups, roles and items, access groups, services, types,
+  synchronizers), scope `data:<service id>` numbers the resource data of a service. A write bumps `rules` **in its own transaction**
+  (`mutate`, once per batch in `RunBatch`, `RestoreAdminAccess`, the seed), a synchronization that changed data bumps `data:<service>` in the
+  transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
+  `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision`), invalidates the view and, for the replicas of the
+  previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`, `authz:sync_epoch`);
+  this release does not read the first two. Answer keys are `authz:permission:t7:r<rules>:…` / `authz:check:t3:r<rules>:…`.
+- The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
+  (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
+  (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
+  (started by `cli.Serve`) and by the requests every `REVISION__POLL_INTERVAL` (`singleflight`, so never twice at once), in the request when it
+  is older than `staleLimit` (2 s or 8 polls), after a write of this process (`invalidateView`, from `AfterWrite` and the synchronizations)
+  and when the request asks for `at_least_as_fresh` a newer revision: `renewView` then waits for the revision for at most
+  `REVISION__WAIT_MAX`, and if it does not come the answer is computed from the data and **not kept** (`cachedAnswer`, `store`).
+  Cache misses queue for `COMPUTE__CONCURRENCY` slots (`computeSlots`, default half of `DB__POOL_SIZE`).
+  A write made through another replica is therefore seen within the poll interval, not at once: a client that needs it at once passes the
+  `X-Authz-Revision` of its write as `at_least_as_fresh`. When the revisions cannot be read, the last view is served for `SNAPSHOT__MAX_AGE` and marked
+  `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
+- The snapshot holds what a decision reads: services (without `client_secret`: `ServiceCheckColumns`), the type graph, the enabled
+  memberships and rules *with* their validity windows (compared with the clock per request, `ruleActive`/`memberActive`), the role items, the
+  access groups, the types with a live synchronizer, the request attributes and the validity boundaries (for the TTL of an answer). It is built
+  in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` and `GetServiceForCheck` answer from it (an
+  unknown or deleted slug is a 404 without a query). Every write that changes any of this must bump the revision (all admin writes go through
+  `mutate` or the batch, which do); a change made by other means (`restore-admin` does bump) shows up at `SNAPSHOT__MAX_AGE` at the latest.
+  `consistency=higher` does not use the snapshot (`cacheState.forConsistency`): it reads everything with queries, as before the snapshot.
+- The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
+  `snapshot.ttl`, ...): a policy that does not fit, `consistency=higher` and the admin simulations use it. Change one, change the other;
+  `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` (random policies, both paths, answers and explanations) keeps them equal.
+- Answers: `cachedAnswer` looks in `answersL1` (keyed like the Redis key, so the revision is in it; entries also record the data versions they
+  read and an `exp`, which the value in Redis carries too) before Redis; tokens: `VerifyToken` looks in `tokensL1`, then Redis, then the
+  provider, and remembers an `InvalidToken` failure by service and token hash in `invalidTokens`. `App.ClearMemoryCaches` empties the levels
+  (tests). Values in these caches are shared by requests and must be treated as read-only.
+- `jwksKeyFor`: one key set per URL, shared fetches (singleflight per URL), refetch for an unknown `kid` at most once per
+  `AUTH__JWKS_MIN_REFRESH`; transport failures are `errJWKSUnavailable` (breaker), never cached.
+- `App.Background` runs on a fixed pool with a bounded queue and returns whether the work was accepted; a full queue drops it
+  (`licetum_background_dropped_total`). Work that registers a marker (`refreshInBackground`) must clear it when dropped.
+- `redisx.ConnectWith(HotTimeout)` is how the check process connects (`cli.Serve`, name `check`): read/write timeout, no retries, and a
+  `FastFail` hook that skips Redis for 5 s after 3 failures in a row (half-open probe afterwards). Skipped commands are not round trips
+  (`observer.ObserveRedis`).
+
+Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` and every
+Redis client given to `engine.New` is counted (`licetum_db_*`, `licetum_redis_*` metrics, `engine.Trace.DBQueries()/RedisRoundTrips()` for
+tests); `harness.StartReplicas` builds several check replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`; `Replica.Permission` asks for at least the
+revision of the last admin write, `Replica.Fresh` asks with `consistency=higher`); `core/testsupport` has the fake source, the
+fake IdP and the Toxiproxy `FaultProxy`; tests under the `chaos` build tag (`task go:test:chaos`, nightly `chaos.yml`) inject faults;
+`admin-api/loadtest/budgets.yaml` holds the budgets the nightly `loadtest.yml` compares runs with (`licetum-loadtest budget`).
+
 Web interface (run from `web/`, Next.js + antd; package manager pnpm — `packageManager` in `package.json`,
 lock `pnpm-lock.yaml`):
 ```
@@ -126,8 +177,8 @@ Errors: return `*apperr.Error` from the service layer, created from an i18n cata
 `apperr.FailedDependency(...)` for upstream/circuit-breaker failures). It implements
 `huma.StatusError` and is itself the error body `{"detail": ..., "extra": {"type":
 "generic"|"missing"|"blocked_by", "code": "<catalog key>"}}`; `huma.NewErrorWithContext` is overridden
-(`internal/api/server.go`) so Huma's own validation errors use the same shape. Any other error becomes a logged 500 without details. Admin writes that affect permissions call
-`App.bumpVersion` to invalidate the permission cache. A 401 carries `WWW-Authenticate` (RFC 6750):
+(`internal/api/server.go`) so Huma's own validation errors use the same shape. Any other error becomes a logged 500 without details. Admin writes that affect permissions bump the revision of
+the rules in their own transaction (`mutate`) and call `App.AfterWrite`. A 401 carries `WWW-Authenticate` (RFC 6750):
 `apperr.Unauthorized` — no usable credentials (`Bearer`), `apperr.InvalidToken` — a malformed,
 expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHeader` adds others.
 
@@ -218,7 +269,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   names (`model.ValidMetaKey`: `[A-Za-z0-9_-]{1,63}`, not `id`/`name`/`parent_id`/`parents`/`meta`),
   over 32 attributes, values over 1024 characters and lists over 64 items are dropped). Attributes
   are part of the sync digest, so a change is written by the next sync, which also bumps the data version
-  of the service that owns the type (`authz:data_versions`, see item 7 of the permission computation). The admin list
+  of the service that owns the type (`revision_state`, scope `data:<service>`, see item 7 of the permission computation). The admin list
   (`GET /type_resource/{id}/resource`) also brings the parent types up to date, so a link is `resolved: false` only when its
   parent is really missing; a resource gone from its source stays with `active: false` and is listed with
   `?include_inactive=true`.
@@ -359,15 +410,15 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    zero rows = the lease was lost, the transaction rolls back (`licetum_sync_lease_lost_total`). A source that did not answer
    sets `attempts+1`, `last_error` and `next_due_at = now() + min(30 s · 2^attempts, 10 min)` for all replicas; the data stays.
    An answer with no resources is the source's truth: it switches off every resource of the type. An admin write marks the
-   platform types due (`BumpVersion` → `invalidatePlatformSync`, `invalidated_at`): the next request waits for a job that
+   platform types due (`AfterWrite` → `invalidatePlatformSync`, `invalidated_at`): the next request waits for a job that
    fetched after the write; it is the only effect of a write on the synchronization (a change of a type or a synchronizer
    changes its structure signature instead). The digest keeps its shape; `format` 5 (4 is read too) is rewritten only when
    data or graph signature changed, and a start of the worker imports the previous release's Redis hashes
    (`authz:resource_sync:hash:<type>`, `v4:<data>:<graph>`) for types without a row. The worker's schedule (`SYNC__SCHEDULE_TICK`)
    queues due types that someone asked for within `SYNC__DEMAND_WINDOW` (all with `SYNC__KEEP_WARM`), gives up a job claimed
    5 times, and prunes old jobs. `App.Role` (check, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
-   outside the worker. Every committed change of a type's data bumps the data version of its service (`recordDataChange`,
-   Redis, right after the commit: the revision moves into the transaction with the data-revision work). `resolve` (one resource
+   outside the worker. Every committed change of a type's data bumps the data revision of its service in the same transaction
+   (`bumpDataRevisions`, see F2), and the worker then calls `invalidateView` (and `recordDataChange` for the previous release). `resolve` (one resource
    refreshed inline by the admin API) writes under the same component lock and timeouts.
 4. Rules become *instances* (rule × anchor; a `resource_from_claim` rule yields the anchor found by one
    `findAncestors` query). Each instance covers the anchor's descendants through the closure
@@ -379,18 +430,17 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    on a `not_sync` type with `sync` descendants still cascades to their resources). Response:
    `{name: {"type": "sync", "resources": [...]} | {"type": "not_sync", "access": [...]}}`; a `not_sync` type
    without rules is absent, on a name collision `sync` wins.
-7. Cached in Redis per `(service, subject, claims fingerprint, rules version)`: key
-   `authz:permission:t6:v<version>:<service>:<subject>:<fingerprint>` (bump `t6` when the format changes; the
-   fingerprint covers only the claims and the request-context attributes the rules and the role items look at, kept under
-   `authz:claim_attrs:t4` as
-   `{version, attrs}`). TTL = min(60 s, the next moment a rule, a role item's assignment or a membership starts/stops
-   being in force). Admin writes bump the global version key (`redisx.VersionKey`). A cached entry also records the
-   data versions of the services whose resource data it read (`authz:data_versions`, a hash service → version,
-   bumped by synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one
-   service leaves the answers that do not read it in place. The whole computation runs through `cachedAnswer`
-   (`service/cache.go`): one round trip reads the versions and claim names (`readCacheState`), concurrent misses for
-   the same key share one computation (singleflight), and the entry is written in the background. `POST /check`
-   answers are cached the same way (`authz:check:t2:…`, keyed by a hash of the questions and of `explain`).
+7. Cached in memory and in Redis per `(service, subject, claims fingerprint, revision of the rules)`: key
+   `authz:permission:t7:r<revision>:<service>:<subject>:<fingerprint>` (bump `t7` when the format changes; the
+   fingerprint covers only the claims and the request-context attributes the rules and the role items look at, which the snapshot
+   knows — a process without it remembers them per revision, `attrsMemo`). TTL = min(60 s, the next moment a rule, a role item's
+   assignment or a membership starts/stops being in force). Admin writes bump the revision of the rules in `revision_state`. A cached
+   entry also records the revisions of the data of the services whose resource data it read (scope `data:<service>`, bumped by
+   synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one service leaves the answers that
+   do not read it in place. The whole computation runs through `cachedAnswer` (`engine/cache.go`): the revisions come from the view
+   (`readCacheState`), concurrent misses for the same key share one computation (singleflight) and queue for a computation slot, and the
+   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t3:…`, keyed by a hash of the
+   questions and of `explain`).
 
 ### Decision semantics (deny wins, explicit exceptions)
 
@@ -502,7 +552,9 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   `DELEGATION__AUDIT_RETENTION_DAYS`, default 365). The access log names the client as `user` and the person as `on_behalf_of`. Known
   limit: a user token of a trusted client is not told apart from its own client-credentials token, so trust a backend client.
 - `GET /metrics` on both apps (Prometheus, own registry per `App`, `service/metrics.go`): permission
-  compute time and cache hit/miss/bypass, check decisions, source fetch time and sync results,
+  compute time and cache hit/miss/bypass, the in-process caches (`licetum_l1_cache_total`), JWKS fetches (`licetum_jwks_fetch_total`),
+  dropped background work (`licetum_background_dropped_total`), requests that had no policy snapshot (`licetum_snapshot_fallback_total`),
+  Redis commands skipped by the fast-fail (`licetum_redis_skipped_total`), check decisions, source fetch time and sync results,
   breaker-open counters, HTTP requests/duration by operation. `App.metrics` may be nil (an `App`
   built only to describe the API) — helpers are nil-safe.
 

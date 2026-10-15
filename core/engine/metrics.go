@@ -28,6 +28,14 @@ type metrics struct {
 	breakerOpen       *prometheus.CounterVec // dependency: source | jwks | token_endpoint
 	httpRequests      *prometheus.CounterVec // operation, status
 	httpDuration      *prometheus.HistogramVec
+	dbQueries         *prometheus.CounterVec   // operation, result
+	dbQueryDuration   *prometheus.HistogramVec // operation
+	redisOps          *prometheus.CounterVec   // operation, commands, result
+	redisOpDuration   *prometheus.HistogramVec // operation
+	backgroundDropped prometheus.Counter
+	snapshotFallback  prometheus.Counter
+	l1Cache           *prometheus.CounterVec // cache: token | answer, result: hit | miss
+	jwksFetches       *prometheus.CounterVec // result: ok | error
 }
 
 func newMetrics() *metrics {
@@ -93,8 +101,47 @@ func newMetrics() *metrics {
 		Buckets: prometheus.ExponentialBuckets(0.001, 2, 14),
 	}, []string{"operation"})
 
+	m.dbQueries = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_db_queries_total",
+		Help: "Statements sent to PostgreSQL by the first SQL keyword (operation) and result (ok | error).",
+	}, []string{"operation", "result"})
+	m.dbQueryDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "licetum_db_query_seconds",
+		Help:    "Time a PostgreSQL statement took, by the first SQL keyword.",
+		Buckets: prometheus.ExponentialBuckets(0.0002, 2, 16),
+	}, []string{"operation"})
+	m.redisOps = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_redis_ops_total",
+		Help: "Round trips to Redis by command (\"pipeline\" for a pipeline: one round trip), the number of commands it carried " +
+			"(commands) and result (ok | error).",
+	}, []string{"operation", "commands", "result"})
+	m.redisOpDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "licetum_redis_op_seconds",
+		Help:    "Time a round trip to Redis took, by command (\"pipeline\" for a pipeline).",
+		Buckets: prometheus.ExponentialBuckets(0.0002, 2, 16),
+	}, []string{"operation"})
+
+	m.backgroundDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "licetum_background_dropped_total",
+		Help: "Background tasks (cache writes, refreshes) dropped because the queue was full.",
+	})
+	m.snapshotFallback = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "licetum_snapshot_fallback_total",
+		Help: "Policy snapshots that were not used because the policy does not fit SNAPSHOT__MAX_BYTES: the queries read the policy.",
+	})
+	m.l1Cache = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_l1_cache_total",
+		Help: "Lookups in the in-process caches in front of Redis, by cache (token | answer) and result (hit | miss).",
+	}, []string{"cache", "result"})
+	m.jwksFetches = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_jwks_fetch_total",
+		Help: "Requests for a JWKS to an identity provider, by result (ok | error).",
+	}, []string{"result"})
+
 	for _, c := range []prometheus.Collector{
 		m.permissionCompute, m.permissionCache, m.checkCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls, m.breakerOpen,
+		m.backgroundDropped, m.snapshotFallback, m.l1Cache, m.jwksFetches,
+		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
 		m.httpRequests, m.httpDuration,
 	} {
 		factory(c)
@@ -157,4 +204,16 @@ func (c *syncQueueCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(syncJobsDesc, prometheus.GaugeValue, float64(queued), "queued")
 	ch <- prometheus.MustNewConstMetric(syncJobsDesc, prometheus.GaugeValue, float64(running), "running")
 	ch <- prometheus.MustNewConstMetric(syncQueueAgeDesc, prometheus.GaugeValue, age)
+}
+
+// l1Lookup counts a lookup in an in-process cache (nil-safe).
+func (m *metrics) l1Lookup(cache string, hit bool) {
+	if m == nil {
+		return
+	}
+	result := "miss"
+	if hit {
+		result = "hit"
+	}
+	m.l1Cache.WithLabelValues(cache, result).Inc()
 }

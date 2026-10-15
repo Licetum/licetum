@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -15,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/model"
 )
 
@@ -25,7 +25,7 @@ const (
 	MaxGroupDepth    = 16
 	// resultCacheFormat is the version of the cached result format: when the format changes, new keys
 	// do not overlap the old ones, and stale entries simply expire by TTL.
-	resultCacheFormat = "t6"
+	resultCacheFormat = "t7"
 )
 
 // PermissionResult — {type_resource_name: sync {resources} | not_sync {access}}.
@@ -74,12 +74,12 @@ func (a *App) GetPermission(ctx context.Context, serviceID uuid.UUID, subject st
 // GetPermissionData is GetPermission with what the self-service needs too: the denials, and the levels
 // on each type as a whole.
 func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, consistency Consistency) (*permissionData, error) {
-	state := a.readCacheState(ctx)
-	key := fmt.Sprintf("authz:permission:%s:v%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
+	state := a.cacheState(ctx).forConsistency(ctx, consistency)
+	key := fmt.Sprintf("authz:permission:%s:r%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env))
 	return cachedAnswer(ctx, a, key, state, consistency, a.metrics.permissionCache,
 		func(ctx context.Context) (computed[*permissionData], error) {
-			if _, err := a.GetExistingService(ctx, a.DB, serviceID); err != nil {
+			if err := a.serviceExists(ctx, state, serviceID); err != nil {
 				return computed[*permissionData]{}, err
 			}
 			started := time.Now()
@@ -94,8 +94,8 @@ func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subjec
 
 // requestFingerprint hashes what the request carries that the rules look at (its claims and its context attributes):
 // two requests with the same fingerprint get the same answer. The names of those attributes are kept in the cache state
-// for the current rules version; when they are not there, they are read from the rules and stored for the requests that
-// follow.
+// for the current revision of the rules (by the snapshot, or by the memo of the process); when they are not there, they
+// are read from the rules and remembered for the requests that follow.
 func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env) string {
 	if state.attrsOK {
 		return fingerprint(state.attrs, env)
@@ -107,13 +107,7 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 		return fingerprint(allRequestAttributes(env), env)
 	}
 	if state.ok {
-		if record, err := json.Marshal(claimAttrsRecord{Version: state.version, Attrs: attrs}); err == nil {
-			a.Background(func(ctx context.Context) {
-				if err := a.Redis.Set(ctx, claimAttrsKey, record, claimAttrsTTL).Err(); err != nil {
-					slog.WarnContext(ctx, "failed to store the attributes the rules look at", "error", err)
-				}
-			})
-		}
+		a.attrsMemo.Store(&attrsMemo{revision: state.version, attrs: attrs})
 	}
 	return fingerprint(attrs, env)
 }
@@ -127,7 +121,11 @@ const notNowSQL = `COALESCE(c->>'source', 'claim') <> 'now'`
 // RequestAttributes reads the attributes the rules look at: the conditions of the rules, of their guards and of the group
 // memberships, and the claims of the resource_from_claim specs (of rules and of role items).
 func (a *App) RequestAttributes(ctx context.Context) ([]string, error) {
-	rows, err := a.DB.Query(ctx, `
+	return requestAttributes(ctx, a.DB)
+}
+
+func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
+	rows, err := q.Query(ctx, `
 		SELECT DISTINCT attr FROM (
 			SELECT `+conditionAttrSQL+` AS attr FROM assignment_rule, jsonb_array_elements(predicate) c WHERE `+notNowSQL+`
 			UNION ALL SELECT `+conditionAttrSQL+` FROM assignment_rule, jsonb_array_elements(requires_predicate) c WHERE `+notNowSQL+`
@@ -340,6 +338,34 @@ func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity
 	return rules, missing, usesNow, nil
 }
 
+// applicableFromSnapshot is applicableRules over the snapshot: the rules with a subject of the identity set come from an
+// index, only the rules without a subject are scanned, and the windows of validity are compared with now.
+func applicableFromSnapshot(snap *snapshot, relevant map[uuid.UUID]bool, identity identitySet, env Env, now time.Time) ([]model.AssignmentRule, map[uuid.UUID]bool, bool) {
+	subjects := make([]string, 0, len(identity))
+	for s := range identity {
+		subjects = append(subjects, s)
+	}
+	direct, scanned := snap.applicable(relevant, subjects, now)
+
+	var out []model.AssignmentRule
+	missing := map[uuid.UUID]bool{}
+	usesNow := false
+	for _, rule := range slices.Concat(direct, scanned) {
+		if ruleUsesNow(rule) {
+			usesNow = true
+		}
+		applies, miss := RuleApplies(rule, identity, env)
+		if !applies {
+			continue
+		}
+		out = append(out, rule)
+		if miss {
+			missing[rule.ID] = true
+		}
+	}
+	return snap.expandRoles(out, relevant), missing, usesNow
+}
+
 // ExpandRoles turns every assignment of a role into one rule per item of the role: a copy of the
 // assignment (same id, subject, validity and effect) that carries the item's target and access levels.
 // The engine then sees the permissions of a role exactly like inline rules. Items on types outside
@@ -543,17 +569,24 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	var identity identitySet
 	var identityUsesNow bool
 	var g *TypeGraph
-	eg, ectx := errgroup.WithContext(ctx)
-	eg.Go(func() (err error) {
-		identity, identityUsesNow, err = a.ResolveIdentitySet(ectx, subject, env)
-		return err
-	})
-	eg.Go(func() (err error) {
-		g, err = a.LoadTypeGraph(ectx)
-		return err
-	})
-	if err := eg.Wait(); err != nil {
-		return nil, err
+	snap := state.snap
+	if snap != nil {
+		// The policy is in memory: the memberships and the graph cost no query.
+		identity, identityUsesNow = IdentityOf(snap.liveMembers(time.Now()), subject, env)
+		g = snap.graph
+	} else {
+		eg, ectx := errgroup.WithContext(ctx)
+		eg.Go(func() (err error) {
+			identity, identityUsesNow, err = a.ResolveIdentitySet(ectx, subject, env)
+			return err
+		})
+		eg.Go(func() (err error) {
+			g, err = a.LoadTypeGraph(ectx)
+			return err
+		})
+		if err := eg.Wait(); err != nil {
+			return nil, err
+		}
 	}
 	p := &Prepared{Graph: g, serviceType: ServiceTypes(g, serviceID)}
 
@@ -570,21 +603,33 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	var rules []model.AssignmentRule
 	var missing map[uuid.UUID]bool
 	var rulesUseNow bool
-	eg, ectx = errgroup.WithContext(ctx)
-	eg.Go(func() (err error) {
-		rules, missing, rulesUseNow, err = a.applicableRules(ectx, relevantIDs, identity, env)
-		return err
-	})
-	eg.Go(func() error {
-		p.ttl = a.cacheTTL(ectx, relevantIDs)
-		return nil
-	})
-	eg.Go(func() (err error) {
-		p.syncTypes, err = a.TypesWithSynchronizer(ectx, p.serviceType)
-		return err
-	})
-	if err := eg.Wait(); err != nil {
-		return nil, err
+	if snap != nil {
+		now := time.Now()
+		rules, missing, rulesUseNow = applicableFromSnapshot(snap, relevant, identity, env, now)
+		p.ttl = snap.ttl(relevant, now)
+		p.syncTypes = map[uuid.UUID]bool{}
+		for _, id := range p.serviceType {
+			if snap.synced[id] {
+				p.syncTypes[id] = true
+			}
+		}
+	} else {
+		eg, ectx := errgroup.WithContext(ctx)
+		eg.Go(func() (err error) {
+			rules, missing, rulesUseNow, err = a.applicableRules(ectx, relevantIDs, identity, env)
+			return err
+		})
+		eg.Go(func() error {
+			p.ttl = a.cacheTTL(ectx, relevantIDs)
+			return nil
+		})
+		eg.Go(func() (err error) {
+			p.syncTypes, err = a.TypesWithSynchronizer(ectx, p.serviceType)
+			return err
+		})
+		if err := eg.Wait(); err != nil {
+			return nil, err
+		}
 	}
 	// An answer that reads the hour or the weekday is correct until the next minute only.
 	if identityUsesNow || rulesUseNow {
@@ -635,7 +680,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		}
 	}
 
-	if p.Insts, err = a.BuildInstances(ctx, rules, env, missing); err != nil {
+	if p.Insts, err = a.buildInstances(ctx, snap, rules, env, missing); err != nil {
 		return nil, err
 	}
 	pairs, err := a.instancePairs(ctx, p.Insts)
@@ -651,6 +696,11 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 // yields one instance per ancestor found, and a rule with resource_where one per resource whose attributes match.
 // The lookups of all the rules run together, in parallel with the anchors of the rules that name a resource.
 func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
+	return a.buildInstances(ctx, nil, rules, env, missing)
+}
+
+// buildInstances is BuildInstances reading the access groups from the snapshot when there is one.
+func (a *App) buildInstances(ctx context.Context, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
 	var refs []anchorRef
 	var lookups []ancestorLookup
 	claimValues := map[int]string{}
@@ -693,6 +743,10 @@ func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, 
 		return err
 	})
 	eg.Go(func() (err error) {
+		if snap != nil {
+			groups = snap.accessGroupLevels(groupTypes)
+			return nil
+		}
 		groups, err = a.accessGroupLevels(ectx, groupTypes)
 		return err
 	})

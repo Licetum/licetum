@@ -78,7 +78,13 @@ lists accept a JSON array or a comma-separated string.
 | Prefix | Variables |
 |---|---|
 | `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE`, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO` |
-| `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers |
+| `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the check API's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
+| `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
+| `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `at_least_as_fresh` waits for its revision before the answer is computed from the data) |
+| `COMPUTE__` | `COMPUTE__CONCURRENCY`: answers computed at once (default half of `DB__POOL_SIZE`); the rest of a wave of cache misses queues |
+| `AUTH__` | `AUTH__STATE_SECRET`, `AUTH__STATE_TTL`; the token and key caches: `AUTH__TOKEN_L1_SIZE` (verified tokens kept in memory, default 50 000), `AUTH__JWKS_TTL` (default `10m`), `AUTH__JWKS_MIN_REFRESH` (default `30s`: an unknown key id refetches the key set at most this often), `AUTH__INVALID_TOKEN_TTL` (default `10s`) |
+| `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
+| `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
 | `PLATFORM__` | the self-service: its OAuth2 client (`PLATFORM__CLIENT_ID`, `PLATFORM__CLIENT_SECRET`, the authorization, token and JWKS URLs, the issuer) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`) |
 | `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
@@ -88,36 +94,24 @@ lists accept a JSON array or a comma-separated string.
 
 ## Synchronization pipeline
 
-The resource sources are synchronized by a separate process: `licetum worker`. The check API (`licetum check`) and the admin
-API only *ask* for a synchronization (a row in `sync_job`) and wait for it for a bounded time; they never write the resource
-graph. The state of the synchronization (`sync_state`: what was applied, when a type is due again, the backoff of a source that
-fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
+A request to the check API that finds its token and its answer in memory sends no query to PostgreSQL and no command to
+Redis. The pieces, all per process:
 
-- A job is claimed with `FOR UPDATE SKIP LOCKED` under a lease (`SYNC__LEASE`, 30 s) that the executor renews every lease/3. The
-  transaction that applies the result ends with an update of the job conditioned on the lease token: an executor that lost its
-  lease applies nothing (`licetum_sync_lease_lost_total`).
-- Requests for the same type, in any process, share one job (a unique index on its key); `consistency=higher` has its own job,
-  and the source of a type is asked by fresh jobs at most once per `SYNC__FRESH_MIN_INTERVAL` (1 s).
-- A request that needs the data of a type that was never synchronized waits `SYNC__REQUEST_WAIT` (5 s) for the job. When the
-  time passes it answers from what exists — the type contributes no resources — and sets `X-Authz-Sync: pending`. The admin
-  paths (resource lists, refresh) wait `SYNC__ADMIN_WAIT` (30 s). A type whose throttle (30 s) ran out is refreshed in the
-  background; the request answers from the data as of the last synchronization.
-- A source that does not answer is put in backoff for the whole cluster: `min(30 s · 2^attempts, 10 min)`; nobody asks it
-  until the backoff ends, and the data stays.
-- Writing the graph takes an advisory lock per connected component of the type graph (so unrelated types do not wait for each
-  other), with `lock_timeout` 5 s and `statement_timeout` `SYNC__STATEMENT_TIMEOUT` (120 s), on its own pool
-  (`DB__SYNC_POOL_SIZE`). A job that cannot get the lock in time is queued again.
-- The worker puts the types that are due on a schedule (`SYNC__SCHEDULE_TICK`, 5 s) when somebody asked for them within
-  `SYNC__DEMAND_WINDOW` (10 min), or always with `SYNC__KEEP_WARM`. `SYNC__CONCURRENCY` jobs run at once (default
-  `DB__SYNC_POOL_SIZE`).
-- The worker holds the whole list of a type in memory while it applies it; the check and admin processes never do. Size the
-  worker's memory for the largest type (the measurement is part of the load test).
-- The database role of the check pods needs `SELECT` on everything, `INSERT`/`UPDATE` on `sync_job`, and no `INSERT`,
-  `UPDATE` or `DELETE` on `resource_cache`, `resource_edge`, `resource_ancestor` and `sync_state`.
-
-Metrics: `licetum_sync_jobs{state}`, `licetum_sync_queue_age_seconds` (read from the database at every scrape, so it grows in
-the check and admin processes when every worker is down), `licetum_sync_job_seconds`, `licetum_sync_jobs_finished_total{state}`,
-`licetum_sync_lease_lost_total`, `licetum_source_calls_total{type,outcome}`.
+- **The policy snapshot** (`engine/snapshot.go`): the services, the type graph, the memberships, the rules, the role items
+  and the access groups, built in one read-only transaction for one revision of the policy (`revision_state`, scope `rules`) and
+  replaced as a whole when the revision moves. The validity windows of rules and memberships are compared with the clock
+  at every request, never built into the snapshot. A policy that does not fit `SNAPSHOT__MAX_BYTES` is not copied: the
+  queries read it (`licetum_snapshot_fallback_total`), as does `consistency=higher`, which asks for the freshest answer.
+- **The view** (`engine/localstate.go`): the revision of the rules and of the data of each service as read from PostgreSQL
+  (one statement), with the snapshot of that revision. It is renewed every `REVISION__POLL_INTERVAL` (`WatchRevision`, and
+  the requests), and at once after a write made through the process or a request that asks for `at_least_as_fresh` a newer
+  revision. When the revisions cannot be read the last view is served for up to `SNAPSHOT__MAX_AGE`, and answers are kept in
+  memory only. The revision and the data change in one transaction, so a replica never sees a revision before its data.
+- **Answers and tokens** are kept in memory first (`CACHE__ANSWER_L1_SIZE`, ten seconds at most; `AUTH__TOKEN_L1_SIZE`, a
+  minute at most) and in Redis second: a request that finds its answer only in Redis makes one round trip.
+- **Key sets** of the identity providers are kept per URL (`AUTH__JWKS_TTL`), fetched once for all the requests that wait
+  for them, and fetched again for an unknown key id at most once per `AUTH__JWKS_MIN_REFRESH`; a token that failed
+  verification is remembered for `AUTH__INVALID_TOKEN_TTL`.
 
 ## Tests
 
