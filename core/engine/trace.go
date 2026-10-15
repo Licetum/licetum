@@ -13,6 +13,8 @@ type Trace struct {
 	requestID string
 	actor     string
 	revision  int64
+	// syncPending says the answer lacks the data of a type that was not synchronized yet (see SyncResult.Pending).
+	syncPending bool
 }
 
 type traceKey struct{}
@@ -92,4 +94,18 @@ func WithMinRevision(ctx context.Context, v int64) context.Context {
 func minRevisionFrom(ctx context.Context) int64 {
 	v, _ := ctx.Value(minRevisionKey{}).(int64)
 	return v
+}
+
+func (t *Trace) setSyncPending() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.syncPending = true
+}
+
+// SyncPending says the answer was made without the data of some type: its synchronization had not finished in time. The
+// check API reports it in the X-Authz-Sync header.
+func (t *Trace) SyncPending() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.syncPending
 }

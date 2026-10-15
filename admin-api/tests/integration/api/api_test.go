@@ -22,6 +22,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,6 +71,28 @@ type env struct {
 	cfg   *config.Config
 	// adminToken is sent to the admin API by default (see do).
 	adminToken string
+	// stopWorker stops the worker the test process runs (a test that needs the jobs to wait calls it).
+	stopWorker func()
+}
+
+// startWorker runs a synchronization worker on app until the returned function is called or the test ends.
+func startWorker(t *testing.T, app *engine.App) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = app.RunWorker(ctx)
+	}()
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func setup(t *testing.T) *env {
@@ -147,6 +170,8 @@ func setup(t *testing.T) *env {
 
 	app := service.New(engine.New(pool, rdb, cfg))
 	t.Cleanup(app.Close)
+	// The synchronization jobs are executed by a worker; the test process runs one next to the APIs it serves.
+	e.stopWorker = startWorker(t, app.App)
 	e.app = app
 	e.pool = pool
 	e.cfg = cfg

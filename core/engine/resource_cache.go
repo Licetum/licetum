@@ -6,20 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"slices"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/licetum/licetum/core/apperr"
-	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
 )
@@ -38,20 +33,6 @@ import (
 // The permission computation works on this copy only and never asks a source per resource.
 
 const (
-	// syncHashSalt: changing it drops every stored hash (e.g. when the way the closure is built
-	// changes) — the next access rebuilds every type.
-	syncHashSalt   = "v4"
-	syncHashPrefix = "authz:resource_sync:hash:"
-	syncLastPrefix = "authz:resource_sync:last:"
-	// syncEpochKey grows on every write that changes what a synchronization produces (types,
-	// synchronizers): it is part of the throttle key, so such a write ends the throttle at once.
-	syncEpochKey = "authz:sync_epoch"
-	// syncTTL is how long a type's source is not asked again after a synchronization, unless the
-	// caller asks for higher consistency.
-	syncTTL = 30 * time.Second
-	// syncWriteLockKey is the advisory lock key: writers of the graph (also on different replicas)
-	// go strictly one after another, otherwise two transactions rebuilding the closure could deadlock.
-	syncWriteLockKey = 7_303_001
 	// insertChunkSize is the number of rows per INSERT built from unnest arrays.
 	insertChunkSize = 5000
 )
@@ -153,19 +134,6 @@ func writeString(w io.Writer, s string) {
 	_, _ = io.WriteString(w, s)
 }
 
-// syncDigest is what is stored in Redis for a type: the hash of the data and the signature of the
-// type graph above it. A changed graph part means every resource of the type must be recomputed even
-// though the data did not change; a changed data part is diffed against the cache.
-func syncDigest(data, graph string) string { return syncHashSalt + ":" + data + ":" + graph }
-
-func splitDigest(digest string) (data, graph string) {
-	parts := strings.Split(digest, ":")
-	if len(parts) != 3 || parts[0] != syncHashSalt {
-		return "", ""
-	}
-	return parts[1], parts[2]
-}
-
 // liveSynchronizers returns the synchronizer of each given type that has a live (not deleted) one.
 // The order is fixed: if a type has several synchronizers (nothing forbids it), the same one is
 // always taken — otherwise its resources would flicker.
@@ -218,222 +186,9 @@ type changedType struct {
 	touchAll bool
 }
 
-// syncPlan is what a synchronization knows before it fetches anything: the live synchronizers of the types,
-// which of them are within their throttle, and the hash each type was last synchronized with.
-type syncPlan struct {
-	epoch     string
-	synced    map[uuid.UUID]bool   // the types with a live synchronizer
-	syncs     []model.Synchronizer // their live synchronizers
-	throttled map[uuid.UUID]bool   // fetched again within syncTTL: not due
-	stored    map[uuid.UUID]string // the hash of the last synchronization ("" if never synchronized)
-}
-
-// throttleKey names the throttle of a type in the current sync epoch.
-func (p *syncPlan) throttleKey(typeID uuid.UUID) string {
-	return syncLastPrefix + p.epoch + ":" + typeID.String()
-}
-
-// planSync reads the state of the synchronization of the given types: their synchronizers, the throttle keys
-// and the stored hashes, the Redis part in two round trips. It fetches nothing and writes nothing, so it runs
-// without the synchronization lock.
-func (a *App) planSync(ctx context.Context, typeIDs []uuid.UUID) (*syncPlan, error) {
-	p := &syncPlan{synced: map[uuid.UUID]bool{}, throttled: map[uuid.UUID]bool{}, stored: map[uuid.UUID]string{}}
-	syncs, err := a.liveSynchronizers(ctx, typeIDs)
-	if err != nil {
-		return nil, err
-	}
-	p.syncs = syncs
-	for _, s := range syncs {
-		p.synced[s.TypeResourceID] = true
-	}
-	if len(syncs) == 0 {
-		return p, nil
-	}
-
-	epoch, err := a.Redis.Get(ctx, syncEpochKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		slog.WarnContext(ctx, "failed to read the sync epoch", "error", err)
-	}
-	p.epoch = epoch
-
-	pipe := a.Redis.Pipeline()
-	throttle := make([]*redis.IntCmd, len(syncs))
-	hashes := make([]*redis.StringCmd, len(syncs))
-	for i, s := range syncs {
-		throttle[i] = pipe.Exists(ctx, p.throttleKey(s.TypeResourceID))
-		hashes[i] = pipe.Get(ctx, syncHashPrefix+s.TypeResourceID.String())
-	}
-	_, _ = pipe.Exec(ctx) // every reply is read below: a missing key is a reply, not a failure of the pipeline
-	for i, s := range syncs {
-		typeID := s.TypeResourceID
-		if n, err := throttle[i].Result(); err == nil && n > 0 {
-			p.throttled[typeID] = true
-		}
-		hash, err := hashes[i].Result()
-		switch {
-		case err == nil:
-			p.stored[typeID] = hash
-		case !errors.Is(err, redis.Nil):
-			slog.WarnContext(ctx, "failed to read the resource sync hash", "error", err)
-		}
-	}
-	return p, nil
-}
-
-// syncOutcome is what a synchronization run found out: the types that have a live synchronizer, and those whose source
-// was asked and did not answer (their data stays as it was).
-type syncOutcome struct {
-	synced     map[uuid.UUID]bool
-	unanswered map[uuid.UUID]bool
-}
-
-// EnsureSynced runs syncTypes and returns the types that have a live synchronizer.
-func (a *App) EnsureSynced(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, fresh bool) (map[uuid.UUID]bool, error) {
-	out, err := a.syncTypes(ctx, g, typeIDs, fresh)
-	return out.synced, err
-}
-
-// syncTypes brings the local copy of the given types up to the state of their sources. The types not
-// synchronized within syncTTL are fetched (all of them with fresh), in parallel (the circuit breaker and
-// singleflight live in the adapter), but the DB is written only if something changed: the hash of the answer
-// is compared with the one stored in Redis. A source that did not answer is skipped; an answer with no resources is
-// the source's truth and switches off every resource of the type. The planning state is
-// read again here, under the synchronization lock: another replica may have synchronized meanwhile. The permission
-// path runs it through syncTypesOnce; the admin paths (IsCovered, ListResources) run it directly, and the writes
-// of the rows are serialized by the advisory lock.
-//
-// Returns the types that have a live synchronizer: only their data is current.
-func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, fresh bool) (syncOutcome, error) {
-	plan, err := a.planSync(ctx, typeIDs)
-	if err != nil {
-		return syncOutcome{}, err
-	}
-	var due []model.Synchronizer
-	for _, s := range plan.syncs {
-		if fresh || !plan.throttled[s.TypeResourceID] {
-			due = append(due, s)
-		}
-	}
-	if len(due) == 0 {
-		return syncOutcome{synced: plan.synced}, nil
-	}
-
-	started := time.Now()
-	fetched := make([][]model.Resource, len(due))
-	unanswered := make([]bool, len(due))
-	var wg sync.WaitGroup
-	for i, s := range due {
-		wg.Go(func() {
-			rows, err := a.Sync.FetchAll(ctx, s.Config, s.ID.String(), fresh)
-			fetched[i], unanswered[i] = rows, err != nil
-		})
-	}
-	wg.Wait()
-	fetchDuration := time.Since(started)
-	a.metrics.syncFetch.Observe(fetchDuration.Seconds())
-
-	dueIDs := make([]uuid.UUID, len(due))
-	for i, s := range due {
-		dueIDs[i] = s.TypeResourceID
-	}
-	counts, err := a.ActiveCounts(ctx, dueIDs)
-	if err != nil {
-		return syncOutcome{}, err
-	}
-
-	unansweredTypes := map[uuid.UUID]bool{}
-	var changed []changedType
-	var settled []uuid.UUID
-	for i, s := range due {
-		typeID := s.TypeResourceID
-		if unanswered[i] {
-			unansweredTypes[typeID] = true
-			slog.WarnContext(ctx, "the source of a resource type did not answer, sync skipped",
-				"type_resource_id", typeID)
-			a.metrics.syncResults.WithLabelValues("unanswered").Inc()
-			continue
-		}
-
-		normalized, dropped := NormalizeResources(g, typeID, fetched[i])
-		if dropped > 0 {
-			slog.WarnContext(ctx, "the source reports parents that cannot be resolved to a parent type of the resource type: "+
-				"the parent type is unknown or ambiguous (use parents[].type, service/name if needed)",
-				"type_resource_id", typeID, "links", dropped)
-		}
-		unique := make(map[string]IncomingResource, len(normalized))
-		for _, r := range normalized {
-			unique[r.ExternalID] = r
-		}
-		digest := syncDigest(dataDigest(unique), structureOf(g, typeID, s.Config))
-
-		stored := plan.stored[typeID]
-		if stored == digest && counts[typeID] == len(unique) {
-			settled = append(settled, typeID)
-			a.metrics.syncResults.WithLabelValues("unchanged").Inc()
-			continue
-		}
-
-		_, storedGraph := splitDigest(stored)
-		_, newGraph := splitDigest(digest)
-		rows := make([]IncomingResource, 0, len(unique))
-		for _, r := range unique {
-			rows = append(rows, r)
-		}
-		changed = append(changed, changedType{typeID: typeID, rows: rows, digest: digest, touchAll: storedGraph != newGraph})
-	}
-
-	if len(changed) > 0 {
-		writeStarted := time.Now()
-		err = db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, syncWriteLockKey); err != nil {
-				return err
-			}
-			touched := map[uuid.UUID]struct{}{}
-			for _, c := range changed {
-				if err := applyType(ctx, tx, c.typeID, c.rows, c.touchAll, false, touched, nil); err != nil {
-					return fmt.Errorf("sync type %s: %w", c.typeID, err)
-				}
-			}
-			return rebuildClosure(ctx, tx, touched)
-		})
-		if err != nil {
-			return syncOutcome{}, err
-		}
-		slog.InfoContext(ctx, "resource graph synchronized", "changed", len(changed), "types", len(due),
-			"fetch_ms", fetchDuration.Milliseconds(), "write_ms", time.Since(writeStarted).Milliseconds())
-	}
-
-	// The changed types are settled too; the metrics count them once, here.
-	changedIDs := make([]uuid.UUID, 0, len(changed))
-	for _, c := range changed {
-		changedIDs = append(changedIDs, c.typeID)
-		settled = append(settled, c.typeID)
-		a.metrics.syncResults.WithLabelValues("changed").Inc()
-	}
-	if len(settled) == 0 {
-		return syncOutcome{synced: plan.synced, unanswered: unansweredTypes}, nil
-	}
-
-	// One round trip records the data change of the changed types — the answers that read their services are stale
-	// from now on — then stores their hashes, and starts the throttle of every settled type. The data change goes
-	// first: if the hash is lost, the next sync sees a difference and records the change again.
-	pipe := a.Redis.Pipeline()
-	recordDataChange(ctx, pipe, g, changedIDs)
-	for _, c := range changed {
-		pipe.Set(ctx, syncHashPrefix+c.typeID.String(), c.digest, 0)
-	}
-	for _, id := range settled {
-		pipe.Set(ctx, plan.throttleKey(id), "1", syncTTL)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		slog.ErrorContext(ctx, "failed to store the resource sync state", "error", err)
-	}
-	return syncOutcome{synced: plan.synced, unanswered: unansweredTypes}, nil
-}
-
 // structureOf fingerprints what the stored data of a type depends on besides its source: the type graph above it
 // (the closure is built from it) and the synchronizer configuration. A state stored under another structure is not
-// current, so the next synchronization runs in the request (see syncWhileServing).
+// current, so the type has no usable data until the worker has synchronized it again (see ensure).
 func structureOf(g *TypeGraph, typeID uuid.UUID, cfg model.SynchronizerConfig) string {
 	// cache_ttl only sets how long the list of the source stays in Redis: it does not change the data.
 	cfg = cfg.Masked()
@@ -441,90 +196,6 @@ func structureOf(g *TypeGraph, typeID uuid.UUID, cfg model.SynchronizerConfig) s
 	raw, _ := json.Marshal(cfg)
 	sum := sha256.Sum256(raw)
 	return g.signature(typeID) + "-" + hex.EncodeToString(sum[:8])
-}
-
-// syncWhileServing is the synchronization of a minimize_latency answer. A type that was synchronized before, under
-// the structure it has now, is answered from its data as of the last synchronization, and refreshed in the
-// background once its throttle has run out: the request does not wait for the source. Any other type — never
-// synchronized, synchronized under another structure, or with no active rows and not emptied by the source — is synchronized in the request.
-// The types of the platform itself are synchronized in the request too: their rows are written by the admin API, and a
-// write must show at once. The planning reads Redis and the count of rows, not the source, so a request with nothing to
-// wait for takes no lock.
-func (a *App) syncWhileServing(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
-	plan, err := a.planSync(ctx, typeIDs)
-	if err != nil {
-		return nil, err
-	}
-	var stale, due []uuid.UUID
-	structures := map[uuid.UUID]string{}
-	for _, s := range plan.syncs {
-		id := s.TypeResourceID
-		_, storedStructure := splitDigest(plan.stored[id])
-		structure := structureOf(g, id, s.Config)
-		structures[id] = structure
-		node, ok := g.Node(id)
-		// The self-service types are written by the admin API itself: a write must be visible to the next request.
-		platform := ok && node.ServiceID == model.PlatformServiceID
-		switch {
-		case plan.throttled[id]:
-		case plan.stored[id] == "" || platform || storedStructure != structure:
-			due = append(due, id)
-		default:
-			stale = append(stale, id)
-		}
-	}
-	if len(stale) > 0 {
-		counts, err := a.ActiveCounts(ctx, stale)
-		if err != nil {
-			return nil, err
-		}
-		kept := stale[:0]
-		for _, id := range stale {
-			// A state synchronized to an answer with no resources has no active rows, and it is current: the source said so.
-			emptied := plan.stored[id] == syncDigest(dataDigest(nil), structures[id])
-			if counts[id] > 0 || emptied {
-				kept = append(kept, id)
-			} else {
-				due = append(due, id)
-			}
-		}
-		stale = kept
-	}
-	if len(stale) > 0 {
-		a.refreshInBackground(stale)
-	}
-	if len(due) > 0 {
-		if _, err := a.syncTypesOnce(ctx, due, false, func(ctx context.Context) (map[uuid.UUID]bool, error) {
-			return a.EnsureSynced(ctx, g, due, false)
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return plan.synced, nil
-}
-
-// refreshInBackground synchronizes the given types in the background, so that the requests that found their data
-// stale are answered without waiting for the source. The type graph is read again here: the one of the request
-// that started the refresh may predate an admin write. One refresh per set of types runs at a time in this process;
-// across replicas the synchronization lock of the set decides, as for any synchronization.
-func (a *App) refreshInBackground(typeIDs []uuid.UUID) {
-	name := typesLockName(typeIDs)
-	if _, running := a.refreshing.LoadOrStore(name, struct{}{}); running {
-		return
-	}
-	a.Background(func(ctx context.Context) {
-		defer a.refreshing.Delete(name)
-		g, err := a.LoadTypeGraph(ctx)
-		if err != nil {
-			slog.WarnContext(ctx, "background refresh of the resource types failed", "error", err)
-			return
-		}
-		if _, err := a.syncWithRedisLock(ctx, name, func(ctx context.Context) (map[uuid.UUID]bool, error) {
-			return a.EnsureSynced(ctx, g, typeIDs, false)
-		}); err != nil {
-			slog.WarnContext(ctx, "background refresh of the resource types failed", "error", err)
-		}
-	})
 }
 
 // metaJSON is the JSON text of an attribute map ({} for none).
@@ -1300,6 +971,9 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 	if err != nil {
 		return nil, err
 	}
+	if a.Role == RoleCheck {
+		return nil, errors.New("the check role does not write the resource graph")
+	}
 	sync, err := a.ActiveSynchronizer(ctx, typeResourceID)
 	if err != nil {
 		return nil, err
@@ -1308,10 +982,9 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 		if row := a.Sync.FetchOne(ctx, sync.Config, externalID, sync.ID.String()); row != nil {
 			normalized, _ := NormalizeResources(g, typeResourceID, []model.Resource{*row})
 			changed := false
-			err := db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
-				if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, syncWriteLockKey); err != nil {
-					return err
-				}
+			// The inline write takes the lock of the component of the type, like a synchronization does, and has the same
+			// timeouts.
+			err := a.syncTx(ctx, ComponentKeys(g, []uuid.UUID{typeResourceID}), func(tx pgx.Tx) error {
 				touched := map[uuid.UUID]struct{}{}
 				if err := applyType(ctx, tx, typeResourceID, normalized, false, true, touched, &changed); err != nil {
 					return err
@@ -1427,14 +1100,14 @@ func (a *App) RefreshResources(ctx context.Context, typeResourceID uuid.UUID) (*
 	if _, ok := g.Node(typeResourceID); !ok {
 		return nil, apperr.NotFound(i18n.TypeResourceNotFound, typeResourceID)
 	}
-	out, err := a.syncTypes(ctx, g, []uuid.UUID{typeResourceID}, true)
+	out, err := a.ensure(ctx, g, []uuid.UUID{typeResourceID}, SyncOptions{Fresh: true, Wait: a.adminWait()}, "admin")
 	if err != nil {
 		return nil, err
 	}
-	if !out.synced[typeResourceID] {
+	if !out.Synced[typeResourceID] {
 		return nil, apperr.Unprocessable(i18n.SynchronizerNoSource, typeResourceID)
 	}
-	if out.unanswered[typeResourceID] {
+	if out.Unanswered[typeResourceID] || out.Pending {
 		return nil, apperr.FailedDependency(i18n.SynchronizerNoAnswer, typeResourceID)
 	}
 	var res model.ResourceRefresh

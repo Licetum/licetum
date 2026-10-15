@@ -31,6 +31,8 @@ The backend is written in Go (`backend/`), one binary with subcommands:
 - `licetum check` — the single runtime endpoint client services actually call at request time
   (`GET /service/{service_id}/permission`), kept in its own process/port (8001) so it can be
   scaled/deployed independently of the admin surface. Route: `internal/api/check.go`.
+- `licetum worker` — the synchronization worker: executes the jobs that fetch the resource sources into the local copy, and keeps the
+  types in use fresh on a schedule. Metrics on :8002. The check and admin processes never apply a synchronization.
 - `licetum migrate` — apply DB migrations and seed the platform self-service.
 - `licetum restore-admin [-user name]...` — the way back in when nobody can manage the platform: puts the admin group, its
   memberships (`PLATFORM__ADMIN_CLAIM_VALUES` and each `-user`), the admin rules of every policy back in force and switches off
@@ -54,6 +56,7 @@ Backend (run from `backend/`, Go 1.26):
 go run ./cmd/licetum migrate           # apply migrations + seed self-service (idempotent)
 go run ./cmd/licetum admin             # admin API on :8000 (-addr / HTTP__ADDR to override)
 go run ./cmd/licetum check             # permission-check API on :8001
+go run ./cmd/licetum worker            # synchronization worker (jobs that fetch the resource sources), metrics on :8002
 go vet ./... && go test -race ./...                    # unit tests
 go test -race -tags integration ./...                  # integration tests via Testcontainers (set DOCKER_HOST for non-default contexts;
                                                        # LICETUM_TEST_POSTGRES_URI / LICETUM_TEST_REDIS_URI use running servers instead)
@@ -189,14 +192,13 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   an empty list is kept too: it is the source's answer). `consistency=higher` (`fresh`) asks the source anyway and
   refreshes that list. A source that does not answer (transport error, bad status, malformed or `null` body, open breaker,
   SQL source without `list_query`) is an error (`FetchAll` returns it): the sync is skipped and the data stays.
-  Concurrent synchronizations of the same set of types share one run inside a process (singleflight), and
-  across replicas the replica that takes the Redis lock (`authz:resource_sync:lock:<hash>`, `service/sync_lock.go`,
-  `SYNC__LOCK_TTL`) does the work while the others wait for its release (at most `SYNC__LOCK_WAIT`) and then find
-  the cache warm. Without Redis, or on a Redis error, the work runs without the lock — the lock is an optimization.
+  A synchronization is a **job** (`sync_job`, `engine/sync_jobs.go`, `engine/sync_worker.go`): the check and admin processes
+  ask for it with `Ensure` and wait for the result for a bounded time, the `worker` role executes it (see item 3 of the
+  permission computation). Requests for the same type, in any process, share one job; the source of a type is asked once.
   A type has **one** source: a second `POST` is 409 `synchronizer_exists`. `POST …/resource/synchronizer/test` tries a
   configuration without saving it (`service/source_check.go`: total, sample, repeated ids, parents that are nowhere, attributes;
   a failure message has the secrets of the configuration redacted) and `POST /type_resource/{id}/resource/refresh` asks the
-  source now (`RefreshResources`: `syncTypes` with fresh; 422 without a source, 424 when it did not answer).
+  source now (`RefreshResources`: `ensure` with `Fresh`; 422 without a source, 424 when it did not answer or the worker did not finish in `SYNC__ADMIN_WAIT`).
 - **ResourceCache**: the local copy of the resource hierarchy fetched by the synchronizers
   (`internal/service/resource_cache.go`) with an `active` flag (a resource gone from its source is
   switched off, not deleted). The permission computation works on this copy only and never asks a
@@ -335,21 +337,38 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    predicate/group rows (all enabled rules are scanned, matching subjects cannot be looked up). Then
    `expandRoles` replaces every role assignment by one rule per item of the role, keeping only the items on
    types the service reaches (`role_permission` joined with `type_resource`, deleted types excluded).
-3. `ensureSynced` (`resource_cache.go`) brings the local copy of the types the rules reach up to date
-   with their sources, under `syncTypesOnce` (one replica at a time per set of types, `service/sync_lock.go`).
-   Sources are fetched in parallel (circuit breaker + singleflight; the lists are cached in Redis for the
-   synchronizer's `cache_ttl`); the DB is written only when the hash of the answer + the type graph signature
-   (Redis `authz:resource_sync:hash:<type>`, value `v3:<data>:<graph>`) changed; under an advisory lock rows
-   are upserted, missing ones switched off, edges diffed, unresolved edges resolved and the closure rebuilt for
-   the touched nodes and their descendants (`rebuildClosureSQL`, bottom-up recursive CTE). A source that
-   did not answer is skipped; an answer with no resources is the source's truth: it switches off every resource of the type. `consistency=minimize_latency` (default) also throttles re-fetching a
-   type to once per 30 s per sync epoch (`authz:resource_sync:last:…`, the epoch `authz:sync_epoch` is bumped
-   with every admin write, see `bumpVersion`). A type synchronized before is not waited for once its throttle has run out:
-   its data as of the last synchronization answers, and the refresh runs in a goroutine (`refreshInBackground`); a type
-   never synchronized is synchronized in the request. `consistency=higher` skips the result cache, the throttle, the
-   background refresh and the cached source lists. The planning reads (`planSync`) take two Redis round trips and no lock.
-   Every committed change of a type's data bumps the data version of its service (`recordDataChange`, pipelined with
-   the hash and the throttle keys).
+3. `ensure` (`engine/sync_jobs.go`) makes sure the types the rules reach are synchronized; **the check path never writes the
+   graph**. State is in PostgreSQL: `sync_state` (per type: the digest `format`/`data_hash`/`graph_sig` of the last
+   synchronization, `applied_at`, `next_due_at` = the throttle of 30 s or the end of the backoff, `attempts`, `last_error`) and
+   `sync_job` (queued | running | done | failed, with the lease). One query reads the states of the involved types, and each
+   type falls in one case: no data under the current structure (never synchronized, or the type graph above it or its
+   synchronizer changed: `structureOf`) or a platform type that a write made due → the request enqueues the job and
+   **waits** for it up to `SYNC__REQUEST_WAIT` (5 s), then answers from what exists (the type contributes no resources, the
+   answer is cached for 2 s only, the response has `X-Authz-Sync: pending`); throttle run out → the job is queued without
+   waiting and the answer comes from the data as of the last synchronization; in backoff → nobody asks. `consistency=higher`
+   always waits for a *fresh* job (its own dedup key) that skips the throttle and the cached source list; fresh jobs ask
+   a type's source at most once per `SYNC__FRESH_MIN_INTERVAL`. There is one job per type (`dedup_key`, unique while
+   queued/running): concurrent requests in any process attach to it and poll `sync_job` (50–500 ms, one poller per job per
+   process). The worker claims a job with `FOR UPDATE SKIP LOCKED` under a lease (`SYNC__LEASE`, renewed every lease/3, new
+   `lease_token` per claim), fetches the sources in parallel (circuit breaker + singleflight; lists cached in Redis for the
+   synchronizer's `cache_ttl`), compares the digest with `sync_state` and applies the changed types in **one transaction**: it
+   takes the advisory lock of the connected component of the type graph (`ComponentKeys`; `lock_timeout` 5 s, `statement_timeout`
+   `SYNC__STATEMENT_TIMEOUT`; on `DB__SYNC_POOL_SIZE` connections, apart from the request pool), upserts rows, switches missing
+   ones off, diffs edges, resolves unresolved edges, rebuilds the closure for the touched nodes and their descendants
+   (`rebuildClosureSQL`), writes `sync_state`, and ends with `UPDATE sync_job SET state='done' … WHERE id AND lease_token`:
+   zero rows = the lease was lost, the transaction rolls back (`licetum_sync_lease_lost_total`). A source that did not answer
+   sets `attempts+1`, `last_error` and `next_due_at = now() + min(30 s · 2^attempts, 10 min)` for all replicas; the data stays.
+   An answer with no resources is the source's truth: it switches off every resource of the type. An admin write marks the
+   platform types due (`BumpVersion` → `invalidatePlatformSync`, `invalidated_at`): the next request waits for a job that
+   fetched after the write; it is the only effect of a write on the synchronization (a change of a type or a synchronizer
+   changes its structure signature instead). The digest keeps its shape; `format` 5 (4 is read too) is rewritten only when
+   data or graph signature changed, and a start of the worker imports the previous release's Redis hashes
+   (`authz:resource_sync:hash:<type>`, `v4:<data>:<graph>`) for types without a row. The worker's schedule (`SYNC__SCHEDULE_TICK`)
+   queues due types that someone asked for within `SYNC__DEMAND_WINDOW` (all with `SYNC__KEEP_WARM`), gives up a job claimed
+   5 times, and prunes old jobs. `App.Role` (check, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
+   outside the worker. Every committed change of a type's data bumps the data version of its service (`recordDataChange`,
+   Redis, right after the commit: the revision moves into the transaction with the data-revision work). `resolve` (one resource
+   refreshed inline by the admin API) writes under the same component lock and timeouts.
 4. Rules become *instances* (rule × anchor; a `resource_from_claim` rule yields the anchor found by one
    `findAncestors` query). Each instance covers the anchor's descendants through the closure
    (`expandAnchors`) with the level mask that flows to them; a whole-type rule covers all resources of the type

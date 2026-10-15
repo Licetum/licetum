@@ -115,3 +115,30 @@ func TestLoadPublicURL(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadSyncPipelineSettings(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.Sync
+	if s.Lease != 30*time.Second || s.RequestWait != 5*time.Second || s.StatementTimeout != 120*time.Second ||
+		s.ScheduleTick != 5*time.Second || s.FreshMinInterval != time.Second || s.KeepWarm || cfg.DB.SyncPoolSize != 4 {
+		t.Errorf("wrong synchronization defaults: %+v, sync pool %d", s, cfg.DB.SyncPoolSize)
+	}
+
+	t.Setenv("SYNC__LEASE", "9")
+	t.Setenv("SYNC__KEEP_WARM", "true")
+	t.Setenv("DB__SYNC_POOL_SIZE", "2")
+	t.Setenv("SYNC__LOCK_TTL", "10")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sync.Lease != 9*time.Second || !cfg.Sync.KeepWarm || cfg.DB.SyncPoolSize != 2 {
+		t.Errorf("wrong values: %+v", cfg.Sync)
+	}
+	if got := config.DeprecatedSettings(); !slices.Equal(got, []string{"SYNC__LOCK_TTL"}) {
+		t.Errorf("DeprecatedSettings = %v", got)
+	}
+}

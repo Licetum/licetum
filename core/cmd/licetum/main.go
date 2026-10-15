@@ -1,6 +1,7 @@
 // licetum is the runtime of Licetum, the part client services call on every request:
 //
 //	licetum check             — permission-check API (default :8001)
+//	licetum worker            — synchronization worker: executes the jobs that fetch the resource sources (default :8002, metrics)
 //	licetum migrate           — apply DB migrations and seed the self-service
 //	licetum openapi check [-yaml] [-lang en|ru|zh] — print the OpenAPI spec (no DB or Redis needed)
 //
@@ -30,6 +31,7 @@ const usage = `Usage: licetum <command> [flags]
 
 Commands:
   check     run the permission-check API (default :8001)
+  worker    run the synchronization worker (metrics on :8002)
   migrate   apply DB migrations and seed the self-service
   openapi   print the OpenAPI spec: licetum openapi check [-yaml] [-lang en|ru|zh]
 `
@@ -62,6 +64,8 @@ func main() {
 		err = cli.Serve(ctx, "check", os.Args[2:], ":8001", func(app *engine.App) http.Handler {
 			return server.NewCheckHandler(app)
 		}, logs)
+	case "worker":
+		err = cli.Worker(ctx, os.Args[2:], ":8002", logs)
 	case "migrate":
 		err = cli.Migrate(ctx)
 	case "openapi":

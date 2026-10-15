@@ -20,7 +20,9 @@ import (
 
 const (
 	ResultCacheTTL = 60 * time.Second
-	MaxGroupDepth  = 16
+	// pendingAnswerTTL is how long an answer is kept when a type it reads has no data yet.
+	pendingAnswerTTL = 2 * time.Second
+	MaxGroupDepth    = 16
 	// resultCacheFormat is the version of the cached result format: when the format changes, new keys
 	// do not overlap the old ones, and stale entries simply expire by TTL.
 	resultCacheFormat = "t6"
@@ -608,17 +610,18 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		}
 	}
 	involvedIDs := Keys(involved)
-	var synced map[uuid.UUID]bool
-	var err error
-	if consistency.fresh() {
-		synced, err = a.syncTypesOnce(ctx, involvedIDs, true, func(ctx context.Context) (map[uuid.UUID]bool, error) {
-			return a.EnsureSynced(ctx, g, involvedIDs, true)
-		})
-	} else {
-		synced, err = a.syncWhileServing(ctx, g, involvedIDs)
-	}
+	// The check path asks for the synchronization and waits for it for a bounded time; it never writes the graph itself.
+	res, err := a.ensure(ctx, g, involvedIDs, SyncOptions{Fresh: consistency.fresh(), Wait: a.requestWait()}, "request")
 	if err != nil {
 		return nil, err
+	}
+	synced := res.Synced
+	if res.Pending {
+		// The data of some type is not there yet: the answer is made of what exists and is not kept for long.
+		if t := TraceFrom(ctx); t != nil {
+			t.setSyncPending()
+		}
+		p.ttl = min(p.ttl, pendingAnswerTTL)
 	}
 	p.syncedTypes(synced)
 

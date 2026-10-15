@@ -77,14 +77,47 @@ lists accept a JSON array or a comma-separated string.
 
 | Prefix | Variables |
 |---|---|
-| `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE`, `DB__POOL_TIMEOUT`, …), `DB__ECHO` |
-| `REDIS__` | `REDIS__URI`: the permission cache, the synchronization locks, the circuit breakers |
+| `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE`, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO` |
+| `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers |
 | `PLATFORM__` | the self-service: its OAuth2 client (`PLATFORM__CLIENT_ID`, `PLATFORM__CLIENT_SECRET`, the authorization, token and JWKS URLs, the issuer) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`) |
-| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT` |
+| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person) |
 | `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address; the address clients reach the check API at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
 | `LOG__LEVEL` | `debug` for debug logs |
+
+## Synchronization pipeline
+
+The resource sources are synchronized by a separate process: `licetum worker`. The check API (`licetum check`) and the admin
+API only *ask* for a synchronization (a row in `sync_job`) and wait for it for a bounded time; they never write the resource
+graph. The state of the synchronization (`sync_state`: what was applied, when a type is due again, the backoff of a source that
+fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
+
+- A job is claimed with `FOR UPDATE SKIP LOCKED` under a lease (`SYNC__LEASE`, 30 s) that the executor renews every lease/3. The
+  transaction that applies the result ends with an update of the job conditioned on the lease token: an executor that lost its
+  lease applies nothing (`licetum_sync_lease_lost_total`).
+- Requests for the same type, in any process, share one job (a unique index on its key); `consistency=higher` has its own job,
+  and the source of a type is asked by fresh jobs at most once per `SYNC__FRESH_MIN_INTERVAL` (1 s).
+- A request that needs the data of a type that was never synchronized waits `SYNC__REQUEST_WAIT` (5 s) for the job. When the
+  time passes it answers from what exists — the type contributes no resources — and sets `X-Authz-Sync: pending`. The admin
+  paths (resource lists, refresh) wait `SYNC__ADMIN_WAIT` (30 s). A type whose throttle (30 s) ran out is refreshed in the
+  background; the request answers from the data as of the last synchronization.
+- A source that does not answer is put in backoff for the whole cluster: `min(30 s · 2^attempts, 10 min)`; nobody asks it
+  until the backoff ends, and the data stays.
+- Writing the graph takes an advisory lock per connected component of the type graph (so unrelated types do not wait for each
+  other), with `lock_timeout` 5 s and `statement_timeout` `SYNC__STATEMENT_TIMEOUT` (120 s), on its own pool
+  (`DB__SYNC_POOL_SIZE`). A job that cannot get the lock in time is queued again.
+- The worker puts the types that are due on a schedule (`SYNC__SCHEDULE_TICK`, 5 s) when somebody asked for them within
+  `SYNC__DEMAND_WINDOW` (10 min), or always with `SYNC__KEEP_WARM`. `SYNC__CONCURRENCY` jobs run at once (default
+  `DB__SYNC_POOL_SIZE`).
+- The worker holds the whole list of a type in memory while it applies it; the check and admin processes never do. Size the
+  worker's memory for the largest type (the measurement is part of the load test).
+- The database role of the check pods needs `SELECT` on everything, `INSERT`/`UPDATE` on `sync_job`, and no `INSERT`,
+  `UPDATE` or `DELETE` on `resource_cache`, `resource_edge`, `resource_ancestor` and `sync_state`.
+
+Metrics: `licetum_sync_jobs{state}`, `licetum_sync_queue_age_seconds` (read from the database at every scrape, so it grows in
+the check and admin processes when every worker is down), `licetum_sync_job_seconds`, `licetum_sync_jobs_finished_total{state}`,
+`licetum_sync_lease_lost_total`, `licetum_source_calls_total{type,outcome}`.
 
 ## Tests
 

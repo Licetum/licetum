@@ -5,6 +5,7 @@ package api_test
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -124,7 +125,7 @@ func TestMinimizeLatencyRefreshesAChangedSourceInTheBackground(t *testing.T) {
 		return string(raw)
 	}
 
-	// The first synchronization has nothing to answer from: it is done in the request.
+	// The first synchronization has nothing to answer from: the request waits for the worker's job.
 	if got := ask(); !strings.Contains(got, `"b2"`) {
 		t.Fatalf("the first answer misses the source's resources: %s", got)
 	}
@@ -135,8 +136,10 @@ func TestMinimizeLatencyRefreshesAChangedSourceInTheBackground(t *testing.T) {
 	mu.Lock()
 	list = append(list, map[string]any{"id": "b3", "name": "Branch3"})
 	mu.Unlock()
-	// An admin write ends the throttle of the synchronization, so the next answer finds the source due.
-	e.must("POST", "/service", servicePayload(e, "refresh-bump"))
+	// The throttle of the synchronization runs out (an admin write does not end it: that is the platform types' business).
+	if _, err := e.pool.Exec(context.Background(), `UPDATE sync_state SET next_due_at = now() WHERE type_resource_id = $1`, branch); err != nil {
+		t.Fatal(err)
+	}
 
 	deadline := time.Now().Add(10 * time.Second)
 	for !strings.Contains(ask(), `"b3"`) {
