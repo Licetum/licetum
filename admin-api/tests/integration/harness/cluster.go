@@ -127,6 +127,7 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		}
 	}
 	t.Cleanup(func() {
+		_, _ = conn.Exec(context.Background(), "DROP SCHEMA IF EXISTS dbos_"+schema+" CASCADE")
 		_, _ = conn.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
 		_ = conn.Close(context.Background())
 	})
@@ -142,7 +143,9 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	}
 
 	c.Cfg = &config.Config{
-		DB:       config.Database{URI: withSchema(dbURI), PoolSize: 5},
+		DB: config.Database{URI: withSchema(dbURI), PoolSize: 5},
+		// The DBOS tables of the cluster live in a schema of their own, dropped with it.
+		Sync:     config.Sync{DBOSSchema: "dbos_" + schema},
 		Auth:     config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
@@ -185,6 +188,7 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	t.Cleanup(func() { _ = adminRedis.Close() })
 	c.Admin = service.New(engine.New(adminPool, adminRedis, c.Cfg))
 	t.Cleanup(c.Admin.Close)
+	c.startWorker()
 	c.AdminServer = serve(t, api.NewAdminHandler(c.Admin))
 	c.AdminToken = c.IdP.Token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
 
@@ -212,6 +216,32 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		c.Replicas = append(c.Replicas, c.startReplica(i, replicaDB, replicaRedis))
 	}
 	return c
+}
+
+// startWorker runs the synchronization worker of the cluster: the check and admin processes only ask for synchronizations.
+func (c *Cluster) startWorker() {
+	t := c.T
+	ctx := context.Background()
+	pool, err := db.Connect(ctx, c.Cfg.DB)
+	if err != nil {
+		t.Fatalf("worker: connect to PostgreSQL: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	rdb, err := redisx.Connect(ctx, c.Infra.RedisURI)
+	if err != nil {
+		t.Fatalf("worker: connect to Redis: %v", err)
+	}
+	t.Cleanup(func() { _ = rdb.Close() })
+	app := engine.New(pool, rdb, c.Cfg)
+	app.Role = engine.RoleWorker
+	t.Cleanup(app.Close)
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = app.RunWorker(runCtx)
+	}()
+	t.Cleanup(func() { stop(); <-done })
 }
 
 func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
@@ -442,6 +472,24 @@ func (r *Replica) Metrics(c *Cluster) string {
 	return string(raw)
 }
 
+// WaitForSyncIdle waits until the synchronization worker has nothing queued or running, and the replicas have had time to
+// see the revisions it moved (two polls of the revision): a synchronization that ends meanwhile makes a replica read the
+// policy again, which would be counted against the request being measured.
+func (c *Cluster) WaitForSyncIdle() {
+	c.T.Helper()
+	ctx := context.Background()
+	q := fmt.Sprintf(`SELECT count(*) FROM %s.workflow_status WHERE status IN ('ENQUEUED', 'PENDING')`, pgx.Identifier{c.Cfg.Sync.DBOSSchema}.Sanitize())
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		var active int
+		if err := c.Pool.QueryRow(db.Uncounted(ctx), q).Scan(&active); err != nil || active == 0 {
+			break // no table yet, or nothing active
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(600 * time.Millisecond)
+}
+
 // Warm sends the request until the replica is in a steady state for it: the answer and the token are cached and the
 // background work of the earlier requests (writing the cache, refreshing a source) has ended, which is when two
 // requests in a row cost the same. It returns the last of them. The cost of a request is meaningful only then.
@@ -461,6 +509,7 @@ func (r *Replica) Warm(c *Cluster, method, path, token string) *Result {
 		}
 		last = res
 		if same >= 2 {
+			c.WaitForSyncIdle()
 			time.Sleep(100 * time.Millisecond) // let the background work of the last request end
 			return r.Do(c, method, path, token, nil)
 		}

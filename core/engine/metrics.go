@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/licetum/licetum/core/db"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -193,7 +195,7 @@ func (c *syncQueueCollector) Collect(ch chan<- prometheus.Metric) {
 	if c.app == nil || c.app.DB == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(db.Uncounted(context.Background()), 2*time.Second)
 	defer cancel()
 	var queued, running int64
 	var age float64
