@@ -25,7 +25,7 @@ const (
 )
 
 // checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format.
-const checkResultFormat = "t2"
+const checkResultFormat = "t3"
 
 // CheckAccess answers the questions "may the caller do X with Y" without building the whole permission map: the
 // rules are loaded once, and the questions are answered together, each from the ancestors of its resource. The
@@ -38,7 +38,7 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 	}
 	sum := sha256.Sum256(questions)
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
-	key := fmt.Sprintf("authz:check:%s:v%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
+	key := fmt.Sprintf("authz:check:%s:r%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env), explain, hex.EncodeToString(sum[:]))
 	results, err := cachedAnswer(ctx, a, key, state, consistency, a.metrics.checkCache,
 		func(ctx context.Context) (computed[[]model.CheckResult], error) {

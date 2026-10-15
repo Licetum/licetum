@@ -16,89 +16,63 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/redisx"
 )
 
-// The answers of the permission and check APIs are kept in Redis. An answer is current while the rules have
-// not changed — the global version, part of its key, that every admin write bumps — and while the resource data
-// it was computed from has not changed. The second is kept per service: a synchronization that changes the data
-// of a service's types bumps that service's data version, and an answer records the data versions of the services
-// it read. So a change in one service leaves in place the answers that do not read it.
+// The answers of the permission and check APIs are kept in Redis (and in memory). An answer is current while the rules
+// have not changed — the revision of the policy, part of its key — and while the resource data it was computed from has
+// not changed. Both numbers live in PostgreSQL, in the table revision_state, and change in the transaction that changes
+// the data they number: a write of an administrator bumps the revision 'rules', a synchronization that changed the data
+// of a service's types bumps 'data:<service>'. An answer records the data revisions of the services it read, so a change
+// in one service leaves in place the answers that do not read it.
 
 const (
-	// claimAttrsKey holds the claim names the rules look at, as a claimAttrsRecord.
-	claimAttrsKey = "authz:claim_attrs:t4"
-	claimAttrsTTL = time.Hour
-	// dataVersionsKey is a hash: service id -> version of the resource data of the service.
+	// dataVersionsKey is a hash: service id -> version of the resource data of the service. Since the revision moved to
+	// PostgreSQL only the replicas of the previous release read it; the synchronizations still write it for them.
 	dataVersionsKey = "authz:data_versions"
 	// computeTimeout bounds a computation that goes on after its first caller has gone away (singleflight).
 	computeTimeout = 30 * time.Second
 )
 
-// claimAttrsRecord is what claimAttrsKey holds: the claim names read for one rules version.
-type claimAttrsRecord struct {
-	Version int64    `json:"version"`
-	Attrs   []string `json:"attrs"`
-}
-
-// cacheState is what a request reads from Redis before it computes or looks up an answer: the rules version,
-// the claim names of the rules for that version, and the data version of every service.
+// cacheState is what a request reads before it computes or looks up an answer: the revision of the rules, the revision
+// of the resource data of every service, and the names of the request attributes the rules look at.
 type cacheState struct {
-	// ok is false when Redis could not be read: the answer is computed and not kept.
+	// ok is false when the revisions could not be read: the answer is computed and not kept.
 	ok      bool
-	version int64
-	data    map[string]int64 // service id -> data version (absent: 0)
+	version int64            // the revision of the rules
+	data    map[string]int64 // service id -> revision of its resource data (absent: 0)
 	attrs   []string
-	// attrsOK says the claim names were read for this rules version (otherwise they must be read again).
+	// attrsOK says the attribute names are those of this revision (otherwise they are read from the rules).
 	attrsOK bool
 	// tag names the data versions the state holds (see dataTag).
 	tag string
 	// snap is the policy snapshot of the revision, when the process keeps the policy in memory (see localView).
 	snap *snapshot
-	// degraded says Redis could not be read lately and the state is the last one this process read: the answers are
-	// kept in memory only, and Redis is not asked for them.
+	// degraded says the revisions could not be read lately and the state is the last one this process read: the answers
+	// are kept in memory only.
 	degraded bool
 }
 
-// readCacheState reads the rules version, the claim names and the data versions of the services in one round
-// trip. A Redis error leaves the state not ok.
+// readCacheState reads the revisions from PostgreSQL, in one statement. An error leaves the state not ok.
 func (a *App) readCacheState(ctx context.Context) cacheState {
-	pipe := a.Redis.Pipeline()
-	version := pipe.Get(ctx, redisx.VersionKey)
-	attrs := pipe.Get(ctx, claimAttrsKey)
-	data := pipe.HGetAll(ctx, dataVersionsKey)
-	_, _ = pipe.Exec(ctx) // every reply is read below: a missing key is a reply, not a failure of the pipeline
-
-	fail := func(err error) cacheState {
-		logRedis(ctx, slog.LevelWarn, "failed to read the cache state", err)
+	rev, err := db.LoadRevisions(ctx, a.DB)
+	if err != nil {
+		slog.WarnContext(ctx, "failed to read the revision of the policy", "error", err)
 		return cacheState{}
 	}
-	state := cacheState{ok: true, data: map[string]int64{}}
-	var err error
-	if state.version, err = counter(version); err != nil {
-		return fail(err)
-	}
-	if raw, err := attrs.Bytes(); err == nil {
-		var record claimAttrsRecord
-		if json.Unmarshal(raw, &record) == nil && record.Version == state.version {
-			state.attrs, state.attrsOK = record.Attrs, true
-		}
-	} else if !errors.Is(err, redis.Nil) {
-		return fail(err)
-	}
-	fields, err := data.Result()
-	if err != nil {
-		return fail(err)
-	}
-	for svc, v := range fields {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return fail(err)
-		}
-		state.data[svc] = n
-	}
+	state := cacheState{ok: true, version: rev.Rules, data: rev.Data}
 	state.tag = dataTag(state.data)
+	if memo := a.attrsMemo.Load(); memo != nil && memo.revision == rev.Rules {
+		state.attrs, state.attrsOK = memo.attrs, true
+	}
 	return state
+}
+
+// attrsMemo remembers the attribute names of one revision of the rules, for the processes that do not keep the snapshot.
+type attrsMemo struct {
+	revision int64
+	attrs    []string
 }
 
 // forConsistency is the state a request of the given consistency decides from. consistency=higher asks for the freshest
@@ -118,18 +92,6 @@ func logRedis(ctx context.Context, level slog.Level, msg string, err error) {
 		level = slog.LevelDebug
 	}
 	slog.Log(ctx, level, msg, "error", err)
-}
-
-// counter reads an integer reply; a missing key is 0.
-func counter(cmd *redis.StringCmd) (int64, error) {
-	raw, err := cmd.Result()
-	if errors.Is(err, redis.Nil) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return strconv.ParseInt(raw, 10, 64)
 }
 
 // current reports whether an answer computed from the data versions deps is still current.
@@ -172,9 +134,12 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		return c.value, nil
 	}
 
+	store := true
 	if minRevisionFrom(ctx) > state.version {
-		// the cache is older than the revision the caller asks for (see WithMinRevision): compute from the data
+		// This process did not reach the revision the caller asks for (see WithMinRevision) within REVISION__WAIT_MAX:
+		// the answer is computed from the data, and not kept under a revision it could not be confirmed to reflect.
 		consistency = HigherConsistency
+		store = false
 	}
 
 	flight := key + "|" + state.tag
@@ -210,9 +175,21 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 	shared, err, _ := a.answers.Do(flight, func() (any, error) {
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), computeTimeout)
 		defer cancel()
+		// A wave of misses (a revision moved under many hot keys) queues here instead of exhausting the database pool.
+		if a.computeSlots != nil {
+			select {
+			case a.computeSlots <- struct{}{}:
+				defer func() { <-a.computeSlots }()
+			case <-cctx.Done():
+				return nil, cctx.Err()
+			}
+		}
 		c, err := compute(cctx)
 		if err != nil {
 			return nil, err
+		}
+		if !store {
+			return c.value, nil
 		}
 		entry := cachedEntry[T]{Value: c.value, Deps: c.deps, Exp: time.Now().Add(c.ttl).UnixMilli()}
 		a.keepAnswerInMemory(key, &entry, time.Now())
@@ -246,8 +223,9 @@ func (a *App) keepAnswerInMemory(key string, entry any, now time.Time) {
 	a.answersL1.Add(key, entry, min(maxAnswerL1TTL, time.UnixMilli(exp).Sub(now)), now)
 }
 
-// recordDataChange adds to the pipeline the bump of the data version of every service that owns one of the given
-// types. Call it after the data is committed: the answers that read those services are stale from then on.
+// recordDataChange adds to the pipeline the bump of the data version of every service that owns one of the given types,
+// in the Redis hash the replicas of the previous release read. The authoritative revision is the one bumpDataRevisions
+// moves in PostgreSQL, in the transaction that wrote the data; this one is for a rolling update.
 func recordDataChange(ctx context.Context, pipe redis.Pipeliner, g *TypeGraph, typeIDs []uuid.UUID) {
 	seen := map[uuid.UUID]bool{}
 	for _, id := range typeIDs {
@@ -276,4 +254,29 @@ func dataTag(data map[string]int64) string {
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:8])
+}
+
+// dataServices are the services that own the given types, each once, in a fixed order.
+func dataServices(g *TypeGraph, typeIDs []uuid.UUID) []uuid.UUID {
+	seen := map[uuid.UUID]bool{}
+	var out []uuid.UUID
+	for _, id := range typeIDs {
+		if n, ok := g.Node(id); ok && !seen[n.ServiceID] {
+			seen[n.ServiceID] = true
+			out = append(out, n.ServiceID)
+		}
+	}
+	slices.SortFunc(out, func(x, y uuid.UUID) int { return compareUUID(x, y) })
+	return out
+}
+
+// bumpDataRevisions moves the revision of the resource data of every service that owns one of the given types. It runs in
+// the transaction that wrote the data, so the revision cannot reach a reader before the data does.
+func bumpDataRevisions(ctx context.Context, q db.Querier, g *TypeGraph, typeIDs []uuid.UUID) error {
+	for _, service := range dataServices(g, typeIDs) {
+		if _, err := db.BumpRevision(ctx, q, db.DataScope(service)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

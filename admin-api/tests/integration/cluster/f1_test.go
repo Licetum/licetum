@@ -23,7 +23,7 @@ import (
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
-	"github.com/licetum/licetum/core/redisx"
+	"github.com/licetum/licetum/core/db"
 )
 
 type request struct {
@@ -154,7 +154,7 @@ func missCost(t *testing.T, n int) (queries int, ops map[string]int) {
 	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
 
 	insertRules(t, c, p.Branch, n)
-	rev, err := c.Redis.Incr(context.Background(), redisx.VersionKey).Result()
+	rev, err := db.BumpRevision(context.Background(), c.Pool, db.ScopeRules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,10 +433,10 @@ func TestF1_TheSnapshotCanBeTurnedOff(t *testing.T) {
 	if r.App.PolicySnapshotLoaded() {
 		t.Fatal("a snapshot was built although it is turned off")
 	}
-	// The old costs: the service is looked up twice, and Redis is read three times (the state, the token, the answer),
-	// minus the token and the answer that are now kept in memory.
-	if warm.Trace.DBQueries() != 2 || warm.Trace.RedisRoundTrips() != 1 {
-		t.Errorf("without the snapshot a warm request made db=%d redis=%d (%v), want 2 and 1", warm.Trace.DBQueries(),
+	// Without the snapshot the slug and the service are looked up, and the revisions are read; the token and the answer
+	// are still kept in memory.
+	if warm.Trace.DBQueries() != 3 || warm.Trace.RedisRoundTrips() != 0 {
+		t.Errorf("without the snapshot a warm request made db=%d redis=%d (%v), want 3 and 0", warm.Trace.DBQueries(),
 			warm.Trace.RedisRoundTrips(), warm.Trace.RedisOps())
 	}
 }

@@ -382,6 +382,7 @@ func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, 
 		changed = append(changed, changedType{typeID: typeID, rows: rows, digest: digest, touchAll: storedGraph != newGraph})
 	}
 
+	dataMoved := false
 	if len(changed) > 0 {
 		writeStarted := time.Now()
 		err = db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
@@ -389,15 +390,32 @@ func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, 
 				return err
 			}
 			touched := map[uuid.UUID]struct{}{}
+			var changedTypes []uuid.UUID
 			for _, c := range changed {
-				if err := applyType(ctx, tx, c.typeID, c.rows, c.touchAll, false, touched, nil); err != nil {
+				// A hash that differs does not mean the rows do (the hash is lost with Redis): the database says what changed.
+				var rowsChanged bool
+				if err := applyType(ctx, tx, c.typeID, c.rows, c.touchAll, false, touched, &rowsChanged); err != nil {
 					return fmt.Errorf("sync type %s: %w", c.typeID, err)
 				}
+				// (A change of the type graph, which makes touchAll, is an admin write: it moved the revision of the rules.)
+				if rowsChanged {
+					changedTypes = append(changedTypes, c.typeID)
+				}
 			}
-			return rebuildClosure(ctx, tx, touched)
+			if err := rebuildClosure(ctx, tx, touched); err != nil {
+				return err
+			}
+			// The revision of the data of these services moves in the transaction that moved the data, and only when
+			// the data moved: an answer that read it is stale from then on, and a synchronization that finds nothing
+			// new (after a Redis restart, say) must not make every cached answer so.
+			dataMoved = len(changedTypes) > 0
+			return bumpDataRevisions(ctx, tx, g, changedTypes)
 		})
 		if err != nil {
 			return syncOutcome{}, err
+		}
+		if dataMoved {
+			a.invalidateView() // the data revisions moved: the next request reads them again
 		}
 		slog.InfoContext(ctx, "resource graph synchronized", "changed", len(changed), "types", len(due),
 			"fetch_ms", fetchDuration.Milliseconds(), "write_ms", time.Since(writeStarted).Milliseconds())
@@ -427,8 +445,6 @@ func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, 
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		logRedis(ctx, slog.LevelError, "failed to store the resource sync state", err)
-	} else if len(changedIDs) > 0 {
-		a.invalidateView() // the data versions moved: the next request reads them again
 	}
 	return syncOutcome{synced: plan.synced, unanswered: unansweredTypes}, nil
 }
@@ -1320,18 +1336,23 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 				if err := applyType(ctx, tx, typeResourceID, normalized, false, true, touched, &changed); err != nil {
 					return err
 				}
-				return rebuildClosure(ctx, tx, touched)
+				if err := rebuildClosure(ctx, tx, touched); err != nil {
+					return err
+				}
+				if changed {
+					return bumpDataRevisions(ctx, tx, g, []uuid.UUID{typeResourceID})
+				}
+				return nil
 			})
 			if err != nil {
 				return nil, err
 			}
 			if changed {
+				a.invalidateView()
 				pipe := a.Redis.Pipeline()
 				recordDataChange(ctx, pipe, g, []uuid.UUID{typeResourceID})
 				if _, err := pipe.Exec(ctx); err != nil {
-					logRedis(ctx, slog.LevelError, "failed to record the resource data change", err)
-				} else {
-					a.invalidateView()
+					logRedis(ctx, slog.LevelWarn, "failed to record the resource data change for the previous release", err)
 				}
 			}
 		}

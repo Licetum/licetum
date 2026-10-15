@@ -15,12 +15,13 @@ import (
 
 // RunBatch applies the operations in one transaction, in order: all of them take effect, or none. An operation sees
 // the writes of the ones before it. An operation that fails is reported with its index (apperr.Error.AtOperation).
-// The cache version is bumped once, after the commit.
+// The revision of the rules is bumped once, in the same transaction.
 func (a *App) RunBatch(ctx context.Context, ops []model.BatchOperation) ([]model.BatchResult, error) {
 	if err := CheckOperations(ops); err != nil {
 		return nil, err
 	}
 	results := make([]model.BatchResult, 0, len(ops))
+	var revision int64
 	err := db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
 		bctx, run := withBatch(ctx, tx)
 		for i, op := range ops {
@@ -35,15 +36,22 @@ func (a *App) RunBatch(ctx context.Context, ops []model.BatchOperation) ([]model
 		}
 		// The operations may replace the admin access one by the other; what counts is what is left at the end.
 		if run.adminTouched {
-			return a.guardAdminAccess(ctx, tx)
+			if err := a.guardAdminAccess(ctx, tx); err != nil {
+				return err
+			}
 		}
-		return nil
+		if len(ops) == 0 {
+			return nil
+		}
+		var err error
+		revision, err = db.BumpRevision(ctx, tx, db.ScopeRules)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(ops) > 0 {
-		a.BumpVersion(ctx)
+		a.AfterWrite(ctx, revision)
 	}
 	return results, nil
 }

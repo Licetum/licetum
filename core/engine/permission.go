@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -24,7 +23,7 @@ const (
 	MaxGroupDepth  = 16
 	// resultCacheFormat is the version of the cached result format: when the format changes, new keys
 	// do not overlap the old ones, and stale entries simply expire by TTL.
-	resultCacheFormat = "t6"
+	resultCacheFormat = "t7"
 )
 
 // PermissionResult — {type_resource_name: sync {resources} | not_sync {access}}.
@@ -74,7 +73,7 @@ func (a *App) GetPermission(ctx context.Context, serviceID uuid.UUID, subject st
 // on each type as a whole.
 func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, consistency Consistency) (*permissionData, error) {
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
-	key := fmt.Sprintf("authz:permission:%s:v%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
+	key := fmt.Sprintf("authz:permission:%s:r%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env))
 	return cachedAnswer(ctx, a, key, state, consistency, a.metrics.permissionCache,
 		func(ctx context.Context) (computed[*permissionData], error) {
@@ -93,8 +92,8 @@ func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subjec
 
 // requestFingerprint hashes what the request carries that the rules look at (its claims and its context attributes):
 // two requests with the same fingerprint get the same answer. The names of those attributes are kept in the cache state
-// for the current rules version; when they are not there, they are read from the rules and stored for the requests that
-// follow.
+// for the current revision of the rules (by the snapshot, or by the memo of the process); when they are not there, they
+// are read from the rules and remembered for the requests that follow.
 func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env) string {
 	if state.attrsOK {
 		return fingerprint(state.attrs, env)
@@ -106,13 +105,7 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 		return fingerprint(allRequestAttributes(env), env)
 	}
 	if state.ok {
-		if record, err := json.Marshal(claimAttrsRecord{Version: state.version, Attrs: attrs}); err == nil {
-			a.Background(func(ctx context.Context) {
-				if err := a.Redis.Set(ctx, claimAttrsKey, record, claimAttrsTTL).Err(); err != nil {
-					logRedis(ctx, slog.LevelWarn, "failed to store the attributes the rules look at", err)
-				}
-			})
-		}
+		a.attrsMemo.Store(&attrsMemo{revision: state.version, attrs: attrs})
 	}
 	return fingerprint(attrs, env)
 }

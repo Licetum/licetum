@@ -57,7 +57,7 @@ type Cluster struct {
 	PostgresFault, RedisFault *support.FaultProxy
 
 	// LastRevision is the revision (X-Authz-Revision) of the last write made through AdminDo or Must. The replicas
-	// follow the revision with a delay of up to SNAPSHOT__REVISION_POLL; Replica.Permission asks for at least this one, so
+	// follow the revision with a delay of up to REVISION__POLL_INTERVAL; Replica.Permission asks for at least this one, so
 	// that it sees the writes of the test, as a client that passes at_least_as_fresh does.
 	LastRevision atomic.Int64
 
@@ -231,6 +231,10 @@ func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
 	t.Cleanup(func() { _ = rdb.Close() })
 	app := engine.New(pool, rdb, &cfg)
 	t.Cleanup(app.Close)
+	// As in the check process: the replica follows the revision of the policy by itself, whether requests come or not.
+	watchCtx, stopWatching := context.WithCancel(ctx)
+	go app.WatchRevision(watchCtx)
+	t.Cleanup(stopWatching)
 
 	r := &Replica{Index: index, App: app, Pool: pool, Redis: rdb}
 	handler := server.NewCheckHandler(app)
@@ -258,6 +262,26 @@ func serve(t testing.TB, h http.Handler) *httptest.Server {
 	return s
 }
 
+// Revision is the revision of the rules in the database, as the replicas will read it.
+func (c *Cluster) Revision() int64 {
+	c.T.Helper()
+	rev, err := db.LoadRevisions(context.Background(), c.Pool)
+	if err != nil {
+		c.T.Fatalf("read the revisions: %v", err)
+	}
+	return rev.Rules
+}
+
+// DataRevision is the revision of the resource data of a service in the database.
+func (c *Cluster) DataRevision(serviceID string) int64 {
+	c.T.Helper()
+	rev, err := db.LoadRevisions(context.Background(), c.Pool)
+	if err != nil {
+		c.T.Fatalf("read the revisions: %v", err)
+	}
+	return rev.Data[serviceID]
+}
+
 // Token signs a token of the fake identity provider.
 func (c *Cluster) Token(claims jwt.MapClaims) string { return c.IdP.Token(claims) }
 
@@ -274,6 +298,17 @@ func (c *Cluster) AdminDo(method, path string, body any) (int, []byte) {
 		c.LastRevision.Store(rev)
 	}
 	return status, raw
+}
+
+// AdminWrite is AdminDo that also returns the revision the write took (X-Authz-Revision; 0 when the request wrote nothing).
+func (c *Cluster) AdminWrite(method, path string, body any) (status int, raw []byte, revision int64) {
+	c.T.Helper()
+	status, raw, header := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "")
+	revision, _ = strconv.ParseInt(header.Get("X-Authz-Revision"), 10, 64)
+	if revision > c.LastRevision.Load() {
+		c.LastRevision.Store(revision)
+	}
+	return status, raw, revision
 }
 
 // Must is AdminDo for a request that must succeed (200); it returns the JSON object of the answer.

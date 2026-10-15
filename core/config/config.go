@@ -60,12 +60,26 @@ type Snapshot struct {
 	// MaxBytes bounds the memory of the copy: a policy that would not fit is not copied, and the queries read it. Zero
 	// takes the default, a negative value turns the copy off.
 	MaxBytes int64
-	// RevisionPoll is how often a process asks Redis for the revision of the policy: a write made through another replica
-	// reaches this process within this time.
-	RevisionPoll time.Duration
 	// MaxAge is the age after which the copy is read again even when the revision did not move (a change made outside
 	// the admin API does not bump it). Zero takes the default, a negative value never reads it again by age.
 	MaxAge time.Duration
+}
+
+// Revision tunes how a process follows the revision of the policy, which lives in PostgreSQL (revision_state).
+type Revision struct {
+	// PollInterval is how often a process reads the revisions: a write made through another replica reaches this process
+	// within this time.
+	PollInterval time.Duration
+	// WaitMax is how long a request that asks for at least a revision (at_least_as_fresh) waits for this process to reach
+	// it before it computes the answer from the data.
+	WaitMax time.Duration
+}
+
+// Compute tunes the computation of answers that are not cached.
+type Compute struct {
+	// Concurrency bounds the computations running at once, so that a wave of cache misses queues instead of exhausting
+	// the database pool. Zero is half of DB__POOL_SIZE.
+	Concurrency int
 }
 
 // Background tunes the work done after a request has been answered (writing the cache, refreshing a source).
@@ -156,6 +170,8 @@ type Config struct {
 	Cache      Cache
 	Snapshot   Snapshot
 	Background Background
+	Revision   Revision
+	Compute    Compute
 }
 
 // Load reads the whole environment. Required variables are checked only for the sections the
@@ -189,10 +205,14 @@ func Load() (*Config, error) {
 			AnswerL1Size: e.int("CACHE__ANSWER_L1_SIZE", 50_000),
 		},
 		Snapshot: Snapshot{
-			MaxBytes:     int64(e.int("SNAPSHOT__MAX_BYTES", 256<<20)),
-			RevisionPoll: e.duration("SNAPSHOT__REVISION_POLL", 250*time.Millisecond),
-			MaxAge:       e.duration("SNAPSHOT__MAX_AGE", time.Minute),
+			MaxBytes: int64(e.int("SNAPSHOT__MAX_BYTES", 256<<20)),
+			MaxAge:   e.duration("SNAPSHOT__MAX_AGE", time.Minute),
 		},
+		Revision: Revision{
+			PollInterval: e.duration("REVISION__POLL_INTERVAL", 250*time.Millisecond),
+			WaitMax:      e.duration("REVISION__WAIT_MAX", 500*time.Millisecond),
+		},
+		Compute: Compute{Concurrency: e.int("COMPUTE__CONCURRENCY", 0)},
 		Background: Background{
 			Workers: e.int("BACKGROUND__WORKERS", 16),
 			Queue:   e.int("BACKGROUND__QUEUE", 1024),

@@ -69,6 +69,10 @@ type App struct {
 	jwks jwksCache
 	// local keeps the revision of the policy and its snapshot in memory (see localView).
 	local viewState
+	// attrsMemo is the attribute names of the last revision read, for a process without the snapshot.
+	attrsMemo atomic.Pointer[attrsMemo]
+	// computeSlots bounds the computations of answers that are not cached (see cachedAnswer).
+	computeSlots chan struct{}
 	// snapshotWarn logs once that the policy does not fit in memory.
 	snapshotWarn sync.Once
 }
@@ -90,6 +94,7 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 		tokensL1:      newLRU[Claims](t.tokenL1Size),
 		answersL1:     newLRU[any](t.answerL1Size),
 		invalidTokens: newLRU[error](invalidTokenCacheSize),
+		computeSlots:  make(chan struct{}, t.computeConcurrency),
 	}
 	if t.invalidTokenTTL <= 0 {
 		app.invalidTokens = nil
@@ -116,18 +121,20 @@ func (a *App) Close() {
 	}
 }
 
-// BumpVersion invalidates the permission cache and ends the throttle of the source synchronization
-// (an admin write may change what a synchronization produces: types, synchronizers, and the entities
-// the platform types are made of). The DB write has already been committed by now, so a Redis failure
-// is not turned into a request error — at worst the cache lives until its TTL expires.
-func (a *App) BumpVersion(ctx context.Context) {
-	version, err := redisx.BumpVersion(ctx, a.Redis)
-	if err != nil {
-		logRedis(ctx, slog.LevelError, "failed to bump the permission cache version", err)
-	} else if t := TraceFrom(ctx); t != nil {
-		t.setRevision(version)
+// AfterWrite is called once a write that can change a decision has committed, with the revision the write took
+// (db.BumpRevision, in the write's own transaction): it is the revision of the write for the caller (X-Authz-Revision),
+// it makes this process read the revisions again at once, and it ends the throttle of the source synchronization (an
+// admin write may change what a synchronization produces: types, synchronizers, and the entities the platform types are
+// made of). The replicas of the previous release follow the Redis counter, which is bumped for them while a rolling
+// update lasts. The write is committed by now, so a Redis failure is not turned into a request error.
+func (a *App) AfterWrite(ctx context.Context, revision int64) {
+	if t := TraceFrom(ctx); t != nil {
+		t.setRevision(revision)
 	}
 	a.invalidateView()
+	if _, err := redisx.BumpVersion(ctx, a.Redis); err != nil {
+		logRedis(ctx, slog.LevelWarn, "failed to bump the cache version of the previous release", err)
+	}
 	if err := a.Redis.Incr(ctx, syncEpochKey).Err(); err != nil {
 		logRedis(ctx, slog.LevelError, "failed to bump the sync epoch", err)
 	}
