@@ -53,7 +53,7 @@ func (a *App) RunWorker(ctx context.Context) error {
 	owner := workerName()
 	slog.InfoContext(ctx, "synchronization worker started", "owner", owner, "lease", a.leaseDuration(), "concurrency", a.workerConcurrency())
 	a.importLegacyState(ctx)
-	if a.Cfg != nil && a.Cfg.Sync.Engine == "dbos" {
+	if a.useDBOS() {
 		return a.runDBOSWorker(ctx, owner)
 	}
 
@@ -691,7 +691,7 @@ func (a *App) scheduleOnce(ctx context.Context) {
 		}
 	}
 
-	if a.Cfg != nil && a.Cfg.Sync.Engine == "dbos" {
+	if a.useDBOS() {
 		return // the DBOS janitor does this
 	}
 	// A job claimed too many times keeps killing its workers: give it up.

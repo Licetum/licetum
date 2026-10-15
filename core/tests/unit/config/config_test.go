@@ -185,3 +185,21 @@ func TestLoadSyncPipelineSettings(t *testing.T) {
 		t.Errorf("DeprecatedSettings = %v", got)
 	}
 }
+
+func TestSyncEngineDefaultsToDBOS(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sync.Engine != "dbos" {
+		t.Errorf("default engine = %q, want dbos", cfg.Sync.Engine)
+	}
+	t.Setenv("SYNC__ENGINE", "postgres")
+	if cfg, err = config.Load(); err != nil || cfg.Sync.Engine != "postgres" {
+		t.Errorf("engine = %q, %v", cfg.Sync.Engine, err)
+	}
+	t.Setenv("SYNC__ENGINE", "kafka")
+	if _, err := config.Load(); err == nil {
+		t.Error("an unknown engine must be refused")
+	}
+}

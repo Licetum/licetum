@@ -60,12 +60,12 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// syncEngine is the engine of the synchronization the suite runs against: LICETUM_SYNC_ENGINE=dbos, or postgres.
+// syncEngine is the engine of the synchronization the suite runs against: LICETUM_SYNC_ENGINE=postgres, or dbos (the default).
 func syncEngine() string {
 	if v := os.Getenv("LICETUM_SYNC_ENGINE"); v != "" {
 		return v
 	}
-	return "postgres"
+	return "dbos"
 }
 
 type env struct {

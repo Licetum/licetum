@@ -35,7 +35,7 @@ type syncBackend interface {
 var errSyncUnavailable = errors.New("the synchronization backend is not available")
 
 func (a *App) backend() syncBackend {
-	if a.Cfg != nil && a.Cfg.Sync.Engine == "dbos" {
+	if a.useDBOS() {
 		return a.dbosBackend()
 	}
 	return pgBackend{a}

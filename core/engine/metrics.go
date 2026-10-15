@@ -198,7 +198,7 @@ func (c *syncQueueCollector) Collect(ch chan<- prometheus.Metric) {
 	var queued, running int64
 	var age float64
 	var err error
-	if c.app.Cfg != nil && c.app.Cfg.Sync.Engine == "dbos" {
+	if c.app.useDBOS() {
 		err = c.app.DB.QueryRow(ctx, fmt.Sprintf(`
 			SELECT count(*) FILTER (WHERE status = 'ENQUEUED'), count(*) FILTER (WHERE status = 'PENDING'),
 			       COALESCE((EXTRACT(EPOCH FROM now()) * 1000 - min(created_at) FILTER (WHERE status = 'ENQUEUED')) / 1000, 0)::float8

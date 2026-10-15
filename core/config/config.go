@@ -135,7 +135,7 @@ type Sync struct {
 	LockTTL  time.Duration
 	LockWait time.Duration
 
-	// Engine runs the synchronization jobs: "postgres" (default, the sync_job table) or "dbos" (DBOS workflows and queue).
+	// Engine runs the synchronization jobs: "dbos" (default: DBOS workflows and queue) or "postgres" (the sync_job table).
 	Engine string
 	// DBOSSchema is the schema of the DBOS system tables (engine dbos).
 	DBOSSchema string
@@ -272,7 +272,7 @@ func Load() (*Config, error) {
 			LockTTL:  e.seconds("SYNC__LOCK_TTL", 60),
 			LockWait: e.seconds("SYNC__LOCK_WAIT", 30),
 
-			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "postgres")),
+			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "dbos")),
 			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
 			Lease:            e.seconds("SYNC__LEASE", 30),
 			RequestWait:      e.seconds("SYNC__REQUEST_WAIT", 5),

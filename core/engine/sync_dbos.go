@@ -465,3 +465,6 @@ func (a *App) closeDBOS() {
 		_ = dbos.Shutdown(c, 2*time.Second)
 	}
 }
+
+// useDBOS says the synchronization runs on DBOS, the default; only SYNC__ENGINE=postgres selects the sync_job table.
+func (a *App) useDBOS() bool { return a.Cfg == nil || a.Cfg.Sync.Engine != "postgres" }
