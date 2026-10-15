@@ -56,9 +56,16 @@ type Cluster struct {
 	// PostgresFault and RedisFault are the proxies the replicas connect through (nil without WithFaultProxies).
 	PostgresFault, RedisFault *support.FaultProxy
 
+	// LastRevision is the revision (X-Authz-Revision) of the last write made through AdminDo or Must. The replicas
+	// follow the revision with a delay of up to SNAPSHOT__REVISION_POLL; Replica.Permission asks for at least this one, so
+	// that it sees the writes of the test, as a client that passes at_least_as_fresh does.
+	LastRevision atomic.Int64
+
 	proxied      bool
 	replicaRedis string
+	hotRedis     time.Duration
 	client       *http.Client
+	configure    []func(*config.Config)
 }
 
 // Replica is one check API instance: its own App, database pool, Redis client and HTTP server.
@@ -83,6 +90,15 @@ func WithFaultProxies() Option { return func(c *Cluster) { c.proxied = true } }
 // WithReplicaRedis makes the replicas use the Redis at uri instead of the one of the infrastructure (the admin API keeps
 // the infrastructure's). It is how a test gives the replicas a Redis that is read-only, or a different one.
 func WithReplicaRedis(uri string) Option { return func(c *Cluster) { c.replicaRedis = uri } }
+
+// WithConfig changes the configuration of the cluster (the admin API and the replicas) before they start.
+func WithConfig(f func(*config.Config)) Option {
+	return func(c *Cluster) { c.configure = append(c.configure, f) }
+}
+
+// WithHotRedis gives the replicas the Redis client of the check API in production: commands time out after timeout, are
+// not retried, and Redis is skipped for a while after a few failures in a row (redisx.Options).
+func WithHotRedis(timeout time.Duration) Option { return func(c *Cluster) { c.hotRedis = timeout } }
 
 // StartReplicas starts n check API replicas on the PostgreSQL and Redis of infra, with an admin API next to them.
 // Each call gets its own database schema and clears Redis, so the tests of a package must not run in parallel.
@@ -135,6 +151,9 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 			Issuer: c.IdP.Issuer(), ClientID: "licetum", ClientSecret: "s",
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username", AdminClaimValues: []string{"admin"},
 		},
+	}
+	for _, f := range c.configure {
+		f(c.Cfg)
 	}
 	c.Pool, err = db.Connect(ctx, c.Cfg.DB)
 	if err != nil {
@@ -205,7 +224,7 @@ func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
 		t.Fatalf("replica %d: connect to PostgreSQL: %v", index, err)
 	}
 	t.Cleanup(pool.Close)
-	rdb, err := redisx.Connect(ctx, redisURI)
+	rdb, err := redisx.ConnectWith(ctx, redisURI, redisx.Options{HotTimeout: c.hotRedis})
 	if err != nil {
 		t.Fatalf("replica %d: connect to Redis: %v", index, err)
 	}
@@ -250,7 +269,10 @@ func (c *Cluster) UserToken(name string) string {
 // AdminDo sends a request to the admin API as the platform administrator and returns the status and the body.
 func (c *Cluster) AdminDo(method, path string, body any) (int, []byte) {
 	c.T.Helper()
-	status, raw, _ := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "")
+	status, raw, header := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "")
+	if rev, err := strconv.ParseInt(header.Get("X-Authz-Revision"), 10, 64); err == nil && rev > c.LastRevision.Load() {
+		c.LastRevision.Store(rev)
+	}
 	return status, raw
 }
 
@@ -350,15 +372,32 @@ func (r *Replica) Do(c *Cluster, method, path, token string, body any) *Result {
 // so (a black-holed dependency makes the replica wait for it). The Trace is not returned: the request may still run.
 func (r *Replica) TryPermission(c *Cluster, serviceRef, token string, timeout time.Duration) (status int, body []byte, err error) {
 	c.T.Helper()
+	return r.TryGet(c, "/service/"+serviceRef+"/permission", token, timeout)
+}
+
+// TryGet is TryPermission for any path of the replica.
+func (r *Replica) TryGet(c *Cluster, path, token string, timeout time.Duration) (status int, body []byte, err error) {
+	c.T.Helper()
 	client := &http.Client{Timeout: timeout}
-	status, body, _, err = c.send(client, http.MethodGet, r.Server.URL+"/service/"+serviceRef+"/permission", token, nil, "")
+	status, body, _, err = c.send(client, http.MethodGet, r.Server.URL+path, token, nil, "")
 	return status, body, err
+}
+
+// Fresh asks GET /service/{ref}/permission with consistency=higher: the policy and the sources are read again, so the
+// request needs PostgreSQL and Redis even when everything is cached.
+func (r *Replica) Fresh(c *Cluster, serviceRef, token string) *Result {
+	c.T.Helper()
+	return r.Do(c, http.MethodGet, "/service/"+serviceRef+"/permission?consistency=higher", token, nil)
 }
 
 // Permission asks GET /service/{ref}/permission.
 func (r *Replica) Permission(c *Cluster, serviceRef, token string) *Result {
 	c.T.Helper()
-	return r.Do(c, http.MethodGet, "/service/"+serviceRef+"/permission", token, nil)
+	path := "/service/" + serviceRef + "/permission"
+	if rev := c.LastRevision.Load(); rev > 0 {
+		path += "?at_least_as_fresh=" + strconv.FormatInt(rev, 10)
+	}
+	return r.Do(c, http.MethodGet, path, token, nil)
 }
 
 // Metrics is the text of GET /metrics of the replica.

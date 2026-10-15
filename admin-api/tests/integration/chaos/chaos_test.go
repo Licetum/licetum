@@ -42,8 +42,9 @@ func TestMain(m *testing.M) {
 
 const delay = 150 * time.Millisecond
 
-// setup starts one replica behind the proxies with a policy, and warms its caches so that a request costs a known
-// number of round trips (2 queries, 3 Redis round trips at the time of writing).
+// setup starts one replica behind the proxies with a policy, and warms its caches. A request of a warm replica needs
+// neither PostgreSQL nor Redis (F1), so the tests that prove a fault takes effect ask with consistency=higher
+// (harness.Replica.Fresh), which reads both.
 func setup(t *testing.T) (*harness.Cluster, *harness.Replica, *harness.Policy, string) {
 	t.Helper()
 	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies())
@@ -62,11 +63,11 @@ func timed(f func()) time.Duration {
 
 func TestF0_4_LatencyOnRedisSlowsTheRequest(t *testing.T) {
 	c, r, p, alice := setup(t)
-	fast := timed(func() { r.Permission(c, p.Slug, alice) })
+	fast := timed(func() { r.Fresh(c, p.Slug, alice) })
 
 	c.RedisFault.Latency(delay, 0)
 	var res *harness.Result
-	slow := timed(func() { res = r.Permission(c, p.Slug, alice) })
+	slow := timed(func() { res = r.Fresh(c, p.Slug, alice) })
 	// Every round trip waits the delay in each direction.
 	min := time.Duration(res.Trace.RedisRoundTrips()) * 2 * delay
 	if res.Status != http.StatusOK || slow < min {
@@ -75,7 +76,7 @@ func TestF0_4_LatencyOnRedisSlowsTheRequest(t *testing.T) {
 	}
 
 	c.RedisFault.Reset()
-	if again := timed(func() { r.Permission(c, p.Slug, alice) }); again > slow/2 {
+	if again := timed(func() { r.Fresh(c, p.Slug, alice) }); again > slow/2 {
 		t.Fatalf("after the fault ended the request still took %v", again)
 	}
 }
@@ -84,7 +85,7 @@ func TestF0_4_LatencyOnPostgresSlowsTheRequest(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.PostgresFault.Latency(delay, 0)
 	var res *harness.Result
-	slow := timed(func() { res = r.Permission(c, p.Slug, alice) })
+	slow := timed(func() { res = r.Fresh(c, p.Slug, alice) })
 	min := time.Duration(res.Trace.DBQueries()) * 2 * delay
 	if res.Status != http.StatusOK || slow < min {
 		t.Fatalf("with %v on PostgreSQL the request took %v (status %d), want at least %v for %d queries",
@@ -96,8 +97,12 @@ func TestF0_4_LatencyOnPostgresSlowsTheRequest(t *testing.T) {
 func TestF0_4_CuttingPostgresFailsTheRequestAndItRecovers(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.PostgresFault.Cut()
+	// A request that finds its answer in memory does not need PostgreSQL.
+	if warm := r.Permission(c, p.Slug, alice); warm.Status != http.StatusOK {
+		t.Fatalf("a warm request with PostgreSQL cut: %d %s", warm.Status, warm.Body)
+	}
 	var res *harness.Result
-	took := timed(func() { res = r.Permission(c, p.Slug, alice) })
+	took := timed(func() { res = r.Fresh(c, p.Slug, alice) })
 	if res.Status == http.StatusOK {
 		t.Fatalf("a request was answered with PostgreSQL cut: %s", res.Body)
 	}
@@ -125,7 +130,7 @@ func TestF0_4_CuttingRedisIsSeenByTheReplica(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.RedisFault.Cut()
 	// Redis is a cache for the reads: the answer is computed from the data, and every Redis call fails.
-	r.Permission(c, p.Slug, alice)
+	r.Fresh(c, p.Slug, alice)
 	if !redisErrors(r.Metrics(c)) {
 		t.Fatal("no Redis error was counted with Redis cut")
 	}
@@ -155,7 +160,7 @@ func redisErrors(metrics string) bool {
 func TestF0_4_BlackHoleOnRedisMakesTheRequestHang(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.RedisFault.BlackHole()
-	_, _, err := r.TryPermission(c, p.Slug, alice, time.Second)
+	_, _, err := r.TryGet(c, "/service/"+p.Slug+"/permission?consistency=higher", alice, time.Second)
 	if err == nil {
 		t.Fatal("the request was answered although Redis swallows the traffic")
 	}
@@ -176,7 +181,7 @@ func TestF0_4_BlackHoleOnRedisMakesTheRequestHang(t *testing.T) {
 func TestF0_4_BlackHoleOnPostgresMakesTheRequestHang(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.PostgresFault.BlackHole()
-	_, _, err := r.TryPermission(c, p.Slug, alice, time.Second)
+	_, _, err := r.TryGet(c, "/service/"+p.Slug+"/permission?consistency=higher", alice, time.Second)
 	if err == nil {
 		t.Fatal("the request was answered although PostgreSQL swallows the traffic")
 	}
@@ -225,7 +230,7 @@ func TestF0_4_ReadOnlyRedisFailsTheWrites(t *testing.T) {
 		t.Fatalf("a write to the replica should fail with READONLY: %v", err)
 	}
 	// The answer is still given (Redis is a cache), and the write of the cache entry fails in the background.
-	if res := r.Permission(c, p.Slug, alice); res.Status != http.StatusOK {
+	if res := r.Fresh(c, p.Slug, alice); res.Status != http.StatusOK {
 		t.Fatalf("a read-only Redis must not fail the request: %d %s", res.Status, res.Body)
 	}
 	deadline := time.Now().Add(10 * time.Second)

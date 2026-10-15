@@ -38,9 +38,9 @@ func waitForKeys(t *testing.T, c *harness.Cluster, patterns ...string) {
 // F0-2: a test can assert the exact number of database queries and Redis round trips of one request, and the same
 // counters are in /metrics.
 //
-// The numbers are those of the code at the start of the production-load work (a cache hit reads PostgreSQL twice, for
-// the service and for its row, and makes three round trips to Redis); the blocks that cut them (F1) change them here
-// on purpose.
+// The numbers are those of the fast read path (F1): a request whose token and answer are cached sends no query to
+// PostgreSQL and makes no round trip to Redis (before it, a cache hit read PostgreSQL twice, for the slug and for the
+// service, and made three round trips to Redis).
 func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
 	c := startReplicas(t, 2)
 	p := c.SeedPolicy("org", 0)
@@ -65,17 +65,11 @@ func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
 		if hit.Status != http.StatusOK {
 			t.Fatalf("replica %d: %d %s", r.Index, hit.Status, hit.Body)
 		}
-		if got := hit.Trace.DBQueries(); got != 2 {
-			t.Errorf("replica %d: a cache hit made %d database queries (%v), want 2", r.Index, got, hit.Trace.DBQueryOps())
+		if got := hit.Trace.DBQueries(); got != 0 {
+			t.Errorf("replica %d: a cache hit made %d database queries (%v), want 0", r.Index, got, hit.Trace.DBQueryOps())
 		}
-		if got := hit.Trace.DBQueryOps()["select"]; got != 2 {
-			t.Errorf("replica %d: database queries by kind: %v", r.Index, hit.Trace.DBQueryOps())
-		}
-		if got := hit.Trace.RedisRoundTrips(); got != 3 {
-			t.Errorf("replica %d: a cache hit made %d Redis round trips (%v), want 3", r.Index, got, hit.Trace.RedisOps())
-		}
-		if ops := hit.Trace.RedisOps(); ops["pipeline"] != 1 || ops["get"] != 2 {
-			t.Errorf("replica %d: Redis round trips by command: %v", r.Index, ops)
+		if got := hit.Trace.RedisRoundTrips(); got != 0 {
+			t.Errorf("replica %d: a cache hit made %d Redis round trips (%v), want 0", r.Index, got, hit.Trace.RedisOps())
 		}
 
 		// The same counts are in /metrics of the replica (the scrape itself is not counted).
@@ -106,12 +100,12 @@ func TestF0_2_ATraceOfTheCallerCountsTheWholeRequest(t *testing.T) {
 	r.Permission(c, p.Slug, alice)
 	waitForKeys(t, c, "authz:permission:*", "authz:token:*")
 
-	// The engine itself, called directly: ServiceIDByRef is one query.
+	// The engine itself, called directly: the type graph is two queries.
 	ctx, trace := engine.WithTrace(context.Background())
-	if _, err := r.App.ServiceIDByRef(ctx, p.Slug); err != nil {
+	if _, err := r.App.LoadTypeGraph(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if trace.DBQueries() != 1 || trace.DBQueryOps()["select"] != 1 || trace.RedisRoundTrips() != 0 {
-		t.Fatalf("ServiceIDByRef: db=%d %v redis=%d", trace.DBQueries(), trace.DBQueryOps(), trace.RedisRoundTrips())
+	if trace.DBQueries() != 2 || trace.DBQueryOps()["select"] != 2 || trace.RedisRoundTrips() != 0 {
+		t.Fatalf("LoadTypeGraph: db=%d %v redis=%d", trace.DBQueries(), trace.DBQueryOps(), trace.RedisRoundTrips())
 	}
 }

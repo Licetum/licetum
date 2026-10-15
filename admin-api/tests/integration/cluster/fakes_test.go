@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/licetum/licetum/admin-api/tests/integration/harness"
+	"github.com/licetum/licetum/core/config"
 )
 
 // F0-3: the fake source and the fake identity provider report how often they were called.
@@ -76,7 +79,9 @@ func TestF0_3_TheFakeSourceCountsAndCanBeHeld(t *testing.T) {
 }
 
 func TestF0_3_TheFakeIdPCountsJWKSRequestsAndRotatesKeys(t *testing.T) {
-	c := startReplicas(t, 2)
+	// A key set is kept for ten minutes and fetched again for an unknown key at most once per AUTH__JWKS_MIN_REFRESH; the
+	// rotation below happens right after the first fetch, so the interval is short here.
+	c := startReplicas(t, 2, harness.WithConfig(func(cfg *config.Config) { cfg.Auth.JWKSMinRefresh = time.Millisecond }))
 	p := c.SeedPolicy("org", 0)
 	waitIdle := func() { time.Sleep(200 * time.Millisecond) }
 
@@ -111,10 +116,20 @@ func TestF0_3_TheFakeIdPCountsJWKSRequestsAndRotatesKeys(t *testing.T) {
 		t.Fatalf("JWKS requests after the rotation: %d, want 2", got)
 	}
 
-	// A provider that fails: the token cannot be verified.
+	// The key set is cached in each process: a token of a key it lists needs no request, whatever the provider does.
 	c.IdP.SetJWKSStatus(http.StatusInternalServerError)
+	if res := c.Replicas[0].Permission(c, p.Slug, c.UserToken("erin")); res.Status != http.StatusOK {
+		t.Fatalf("a token of a known key while the JWKS fails: %d %s", res.Status, res.Body)
+	}
+	if got := c.IdP.JWKSRequests(); got != 2 {
+		t.Fatalf("JWKS requests: %d, want 2 (the key set is cached)", got)
+	}
+
+	// A provider that fails and a key the cached set lacks: the token cannot be verified.
+	c.IdP.RotateKey(true)
 	dave := c.UserToken("dave")
-	if res := c.Replicas[1].Permission(c, p.Slug, dave); res.Status == http.StatusOK {
+	time.Sleep(5 * time.Millisecond)
+	if res := c.Replicas[0].Permission(c, p.Slug, dave); res.Status == http.StatusOK {
 		t.Fatalf("a token was accepted while the JWKS failed: %s", res.Body)
 	}
 	if got := c.IdP.JWKSRequests(); got != 3 {

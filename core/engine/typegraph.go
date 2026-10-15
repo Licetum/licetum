@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/model"
 )
 
@@ -195,7 +196,12 @@ func (g *TypeGraph) signature(id uuid.UUID) string {
 
 // LoadTypeGraph reads the whole type graph (all services, live and deleted types).
 func (a *App) LoadTypeGraph(ctx context.Context) (*TypeGraph, error) {
-	rows, err := a.DB.Query(ctx, `
+	return loadTypeGraph(ctx, a.DB)
+}
+
+// loadTypeGraph reads the type graph through q (the pool, or a transaction).
+func loadTypeGraph(ctx context.Context, q db.Querier) (*TypeGraph, error) {
+	rows, err := q.Query(ctx, `
 		SELECT t.id, t.service_id, s.name, t.name, t.deleted_at IS NOT NULL, t.access_implies
 		FROM type_resource t JOIN service s ON s.id = t.service_id`)
 	if err != nil {
@@ -226,7 +232,7 @@ func (a *App) LoadTypeGraph(ctx context.Context) (*TypeGraph, error) {
 	}
 	rows.Close()
 
-	edges, err := a.DB.Query(ctx, `SELECT type_resource_id, parent_id, inherit FROM type_resource_parent`)
+	edges, err := q.Query(ctx, `SELECT type_resource_id, parent_id, inherit FROM type_resource_parent`)
 	if err != nil {
 		return nil, err
 	}

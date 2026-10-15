@@ -44,3 +44,15 @@ c.Replicas[1].Warm(c, "GET", "/service/org/permission", token) // until the cost
   the replicas at another Redis, for the read-only test (`REPLICAOF` to an address nobody serves).
 
 Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in the pull request which criteria it covers.
+
+## The fast read path (F1)
+
+| test | what it proves |
+|---|---|
+| `cluster/f1_test.go` `TestF1_1`, `_2`, `_3`, `_5`, `_6`, `_7`, `_8` | no query and no Redis command for a warm request; one round trip for an answer only Redis holds; a miss costs the same few queries for 1 000 and for 100 000 rules; slugs and deleted services follow the revision within a second; one key set fetch per TTL, none for bad tokens, one refetch per rotation |
+| `api/snapshot_differential_test.go` `TestF1_11` | random policies (validity windows, claim-based and attribute-based rules, roles, nested groups, conditions, denials, exceptions) give the same answers and explanations from the snapshot and from the queries, also after changes and after windows have passed. `LICETUM_DIFF_SEED` repeats a run |
+| `chaos/f1_test.go` `TestF1_4`, `_9`, `_10` | a warm request ignores 150 ms on PostgreSQL and Redis; a Redis that answers after 5 s does not pile up goroutines or memory under 600 rps; a skipped Redis adds at most its timeout |
+
+The replicas follow the revision with a delay of up to `SNAPSHOT__REVISION_POLL`: `Replica.Permission` asks for at least the revision
+of the last write made through `AdminDo`/`Must`; use `Replica.Do` for a plain request. Run the packages one at a time (`-p 1`) when they
+share one Redis (`LICETUM_TEST_REDIS_URI`).

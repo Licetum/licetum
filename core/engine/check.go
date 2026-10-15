@@ -37,12 +37,12 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 		return nil, err
 	}
 	sum := sha256.Sum256(questions)
-	state := a.readCacheState(ctx)
+	state := a.cacheState(ctx).forConsistency(ctx, consistency)
 	key := fmt.Sprintf("authz:check:%s:v%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env), explain, hex.EncodeToString(sum[:]))
 	results, err := cachedAnswer(ctx, a, key, state, consistency, a.metrics.checkCache,
 		func(ctx context.Context) (computed[[]model.CheckResult], error) {
-			if _, err := a.GetExistingService(ctx, a.DB, serviceID); err != nil {
+			if err := a.serviceExists(ctx, state, serviceID); err != nil {
 				return computed[[]model.CheckResult]{}, err
 			}
 			results, deps, ttl, err := a.checkAccess(ctx, serviceID, subject, env, requests, explain, state, consistency)
