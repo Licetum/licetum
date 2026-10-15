@@ -86,7 +86,7 @@ lists accept a JSON array or a comma-separated string.
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
 | `PLATFORM__` | the self-service: its OAuth2 client (`PLATFORM__CLIENT_ID`, `PLATFORM__CLIENT_SECRET`, the authorization, token and JWKS URLs, the issuer) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`) |
-| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__ENGINE` (`dbos`, the default, or `postgres`), `SYNC__DBOS_SCHEMA`, and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
+| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__ENGINE` (`dbos`, the default, or `postgres`), `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, outside `DB__POOL_SIZE`), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person) |
 | `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address; the address clients reach the check API at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
@@ -129,6 +129,7 @@ fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
   time passes it answers from what exists — the type contributes no resources — and sets `X-Authz-Sync: pending`. The admin
   paths (resource lists, refresh) wait `SYNC__ADMIN_WAIT` (30 s). A type whose throttle (30 s) ran out is refreshed in the
   background; the request answers from the data as of the last synchronization.
+- A `consistency=higher` request that arrives while a fresh job of the type is already running shares it, so its source call may have started before the request: the source is asked once per `SYNC__FRESH_MIN_INTERVAL`, not once per request. A client that must see a write it has just made at the source asks again after the response (or waits the interval).
 - A source that does not answer is put in backoff for the whole cluster: `min(30 s · 2^attempts, 10 min)`; nobody asks it
   until the backoff ends, and the data stays.
 - Writing the graph takes an advisory lock per connected component of the type graph (so unrelated types do not wait for each

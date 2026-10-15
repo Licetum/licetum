@@ -130,10 +130,8 @@ type Sync struct {
 	// FetchTTL is how long a fetched list of a source's resources is kept in Redis, so that requests
 	// in this window do not go to the source. A synchronizer's own cache_ttl overrides it; 0 — no cache.
 	FetchTTL time.Duration
-	// LockTTL and LockWait belong to the Redis lock that the job table replaced. They are still read, for one release,
-	// so that a deployment that sets them gets a deprecation warning instead of silence (see Config.Deprecated).
-	LockTTL  time.Duration
-	LockWait time.Duration
+	// DBOSPoolSize is the size of the connection pool of the DBOS client of a process (engine dbos); it is outside DB__POOL_SIZE.
+	DBOSPoolSize int
 
 	// Engine runs the synchronization jobs: "dbos" (default: DBOS workflows and queue) or "postgres" (the sync_job table).
 	Engine string
@@ -268,10 +266,8 @@ func Load() (*Config, error) {
 			AdminClaimValues: e.list("PLATFORM__ADMIN_CLAIM_VALUES", nil),
 		},
 		Sync: Sync{
-			FetchTTL: e.seconds("SYNC__FETCH_TTL", 10),
-			LockTTL:  e.seconds("SYNC__LOCK_TTL", 60),
-			LockWait: e.seconds("SYNC__LOCK_WAIT", 30),
-
+			FetchTTL:         e.seconds("SYNC__FETCH_TTL", 10),
+			DBOSPoolSize:     e.int("SYNC__DBOS_POOL_SIZE", 20),
 			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "dbos")),
 			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
 			Lease:            e.seconds("SYNC__LEASE", 30),

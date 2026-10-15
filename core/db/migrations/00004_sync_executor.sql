@@ -8,7 +8,8 @@
 CREATE TABLE sync_demand (
     type_resource_id uuid NOT NULL,
     last_asked_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT sync_demand_pkey PRIMARY KEY (type_resource_id)
+    CONSTRAINT sync_demand_pkey PRIMARY KEY (type_resource_id),
+    CONSTRAINT sync_demand_type_resource_id_fkey FOREIGN KEY (type_resource_id) REFERENCES type_resource(id) ON DELETE CASCADE
 );
 
 CREATE TABLE sync_executor (

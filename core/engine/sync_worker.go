@@ -146,7 +146,9 @@ func (a *App) dispatch(ctx context.Context, wake chan<- struct{}) {
 			case ctx.Err() != nil:
 				return
 			case errors.Is(err, context.DeadlineExceeded):
-				signal() // poll
+				if a.hasClaimableJob(ctx) { // poll: the executors are woken only when there is something to claim
+					signal()
+				}
 			default:
 				// the connection is gone: take another one next time
 				_ = conn.Conn().Close(context.Background())
@@ -162,8 +164,20 @@ func (a *App) dispatch(ctx context.Context, wake chan<- struct{}) {
 		case <-a.workerWake:
 		case <-time.After(a.pollEvery()):
 		}
-		signal()
+		if a.hasClaimableJob(ctx) {
+			signal()
+		}
 	}
+}
+
+// hasClaimableJob says whether a job waits for an executor: queued, or running with a lease that ran out. A failed read
+// counts as yes, so a job is never left because the check failed.
+func (a *App) hasClaimableJob(ctx context.Context) bool {
+	var ok bool
+	err := a.DB.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM sync_job WHERE attempts < $1 AND (state = 'queued' OR (state = 'running' AND lease_until < now())))`,
+		maxJobClaims).Scan(&ok)
+	return err != nil || ok
 }
 
 // executor claims and runs jobs one after another.
@@ -249,7 +263,10 @@ func (a *App) runJob(ctx context.Context, owner string, job syncJob) {
 		slog.WarnContext(ctx, "a synchronization job waited too long for the graph lock, it is queued again", "job", job.ID, "error", err)
 		a.requeueJob(ctx, job)
 		state = "requeued"
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+		case <-time.After(500 * time.Millisecond):
+		}
 	default:
 		slog.ErrorContext(ctx, "a synchronization job failed", "job", job.ID, "types", job.TypeIDs, "error", err)
 		a.failJob(ctx, job, err)
@@ -695,10 +712,27 @@ func (a *App) scheduleOnce(ctx context.Context) {
 		return // the DBOS janitor does this
 	}
 	// A job claimed too many times keeps killing its workers: give it up.
-	if _, err := a.DB.Exec(ctx, `
+	// The types of such a job get a backoff, or every request would queue the same job again.
+	given, err := a.DB.Query(ctx, `
 		UPDATE sync_job SET state = 'failed', finished_at = now(), error = 'the job was claimed too many times without finishing'
-		WHERE attempts >= $1 AND (state = 'queued' OR (state = 'running' AND lease_until < now()))`, maxJobClaims); err != nil && ctx.Err() == nil {
-		slog.WarnContext(ctx, "failed to give up the jobs that never finish", "error", err)
+		WHERE attempts >= $1 AND (state = 'queued' OR (state = 'running' AND lease_until < now()))
+		RETURNING type_ids`, maxJobClaims)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.WarnContext(ctx, "failed to give up the jobs that never finish", "error", err)
+		}
+	} else {
+		var abandoned []uuid.UUID
+		for given.Next() {
+			var ids []uuid.UUID
+			if given.Scan(&ids) == nil {
+				abandoned = append(abandoned, ids...)
+			}
+		}
+		given.Close()
+		if len(abandoned) > 0 {
+			a.recordFailure(ctx, abandoned, errors.New("the synchronization job was claimed too many times without finishing"))
+		}
 	}
 	retention := max(time.Hour, 2*window)
 	if _, err := a.DB.Exec(ctx, `

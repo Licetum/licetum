@@ -159,7 +159,7 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 			block, async = ids, nil
 		}
 		if len(async) > 0 {
-			a.requestInBackground(ctx, async, source)
+			a.requestInBackground(async, source)
 		}
 		if len(block) == 0 {
 			return res, nil
@@ -183,7 +183,11 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 		jobs, err := a.enqueueSync(ctx, block, opts.Fresh, source)
 		if errors.Is(err, errSyncUnavailable) {
 			// The backend is not ready (the first worker has not created its tables yet): try again while the wait lasts.
-			time.Sleep(min(remaining, 100*time.Millisecond))
+			select {
+			case <-ctx.Done():
+				return res, ctx.Err()
+			case <-time.After(min(remaining, 100*time.Millisecond)):
+			}
 			round--
 			continue
 		}
@@ -212,23 +216,35 @@ func isPlatformType(g *TypeGraph, id uuid.UUID) bool {
 	return ok && n.ServiceID == model.PlatformServiceID
 }
 
-// requestInBackground asks for the synchronization of the given types without waiting. A process asks for a type at most
+// requestInBackground asks for the synchronization of the given types without waiting (and off the request goroutine). A process asks for a type at most
 // once a second: a burst of requests that all find the type due is one row in the table, not one write each.
-func (a *App) requestInBackground(ctx context.Context, typeIDs []uuid.UUID, source string) {
+func (a *App) requestInBackground(typeIDs []uuid.UUID, source string) {
 	now := time.Now()
 	var ask []uuid.UUID
 	for _, id := range typeIDs {
 		if last, ok := a.syncAsked.Load(id); ok && now.Sub(last.(time.Time)) < time.Second {
 			continue
 		}
-		a.syncAsked.Store(id, now)
 		ask = append(ask, id)
 	}
 	if len(ask) == 0 {
 		return
 	}
-	if _, err := a.enqueueSync(ctx, ask, false, source); err != nil {
-		slog.WarnContext(ctx, "failed to ask for the refresh of the resource types", "error", err)
+	// The writes (the demand, the job, the notification) are not part of the answer: they run on the background pool, and a
+	// full queue drops them — the next request asks again.
+	accepted := a.Background(func(bg context.Context) {
+		if _, err := a.enqueueSync(bg, ask, false, source); err != nil {
+			level := slog.LevelWarn
+			if errors.Is(err, errSyncUnavailable) {
+				level = slog.LevelDebug // the first worker has not created its tables yet: not worth a line per type
+			}
+			slog.Log(bg, level, "failed to ask for the refresh of the resource types", "error", err)
+		}
+	})
+	if accepted {
+		for _, id := range ask {
+			a.syncAsked.Store(id, now)
+		}
 	}
 }
 
@@ -338,8 +354,8 @@ func (a *App) waitJobs(ctx context.Context, jobs map[uuid.UUID]string, d time.Du
 		select {
 		case w := <-results:
 			if !w.ok {
-				finished = false
-				continue
+				finished = false // a poll that failed: the wait is over, the caller answers with what exists
+				break
 			}
 			if w.outcome.state == "failed" {
 				slog.WarnContext(ctx, "a resource synchronization job failed", "type_resource_id", w.typeID, "error", w.outcome.err)

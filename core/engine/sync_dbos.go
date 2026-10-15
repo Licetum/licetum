@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,15 +76,26 @@ func (a *App) dbosSchema() string {
 	return "dbos"
 }
 
+func (a *App) dbosPoolSize() int {
+	if a.Cfg != nil && a.Cfg.Sync.DBOSPoolSize > 0 {
+		return a.Cfg.Sync.DBOSPoolSize
+	}
+	return 20
+}
+
 // dbosURL is the connection string of the DBOS system database: the application's own with room for the waiters.
 func (a *App) dbosURL() (string, error) {
+	if a.Cfg == nil {
+		return "", errors.New("dbos: no configuration")
+	}
 	u, err := url.Parse(db.NormalizeDSN(a.Cfg.DB.URI))
 	if err != nil {
 		return "", err
 	}
 	q := u.Query()
 	if !q.Has("pool_max_conns") {
-		q.Set("pool_max_conns", "20")
+		// The waiters of one workflow share a poller, so the pool is for the enqueues and the workflows; it is outside DB__POOL_SIZE.
+		q.Set("pool_max_conns", strconv.Itoa(a.dbosPoolSize()))
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
@@ -187,6 +199,8 @@ func (b dbosBackend) poll(ref string) (jobOutcome, error) {
 		}
 		out, err := h.GetResult(dbos.WithHandleTimeout(jobPollCap), dbos.WithHandlePollingInterval(25*time.Millisecond))
 		switch {
+		case err == nil && out.LeaseLost:
+			ref += dbosReplacement // it applied nothing: the replacement is the job to wait for
 		case err == nil:
 			o := jobOutcome{state: "done"}
 			for _, s := range out.Unanswered {
