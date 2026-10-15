@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,8 +33,6 @@ const (
 	dataVersionsKey = "authz:data_versions"
 	// computeTimeout bounds a computation that goes on after its first caller has gone away (singleflight).
 	computeTimeout = 30 * time.Second
-	// backgroundTimeout bounds the background work: cache writes and refreshes of the resource data.
-	backgroundTimeout = 30 * time.Second
 )
 
 // claimAttrsRecord is what claimAttrsKey holds: the claim names read for one rules version.
@@ -56,6 +53,11 @@ type cacheState struct {
 	attrsOK bool
 	// tag names the data versions the state holds (see dataTag).
 	tag string
+	// snap is the policy snapshot of the revision, when the process keeps the policy in memory (see localView).
+	snap *snapshot
+	// degraded says Redis could not be read lately and the state is the last one this process read: the answers are
+	// kept in memory only, and Redis is not asked for them.
+	degraded bool
 }
 
 // readCacheState reads the rules version, the claim names and the data versions of the services in one round
@@ -99,6 +101,15 @@ func (a *App) readCacheState(ctx context.Context) cacheState {
 	return state
 }
 
+// forConsistency is the state a request of the given consistency decides from. consistency=higher asks for the freshest
+// answer there is: it reads the policy from the database, as it reads the sources again, and not from the snapshot.
+func (s cacheState) forConsistency(c Consistency) cacheState {
+	if c.fresh() {
+		s.snap = nil
+	}
+	return s
+}
+
 // counter reads an integer reply; a missing key is 0.
 func counter(cmd *redis.StringCmd) (int64, error) {
 	raw, err := cmd.Result()
@@ -128,10 +139,12 @@ type computed[T any] struct {
 	ttl   time.Duration
 }
 
-// cachedEntry is an answer as the cache keeps it.
+// cachedEntry is an answer as the cache keeps it. Exp is when it stops being current (unix milliseconds), so that a
+// process that reads it from Redis knows how long it may keep it in memory; entries written before it was added have none.
 type cachedEntry[T any] struct {
 	Value T                `json:"value"`
 	Deps  map[string]int64 `json:"deps,omitempty"`
+	Exp   int64            `json:"exp,omitempty"`
 }
 
 // cachedAnswer returns the answer of compute for key: from the cache while the entry there is current, otherwise
@@ -159,15 +172,27 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		results.WithLabelValues("bypass").Inc()
 		flight += ":fresh"
 	} else {
-		raw, err := a.Redis.Get(ctx, key).Bytes()
-		if err == nil {
-			var entry cachedEntry[T]
-			if json.Unmarshal(raw, &entry) == nil && state.current(entry.Deps) {
+		now := time.Now()
+		if v, ok := a.answersL1.Get(key, now); ok {
+			if entry, ok := v.(*cachedEntry[T]); ok && state.current(entry.Deps) {
+				a.metrics.l1Lookup("answer", true)
 				results.WithLabelValues("hit").Inc()
 				return entry.Value, nil
 			}
-		} else if !errors.Is(err, redis.Nil) {
-			slog.WarnContext(ctx, "failed to read the cached answer", "error", err)
+		}
+		a.metrics.l1Lookup("answer", false)
+		if !state.degraded {
+			raw, err := a.Redis.Get(ctx, key).Bytes()
+			if err == nil {
+				var entry cachedEntry[T]
+				if json.Unmarshal(raw, &entry) == nil && state.current(entry.Deps) {
+					a.keepAnswerInMemory(key, &entry, now)
+					results.WithLabelValues("hit").Inc()
+					return entry.Value, nil
+				}
+			} else if !errors.Is(err, redis.Nil) {
+				slog.WarnContext(ctx, "failed to read the cached answer", "error", err)
+			}
 		}
 		results.WithLabelValues("miss").Inc()
 	}
@@ -179,7 +204,9 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		if err != nil {
 			return nil, err
 		}
-		if raw, err := json.Marshal(cachedEntry[T]{Value: c.value, Deps: c.deps}); err == nil {
+		entry := cachedEntry[T]{Value: c.value, Deps: c.deps, Exp: time.Now().Add(c.ttl).UnixMilli()}
+		a.keepAnswerInMemory(key, &entry, time.Now())
+		if raw, err := json.Marshal(entry); err == nil && !state.degraded {
 			a.Background(func(ctx context.Context) {
 				if err := a.Redis.Set(ctx, key, raw, c.ttl).Err(); err != nil {
 					slog.WarnContext(ctx, "failed to write the cached answer", "error", err)
@@ -192,6 +219,21 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		return zero, err
 	}
 	return shared.(T), nil
+}
+
+// keepAnswerInMemory keeps an answer in the first level of the answer cache until it stops being current, and at most
+// ten seconds: the key holds the revision, so a write makes the entry unreachable, and the data versions it read are
+// compared at every lookup. An entry whose end is unknown (written by an older version) is not kept.
+func (a *App) keepAnswerInMemory(key string, entry any, now time.Time) {
+	var exp int64
+	switch e := entry.(type) {
+	case interface{ expiry() int64 }:
+		exp = e.expiry()
+	}
+	if exp == 0 {
+		return
+	}
+	a.answersL1.Add(key, entry, min(maxAnswerL1TTL, time.UnixMilli(exp).Sub(now)), now)
 }
 
 // recordDataChange adds to the pipeline the bump of the data version of every service that owns one of the given
@@ -208,6 +250,8 @@ func recordDataChange(ctx context.Context, pipe redis.Pipeliner, g *TypeGraph, t
 	}
 }
 
+func (e *cachedEntry[T]) expiry() int64 { return e.Exp }
+
 // dataTag names the data versions of a state. Two requests share a computation only when they saw the same
 // versions: a computation that started before a change of the data must not answer a request that started after it.
 func dataTag(data map[string]int64) string {
@@ -222,28 +266,4 @@ func dataTag(data map[string]int64) string {
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:8])
-}
-
-// Background runs fn after the request that started it has been answered. Close waits for it. Once Close has
-// begun, no new Background work starts: its cache writes and refreshes are optional.
-func (a *App) Background(fn func(ctx context.Context)) {
-	a.closeMu.Lock()
-	if a.closed {
-		a.closeMu.Unlock()
-		return
-	}
-	a.inflight.Add(1)
-	a.closeMu.Unlock()
-	go func() {
-		defer a.inflight.Done()
-		defer func() {
-			// The request that started this work has been answered; a panic here must not take the process down.
-			if p := recover(); p != nil {
-				slog.Error("background work panicked", "panic", p, "stack", string(debug.Stack()))
-			}
-		}()
-		ctx, cancel := context.WithTimeout(context.Background(), backgroundTimeout)
-		defer cancel()
-		fn(ctx)
-	}()
 }

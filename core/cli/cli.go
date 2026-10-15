@@ -82,7 +82,13 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	}
 	defer pool.Close()
 
-	rdb, err := redisx.Connect(ctx, cfg.Redis.URI)
+	// The check API answers within a budget: its Redis client times out fast, does not retry, and skips Redis for a while
+	// after repeated failures (see redisx.FastFail). The admin API waits for Redis as long as the default allows.
+	var redisOptions redisx.Options
+	if name == "check" && cfg.Redis.HotTimeout > 0 {
+		redisOptions.HotTimeout = cfg.Redis.HotTimeout
+	}
+	rdb, err := redisx.ConnectWith(ctx, cfg.Redis.URI, redisOptions)
 	if err != nil {
 		return err
 	}

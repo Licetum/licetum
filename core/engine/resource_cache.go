@@ -428,6 +428,7 @@ func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, 
 	if _, err := pipe.Exec(ctx); err != nil {
 		slog.ErrorContext(ctx, "failed to store the resource sync state", "error", err)
 	}
+	a.invalidateView() // the data versions moved: the next request reads them again
 	return syncOutcome{synced: plan.synced, unanswered: unansweredTypes}, nil
 }
 
@@ -512,7 +513,7 @@ func (a *App) refreshInBackground(typeIDs []uuid.UUID) {
 	if _, running := a.refreshing.LoadOrStore(name, struct{}{}); running {
 		return
 	}
-	a.Background(func(ctx context.Context) {
+	if !a.Background(func(ctx context.Context) {
 		defer a.refreshing.Delete(name)
 		g, err := a.LoadTypeGraph(ctx)
 		if err != nil {
@@ -524,7 +525,9 @@ func (a *App) refreshInBackground(typeIDs []uuid.UUID) {
 		}); err != nil {
 			slog.WarnContext(ctx, "background refresh of the resource types failed", "error", err)
 		}
-	})
+	}) {
+		a.refreshing.Delete(name) // dropped: a later request starts the refresh again
+	}
 }
 
 // metaJSON is the JSON text of an attribute map ({} for none).
@@ -1327,6 +1330,7 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 				if _, err := pipe.Exec(ctx); err != nil {
 					slog.ErrorContext(ctx, "failed to record the resource data change", "error", err)
 				}
+				a.invalidateView()
 			}
 		}
 	}

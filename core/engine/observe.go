@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -25,6 +26,13 @@ func (o observer) ObserveQuery(ctx context.Context, operation string, took time.
 // ObserveRedis counts a round trip in the metrics and, unless it is connection setup (redisx.Setup: traffic, not what the
 // request asked for), in the Trace of its request.
 func (o observer) ObserveRedis(ctx context.Context, operation string, commands int, took time.Duration, err error) {
+	if errors.Is(err, redisx.ErrSkipped) {
+		// Nothing was sent: not a round trip, not part of the cost of the request.
+		if m := o.a.metrics; m != nil {
+			m.redisSkipped.Inc()
+		}
+		return
+	}
 	if m := o.a.metrics; m != nil {
 		m.redisOps.WithLabelValues(operation, commandsLabel(commands), resultOf(err)).Inc()
 		m.redisOpDuration.WithLabelValues(operation).Observe(took.Seconds())

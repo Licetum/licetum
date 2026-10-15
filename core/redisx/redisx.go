@@ -15,11 +15,33 @@ import (
 
 // Connect parses REDIS__URI (redis://, rediss://, unix://) and checks the connection.
 func Connect(ctx context.Context, uri string) (*redis.Client, error) {
+	return ConnectWith(ctx, uri, Options{})
+}
+
+// Options tune a client for the check path.
+type Options struct {
+	// HotTimeout, when positive, is the read and write timeout of every command, and retries are off: a slow Redis costs
+	// a request at most this much. The client is also given a FastFail, which skips Redis for a while after a few failures
+	// in a row.
+	HotTimeout time.Duration
+}
+
+// ConnectWith is Connect with the options of the check path.
+func ConnectWith(ctx context.Context, uri string, o Options) (*redis.Client, error) {
 	opts, err := redis.ParseURL(uri)
 	if err != nil {
 		return nil, fmt.Errorf("parse REDIS__URI: %w", err)
 	}
+	if o.HotTimeout > 0 {
+		opts.ReadTimeout, opts.WriteTimeout = o.HotTimeout, o.HotTimeout
+		opts.DialTimeout = max(5*o.HotTimeout, 250*time.Millisecond)
+		opts.PoolTimeout = max(2*o.HotTimeout, 100*time.Millisecond)
+		opts.MaxRetries = -1 // go-redis: -1 turns the retries off (0 would mean the default of 3)
+	}
 	client := redis.NewClient(opts)
+	if o.HotTimeout > 0 {
+		client.AddHook(NewFastFail())
+	}
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("connect to Redis: %w", err)
