@@ -164,7 +164,7 @@ func (b dbosBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh boo
 	wg.Wait()
 	if firstErr != nil {
 		slog.WarnContext(ctx, "failed to enqueue synchronization workflows", "error", firstErr)
-		return nil, fmt.Errorf("%w: %v", errSyncUnavailable, firstErr)
+		return nil, fmt.Errorf("%w: %w", errSyncUnavailable, firstErr)
 	}
 	return refs, nil
 }

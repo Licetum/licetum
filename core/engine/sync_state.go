@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -190,14 +189,4 @@ func (a *App) syncTx(ctx context.Context, keys []int64, fn func(tx pgx.Tx) error
 func isLockTimeout(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && (pgErr.Code == "55P03" || pgErr.Code == "57014")
-}
-
-// typesKey names a set of types: the same set has the same key in every process.
-func typesKey(typeIDs []uuid.UUID) string {
-	ids := make([]string, len(typeIDs))
-	for i, id := range typeIDs {
-		ids[i] = id.String()
-	}
-	slices.Sort(ids)
-	return strings.Join(ids, ",")
 }

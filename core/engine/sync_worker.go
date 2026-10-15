@@ -149,7 +149,7 @@ func (a *App) dispatch(ctx context.Context, wake chan<- struct{}) {
 				signal() // poll
 			default:
 				// the connection is gone: take another one next time
-				conn.Conn().Close(context.Background())
+				_ = conn.Conn().Close(context.Background())
 				conn.Release()
 				conn = nil
 				time.Sleep(200 * time.Millisecond)
@@ -399,7 +399,7 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 		case job.Fresh:
 			due = append(due, s)
 		case !ok || !st.usable() || st.GraphSig != structure:
-			if !(ok && st.Backoff) {
+			if !ok || !st.Backoff {
 				due = append(due, s)
 			}
 		case st.Due:
