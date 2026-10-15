@@ -21,6 +21,26 @@ import (
 // a synchronization — a row in sync_job — and wait for the result for a bounded time; the worker (sync_worker.go) claims
 // the job under a lease, fetches the sources and applies the result in one transaction that ends with a fence.
 
+// syncBackend is what runs the jobs: the sync_job table (default) or DBOS workflows. Both give the same guarantees: one
+// execution per type shared by all callers, recovery after the death of an executor, and a result the callers wait for.
+type syncBackend interface {
+	// enqueue makes sure there is an active job for each type and returns a reference to it.
+	enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]string, error)
+	// poll waits for the job to end (for at most jobPollCap) and says how it ended.
+	poll(ref string) (jobOutcome, error)
+}
+
+// errSyncUnavailable says the backend cannot be reached or is not ready (the DBOS tables are created by the first worker):
+// the request answers from the data that exists.
+var errSyncUnavailable = errors.New("the synchronization backend is not available")
+
+func (a *App) backend() syncBackend {
+	if a.Cfg != nil && a.Cfg.Sync.Engine == "dbos" {
+		return a.dbosBackend()
+	}
+	return pgBackend{a}
+}
+
 // SyncOptions tells Ensure what the caller needs.
 type SyncOptions struct {
 	// Fresh asks the source regardless of the throttle (consistency=higher): the sources are asked even if the data is
@@ -154,13 +174,19 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 		if remaining <= 0 {
 			// A caller that does not wait only asks (the worker finds the job), and answers from what exists.
 			res.Pending = true
-			if _, err := a.enqueueSync(ctx, block, opts.Fresh, source); err != nil {
+			if _, err := a.enqueueSync(ctx, block, opts.Fresh, source); err != nil && !errors.Is(err, errSyncUnavailable) {
 				return res, err
 			}
 			return res, nil
 		}
 
 		jobs, err := a.enqueueSync(ctx, block, opts.Fresh, source)
+		if errors.Is(err, errSyncUnavailable) {
+			// The backend is not ready (the first worker has not created its tables yet): try again while the wait lasts.
+			time.Sleep(min(remaining, 100*time.Millisecond))
+			round--
+			continue
+		}
 		if err != nil {
 			return res, err
 		}
@@ -206,11 +232,24 @@ func (a *App) requestInBackground(ctx context.Context, typeIDs []uuid.UUID, sour
 	}
 }
 
-// enqueueSync makes sure there is an active job for each type and returns their ids. A type that has one (queued or
-// running) shares it: the unique index on the key makes the attach atomic across all processes. Each type has its own
-// job, so that two requests that involve different sets of types still share the source call of a type they have in
-// common.
-func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]int64, error) {
+// enqueueSync makes sure there is an active job for each type and returns a reference to each. A type that has one (queued
+// or running) shares it. Each type has its own job, so that two requests that involve different sets of types still share
+// the source call of a type they have in common. Who asked is remembered: the worker keeps the types in demand fresh.
+func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]string, error) {
+	if source != "schedule" {
+		if _, err := a.DB.Exec(ctx, `
+			INSERT INTO sync_demand (type_resource_id, last_asked_at) SELECT unnest($1::uuid[]), now()
+			ON CONFLICT (type_resource_id) DO UPDATE SET last_asked_at = now()`, typeIDs); err != nil {
+			return nil, err
+		}
+	}
+	return a.backend().enqueue(ctx, typeIDs, fresh, source)
+}
+
+type pgBackend struct{ a *App }
+
+func (b pgBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]string, error) {
+	a := b.a
 	keys := make([]string, len(typeIDs))
 	for i, id := range typeIDs {
 		keys[i] = dedupKey([]uuid.UUID{id}, fresh)
@@ -225,7 +264,7 @@ func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, 
 		return nil, err
 	}
 	defer rows.Close()
-	jobs := map[uuid.UUID]int64{}
+	jobs := map[uuid.UUID]string{}
 	created := false
 	for rows.Next() {
 		var id int64
@@ -234,7 +273,7 @@ func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, 
 		if err := rows.Scan(&id, &typeID, &inserted); err != nil {
 			return nil, err
 		}
-		jobs[typeID] = id
+		jobs[typeID] = strconv.FormatInt(id, 10)
 		created = created || inserted
 	}
 	rows.Close()
@@ -270,7 +309,7 @@ type jobOutcome struct {
 
 // waitJobs waits for the jobs to finish for at most d. It returns the types that did not get an answer from their source
 // (including those of a job that failed) and whether every job finished.
-func (a *App) waitJobs(ctx context.Context, jobs map[uuid.UUID]int64, d time.Duration) (map[uuid.UUID]bool, bool) {
+func (a *App) waitJobs(ctx context.Context, jobs map[uuid.UUID]string, d time.Duration) (map[uuid.UUID]bool, bool) {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	type waited struct {
@@ -283,7 +322,7 @@ func (a *App) waitJobs(ctx context.Context, jobs map[uuid.UUID]int64, d time.Dur
 	stop := make(chan struct{})
 	for typeID, jobID := range jobs {
 		wg.Go(func() {
-			ch := a.jobFlights.DoChan("job:"+strconv.FormatInt(jobID, 10), func() (any, error) { return a.pollJob(jobID) })
+			ch := a.jobFlights.DoChan("job:"+jobID, func() (any, error) { return a.backend().poll(jobID) })
 			select {
 			case r := <-ch:
 				o, _ := r.Val.(jobOutcome)
@@ -328,7 +367,12 @@ const jobPollCap = 2 * time.Minute
 
 // pollJob watches a job until it ends, with the interval growing from 25 ms to 500 ms. One poller serves every waiter of
 // the job in this process (singleflight). A job that ended in this very process wakes it at once.
-func (a *App) pollJob(jobID int64) (jobOutcome, error) {
+func (b pgBackend) poll(ref string) (jobOutcome, error) {
+	a := b.a
+	jobID, err := strconv.ParseInt(ref, 10, 64)
+	if err != nil {
+		return jobOutcome{}, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), jobPollCap)
 	defer cancel()
 	delay := 25 * time.Millisecond

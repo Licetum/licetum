@@ -135,6 +135,11 @@ type Sync struct {
 	LockTTL  time.Duration
 	LockWait time.Duration
 
+	// Engine runs the synchronization jobs: "postgres" (default, the sync_job table) or "dbos" (DBOS workflows and queue).
+	Engine string
+	// DBOSSchema is the schema of the DBOS system tables (engine dbos).
+	DBOSSchema string
+
 	// Lease is how long a worker owns a synchronization job without renewing it; it renews every Lease/3. A job whose
 	// lease ran out is taken over by another worker.
 	Lease time.Duration
@@ -267,6 +272,8 @@ func Load() (*Config, error) {
 			LockTTL:  e.seconds("SYNC__LOCK_TTL", 60),
 			LockWait: e.seconds("SYNC__LOCK_WAIT", 30),
 
+			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "postgres")),
+			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
 			Lease:            e.seconds("SYNC__LEASE", 30),
 			RequestWait:      e.seconds("SYNC__REQUEST_WAIT", 5),
 			AdminWait:        e.seconds("SYNC__ADMIN_WAIT", 30),
@@ -294,6 +301,9 @@ func Load() (*Config, error) {
 			parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 			e.errs = append(e.errs, fmt.Errorf("HTTP__PUBLIC_URL must be an http(s) URL without a path, a query or a fragment, got %q", u))
 		}
+	}
+	if cfg.Sync.Engine != "postgres" && cfg.Sync.Engine != "dbos" {
+		e.errs = append(e.errs, fmt.Errorf("SYNC__ENGINE must be postgres or dbos, got %q", cfg.Sync.Engine))
 	}
 	if len(e.errs) > 0 {
 		return nil, errors.Join(e.errs...)

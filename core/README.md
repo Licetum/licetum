@@ -86,7 +86,7 @@ lists accept a JSON array or a comma-separated string.
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
 | `PLATFORM__` | the self-service: its OAuth2 client (`PLATFORM__CLIENT_ID`, `PLATFORM__CLIENT_SECRET`, the authorization, token and JWKS URLs, the issuer) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`) |
-| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
+| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__ENGINE` (`postgres` or `dbos`), `SYNC__DBOS_SCHEMA`, and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person) |
 | `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address; the address clients reach the check API at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
@@ -148,6 +148,29 @@ fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
 Metrics: `licetum_sync_jobs{state}`, `licetum_sync_queue_age_seconds` (read from the database at every scrape, so it grows in
 the check and admin processes when every worker is down), `licetum_sync_job_seconds`, `licetum_sync_jobs_finished_total{state}`,
 `licetum_sync_lease_lost_total`, `licetum_source_calls_total{type,outcome}`.
+
+### The DBOS engine
+
+`SYNC__ENGINE=dbos` (default `postgres`) runs the same pipeline on [DBOS Transact](https://github.com/dbos-inc/dbos-transact-golang)
+instead of the `sync_job` table: a database-backed queue `licetum-sync`, a workflow `SyncType` per type, and the DBOS
+deduplication id ("return existing") as the shared job. The system tables are in the schema `SYNC__DBOS_SCHEMA` (default `dbos`)
+of the same database, created by the first worker; the check and admin processes talk to it through a DBOS client and answer
+from the existing data until it is ready. Fetch and apply are one step, so a checkpoint is a few dozen bytes whatever the size
+of the type. All workers must run the same `SYNC__ENGINE`.
+
+What the spike found, and what the engine does about it:
+
+- DBOS Go does not give the interrupted workflows of a crashed executor to a live one (the Conductor service, or a restart under
+  the same executor id, does). Every executor writes a heartbeat to `sync_executor`; each worker cancels the workflows of an
+  executor whose heartbeat is older than `SYNC__LEASE` and queues a replacement under `<id>+r`, which the waiters follow.
+- The fence of the apply transaction is the status of the workflow row, read `FOR SHARE`: a workflow that was taken over applies
+  nothing (`licetum_sync_lease_lost_total`), and the cancel of a takeover waits for a commit in flight.
+- The DBOS client holds a connection per waiting `GetResult`, and its pool has 20: the waiters of one workflow share a single
+  poller per process, and `pool_max_conns` is set to 20 unless the URI says otherwise.
+- Through a link with a round trip of 150 ms an enqueue takes about 4 round trips (0.6 s) and the whole call about 1.4 s more than
+  on a local network: put the workers and the check processes in the region of the database.
+- PgBouncer in transaction mode was not tried: DBOS listens for notifications and needs session connections. Use direct
+  connections or session pooling for the check, admin and worker processes.
 
 ## Tests
 

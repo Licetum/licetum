@@ -50,6 +50,8 @@ type App struct {
 	jobFlights singleflight.Group
 	// syncAsked remembers when this process last asked for the refresh of a type (see requestInBackground).
 	syncAsked sync.Map
+	// dbos is the DBOS handle of the process (engine dbos).
+	dbos dbosState
 	// workerWake wakes the workers of this process when a job is queued (the other processes get a NOTIFY).
 	workerWake chan struct{}
 	// doneMu guards doneCh, which is closed when a job ends in this process.
@@ -129,6 +131,7 @@ func (a *App) Close() {
 	if !a.background().close(closeWait) {
 		slog.Warn("background work did not finish before the shutdown", "wait", closeWait)
 	}
+	a.closeDBOS()
 	if a.Sync != nil {
 		a.Sync.Close()
 	}

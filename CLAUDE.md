@@ -416,7 +416,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    data or graph signature changed, and a start of the worker imports the previous release's Redis hashes
    (`authz:resource_sync:hash:<type>`, `v4:<data>:<graph>`) for types without a row. The worker's schedule (`SYNC__SCHEDULE_TICK`)
    queues due types that someone asked for within `SYNC__DEMAND_WINDOW` (all with `SYNC__KEEP_WARM`), gives up a job claimed
-   5 times, and prunes old jobs. `App.Role` (check, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
+   5 times, and prunes old jobs. `SYNC__ENGINE=dbos` runs the same pipeline on DBOS workflows (`engine/sync_dbos.go`, see core/README.md: queue `licetum-sync`, dedup id as the shared job, an executor heartbeat in `sync_executor` and a janitor that takes over the workflows of dead executors, the workflow row read `FOR SHARE` as the fence); both engines pass the same acceptance tests (`LICETUM_SYNC_ENGINE=dbos go test -tags integration …`). `App.Role` (check, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
    outside the worker. Every committed change of a type's data bumps the data revision of its service in the same transaction
    (`bumpDataRevisions`, see F2), and the worker then calls `invalidateView` (and `recordDataChange` for the previous release). `resolve` (one resource
    refreshed inline by the admin API) writes under the same component lock and timeouts.

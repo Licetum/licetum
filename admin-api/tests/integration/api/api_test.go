@@ -60,6 +60,14 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// syncEngine is the engine of the synchronization the suite runs against: LICETUM_SYNC_ENGINE=dbos, or postgres.
+func syncEngine() string {
+	if v := os.Getenv("LICETUM_SYNC_ENGINE"); v != "" {
+		return v
+	}
+	return "postgres"
+}
+
 type env struct {
 	t     *testing.T
 	admin *httptest.Server
@@ -141,7 +149,7 @@ func setup(t *testing.T) *env {
 		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Cors: config.Cors{AllowOrigins: []string{"http://localhost:5173"}},
 		// Tests that ask for higher consistency in a loop must not be spaced out to one source call per second.
-		Sync: config.Sync{FreshMinInterval: time.Millisecond},
+		Sync: config.Sync{FreshMinInterval: time.Millisecond, Engine: syncEngine(), DBOSSchema: "dbos_" + schema},
 		// The registry of known subjects is on, as by default.
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{

@@ -25,11 +25,11 @@ import (
 
 // SyncHooks lets the tests stop an executor at a chosen point. The zero value does nothing.
 type SyncHooks struct {
-	// AfterFetch runs after the sources were asked and before the result is applied.
-	AfterFetch func(ctx context.Context, jobID int64)
-	// NoHeartbeat, when it returns true for a job, stops the executor from renewing the lease of that job, as a paused
-	// process would.
-	NoHeartbeat func(jobID int64) bool
+	// AfterFetch runs after the sources of the given types were asked and before the result is applied.
+	AfterFetch func(ctx context.Context, typeIDs []uuid.UUID)
+	// NoHeartbeat, when it returns true, stops the renewal of a lease, as a paused process would. The postgres engine asks
+	// per job (with the types of the job), the dbos engine for the whole executor (with nil).
+	NoHeartbeat func(typeIDs []uuid.UUID) bool
 }
 
 var errLeaseLost = errors.New("the lease of the synchronization job was lost")
@@ -53,6 +53,9 @@ func (a *App) RunWorker(ctx context.Context) error {
 	owner := workerName()
 	slog.InfoContext(ctx, "synchronization worker started", "owner", owner, "lease", a.leaseDuration(), "concurrency", a.workerConcurrency())
 	a.importLegacyState(ctx)
+	if a.Cfg != nil && a.Cfg.Sync.Engine == "dbos" {
+		return a.runDBOSWorker(ctx, owner)
+	}
 
 	var wg sync.WaitGroup
 	wake := make(chan struct{}, a.workerConcurrency())
@@ -262,7 +265,7 @@ func (a *App) runJob(ctx context.Context, owner string, job syncJob) {
 
 // heartbeat renews the lease every lease/3; when the renewal finds the token gone, the job is cancelled.
 func (a *App) heartbeat(ctx context.Context, cancel context.CancelCauseFunc, job syncJob) {
-	if a.Hooks.NoHeartbeat != nil && a.Hooks.NoHeartbeat(job.ID) {
+	if a.Hooks.NoHeartbeat != nil && a.Hooks.NoHeartbeat(job.TypeIDs) {
 		<-ctx.Done()
 		return
 	}
@@ -351,6 +354,27 @@ func markUnanswered(ctx context.Context, tx pgx.Tx, typeID uuid.UUID, reason str
 // executeJob does the work of a job: decides which of its types need the source, fetches them in parallel, and applies
 // the result in one transaction that also settles the job.
 func (a *App) executeJob(ctx context.Context, job syncJob) (map[uuid.UUID]bool, error) {
+	return a.runSync(ctx, job.TypeIDs, job.Fresh, func(ctx context.Context, tx pgx.Tx, unanswered map[uuid.UUID]bool) error {
+		// The fence: the job ends only if the lease is still ours.
+		tag, err := tx.Exec(ctx, `
+			UPDATE sync_job SET state = 'done', finished_at = now(), unanswered = $3, lease_until = NULL
+			WHERE id = $1 AND lease_token = $2 AND state = 'running'`, job.ID, job.Token, Keys(unanswered))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			a.leaseLost()
+			return errLeaseLost
+		}
+		return nil
+	})
+}
+
+// runSync synchronizes the given types: it decides which of them need the source, fetches them in parallel, and applies the
+// result in one transaction. settle runs last, in that transaction, and is the engine's fence: it returns errLeaseLost
+// when the execution no longer owns the work, which rolls everything back.
+func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, settle func(ctx context.Context, tx pgx.Tx, unanswered map[uuid.UUID]bool) error) (map[uuid.UUID]bool, error) {
+	job := syncJob{TypeIDs: typeIDs, Fresh: fresh}
 	g, err := a.LoadTypeGraph(ctx)
 	if err != nil {
 		return nil, err
@@ -419,7 +443,7 @@ func (a *App) executeJob(ctx context.Context, job syncJob) (map[uuid.UUID]bool, 
 		return nil, context.Cause(ctx)
 	}
 	if a.Hooks.AfterFetch != nil {
-		a.Hooks.AfterFetch(ctx, job.ID)
+		a.Hooks.AfterFetch(ctx, job.TypeIDs)
 		if err := ctx.Err(); err != nil {
 			return nil, context.Cause(ctx)
 		}
@@ -532,24 +556,13 @@ func (a *App) executeJob(ctx context.Context, job syncJob) (map[uuid.UUID]bool, 
 				return err
 			}
 		}
-		// The fence: the job ends only if the lease is still ours.
-		tag, err := tx.Exec(ctx, `
-			UPDATE sync_job SET state = 'done', finished_at = now(), unanswered = $3, lease_until = NULL
-			WHERE id = $1 AND lease_token = $2 AND state = 'running'`, job.ID, job.Token, Keys(unanswered))
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			a.leaseLost()
-			return errLeaseLost
-		}
-		return nil
+		return settle(ctx, tx, unanswered)
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(changed) > 0 {
-		slog.InfoContext(ctx, "resource graph synchronized", "job", job.ID, "changed", len(changed), "types", len(due),
+		slog.InfoContext(ctx, "resource graph synchronized", "changed", len(changed), "types", len(due),
 			"fetch_ms", fetchDuration.Milliseconds(), "write_ms", time.Since(writeStarted).Milliseconds())
 	}
 	if len(movedTypes) > 0 {
@@ -648,9 +661,8 @@ func (a *App) scheduleOnce(ctx context.Context) {
 		JOIN type_resource t ON t.id = st.type_resource_id AND t.deleted_at IS NULL
 		WHERE st.next_due_at <= now()
 		  AND EXISTS (SELECT 1 FROM synchronizer s WHERE s.type_resource_id = t.id AND s.deleted_at IS NULL)
-		  AND ($1 OR EXISTS (SELECT 1 FROM sync_job j
-		                     WHERE j.source <> 'schedule' AND j.created_at > now() - make_interval(secs => $2)
-		                       AND j.type_ids && ARRAY[st.type_resource_id]))
+		  AND ($1 OR EXISTS (SELECT 1 FROM sync_demand d
+		                     WHERE d.type_resource_id = st.type_resource_id AND d.last_asked_at > now() - make_interval(secs => $2)))
 		UNION
 		SELECT s.type_resource_id FROM synchronizer s
 		JOIN type_resource t ON t.id = s.type_resource_id AND t.deleted_at IS NULL
@@ -679,6 +691,9 @@ func (a *App) scheduleOnce(ctx context.Context) {
 		}
 	}
 
+	if a.Cfg != nil && a.Cfg.Sync.Engine == "dbos" {
+		return // the DBOS janitor does this
+	}
 	// A job claimed too many times keeps killing its workers: give it up.
 	if _, err := a.DB.Exec(ctx, `
 		UPDATE sync_job SET state = 'failed', finished_at = now(), error = 'the job was claimed too many times without finishing'
