@@ -427,8 +427,9 @@ func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, 
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		slog.ErrorContext(ctx, "failed to store the resource sync state", "error", err)
+	} else if len(changedIDs) > 0 {
+		a.invalidateView() // the data versions moved: the next request reads them again
 	}
-	a.invalidateView() // the data versions moved: the next request reads them again
 	return syncOutcome{synced: plan.synced, unanswered: unansweredTypes}, nil
 }
 
@@ -1329,8 +1330,9 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 				recordDataChange(ctx, pipe, g, []uuid.UUID{typeResourceID})
 				if _, err := pipe.Exec(ctx); err != nil {
 					slog.ErrorContext(ctx, "failed to record the resource data change", "error", err)
+				} else {
+					a.invalidateView()
 				}
-				a.invalidateView()
 			}
 		}
 	}

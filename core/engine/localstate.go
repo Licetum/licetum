@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -138,12 +139,17 @@ func degraded(v *localView, now time.Time, t tuning) *localView {
 }
 
 func (a *App) renewViewInBackground() {
+	if time.Since(time.Unix(0, a.local.failedRenew.Load())) < a.tuningOrDefault().revisionPoll {
+		return // Redis could not be read a moment ago
+	}
 	if !a.local.renewing.CompareAndSwap(false, true) {
 		return
 	}
 	if !a.Background(func(ctx context.Context) {
 		defer a.local.renewing.Store(false)
-		a.renewView(ctx)
+		if a.renewView(ctx) == nil {
+			a.local.failedRenew.Store(time.Now().UnixNano())
+		}
 	}) {
 		a.local.renewing.Store(false)
 	}
@@ -212,7 +218,7 @@ func (a *App) snapshotFor(ctx context.Context, revision int64, previous *localVi
 	return nil
 }
 
-func isTooLarge(err error) bool { return err == errSnapshotTooLarge }
+func isTooLarge(err error) bool { return errors.Is(err, errSnapshotTooLarge) }
 
 // ClearMemoryCaches empties the in-process levels of the answer cache and of the token cache (and forgets the tokens
 // remembered as invalid). Redis keeps what it holds, so the next request is served from it: this is how a test, or an
@@ -225,6 +231,13 @@ func (a *App) ClearMemoryCaches() {
 
 // ClearAnswerMemoryCache empties the in-process level of the answer cache only.
 func (a *App) ClearAnswerMemoryCache() { a.answersL1.Clear() }
+
+// PolicySnapshotLoaded reports whether the last view of this process holds a policy snapshot, which the answers that are
+// not cached are decided from. It is false when the policy does not fit SNAPSHOT__MAX_BYTES or the snapshot is off.
+func (a *App) PolicySnapshotLoaded() bool {
+	v := a.local.view.Load()
+	return v != nil && v.snap != nil
+}
 
 // PolicyRevision is the revision of the policy this process serves from (the one answers are keyed by), 0 when it has
 // not read one yet or does not keep the policy in memory.

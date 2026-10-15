@@ -372,9 +372,22 @@ func (r *Replica) Do(c *Cluster, method, path, token string, body any) *Result {
 // so (a black-holed dependency makes the replica wait for it). The Trace is not returned: the request may still run.
 func (r *Replica) TryPermission(c *Cluster, serviceRef, token string, timeout time.Duration) (status int, body []byte, err error) {
 	c.T.Helper()
+	return r.TryGet(c, "/service/"+serviceRef+"/permission", token, timeout)
+}
+
+// TryGet is TryPermission for any path of the replica.
+func (r *Replica) TryGet(c *Cluster, path, token string, timeout time.Duration) (status int, body []byte, err error) {
+	c.T.Helper()
 	client := &http.Client{Timeout: timeout}
-	status, body, _, err = c.send(client, http.MethodGet, r.Server.URL+"/service/"+serviceRef+"/permission", token, nil, "")
+	status, body, _, err = c.send(client, http.MethodGet, r.Server.URL+path, token, nil, "")
 	return status, body, err
+}
+
+// Fresh asks GET /service/{ref}/permission with consistency=higher: the policy and the sources are read again, so the
+// request needs PostgreSQL and Redis even when everything is cached.
+func (r *Replica) Fresh(c *Cluster, serviceRef, token string) *Result {
+	c.T.Helper()
+	return r.Do(c, http.MethodGet, "/service/"+serviceRef+"/permission?consistency=higher", token, nil)
 }
 
 // Permission asks GET /service/{ref}/permission.

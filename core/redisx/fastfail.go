@@ -103,10 +103,7 @@ func countsAsFailure(err error) bool {
 		return false
 	}
 	var reply redis.Error
-	if errors.As(err, &reply) {
-		return false
-	}
-	return true
+	return !errors.As(err, &reply)
 }
 
 func (f *FastFail) DialHook(next redis.DialHook) redis.DialHook {

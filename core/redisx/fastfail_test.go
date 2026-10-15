@@ -58,7 +58,7 @@ func TestFastFailSkipsRedisAfterThreeFailuresInARow(t *testing.T) {
 func TestFastFailHalfOpenSendsOneProbe(t *testing.T) {
 	f, clk := newTestFastFail()
 	for range 3 {
-		send(f, timeout)
+		_, _ = send(f, timeout)
 	}
 	clk.now = clk.now.Add(FastFailCooldown)
 	// The probe fails: skipped for another cooldown.
@@ -86,7 +86,7 @@ func TestFastFailHalfOpenSendsOneProbe(t *testing.T) {
 func TestFastFailHalfOpenLetsOnlyOneProbeThrough(t *testing.T) {
 	f, clk := newTestFastFail()
 	for range 3 {
-		send(f, timeout)
+		_, _ = send(f, timeout)
 	}
 	clk.now = clk.now.Add(FastFailCooldown)
 	allow, probe := f.admit()
@@ -102,7 +102,7 @@ func TestFastFailIgnoresWhatIsNotAFailureToReachRedis(t *testing.T) {
 	f, _ := newTestFastFail()
 	for _, err := range []error{redis.Nil, context.Canceled, errors.New("READONLY You can't write against a read only replica")} {
 		for range 5 {
-			send(f, err)
+			_, _ = send(f, err)
 		}
 	}
 	// The READONLY text above is a plain error here; a Redis reply error is a redis.Error.
@@ -119,11 +119,11 @@ func TestFastFailIgnoresWhatIsNotAFailureToReachRedis(t *testing.T) {
 
 func TestFastFailSuccessResetsTheCount(t *testing.T) {
 	f, _ := newTestFastFail()
-	send(f, timeout)
-	send(f, timeout)
-	send(f, nil)
-	send(f, timeout)
-	send(f, timeout)
+	_, _ = send(f, timeout)
+	_, _ = send(f, timeout)
+	_, _ = send(f, nil)
+	_, _ = send(f, timeout)
+	_, _ = send(f, timeout)
 	if f.Open() {
 		t.Fatal("the failures were not in a row")
 	}
@@ -132,7 +132,7 @@ func TestFastFailSuccessResetsTheCount(t *testing.T) {
 func TestFastFailPipelineMarksEveryCommandSkipped(t *testing.T) {
 	f, _ := newTestFastFail()
 	for range 3 {
-		send(f, timeout)
+		_, _ = send(f, timeout)
 	}
 	cmds := []redis.Cmder{redis.NewStringCmd(context.Background(), "get", "a"), redis.NewStringCmd(context.Background(), "get", "b")}
 	sent := false
