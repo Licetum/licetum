@@ -60,6 +60,8 @@ type dbosState struct {
 	client  dbos.Client
 	tried   time.Time
 	runtime dbos.Context
+	// connecting is set while a client is being created, so that callers do not queue behind the lock or start a second one.
+	connecting bool
 }
 
 func (a *App) dbosBackend() syncBackend { return dbosBackend{a} }
@@ -92,32 +94,46 @@ func (a *App) dbosURL() (string, error) {
 func (a *App) dbosClient(ctx context.Context) (dbos.Client, error) {
 	s := &a.dbos
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.runtime != nil {
+		defer s.mu.Unlock()
 		return s.runtime, nil
 	}
 	if s.client != nil {
+		defer s.mu.Unlock()
 		return s.client, nil
 	}
-	if time.Since(s.tried) < 100*time.Millisecond {
+	if s.connecting || time.Since(s.tried) < 100*time.Millisecond {
+		s.mu.Unlock()
 		return nil, errSyncUnavailable
 	}
 	s.tried = time.Now()
-	dsn, err := a.dbosURL()
-	if err != nil {
-		return nil, err
-	}
-	// The client lives as long as the process: its context must not end with the request that created it.
-	c, err := dbos.NewClient(context.WithoutCancel(ctx), dbos.ClientConfig{
-		DatabaseURL: dsn, DatabaseSchema: a.dbosSchema(), AppName: dbosApp, SystemDBStartupTimeout: 5 * time.Second,
-		Logger: slog.Default().With("component", "dbos"),
-	})
+	s.connecting = true
+	s.mu.Unlock()
+
+	// Creating the client waits for the system tables for seconds: the lock is not held meanwhile, or every request that
+	// needs a synchronization would queue behind it.
+	c, err := a.newDBOSClient(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.connecting = false
 	if err != nil {
 		slog.WarnContext(ctx, "the DBOS client is not ready (has a worker created the tables?)", "error", err)
 		return nil, errSyncUnavailable
 	}
 	s.client = c
 	return c, nil
+}
+
+func (a *App) newDBOSClient(ctx context.Context) (dbos.Client, error) {
+	dsn, err := a.dbosURL()
+	if err != nil {
+		return nil, err
+	}
+	// The client lives as long as the process: its context must not end with the request that created it.
+	return dbos.NewClient(context.WithoutCancel(ctx), dbos.ClientConfig{
+		DatabaseURL: dsn, DatabaseSchema: a.dbosSchema(), AppName: dbosApp, SystemDBStartupTimeout: 5 * time.Second,
+		Logger: slog.Default().With("component", "dbos"),
+	})
 }
 
 func (b dbosBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]string, error) {
@@ -147,6 +163,7 @@ func (b dbosBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh boo
 	}
 	wg.Wait()
 	if firstErr != nil {
+		slog.WarnContext(ctx, "failed to enqueue synchronization workflows", "error", firstErr)
 		return nil, fmt.Errorf("%w: %v", errSyncUnavailable, firstErr)
 	}
 	return refs, nil
@@ -282,6 +299,9 @@ func (a *App) dbosSyncWorkflow(ctx dbos.Context, in dbosSyncIn) (dbosSyncOut, er
 		slog.WarnContext(ctx, "a synchronization workflow was taken over, its result is dropped", "workflow", workflowID)
 		state = "lease_lost"
 	case err == nil:
+	case ctx.Err() != nil:
+		// The worker is shutting down: the workflow is recovered or taken over, and no backoff is due.
+		return out, err
 	default:
 		slog.ErrorContext(ctx, "a synchronization workflow failed", "workflow", workflowID, "type_resource_id", typeID, "error", err)
 		a.recordFailure(context.WithoutCancel(ctx), []uuid.UUID{typeID}, err)

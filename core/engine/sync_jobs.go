@@ -240,7 +240,8 @@ func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, 
 		if _, err := a.DB.Exec(ctx, `
 			INSERT INTO sync_demand (type_resource_id, last_asked_at) SELECT unnest($1::uuid[]), now()
 			ON CONFLICT (type_resource_id) DO UPDATE SET last_asked_at = now()`, typeIDs); err != nil {
-			return nil, err
+			// Only the schedule's view of the demand is lost; the job itself must still be asked for.
+			slog.WarnContext(ctx, "failed to remember the demand for the resource types", "error", err)
 		}
 	}
 	return a.backend().enqueue(ctx, typeIDs, fresh, source)
