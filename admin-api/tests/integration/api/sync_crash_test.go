@@ -135,6 +135,8 @@ func TestSyncKillNineOfTheWorker(t *testing.T) {
 			case "fetch":
 				e.waitFor("the source to be asked", 20*time.Second, func() bool { return src.calls.Load() > 0 })
 			case "commit":
+				// The job of the fixture itself must be running, not a synchronization of a platform type that happens to write.
+				e.waitFor("the job to be running", 60*time.Second, func() bool { return e.jobCount(f.typ, "running") > 0 })
 				e.waitFor("the transaction to be writing", 60*time.Second, func() bool {
 					var busy int
 					_ = e.pool.QueryRow(context.Background(), `
