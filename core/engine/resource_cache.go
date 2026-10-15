@@ -252,7 +252,7 @@ func (a *App) planSync(ctx context.Context, typeIDs []uuid.UUID) (*syncPlan, err
 
 	epoch, err := a.Redis.Get(ctx, syncEpochKey).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		slog.WarnContext(ctx, "failed to read the sync epoch", "error", err)
+		logRedis(ctx, slog.LevelWarn, "failed to read the sync epoch", err)
 	}
 	p.epoch = epoch
 
@@ -274,7 +274,7 @@ func (a *App) planSync(ctx context.Context, typeIDs []uuid.UUID) (*syncPlan, err
 		case err == nil:
 			p.stored[typeID] = hash
 		case !errors.Is(err, redis.Nil):
-			slog.WarnContext(ctx, "failed to read the resource sync hash", "error", err)
+			logRedis(ctx, slog.LevelWarn, "failed to read the resource sync hash", err)
 		}
 	}
 	return p, nil
@@ -426,7 +426,7 @@ func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, 
 		pipe.Set(ctx, plan.throttleKey(id), "1", syncTTL)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
-		slog.ErrorContext(ctx, "failed to store the resource sync state", "error", err)
+		logRedis(ctx, slog.LevelError, "failed to store the resource sync state", err)
 	} else if len(changedIDs) > 0 {
 		a.invalidateView() // the data versions moved: the next request reads them again
 	}
@@ -1329,7 +1329,7 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 				pipe := a.Redis.Pipeline()
 				recordDataChange(ctx, pipe, g, []uuid.UUID{typeResourceID})
 				if _, err := pipe.Exec(ctx); err != nil {
-					slog.ErrorContext(ctx, "failed to record the resource data change", "error", err)
+					logRedis(ctx, slog.LevelError, "failed to record the resource data change", err)
 				} else {
 					a.invalidateView()
 				}

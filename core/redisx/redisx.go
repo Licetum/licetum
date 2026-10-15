@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -16,6 +17,17 @@ import (
 // Connect parses REDIS__URI (redis://, rediss://, unix://) and checks the connection.
 func Connect(ctx context.Context, uri string) (*redis.Client, error) {
 	return ConnectWith(ctx, uri, Options{})
+}
+
+// fastFails are the FastFail hooks of the clients made with a HotTimeout.
+var fastFails sync.Map // *redis.Client -> *FastFail
+
+// Skipped is how many commands the FastFail of the client has not sent (0 for a client without one).
+func Skipped(rdb *redis.Client) int64 {
+	if v, ok := fastFails.Load(rdb); ok {
+		return v.(*FastFail).skipped.Load()
+	}
+	return 0
 }
 
 // Options tune a client for the check path.
@@ -40,7 +52,9 @@ func ConnectWith(ctx context.Context, uri string, o Options) (*redis.Client, err
 	}
 	client := redis.NewClient(opts)
 	if o.HotTimeout > 0 {
-		client.AddHook(NewFastFail())
+		ff := NewFastFail()
+		client.AddHook(ff)
+		fastFails.Store(client, ff)
 	}
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()

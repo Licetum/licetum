@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -31,6 +32,7 @@ type FastFail struct {
 	openUntil   time.Time
 	probing     bool
 	now         func() time.Time
+	skipped     atomic.Int64
 }
 
 // Default parameters of the fast-fail of the check API: three failures in a row skip Redis for five seconds.
@@ -114,6 +116,7 @@ func (f *FastFail) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		allow, probe := f.admit()
 		if !allow {
+			f.skipped.Add(1)
 			return ErrSkipped
 		}
 		err := next(ctx, cmd)
@@ -126,6 +129,7 @@ func (f *FastFail) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pro
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		allow, probe := f.admit()
 		if !allow {
+			f.skipped.Add(int64(len(cmds)))
 			for _, c := range cmds {
 				c.SetErr(ErrSkipped)
 			}

@@ -109,7 +109,7 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 		if record, err := json.Marshal(claimAttrsRecord{Version: state.version, Attrs: attrs}); err == nil {
 			a.Background(func(ctx context.Context) {
 				if err := a.Redis.Set(ctx, claimAttrsKey, record, claimAttrsTTL).Err(); err != nil {
-					slog.WarnContext(ctx, "failed to store the attributes the rules look at", "error", err)
+					logRedis(ctx, slog.LevelWarn, "failed to store the attributes the rules look at", err)
 				}
 			})
 		}

@@ -70,7 +70,7 @@ func (a *App) readCacheState(ctx context.Context) cacheState {
 	_, _ = pipe.Exec(ctx) // every reply is read below: a missing key is a reply, not a failure of the pipeline
 
 	fail := func(err error) cacheState {
-		slog.WarnContext(ctx, "failed to read the cache state", "error", err)
+		logRedis(ctx, slog.LevelWarn, "failed to read the cache state", err)
 		return cacheState{}
 	}
 	state := cacheState{ok: true, data: map[string]int64{}}
@@ -108,6 +108,15 @@ func (s cacheState) forConsistency(c Consistency) cacheState {
 		s.snap = nil
 	}
 	return s
+}
+
+// logRedis logs a failed use of Redis. A command that was skipped because Redis is being skipped (redisx.FastFail) is
+// the consequence of a failure already logged, and at 600 requests a second would flood the log: it is a debug line.
+func logRedis(ctx context.Context, level slog.Level, msg string, err error) {
+	if errors.Is(err, redisx.ErrSkipped) {
+		level = slog.LevelDebug
+	}
+	slog.Log(ctx, level, msg, "error", err)
 }
 
 // counter reads an integer reply; a missing key is 0.
@@ -191,7 +200,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 					return entry.Value, nil
 				}
 			} else if !errors.Is(err, redis.Nil) {
-				slog.WarnContext(ctx, "failed to read the cached answer", "error", err)
+				logRedis(ctx, slog.LevelWarn, "failed to read the cached answer", err)
 			}
 		}
 		results.WithLabelValues("miss").Inc()
@@ -209,7 +218,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		if raw, err := json.Marshal(entry); err == nil && !state.degraded {
 			a.Background(func(ctx context.Context) {
 				if err := a.Redis.Set(ctx, key, raw, c.ttl).Err(); err != nil {
-					slog.WarnContext(ctx, "failed to write the cached answer", "error", err)
+					logRedis(ctx, slog.LevelWarn, "failed to write the cached answer", err)
 				}
 			})
 		}

@@ -27,11 +27,7 @@ func (o observer) ObserveQuery(ctx context.Context, operation string, took time.
 // request asked for), in the Trace of its request.
 func (o observer) ObserveRedis(ctx context.Context, operation string, commands int, took time.Duration, err error) {
 	if errors.Is(err, redisx.ErrSkipped) {
-		// Nothing was sent: not a round trip, not part of the cost of the request.
-		if m := o.a.metrics; m != nil {
-			m.redisSkipped.Inc()
-		}
-		return
+		return // nothing was sent: not a round trip, not part of the cost of the request (redisx.Skipped counts them)
 	}
 	if m := o.a.metrics; m != nil {
 		m.redisOps.WithLabelValues(operation, commandsLabel(commands), resultOf(err)).Inc()

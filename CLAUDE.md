@@ -69,9 +69,43 @@ format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite 
 (the Licetum service within itself, its policy types, their sources, the admin group) is seeded by `db.SeedPlatform`, run by
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
 
+Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `jwks.go`, `background.go`, `tuning.go`; `core/redisx/fastfail.go`;
+settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TOKEN_TTL`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`,
+`REDIS__HOT_TIMEOUT`; the numbers are in `core/README.md`):
+- The check path decides from `cacheState` (`App.cacheState`), not from Redis reads of its own. In a process with the snapshot on
+  (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revision, the data versions and the claim names last
+  read from Redis, with the `snapshot` of that revision. A request uses the view; the view is renewed in the background every
+  `SNAPSHOT__REVISION_POLL` while requests come, in the request when it is older than `staleLimit` (2 s or 8 polls), after a write of this
+  process (`invalidateView`, from `BumpVersion` and `recordDataChange`) and when the request asks for `at_least_as_fresh` a newer revision.
+  A write made through another replica is therefore seen within the poll interval, not at once: a client that needs it at once passes the
+  `X-Authz-Revision` of its write as `at_least_as_fresh`. When Redis cannot be read, the last view is served for `SNAPSHOT__MAX_AGE` and marked
+  `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
+- The snapshot holds what a decision reads: services (without `client_secret`: `ServiceCheckColumns`), the type graph, the enabled
+  memberships and rules *with* their validity windows (compared with the clock per request, `ruleActive`/`memberActive`), the role items, the
+  access groups, the types with a live synchronizer, the request attributes and the validity boundaries (for the TTL of an answer). It is built
+  in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` and `GetServiceForCheck` answer from it (an
+  unknown or deleted slug is a 404 without a query). Every write that changes any of this must bump the revision (all admin writes go through
+  `mutate` or the batch, which do); a change made by other means (`restore-admin` does bump) shows up at `SNAPSHOT__MAX_AGE` at the latest.
+  `consistency=higher` does not use the snapshot (`cacheState.forConsistency`): it reads everything with queries, as before the snapshot.
+- The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
+  `snapshot.ttl`, ...): a policy that does not fit, `consistency=higher` and the admin simulations use it. Change one, change the other;
+  `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` (random policies, both paths, answers and explanations) keeps them equal.
+- Answers: `cachedAnswer` looks in `answersL1` (keyed like the Redis key, so the revision is in it; entries also record the data versions they
+  read and an `exp`, which the value in Redis carries too) before Redis; tokens: `VerifyToken` looks in `tokensL1`, then Redis, then the
+  provider, and remembers an `InvalidToken` failure by service and token hash in `invalidTokens`. `App.ClearMemoryCaches` empties the levels
+  (tests). Values in these caches are shared by requests and must be treated as read-only.
+- `jwksKeyFor`: one key set per URL, shared fetches (singleflight per URL), refetch for an unknown `kid` at most once per
+  `AUTH__JWKS_MIN_REFRESH`; transport failures are `errJWKSUnavailable` (breaker), never cached.
+- `App.Background` runs on a fixed pool with a bounded queue and returns whether the work was accepted; a full queue drops it
+  (`licetum_background_dropped_total`). Work that registers a marker (`refreshInBackground`) must clear it when dropped.
+- `redisx.ConnectWith(HotTimeout)` is how the check process connects (`cli.Serve`, name `check`): read/write timeout, no retries, and a
+  `FastFail` hook that skips Redis for 5 s after 3 failures in a row (half-open probe afterwards). Skipped commands are not round trips
+  (`observer.ObserveRedis`).
+
 Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` and every
 Redis client given to `engine.New` is counted (`licetum_db_*`, `licetum_redis_*` metrics, `engine.Trace.DBQueries()/RedisRoundTrips()` for
-tests); `harness.StartReplicas` builds several check replicas on one PostgreSQL and Redis; `core/testsupport` has the fake source, the
+tests); `harness.StartReplicas` builds several check replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`; `Replica.Permission` asks for at least the
+revision of the last admin write, `Replica.Fresh` asks with `consistency=higher`); `core/testsupport` has the fake source, the
 fake IdP and the Toxiproxy `FaultProxy`; tests under the `chaos` build tag (`task go:test:chaos`, nightly `chaos.yml`) inject faults;
 `admin-api/loadtest/budgets.yaml` holds the budgets the nightly `loadtest.yml` compares runs with (`licetum-loadtest budget`).
 
@@ -489,7 +523,9 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   `DELEGATION__AUDIT_RETENTION_DAYS`, default 365). The access log names the client as `user` and the person as `on_behalf_of`. Known
   limit: a user token of a trusted client is not told apart from its own client-credentials token, so trust a backend client.
 - `GET /metrics` on both apps (Prometheus, own registry per `App`, `service/metrics.go`): permission
-  compute time and cache hit/miss/bypass, check decisions, source fetch time and sync results,
+  compute time and cache hit/miss/bypass, the in-process caches (`licetum_l1_cache_total`), JWKS fetches (`licetum_jwks_fetch_total`),
+  dropped background work (`licetum_background_dropped_total`), requests that had no policy snapshot (`licetum_snapshot_fallback_total`),
+  Redis commands skipped by the fast-fail (`licetum_redis_skipped_total`), check decisions, source fetch time and sync results,
   breaker-open counters, HTTP requests/duration by operation. `App.metrics` may be nil (an `App`
   built only to describe the API) — helpers are nil-safe.
 

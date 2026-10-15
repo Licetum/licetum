@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
@@ -88,7 +89,7 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 		tune:          t,
 		tokensL1:      newLRU[Claims](t.tokenL1Size),
 		answersL1:     newLRU[any](t.answerL1Size),
-		invalidTokens: newLRU[error](min(invalidTokenCacheSize, max(t.tokenL1Size, 1))),
+		invalidTokens: newLRU[error](invalidTokenCacheSize),
 	}
 	if t.invalidTokenTTL <= 0 {
 		app.invalidTokens = nil
@@ -97,6 +98,10 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 	// request that made it. A pool not made by db.Connect has no tracer and is not counted.
 	db.Observe(pool, observer{app})
 	redisx.Observe(rdb, observer{app})
+	m.registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "licetum_redis_skipped_total",
+		Help: "Redis commands not sent because the fast-fail was open after repeated errors or timeouts.",
+	}, func() float64 { return float64(redisx.Skipped(rdb)) }))
 	return app
 }
 
@@ -118,13 +123,13 @@ func (a *App) Close() {
 func (a *App) BumpVersion(ctx context.Context) {
 	version, err := redisx.BumpVersion(ctx, a.Redis)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to bump the permission cache version", "error", err)
+		logRedis(ctx, slog.LevelError, "failed to bump the permission cache version", err)
 	} else if t := TraceFrom(ctx); t != nil {
 		t.setRevision(version)
 	}
 	a.invalidateView()
 	if err := a.Redis.Incr(ctx, syncEpochKey).Err(); err != nil {
-		slog.ErrorContext(ctx, "failed to bump the sync epoch", "error", err)
+		logRedis(ctx, slog.LevelError, "failed to bump the sync epoch", err)
 	}
 }
 

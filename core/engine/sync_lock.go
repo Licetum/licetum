@@ -73,7 +73,7 @@ func (a *App) syncWithRedisLock(ctx context.Context, name string, work func(cont
 	token := uuid.NewString()
 	acquired, err := a.Redis.SetNX(ctx, key, token, a.syncLockTTL()).Result()
 	if err != nil {
-		slog.WarnContext(ctx, "the resource sync lock is unavailable, synchronizing without it", "error", err)
+		logRedis(ctx, slog.LevelWarn, "the resource sync lock is unavailable, synchronizing without it", err)
 		return work(ctx)
 	}
 	if !acquired {

@@ -395,3 +395,48 @@ func TestF1_8_KeyRotationCostsOneRefetch(t *testing.T) {
 	}
 	// The old key is still accepted, from the set that was fetched.
 }
+
+// A policy that does not fit SNAPSHOT__MAX_BYTES is not copied: the queries read it, the answers are the same, and the
+// fallback is counted.
+func TestF1_ThePolicyThatDoesNotFitIsReadWithQueries(t *testing.T) {
+	c := startReplicas(t, 1, harness.WithConfig(func(cfg *config.Config) { cfg.Snapshot.MaxBytes = 2_000 }))
+	p := c.SeedPolicy("org", 0)
+	r := c.Replicas[0]
+	res := r.Permission(c, p.Slug, c.UserToken("alice"))
+	if res.Status != http.StatusOK {
+		t.Fatalf("alice: %d %s", res.Status, res.Body)
+	}
+	branches, _ := res.JSON(t)["branch"].(map[string]any)
+	if resources, _ := branches["resources"].([]any); len(resources) != 3 {
+		t.Fatalf("alice should see the three branches: %s", res.Body)
+	}
+	if r.App.PolicySnapshotLoaded() {
+		t.Fatal("a snapshot was built although the policy does not fit")
+	}
+	if got := harness.MetricValue(r.Metrics(c), "licetum_snapshot_fallback_total"); got == 0 {
+		t.Fatal("licetum_snapshot_fallback_total did not count the fallback")
+	}
+	// A request that is answered from memory still costs nothing; one that is not reads the policy with queries.
+	warm := r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", c.UserToken("alice"))
+	if warm.Trace.DBQueries() != 2 { // the slug and the service: without a snapshot they are looked up
+		t.Errorf("a warm request without a snapshot made %d queries (%v), want the 2 lookups of the service", warm.Trace.DBQueries(), warm.Trace.DBQueryOps())
+	}
+}
+
+// SNAPSHOT__MAX_BYTES below zero turns the snapshot off altogether.
+func TestF1_TheSnapshotCanBeTurnedOff(t *testing.T) {
+	c := startReplicas(t, 1, harness.WithConfig(func(cfg *config.Config) { cfg.Snapshot.MaxBytes = -1 }))
+	p := c.SeedPolicy("org", 0)
+	r := c.Replicas[0]
+	alice := c.UserToken("alice")
+	warm := r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+	if r.App.PolicySnapshotLoaded() {
+		t.Fatal("a snapshot was built although it is turned off")
+	}
+	// The old costs: the service is looked up twice, and Redis is read three times (the state, the token, the answer),
+	// minus the token and the answer that are now kept in memory.
+	if warm.Trace.DBQueries() != 2 || warm.Trace.RedisRoundTrips() != 1 {
+		t.Errorf("without the snapshot a warm request made db=%d redis=%d (%v), want 2 and 1", warm.Trace.DBQueries(),
+			warm.Trace.RedisRoundTrips(), warm.Trace.RedisOps())
+	}
+}

@@ -408,7 +408,7 @@ func (a *App) VerifyToken(ctx context.Context, svc *model.Service, token string)
 			return claims, nil
 		}
 	} else if !errors.Is(err, redis.Nil) {
-		slog.WarnContext(ctx, "failed to read the token cache", "error", err)
+		logRedis(ctx, slog.LevelWarn, "failed to read the token cache", err)
 	}
 
 	claims, err := a.verifyTokenLive(ctx, svc, token, tokenHash)

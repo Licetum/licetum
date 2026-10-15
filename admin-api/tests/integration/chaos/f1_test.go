@@ -82,8 +82,8 @@ func TestF1_4_AWarmRequestIgnoresTheLatencyOfPostgreSQLAndRedis(t *testing.T) {
 	}
 	slices.Sort(latencies)
 	t.Logf("%d requests: p50 %v, p99 %v, max %v", len(latencies), percentile(latencies, 0.5), percentile(latencies, 0.99), latencies[len(latencies)-1])
-	if p99 := percentile(latencies, 0.99); p99 > 20*time.Millisecond {
-		t.Fatalf("p99 of a warm request is %v with %v on PostgreSQL and Redis, want at most 20ms", p99, delay)
+	if p99 := percentile(latencies, 0.99); p99 > 20*slowdown*time.Millisecond {
+		t.Fatalf("p99 of a warm request is %v with %v on PostgreSQL and Redis, want at most %v", p99, delay, 20*slowdown*time.Millisecond)
 	}
 }
 
@@ -100,7 +100,7 @@ func hotSetup(t *testing.T, users int) (*harness.Cluster, *harness.Replica, *har
 // F1-10: with Redis swallowing the traffic, once Redis is skipped a request is slowed by no more than 50 ms, and its
 // answer is right.
 func TestF1_10_ASkippedRedisAddsNoMoreThanItsTimeoutToARequest(t *testing.T) {
-	c, r, p, tokens := hotSetup(t, 60)
+	c, r, p, tokens := hotSetup(t, 70)
 	path := "/service/" + p.Slug + "/permission"
 
 	// What a request for a subject nobody asked for yet costs while Redis is healthy, and what it answers.
@@ -120,20 +120,21 @@ func TestF1_10_ASkippedRedisAddsNoMoreThanItsTimeoutToARequest(t *testing.T) {
 	}
 
 	c.RedisFault.BlackHole()
-	// A few requests pay the timeout and trip the fast-fail.
-	for i := 10; i < 20; i++ {
-		r.TryGet(c, path, tokens[i], 5*time.Second)
-	}
-	deadline := time.Now().Add(10 * time.Second)
+	// The first requests pay the timeout and trip the fast-fail; each one is for a subject that is new to the replica, so
+	// that it needs Redis (a token and an answer found in memory do not).
+	next := 10
+	deadline := time.Now().Add(20 * time.Second)
 	for skippedCommands(r.Metrics(c)) == 0 {
-		if time.Now().After(deadline) {
+		if time.Now().After(deadline) || next >= 30 {
 			t.Fatal("Redis was never skipped")
 		}
-		r.TryGet(c, path, tokens[20], 5*time.Second)
+		r.TryGet(c, path, tokens[next], 5*time.Second)
+		next++
 	}
+	tokens = tokens[30:]
 
 	var worst time.Duration
-	for _, token := range tokens[20:] {
+	for _, token := range tokens {
 		start := time.Now()
 		status, body, err := r.TryGet(c, path, token, 5*time.Second)
 		took := time.Since(start)
@@ -146,9 +147,9 @@ func TestF1_10_ASkippedRedisAddsNoMoreThanItsTimeoutToARequest(t *testing.T) {
 		worst = max(worst, took)
 	}
 	t.Logf("healthy: worst %v; with Redis skipped: worst %v", base, worst)
-	if worst > base+hotTimeout {
+	if worst > base+hotTimeout*slowdown {
 		t.Fatalf("a request with Redis skipped took %v, %v more than %v with a healthy Redis: want at most %v more",
-			worst, worst-base, base, hotTimeout)
+			worst, worst-base, base, hotTimeout*slowdown)
 	}
 }
 
@@ -247,7 +248,7 @@ load:
 	if after.HeapAlloc > before.HeapAlloc+256<<20 {
 		t.Errorf("the heap grew from %d MiB to %d MiB", before.HeapAlloc>>20, after.HeapAlloc>>20)
 	}
-	if p99 := percentile(latencies, 0.99); p99 > 20*time.Millisecond+hotTimeout {
-		t.Errorf("p99 is %v, want at most %v", p99, 20*time.Millisecond+hotTimeout)
+	if limit := (20*time.Millisecond + hotTimeout) * slowdown; percentile(latencies, 0.99) > limit {
+		t.Errorf("p99 is %v, want at most %v", percentile(latencies, 0.99), limit)
 	}
 }

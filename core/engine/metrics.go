@@ -30,7 +30,6 @@ type metrics struct {
 	snapshotFallback  prometheus.Counter
 	l1Cache           *prometheus.CounterVec // cache: token | answer, result: hit | miss
 	jwksFetches       *prometheus.CounterVec // result: ok | error
-	redisSkipped      prometheus.Counter
 }
 
 func newMetrics() *metrics {
@@ -115,13 +114,9 @@ func newMetrics() *metrics {
 		Name: "licetum_jwks_fetch_total",
 		Help: "Requests for a JWKS to an identity provider, by result (ok | error).",
 	}, []string{"result"})
-	m.redisSkipped = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "licetum_redis_skipped_total",
-		Help: "Redis commands not sent because the fast-fail was open after repeated errors or timeouts.",
-	})
 
 	for _, c := range []prometheus.Collector{
-		m.backgroundDropped, m.snapshotFallback, m.l1Cache, m.jwksFetches, m.redisSkipped,
+		m.backgroundDropped, m.snapshotFallback, m.l1Cache, m.jwksFetches,
 		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
 		m.permissionCompute, m.permissionCache, m.checkCache, m.checks, m.syncFetch, m.syncResults, m.breakerOpen,
 		m.httpRequests, m.httpDuration,
