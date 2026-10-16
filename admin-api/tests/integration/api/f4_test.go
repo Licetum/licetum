@@ -176,6 +176,32 @@ func TestF4_4_RetentionRemovesOldRecordsInChunks(t *testing.T) {
 	}
 }
 
+func TestF4_4_RetentionPrunesSubjectsWhateverTheWorkerRegistrySetting(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject, last_seen) VALUES ('old', now() - interval '200 days'), ('fresh', now())`); err != nil {
+		t.Fatal(err)
+	}
+	app := w.replica(func(c *config.Config) { c.Subjects.Enabled = false; c.Subjects.RetentionDays = 90 })
+	app.RunRetention(ctx)
+	if got := w.countRows(`SELECT count(*) FROM known_subject WHERE subject IN ('old', 'fresh')`); got != 1 {
+		t.Fatalf("%d subjects left, want only the fresh one", got)
+	}
+}
+
+func TestF4_2_StrictAuditFailsTheCallWhenTheRecordCannotBeWritten(t *testing.T) {
+	w := newWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the database cannot be reached: the insert fails, and so must the call
+	err := w.app.RecordDelegatedCall(ctx, uuid.MustParse(w.org), engine.DelegatedCall{CallerClient: "docs", Subject: "u", Operation: "check"})
+	if err == nil {
+		t.Fatal("strict mode answered a call whose record was not written")
+	}
+	if got := w.countRows(`SELECT count(*) FROM delegated_call`); got != 0 {
+		t.Fatalf("%d records stored", got)
+	}
+}
+
 func TestF4_4_RetentionRunsOncePerIntervalAcrossReplicas(t *testing.T) {
 	w := newWorld(t)
 	ctx, cancel := context.WithCancel(context.Background())

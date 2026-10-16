@@ -50,7 +50,8 @@ func (a *App) RunRetention(ctx context.Context) {
 			DELETE FROM delegated_call WHERE ctid IN (
 				SELECT ctid FROM delegated_call WHERE at < now() - make_interval(days => $1) LIMIT $2)`, days)
 	}
-	if days := a.Cfg.Subjects.RetentionDays; a.Cfg.Subjects.Enabled && days > 0 {
+	// Not conditioned on SUBJECTS__ENABLED: the worker may run without the settings of the processes that write the rows.
+	if days := a.Cfg.Subjects.RetentionDays; days > 0 {
 		a.pruneInChunks(ctx, "known_subject", `
 			DELETE FROM known_subject WHERE ctid IN (
 				SELECT ctid FROM known_subject WHERE last_seen < now() - make_interval(days => $1) LIMIT $2)`, days)

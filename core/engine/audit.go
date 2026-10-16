@@ -22,6 +22,9 @@ const (
 	auditFlushEvery = 500 * time.Millisecond
 	auditBatch      = 500
 	auditFlushLimit = 10 * time.Second
+	// auditShutdownBudget is how long the final flush on Close may take in all. What is not written by then is
+	// logged and counted as dropped: a shutdown does not wait for a database that does not answer.
+	auditShutdownBudget = 25 * time.Second
 )
 
 // auditRecord is a buffered delegated call.
@@ -113,7 +116,23 @@ func (s *auditSink) add(r auditRecord) {
 // flush writes the buffer in statements of at most auditBatch records. A statement that fails puts its records back
 // (older first) for the next attempt; at the final flush they are dropped and counted.
 func (s *auditSink) flush(final bool) {
+	var deadline time.Time
+	if final {
+		deadline = time.Now().Add(auditShutdownBudget)
+	}
 	for {
+		if final && !time.Now().Before(deadline) {
+			s.mu.Lock()
+			lost := len(s.buf)
+			s.buf = nil
+			s.closed = true
+			s.mu.Unlock()
+			if lost > 0 {
+				slog.Warn("the delegated-call audit was not written before the shutdown", "records", lost)
+				s.drop(lost)
+			}
+			return
+		}
 		s.mu.Lock()
 		if final {
 			s.closed = true
@@ -127,7 +146,11 @@ func (s *auditSink) flush(final bool) {
 		s.buf = s.buf[n:]
 		s.mu.Unlock()
 
-		ctx, cancel := context.WithTimeout(context.Background(), auditFlushLimit)
+		limit := auditFlushLimit
+		if final {
+			limit = min(limit, time.Until(deadline))
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), limit)
 		rest, err := s.writeBatch(ctx, batch)
 		cancel()
 		if err == nil {
@@ -214,5 +237,5 @@ func (s *auditSink) write(ctx context.Context, batch []auditRecord) error {
 
 // close flushes what is left and stops the sink.
 func (s *auditSink) close() {
-	s.flusher.close(auditFlushLimit + time.Second)
+	s.flusher.close(auditShutdownBudget + time.Second)
 }
