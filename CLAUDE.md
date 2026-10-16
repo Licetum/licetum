@@ -114,10 +114,12 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
     (`POLICY__MAX_STALENESS`, 0 = no limit); beyond it the state is not ok, the queries fail and `server.LocalizeError` turns
     `db.IsUnavailable` errors into 503 `policy_unavailable` (and an expired request context into 503 `request_timeout`, a canceled one
     quietly). A degraded view serves answers past their `Exp` while their `Hold` (the next validity boundary, uncapped by `ResultCacheTTL`; `computed.hold`,
-    `Prepared.hold`, `validityUntil`) has not passed (`cachedEntry.stale`, `result="stale"`); `cachedEntry.serveUntil` is the ordinary serving
+    `Prepared.hold`, `validityUntil`: the exact distance to the boundary, no one-second floor, counted from the start of the computation) has not
+    passed (`cachedEntry.stale`, `result="stale"`; `hold_property_test.go` checks it against random policies with a manual clock, `App.clock`); `cachedEntry.serveUntil` is the ordinary serving
     time of the L1 entry, which now lives in the LRU until `Hold` (at most `maxStaleAnswerTTL`). While Redis is down (`App.redisDegraded`) an L1
     entry is served until its `Exp`, not ten seconds (`liveWithoutRedis`). `cachedAnswer` waits for the shared computation with `DoChan` and the
-    caller's context, so a request deadline is honoured.
+    caller's context, so a request deadline is honoured. `HTTP__MAX_INFLIGHT` keeps no latency under overload (the admitted requests wait behind
+    at most that many others): `core/README.md` says how to size it, `chaos/f5_8_test.go` measures it.
   - **Shutdown** (`cli.StopServing`): `SetDraining` (responses get `Connection: close`), wait `SHUTDOWN__DRAIN`, `http.Server.Shutdown` with
     `SHUTDOWN__TIMEOUT`, then the deferred `app.Close()`. **Admission** (`server.withAdmission`, outermost; `App.Admit`): `HTTP__MAX_INFLIGHT`
     (default `GOMAXPROCS×256`) → 503 `overloaded` + `Retry-After: 1`, `licetum_shed_total`; `HTTP__REQUEST_TIMEOUT` (`App.RequestTimeout`: 10 s check,
