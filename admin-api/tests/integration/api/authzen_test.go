@@ -6,6 +6,7 @@ package api_test
 // the questions about other people that a trusted client asks, and the discovery document.
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -304,6 +305,8 @@ func TestAuthzenSubjectSearchPagesWithoutSkippingOrRepeating(t *testing.T) {
 			w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": p, "access": []string{"read"}})
 		}
 	}
+	// The registry is written in batches (once a second); write what is waiting now.
+	w.app.FlushSubjects(context.Background())
 	waitFor(t, "the people in the registry", func() bool {
 		s, raw := w.do("GET", w.admin.URL+"/subject", nil)
 		return s == http.StatusOK && decodeMap(t, raw)["total"].(float64) >= 6
