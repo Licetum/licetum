@@ -109,6 +109,29 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 - Add a new numbered Goose migration for schema changes. Do not rewrite an already-applied migration.
 - Run `task generate` after changing an API schema and verify that `task check` passes.
 
+### Migrations must work with the previous release
+
+During a rolling update the new schema is applied (`licetum migrate`, which runs first) while pods of the **previous**
+release are still serving requests, and a rollback puts those pods back for good. So a migration must leave the schema
+usable by the release that came before it. Make every change in two steps, **expand** and **contract**, in two releases:
+
+1. **Expand** (release N): add what the new code needs, and change nothing the old code reads or writes. Add a column
+   as nullable or with a default, add a table or an index, add an enum value. The new code reads and writes both the old
+   and the new shape.
+2. **Contract** (release N+1 or later, once release N-1 can no longer run): drop the column, the table or the constraint
+   nothing uses any more, make a column `NOT NULL`, tighten a check.
+
+In particular, in one release do not: drop or rename a column, a table or an enum value; add a `NOT NULL` column without
+a default; narrow a column type; add a constraint that rows written by the old code can violate; change the meaning of
+an existing value. A rename is a new column, a copy, a switch of the readers, and a drop two releases later. Long
+statements (a table rewrite, an index on a large table) need `CREATE INDEX CONCURRENTLY` or batches, because they hold
+locks that the pods of the previous release wait on.
+
+The check API reports ready (`/readyz`) when the schema is **at least** the version it was built for, so pods of the
+previous release stay in service while the new schema is applied. `licetum migrate` takes an advisory lock, so several
+runs started together (one per pod) apply each migration once; it needs a connection that lasts for the whole run, which
+behind PgBouncer in transaction mode means `DB__MIGRATE_URI` pointing at PostgreSQL itself.
+
 ### Interface changes
 
 - Put user-facing text in the locale dictionaries; English is the source locale.

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -87,12 +88,27 @@ type App struct {
 	jwks jwksCache
 	// local keeps the revision of the policy and its snapshot in memory (see localView).
 	local viewState
+	// ready answers the readiness probe (see Ready); health tells which dependencies the calls are failing on lately.
+	ready  readyState
+	health struct{ postgres, redis dependencyHealth }
+	// admit counts the requests in flight and the ones refused (see Admit).
+	admit admission
 	// attrsMemo is the attribute names of the last revision read, for a process without the snapshot.
 	attrsMemo atomic.Pointer[attrsMemo]
 	// computeSlots bounds the computations of answers that are not cached (see cachedAnswer).
 	computeSlots chan struct{}
 	// snapshotWarn logs once that the policy does not fit in memory.
 	snapshotWarn sync.Once
+	// clock is the time of the answer cache; nil is time.Now. Tests replace it to follow hours of validity windows at once.
+	clock func() time.Time
+}
+
+// now is the time the answer cache reasons with (see cachedAnswer).
+func (a *App) now() time.Time {
+	if a.clock != nil {
+		return a.clock()
+	}
+	return time.Now()
 }
 
 func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
@@ -126,7 +142,14 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 		Name: "licetum_redis_skipped_total",
 		Help: "Redis commands not sent because the fast-fail was open after repeated errors or timeouts.",
 	}, func() float64 { return float64(redisx.Skipped(rdb)) }))
+	m.registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "licetum_log_suppressed_total",
+		Help: "Log records left out because the same failure of a dependency had just been logged (one record per kind of failure per second).",
+	}, func() float64 { return float64(logx.Repeated.Suppressed()) }))
 	m.registry.MustRegister(&syncQueueCollector{app: app})
+	m.registry.MustRegister(&poolCollector{app: app})
+	m.registry.MustRegister(&degradedCollector{app: app})
+	app.registerAdmissionMetrics(m)
 	return app
 }
 

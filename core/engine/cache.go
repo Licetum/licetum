@@ -58,7 +58,7 @@ type cacheState struct {
 func (a *App) readCacheState(ctx context.Context) cacheState {
 	rev, err := db.LoadRevisions(ctx, a.DB)
 	if err != nil {
-		slog.WarnContext(ctx, "failed to read the revision of the policy", "error", err)
+		logDependency(ctx, slog.LevelWarn, "failed to read the revision of the policy", err)
 		return cacheState{}
 	}
 	a.noteLogSettingsRevision(rev.LogSettings)
@@ -92,7 +92,7 @@ func logRedis(ctx context.Context, level slog.Level, msg string, err error) {
 	if errors.Is(err, redisx.ErrSkipped) {
 		level = slog.LevelDebug
 	}
-	slog.Log(ctx, level, msg, "error", err)
+	logDependency(ctx, level, msg, err)
 }
 
 // current reports whether an answer computed from the data versions deps is still current.
@@ -105,19 +105,43 @@ func (s cacheState) current(deps map[string]int64) bool {
 	return true
 }
 
-// computed is an answer with what it depends on: the data versions it read, and how long it stays current.
+// computed is an answer with what it depends on: the data versions it read, how long it is kept (ttl), and how long it stays
+// correct with respect to validity windows (hold, at least ttl: see validityUntil).
 type computed[T any] struct {
 	value T
 	deps  map[string]int64
 	ttl   time.Duration
+	hold  time.Duration
 }
 
 // cachedEntry is an answer as the cache keeps it. Exp is when it stops being current (unix milliseconds), so that a
 // process that reads it from Redis knows how long it may keep it in memory; entries written before it was added have none.
+// Hold is when it stops being correct at all (no validity window starts or ends before it): a process that cannot reach
+// PostgreSQL serves the answer until then (see stale).
 type cachedEntry[T any] struct {
 	Value T                `json:"value"`
 	Deps  map[string]int64 `json:"deps,omitempty"`
 	Exp   int64            `json:"exp,omitempty"`
+	Hold  int64            `json:"hold,omitempty"`
+
+	// serveUntil is the end of the time this process serves the entry from memory while PostgreSQL answers (it is not stored).
+	serveUntil time.Time
+}
+
+// fresh: the entry may be served in the usual way.
+func (e *cachedEntry[T]) fresh(now time.Time) bool { return now.Before(e.serveUntil) }
+
+// liveWithoutRedis: the entry is past the ten seconds memory serves it for, and Redis, which would be asked for it next, is
+// gone: it is still current, and the alternative is to compute it from PostgreSQL.
+func (e *cachedEntry[T]) liveWithoutRedis(now time.Time, a *App) bool {
+	return e.Exp > 0 && now.Before(time.UnixMilli(e.Exp)) && a.redisDegraded()
+}
+
+// stale: the entry is past its time, but nothing that could make it wrong has happened as far as this process can tell:
+// the view of the policy it was made under is the one the process still holds, and no validity window has started or ended.
+// It is served only while the process cannot read the revisions (a degraded view), for the time POLICY__MAX_STALENESS allows.
+func (e *cachedEntry[T]) stale(now time.Time) bool {
+	return e.Hold > 0 && now.Before(time.UnixMilli(e.Hold))
 }
 
 // cachedAnswer returns the answer of compute for key: from the cache while the entry there is current, otherwise
@@ -148,12 +172,22 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		results.WithLabelValues("bypass").Inc()
 		flight += ":fresh"
 	} else {
-		now := time.Now()
+		now := a.now()
 		if v, ok := a.answersL1.Get(key, now); ok {
+			// While the revisions cannot be read an answer is served past its time, as long as no validity window has started or
+			// ended since: the process cannot compute another (the data it needs is in PostgreSQL), and the policy it holds is
+			// the one it was told to trust for POLICY__MAX_STALENESS.
 			if entry, ok := v.(*cachedEntry[T]); ok && state.current(entry.Deps) {
-				a.metrics.l1Lookup("answer", true)
-				results.WithLabelValues("hit").Inc()
-				return entry.Value, nil
+				switch {
+				case entry.fresh(now), entry.liveWithoutRedis(now, a):
+					a.metrics.l1Lookup("answer", true)
+					results.WithLabelValues("hit").Inc()
+					return entry.Value, nil
+				case state.degraded && entry.stale(now):
+					a.metrics.l1Lookup("answer", true)
+					results.WithLabelValues("stale").Inc()
+					return entry.Value, nil
+				}
 			}
 		}
 		a.metrics.l1Lookup("answer", false)
@@ -173,7 +207,9 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		results.WithLabelValues("miss").Inc()
 	}
 
-	shared, err, _ := a.answers.Do(flight, func() (any, error) {
+	// The computation is shared and goes on for the others, but the caller does not wait for it longer than its own request
+	// lasts (HTTP__REQUEST_TIMEOUT): a request that ran out of time is answered, not held until the computation ends.
+	flightResult := a.answers.DoChan(flight, func() (any, error) {
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), computeTimeout)
 		defer cancel()
 		// A wave of misses (a revision moved under many hot keys) queues here instead of exhausting the database pool.
@@ -185,6 +221,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 				return nil, cctx.Err()
 			}
 		}
+		started := a.now()
 		c, err := compute(cctx)
 		if err != nil {
 			return nil, err
@@ -192,8 +229,12 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		if !store {
 			return c.value, nil
 		}
-		entry := cachedEntry[T]{Value: c.value, Deps: c.deps, Exp: time.Now().Add(c.ttl).UnixMilli()}
-		a.keepAnswerInMemory(key, &entry, time.Now())
+		written := a.now()
+		// Hold is counted from the start of the computation, which is not later than the moment its hold was measured from:
+		// an answer is never served stale after the boundary it was made to stop at, however long the computation took.
+		entry := cachedEntry[T]{Value: c.value, Deps: c.deps, Exp: written.Add(c.ttl).UnixMilli(),
+			Hold: started.Add(c.hold).UnixMilli()}
+		a.keepAnswerInMemory(key, &entry, written)
 		if raw, err := json.Marshal(entry); err == nil && !state.degraded {
 			a.Background(func(ctx context.Context) {
 				if err := a.Redis.Set(ctx, key, raw, c.ttl).Err(); err != nil {
@@ -203,25 +244,51 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		}
 		return c.value, nil
 	})
-	if err != nil {
-		return zero, err
+	select {
+	case res := <-flightResult:
+		if res.Err != nil {
+			return zero, res.Err
+		}
+		return res.Val.(T), nil
+	case <-ctx.Done():
+		return zero, ctx.Err()
 	}
-	return shared.(T), nil
 }
 
-// keepAnswerInMemory keeps an answer in the first level of the answer cache until it stops being current, and at most
-// ten seconds: the key holds the revision, so a write makes the entry unreachable, and the data versions it read are
-// compared at every lookup. An entry whose end is unknown (written by an older version) is not kept.
+// keepAnswerInMemory keeps an answer in the first level of the answer cache. It is served from there until it stops being
+// current, and at most ten seconds (the key holds the revision, so a write makes the entry unreachable, and the data versions
+// it read are compared at every lookup). An entry whose end is unknown (written by an older version) is not kept.
+//
+// While Redis is down the second level is gone, and an answer that left memory has to be computed from PostgreSQL: the
+// cap is lifted then, and an answer stays as long as it is current (a minute at most), so the outage costs the database a
+// computation per answer per minute, not per ten seconds.
+//
+// The entry is kept in memory longer than it is served (until Hold, at most maxStaleAnswerTTL): if PostgreSQL cannot be
+// reached and the revisions cannot be read, it is the only answer there is (see cachedEntry.stale).
 func (a *App) keepAnswerInMemory(key string, entry any, now time.Time) {
-	var exp int64
-	switch e := entry.(type) {
-	case interface{ expiry() int64 }:
-		exp = e.expiry()
-	}
-	if exp == 0 {
+	e, ok := entry.(interface {
+		expiry() int64
+		holdTime() int64
+		serveFor(time.Time)
+	})
+	if !ok || e.expiry() == 0 {
 		return
 	}
-	a.answersL1.Add(key, entry, min(maxAnswerL1TTL, time.UnixMilli(exp).Sub(now)), now)
+	serve := time.UnixMilli(e.expiry()).Sub(now)
+	if !a.redisDegraded() {
+		serve = min(maxAnswerL1TTL, serve)
+	}
+	e.serveFor(now.Add(serve))
+	keep := serve
+	if hold := time.UnixMilli(e.holdTime()).Sub(now); hold > keep {
+		keep = min(hold, maxStaleAnswerTTL)
+	}
+	a.answersL1.Add(key, entry, keep, now)
+}
+
+// redisDegraded: the process is running without Redis (see licetum_degraded).
+func (a *App) redisDegraded() bool {
+	return a.Redis != nil && redisx.Degraded(a.Redis) || a.health.redis.degraded()
 }
 
 // recordDataChange adds to the pipeline the bump of the data version of every service that owns one of the given types,
@@ -240,6 +307,10 @@ func recordDataChange(ctx context.Context, pipe redis.Pipeliner, g *TypeGraph, t
 }
 
 func (e *cachedEntry[T]) expiry() int64 { return e.Exp }
+
+func (e *cachedEntry[T]) holdTime() int64 { return e.Hold }
+
+func (e *cachedEntry[T]) serveFor(until time.Time) { e.serveUntil = until }
 
 // dataTag names the data versions of a state. Two requests share a computation only when they saw the same
 // versions: a computation that started before a change of the data must not answer a request that started after it.

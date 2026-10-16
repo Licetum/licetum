@@ -203,3 +203,68 @@ func TestSyncEngineDefaultsToDBOS(t *testing.T) {
 		t.Error("an unknown engine must be refused")
 	}
 }
+
+func TestLoadResilienceDefaults(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Policy.MaxStaleness != 0 {
+		t.Errorf("POLICY__MAX_STALENESS defaults to no limit, got %v", cfg.Policy.MaxStaleness)
+	}
+	if cfg.Shutdown.Drain != 10*time.Second || cfg.Shutdown.Timeout != 30*time.Second {
+		t.Errorf("shutdown defaults are 10s and 30s, got %+v", cfg.Shutdown)
+	}
+	if cfg.HTTP.MaxInflight != 0 || cfg.HTTP.RequestTimeout != 0 {
+		t.Errorf("HTTP__MAX_INFLIGHT and HTTP__REQUEST_TIMEOUT default to zero (the defaults of the process), got %d and %v",
+			cfg.HTTP.MaxInflight, cfg.HTTP.RequestTimeout)
+	}
+	if cfg.DB.PgBouncer || cfg.DB.MigrateURI != "" || cfg.Sync.DBOSURI != "" {
+		t.Errorf("PgBouncer settings are off by default: %+v %q", cfg.DB, cfg.Sync.DBOSURI)
+	}
+	if cfg.DB.MaxConns() != 30 {
+		t.Errorf("the default pool is 10 + 20 connections, got %d", cfg.DB.MaxConns())
+	}
+}
+
+func TestLoadResilienceSettings(t *testing.T) {
+	t.Setenv("POLICY__MAX_STALENESS", "45s")
+	t.Setenv("SHUTDOWN__DRAIN", "0")
+	t.Setenv("SHUTDOWN__TIMEOUT", "1m")
+	t.Setenv("HTTP__MAX_INFLIGHT", "128")
+	t.Setenv("HTTP__REQUEST_TIMEOUT", "2500ms")
+	t.Setenv("DB__PGBOUNCER", "true")
+	t.Setenv("DB__MIGRATE_URI", "postgres://direct/db")
+	t.Setenv("SYNC__DBOS_URI", "postgres://direct/dbos")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Policy.MaxStaleness != 45*time.Second || cfg.Shutdown.Drain != 0 || cfg.Shutdown.Timeout != time.Minute ||
+		cfg.HTTP.MaxInflight != 128 || cfg.HTTP.RequestTimeout != 2500*time.Millisecond ||
+		!cfg.DB.PgBouncer || cfg.DB.MigrateURI != "postgres://direct/db" || cfg.Sync.DBOSURI != "postgres://direct/dbos" {
+		t.Errorf("wrong values: %+v %+v %+v %+v", cfg.Policy, cfg.Shutdown, cfg.HTTP, cfg.DB)
+	}
+}
+
+func TestLoadRefusesSettingsThatCannotWork(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"a pool of no connection": {"DB__POOL_SIZE": "0"},
+		"a negative overflow":     {"DB__MAX_OVERFLOW": "-1"},
+		"a negative staleness":    {"POLICY__MAX_STALENESS": "-1s"},
+		"no time to shut down":    {"SHUTDOWN__TIMEOUT": "0"},
+		"a negative drain":        {"SHUTDOWN__DRAIN": "-1s"},
+		"a duration that is not":  {"HTTP__REQUEST_TIMEOUT": "soon"},
+		"a bool that is not":      {"DB__PGBOUNCER": "maybe"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range env {
+				t.Setenv(k, v)
+			}
+			if _, err := config.Load(); err == nil {
+				t.Fatalf("%v was accepted", env)
+			}
+		})
+	}
+}

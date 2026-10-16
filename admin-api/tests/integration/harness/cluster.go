@@ -29,6 +29,7 @@ import (
 
 	"github.com/licetum/licetum/admin-api/api"
 	"github.com/licetum/licetum/admin-api/service"
+	"github.com/licetum/licetum/core/cli"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
@@ -63,9 +64,12 @@ type Cluster struct {
 
 	proxied      bool
 	replicaRedis string
-	hotRedis     time.Duration
-	client       *http.Client
-	configure    []func(*config.Config)
+	// replicaDBURI and replicaRedisURI are what the replicas connect to (behind the proxies when there are any): AddReplica
+	// starts another one the same way.
+	replicaDBURI, replicaRedisURI string
+	hotRedis                      time.Duration
+	client                        *http.Client
+	configure                     []func(*config.Config)
 }
 
 // Replica is one check API instance: its own App, database pool, Redis client and HTTP server.
@@ -114,38 +118,14 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	c.IdP = support.NewIdP(t)
 	c.Source = support.NewSource(t)
 
-	// An isolated schema per cluster; the public schema stays on the search path for the extensions installed there.
-	schema := fmt.Sprintf("it_%d", time.Now().UnixNano())
-	dbURI := db.NormalizeDSN(infra.DBURI)
-	conn, err := pgx.Connect(ctx, dbURI)
-	if err != nil {
-		t.Fatalf("connect to PostgreSQL: %v", err)
-	}
-	for _, stmt := range []string{"CREATE EXTENSION IF NOT EXISTS ltree SCHEMA public", "CREATE SCHEMA " + schema} {
-		if _, err := conn.Exec(ctx, stmt); err != nil {
-			t.Fatalf("%s: %v", stmt, err)
-		}
-	}
-	t.Cleanup(func() {
-		_, _ = conn.Exec(context.Background(), "DROP SCHEMA IF EXISTS dbos_"+schema+" CASCADE")
-		_, _ = conn.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-		_ = conn.Close(context.Background())
-	})
-	withSchema := func(raw string) string {
-		u, err := url.Parse(raw)
-		if err != nil {
-			t.Fatalf("parse %q: %v", raw, err)
-		}
-		q := u.Query()
-		q.Set("search_path", schema+",public")
-		u.RawQuery = q.Encode()
-		return u.String()
-	}
+	// An isolated schema per cluster (a database of its own behind PgBouncer, see Infrastructure.Isolate).
+	iso := infra.Isolate(ctx, t)
+	dbURI := iso.URI
 
 	c.Cfg = &config.Config{
-		DB: config.Database{URI: withSchema(dbURI), PoolSize: 5},
+		DB: config.Database{URI: dbURI, PoolSize: 5, PgBouncer: iso.PgBouncer, MigrateURI: iso.MigrateURI},
 		// The DBOS tables of the cluster live in a schema of their own, dropped with it.
-		Sync:     config.Sync{DBOSSchema: "dbos_" + schema},
+		Sync:     config.Sync{DBOSSchema: "dbos_" + iso.Name},
 		Auth:     config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
@@ -158,14 +138,16 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	for _, f := range c.configure {
 		f(c.Cfg)
 	}
+	// The migrations connect as `licetum migrate` does: directly to PostgreSQL where the application goes through a pooler.
+	if err := db.RunMigrate(ctx, c.Cfg); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	var err error
 	c.Pool, err = db.Connect(ctx, c.Cfg.DB)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(c.Pool.Close)
-	if err := db.Migrate(ctx, c.Pool, c.Cfg); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	c.Redis, err = redisx.Connect(ctx, infra.RedisURI)
 	if err != nil {
 		t.Fatalf("connect to Redis: %v", err)
@@ -204,7 +186,7 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		}
 		c.PostgresFault = support.NewFaultProxy(t, "postgres", pgURL.Host)
 		c.RedisFault = support.NewFaultProxy(t, "redis", redisURL.Host)
-		replicaDB, replicaRedis = withSchema(c.PostgresFault.Rewrite(dbURI)), c.RedisFault.Rewrite(infra.RedisURI)
+		replicaDB, replicaRedis = c.PostgresFault.Rewrite(dbURI), c.RedisFault.Rewrite(infra.RedisURI)
 	}
 	if c.replicaRedis != "" {
 		replicaRedis = c.replicaRedis
@@ -212,10 +194,25 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 			t.Fatal("WithReplicaRedis and WithFaultProxies cannot be combined: the proxy would not be in front of the replicas' Redis")
 		}
 	}
+	c.replicaDBURI, c.replicaRedisURI = replicaDB, replicaRedis
 	for i := 0; i < n; i++ {
 		c.Replicas = append(c.Replicas, c.startReplica(i, replicaDB, replicaRedis))
 	}
 	return c
+}
+
+// AddReplica starts one more check API replica, as a pod that replaces another one in a rolling update does.
+func (c *Cluster) AddReplica() *Replica {
+	c.T.Helper()
+	r := c.startReplica(len(c.Replicas), c.replicaDBURI, c.replicaRedisURI)
+	c.Replicas = append(c.Replicas, r)
+	return r
+}
+
+// Stop ends the replica as the process does on SIGTERM (cli.StopServing): it says it is not ready, serves for the drain,
+// stops listening and waits for the requests in progress.
+func (r *Replica) Stop(drain, timeout time.Duration) error {
+	return cli.StopServing(r.Server.Config, r.App, config.Shutdown{Drain: drain, Timeout: timeout}, nil)
 }
 
 // startWorker runs the synchronization worker of the cluster: the check and admin processes only ask for synchronizations.

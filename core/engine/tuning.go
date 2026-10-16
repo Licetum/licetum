@@ -26,6 +26,9 @@ const (
 	// maxTokenL1TTL and maxAnswerL1TTL bound how long an in-memory entry lives, whatever the entry says.
 	maxTokenL1TTL  = 60 * time.Second
 	maxAnswerL1TTL = 10 * time.Second
+	// maxStaleAnswerTTL bounds how long an answer that is no longer served is kept in memory for the case PostgreSQL cannot
+	// be reached (see cachedEntry.stale); the size of the level bounds the memory the same way.
+	maxStaleAnswerTTL = 15 * time.Minute
 )
 
 // tuning is the effective value of the settings of the fast read path: a zero in the configuration took the default,
@@ -35,8 +38,10 @@ type tuning struct {
 	jwksTTL, jwksMinRefresh, invalidTokenTTL   time.Duration
 	snapshotMaxBytes                           int64
 	revisionPoll, revisionWait, snapshotMaxAge time.Duration
-	computeConcurrency                         int
-	workers, queue                             int
+	// policyMaxStaleness is how long the process answers from its copy of the policy without having confirmed it (0: no limit).
+	policyMaxStaleness time.Duration
+	computeConcurrency int
+	workers, queue     int
 }
 
 func newTuning(cfg *config.Config) tuning {
@@ -76,6 +81,7 @@ func newTuning(cfg *config.Config) tuning {
 	case v > 0:
 		t.snapshotMaxBytes = v
 	}
+	t.policyMaxStaleness = max(cfg.Policy.MaxStaleness, 0)
 	t.computeConcurrency = cfg.Compute.Concurrency
 	if t.computeConcurrency <= 0 {
 		t.computeConcurrency = max(1, cfg.DB.PoolSize/2)

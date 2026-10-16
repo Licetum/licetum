@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/licetum/licetum/core/db"
 
@@ -57,11 +58,11 @@ func newMetrics() *metrics {
 	})
 	m.permissionCache = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_permission_cache_total",
-		Help: "Permission result cache lookups: hit, miss, or bypass (higher consistency requested).",
+		Help: "Permission result cache lookups: hit, miss, bypass (higher consistency requested), or stale (an answer served past its time because the revisions of the policy cannot be read).",
 	}, []string{"result"})
 	m.checkCache = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_check_cache_total",
-		Help: "Check answer cache lookups: hit, miss, or bypass (higher consistency requested).",
+		Help: "Check answer cache lookups: hit, miss, bypass (higher consistency requested), or stale (an answer served past its time because the revisions of the policy cannot be read).",
 	}, []string{"result"})
 	m.checks = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_check_decisions_total",
@@ -224,6 +225,67 @@ func (c *syncQueueCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(syncJobsDesc, prometheus.GaugeValue, float64(queued), "queued")
 	ch <- prometheus.MustNewConstMetric(syncJobsDesc, prometheus.GaugeValue, float64(running), "running")
 	ch <- prometheus.MustNewConstMetric(syncQueueAgeDesc, prometheus.GaugeValue, age)
+}
+
+// poolCollector reports the connection pools of the process at every scrape: the request pool and, in the processes that
+// have one, the pool of the synchronization transactions. The acquire counters are what shows a pool that is too small
+// (requests wait for a connection: the empty acquires and the time they waited) or too large for the server
+// (licetum_db_pool_connections summed over the replicas against max_connections).
+type poolCollector struct{ app *App }
+
+var (
+	poolConnsDesc = prometheus.NewDesc("licetum_db_pool_connections",
+		"Connections of a pool by state: acquired (in use), idle, constructing (being opened).", []string{"pool", "state"}, nil)
+	poolMaxDesc = prometheus.NewDesc("licetum_db_pool_max_connections",
+		"The most connections a pool may hold (DB__POOL_SIZE + DB__MAX_OVERFLOW for the request pool).", []string{"pool"}, nil)
+	poolAcquireDesc = prometheus.NewDesc("licetum_db_pool_acquire_total",
+		"Connections taken from a pool.", []string{"pool"}, nil)
+	poolEmptyAcquireDesc = prometheus.NewDesc("licetum_db_pool_empty_acquire_total",
+		"Acquires that found no idle connection and had to wait for one or to open one.", []string{"pool"}, nil)
+	poolCanceledDesc = prometheus.NewDesc("licetum_db_pool_canceled_acquire_total",
+		"Acquires that were given up (the request ended) before a connection came.", []string{"pool"}, nil)
+	poolAcquireSecondsDesc = prometheus.NewDesc("licetum_db_pool_acquire_seconds_total",
+		"Time spent waiting for a connection of a pool, summed over the acquires that had to wait.", []string{"pool"}, nil)
+	poolNewConnsDesc = prometheus.NewDesc("licetum_db_pool_new_connections_total",
+		"Connections a pool has opened.", []string{"pool"}, nil)
+)
+
+func (c *poolCollector) Describe(ch chan<- *prometheus.Desc) {
+	for _, d := range []*prometheus.Desc{poolConnsDesc, poolMaxDesc, poolAcquireDesc, poolEmptyAcquireDesc, poolCanceledDesc,
+		poolAcquireSecondsDesc, poolNewConnsDesc} {
+		ch <- d
+	}
+}
+
+func (c *poolCollector) Collect(ch chan<- prometheus.Metric) {
+	if c.app == nil {
+		return
+	}
+	pools := []struct {
+		name string
+		pool *pgxpool.Pool
+	}{{"request", c.app.DB}}
+	if c.app.SyncDB != nil && c.app.SyncDB != c.app.DB {
+		pools = append(pools, struct {
+			name string
+			pool *pgxpool.Pool
+		}{"sync", c.app.SyncDB})
+	}
+	for _, p := range pools {
+		if p.pool == nil {
+			continue
+		}
+		st := p.pool.Stat()
+		ch <- prometheus.MustNewConstMetric(poolConnsDesc, prometheus.GaugeValue, float64(st.AcquiredConns()), p.name, "acquired")
+		ch <- prometheus.MustNewConstMetric(poolConnsDesc, prometheus.GaugeValue, float64(st.IdleConns()), p.name, "idle")
+		ch <- prometheus.MustNewConstMetric(poolConnsDesc, prometheus.GaugeValue, float64(st.ConstructingConns()), p.name, "constructing")
+		ch <- prometheus.MustNewConstMetric(poolMaxDesc, prometheus.GaugeValue, float64(st.MaxConns()), p.name)
+		ch <- prometheus.MustNewConstMetric(poolAcquireDesc, prometheus.CounterValue, float64(st.AcquireCount()), p.name)
+		ch <- prometheus.MustNewConstMetric(poolEmptyAcquireDesc, prometheus.CounterValue, float64(st.EmptyAcquireCount()), p.name)
+		ch <- prometheus.MustNewConstMetric(poolCanceledDesc, prometheus.CounterValue, float64(st.CanceledAcquireCount()), p.name)
+		ch <- prometheus.MustNewConstMetric(poolAcquireSecondsDesc, prometheus.CounterValue, st.EmptyAcquireWaitTime().Seconds(), p.name)
+		ch <- prometheus.MustNewConstMetric(poolNewConnsDesc, prometheus.CounterValue, float64(st.NewConnsCount()), p.name)
+	}
 }
 
 // l1Lookup counts a lookup in an in-process cache (nil-safe).

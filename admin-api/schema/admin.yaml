@@ -2170,6 +2170,17 @@ components:
         - op
         - value
       type: object
+    ReadyOutputBody:
+      additionalProperties: false
+      properties:
+        status:
+          description: ok when the process may take requests
+          examples:
+            - ok
+          type: string
+      required:
+        - status
+      type: object
     RefreshTokenInput:
       additionalProperties: true
       properties:
@@ -4801,6 +4812,55 @@ paths:
       summary: My access to the platform
       tags:
         - Platform
+  /readyz:
+    get:
+      description: |-
+        Answers 200 when the process may take requests and 503 when it may not: PostgreSQL does not answer within a second,
+        the schema of the database is older than the release (run `licetum migrate`), the copy of the policy is not loaded yet, or
+        the process is shutting down and waits for the balancer to stop sending it requests. A schema newer than the release is
+        fine. Redis is not checked: without it the process still answers, only slower (see the metric licetum_degraded).
+        The result is reused for a second. Use it as the readiness probe and `/healthz` as the liveness probe.
+      operationId: readyz
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyOutputBody"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Readiness check
+      tags:
+        - System
   /role:
     get:
       operationId: list_roles

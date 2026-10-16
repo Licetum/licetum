@@ -12,6 +12,8 @@ x-env-app: &env-app
   REDIS__URI: "${REDIS__URI:-redis://redis:6379/0}"
   # The registry of known subjects is off unless asked for; the development stack asks, so the people screens have data.
   SUBJECTS__ENABLED: "${SUBJECTS__ENABLED:-true}"
+  # air restarts the apps on every change: no drain on shutdown in development (the default of 10 s is for a balancer).
+  SHUTDOWN__DRAIN: "${SHUTDOWN__DRAIN:-0}"
   # The address clients reach the check API at: the AuthZEN discovery document is built from it.
   HTTP__PUBLIC_URL: "${HTTP__PUBLIC_URL:-http://localhost:8001}"
   CORS__ALLOW_ORIGINS: '${CORS__ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'

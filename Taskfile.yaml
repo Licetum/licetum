@@ -114,6 +114,15 @@ tasks:
         fi
         for m in core admin-api; do (cd $m && go test -race -count=1 -timeout 30m -tags integration ./tests/integration/...) || exit 1; done
 
+  go:test:integration:pgbouncer:
+    desc: The integration tests through PgBouncer in transaction mode (needs LICETUM_TEST_POSTGRES_URI, LICETUM_TEST_REDIS_URI and LICETUM_TEST_PGBOUNCER_ADDR, see admin-api/tests/integration/README.md)
+    cmds:
+      - |
+        for v in LICETUM_TEST_POSTGRES_URI LICETUM_TEST_REDIS_URI LICETUM_TEST_PGBOUNCER_ADDR; do
+          if [ -z "$(printenv $v)" ]; then echo "$v is not set: see admin-api/tests/integration/README.md"; exit 1; fi
+        done
+        for m in core admin-api; do (cd $m && go test -race -count=1 -p 1 -timeout 40m -tags integration ./tests/integration/...) || exit 1; done
+
   go:test:chaos:
     desc: Fault injection tests with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole, read-only Redis), needs Docker
     cmds:

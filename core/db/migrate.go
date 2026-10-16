@@ -2,16 +2,22 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io/fs"
 	"log/slog"
+	"strconv"
+	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/model"
@@ -22,6 +28,58 @@ var migrationFS embed.FS
 
 // migrationsFS is the embedded migrations rooted at the directory (also used by tests).
 func migrationsFS() (fs.FS, error) { return fs.Sub(migrationFS, "migrations") }
+
+// migrateLockTries is how many times, one a second, a migration run tries to take the lock held by another run (a
+// parallel `licetum migrate`, as the pods of a release start) before it gives up.
+const migrateLockTries = 600
+
+// newProvider is the goose provider of the embedded migrations. With locked it takes the session-level advisory lock of
+// goose for the whole run, so two parallel runs never apply the same migration: the second one waits, then finds nothing to
+// do. MigrateUpTo and MigrateDownTo, which tests use on pools of any kind, do not lock.
+// The lock belongs to the connection that took it, so a run needs a connection that stays the same for its whole
+// duration: PostgreSQL itself, or PgBouncer in session mode, not in transaction mode (see config.Database.MigrateURI).
+func newProvider(sqlDB *sql.DB, migrations fs.FS, locked bool) (*goose.Provider, error) {
+	var options []goose.ProviderOption
+	if locked {
+		locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, migrateLockTries))
+		if err != nil {
+			return nil, fmt.Errorf("init the migration lock: %w", err)
+		}
+		options = append(options, goose.WithSessionLocker(locker))
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations, options...)
+	if err != nil {
+		return nil, fmt.Errorf("init goose: %w", err)
+	}
+	return provider, nil
+}
+
+// latestMigration is the highest version among the embedded migrations (they are named NNNNN_name.sql).
+var latestMigration = sync.OnceValue(func() int64 {
+	entries, err := fs.ReadDir(migrationFS, "migrations")
+	if err != nil {
+		return 0
+	}
+	var latest int64
+	for _, e := range entries {
+		version, _, _ := strings.Cut(e.Name(), "_")
+		if n, err := strconv.ParseInt(version, 10, 64); err == nil && n > latest {
+			latest = n
+		}
+	}
+	return latest
+})
+
+// LatestMigration is the version of the schema this binary was built for: the highest embedded migration.
+func LatestMigration() int64 { return latestMigration() }
+
+// SchemaVersion is the version of the schema the database is at: the highest migration applied. A database that was
+// never migrated has no version table, which is an error.
+func SchemaVersion(ctx context.Context, q Querier) (int64, error) {
+	var version int64
+	err := q.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&version)
+	return version, err
+}
 
 // MigrateUpTo applies the migrations up to and including version, without seeding the self-service. It
 // lets a test bring a database to the schema of an earlier release, fill it, and migrate it on.
@@ -34,9 +92,9 @@ func MigrateUpTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations)
+	provider, err := newProvider(sqlDB, migrations, false)
 	if err != nil {
-		return fmt.Errorf("init goose: %w", err)
+		return err
 	}
 	if _, err := provider.UpTo(ctx, version); err != nil {
 		return fmt.Errorf("apply migrations up to %d: %w", version, err)
@@ -55,14 +113,40 @@ func MigrateDownTo(ctx context.Context, pool *pgxpool.Pool, version int64) error
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations)
+	provider, err := newProvider(sqlDB, migrations, false)
 	if err != nil {
-		return fmt.Errorf("init goose: %w", err)
+		return err
 	}
 	if _, err := provider.DownTo(ctx, version); err != nil {
 		return fmt.Errorf("roll back to %d: %w", version, err)
 	}
 	return nil
+}
+
+// RunMigrate is what `licetum migrate` does: it connects as DB__MIGRATE_URI says (DB__URI when that is empty), applies the
+// migrations and seeds the self-service. The migrations hold a session-level advisory lock for their whole run, so they need
+// a connection that stays the same: behind PgBouncer in transaction mode that is PostgreSQL itself, and never the simple
+// protocol of the pooler.
+func RunMigrate(ctx context.Context, cfg *config.Config) error {
+	conn := cfg.DB
+	if conn.MigrateURI != "" {
+		conn.URI, conn.PgBouncer = conn.MigrateURI, false
+	} else if conn.PgBouncer {
+		slog.Warn("DB__PGBOUNCER is set and DB__MIGRATE_URI is not: the migrations lock the database for their run, which " +
+			"PgBouncer in transaction mode cannot hold; point DB__MIGRATE_URI at PostgreSQL itself")
+	}
+	// The session lock keeps one connection of the pool for the whole run. The SQL migrations run on that very connection, but a
+	// Go migration (goose gives it the pool) would need another, and a pool of one (DB__POOL_SIZE=1, no overflow) would wait for
+	// itself for ever: the migration pool is never smaller than two.
+	if conn.MaxConns() < 2 {
+		conn.MaxOverflow = 2 - conn.PoolSize
+	}
+	pool, err := Connect(ctx, conn)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	return Migrate(ctx, pool, cfg)
 }
 
 // Migrate applies every embedded migration (goose) and then idempotently seeds the self-service.
@@ -75,9 +159,9 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) error 
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations)
+	provider, err := newProvider(sqlDB, migrations, true)
 	if err != nil {
-		return fmt.Errorf("init goose: %w", err)
+		return err
 	}
 
 	results, err := provider.Up(ctx)
@@ -90,6 +174,13 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) error 
 
 	return SeedPlatform(ctx, pool, cfg)
 }
+
+// seedLockKey is the advisory lock key the seed of the self-service runs under.
+var seedLockKey = func() int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("licetum.seed.platform"))
+	return int64(h.Sum64()) // #nosec G115 -- a hash, wrapping is fine
+}()
 
 // platformSource describes where a platform policy's entities live: the table, the expression used
 // as the resource name and the condition of a live row.
@@ -134,6 +225,11 @@ func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) e
 	var created []model.PlatformType
 	err := InTx(ctx, pool, func(tx pgx.Tx) error {
 		created = nil
+		// Parallel runs of the seed (the pods of a release start together) take turns: the one that comes second finds the
+		// rows of the first and creates nothing. The lock is released with the transaction.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, seedLockKey); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO service (id, name, slug, url, icon, authorization_url, token_url, jwks_url, issuer, client_id, client_secret)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)

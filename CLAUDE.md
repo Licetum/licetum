@@ -92,7 +92,7 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   `REVISION__WAIT_MAX`, and if it does not come the answer is computed from the data and **not kept** (`cachedAnswer`, `store`).
   Cache misses queue for `COMPUTE__CONCURRENCY` slots (`computeSlots`, default half of `DB__POOL_SIZE`).
   A write made through another replica is therefore seen within the poll interval, not at once: a client that needs it at once passes the
-  `X-Authz-Revision` of its write as `at_least_as_fresh`. When the revisions cannot be read, the last view is served for `SNAPSHOT__MAX_AGE` and marked
+  `X-Authz-Revision` of its write as `at_least_as_fresh`. When the revisions cannot be read, the last view is served (as long as `POLICY__MAX_STALENESS` allows, no limit by default; see "Resilience") and marked
   `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
 - The snapshot holds what a decision reads: services (without `client_secret`: `ServiceCheckColumns`), the type graph, the enabled
   memberships and rules *with* their validity windows (compared with the clock per request, `ruleActive`/`memberActive`), the role items, the
@@ -101,6 +101,39 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   unknown or deleted slug is a 404 without a query). Every write that changes any of this must bump the revision (all admin writes go through
   `mutate` or the batch, which do); a change made by other means (`restore-admin` does bump) shows up at `SNAPSHOT__MAX_AGE` at the latest.
   `consistency=higher` does not use the snapshot (`cacheState.forConsistency`): it reads everything with queries, as before the snapshot.
+- Resilience and operations (F5; `core/README.md` has the user-facing description):
+  - **Probes** (`engine/ready.go`, `server.NewServer`): `GET /healthz` has no dependency; `GET /readyz` (`App.Ready`) is 200 when the process is
+    not draining (`App.SetDraining`), PostgreSQL answers one statement within 1 s (`db.SchemaVersion`, result reused for 1 s, not counted in the
+    metrics) with the schema **at least** `db.LatestMigration()` (a newer one is fine: the previous release stays ready during a rolling
+    update), and the view holds its snapshot (or the policy is deliberately not copied: `oversized`). Redis is not part of it. The worker has
+    `/readyz` too (database and schema only). `licetum_degraded{component}` (redis: `redisx.Degraded` = the FastFail is tripped, open or half-open,
+    or a recent failure; postgres: the view is unconfirmed for `staleLimit` or the statements fail) and `licetum_snapshot_age_seconds`
+    (age of `localView.readAt`).
+  - **Degraded PostgreSQL**: `readView` reads the revisions with a 1 s timeout (`revisionReadTimeout`; the snapshot build has its own 30 s),
+    `currentView` serves an age-stale view degraded without joining a reading in progress (`viewState.reading`) while `degraded()` allows it
+    (`POLICY__MAX_STALENESS`, 0 = no limit); beyond it the state is not ok, the queries fail and `server.LocalizeError` turns
+    `db.IsUnavailable` errors into 503 `policy_unavailable` (and an expired request context into 503 `request_timeout`, a canceled one
+    quietly). A degraded view serves answers past their `Exp` while their `Hold` (the next validity boundary, uncapped by `ResultCacheTTL`; `computed.hold`,
+    `Prepared.hold`, `validityUntil`: the exact distance to the boundary, no one-second floor, counted from the start of the computation) has not
+    passed (`cachedEntry.stale`, `result="stale"`; `hold_property_test.go` checks it against random policies with a manual clock, `App.clock`); `cachedEntry.serveUntil` is the ordinary serving
+    time of the L1 entry, which now lives in the LRU until `Hold` (at most `maxStaleAnswerTTL`). While Redis is down (`App.redisDegraded`) an L1
+    entry is served until its `Exp`, not ten seconds (`liveWithoutRedis`). `cachedAnswer` waits for the shared computation with `DoChan` and the
+    caller's context, so a request deadline is honoured. `HTTP__MAX_INFLIGHT` keeps no latency under overload (the admitted requests wait behind
+    at most that many others): `core/README.md` says how to size it, `chaos/f5_8_test.go` measures it.
+  - **Shutdown** (`cli.StopServing`): `SetDraining` (responses get `Connection: close`), wait `SHUTDOWN__DRAIN`, `http.Server.Shutdown` with
+    `SHUTDOWN__TIMEOUT`, then the deferred `app.Close()`. **Admission** (`server.withAdmission`, outermost; `App.Admit`): `HTTP__MAX_INFLIGHT`
+    (default `GOMAXPROCS×256`) → 503 `overloaded` + `Retry-After: 1`, `licetum_shed_total`; `HTTP__REQUEST_TIMEOUT` (`App.RequestTimeout`: 10 s check,
+    60 s admin/worker, none for an engine without a role); `/healthz`, `/readyz`, `/metrics` exempt.
+  - **Connections**: `db.Connect` registers the uuid types for the simple protocol (`AfterConnect`) and, with `DB__PGBOUNCER`, uses
+    `QueryExecModeSimpleProtocol` with no statement cache; `licetum_db_pool_*` (`poolCollector`); each process logs `connectionBudget`.
+    `db.RunMigrate` (`DB__MIGRATE_URI`, never the simple protocol) is what `licetum migrate` and the tests call; `db.Migrate` uses the goose
+    session locker (`newProvider`, 1 s polling) and `SeedPlatform` runs under `pg_advisory_xact_lock(seedLockKey)`. `SYNC__DBOS_URI` gives
+    DBOS a URI of its own (it prepares statements).
+  - **Breaker**: `redisx.RecordFailure` is one Lua script (INCR, PEXPIRE on the first failure or when the key has none, SET of the open key); `redisx.Breaker`
+    carries the parameters for tests. `FastFail` does not gate the connection-setup commands (HELLO, ...) that run inside the probe. **Logs**: failures of a
+    dependency on the request path go through `logx.Repeated` (`logDependency`, `errKind`; `licetum_log_suppressed_total`): one record per kind per second.
+  - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_REDIS_OUTAGE` shortens the minute), `core/tests/integration/{db,redisx}`. The
+    suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
 - The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
   `snapshot.ttl`, ...): a policy that does not fit, `consistency=higher` and the admin simulations use it. Change one, change the other;
   `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` (random policies, both paths, answers and explanations) keeps them equal.
