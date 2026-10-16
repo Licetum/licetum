@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -158,7 +159,8 @@ func LocalizeError(ctx context.Context, operationID string, err error) *apperr.E
 		}
 	}
 	if !ok {
-		logx.Repeated.Log(ctx, slog.LevelError, "internal error|"+operationID, "internal error", "operation", operationID, "error", err)
+		logx.Repeated.Log(ctx, slog.LevelError, fmt.Sprintf("internal error|%s|%T", operationID, err),
+			"internal error", "operation", operationID, "error", err)
 		return apperr.Internal().Localize(i18n.FromContext(ctx))
 	}
 	if apiErr.Status >= http.StatusInternalServerError || apiErr.Status == http.StatusFailedDependency || apiErr.Unwrap() != nil {

@@ -108,7 +108,11 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	if err := app.LoadLogSettings(ctx); err != nil {
 		slog.WarnContext(ctx, "the stored log settings are not applied, the defaults stay in force", "error", err)
 	}
-	go app.WatchRevision(ctx)
+	// The revision is watched until the process has finished serving, not until SIGTERM: during the drain and the wait for
+	// the requests in progress the process answers, and its copy of the policy must keep being confirmed.
+	watchCtx, stopWatching := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopWatching()
+	go app.WatchRevision(watchCtx)
 
 	srv := &http.Server{
 		Addr:              *addr,

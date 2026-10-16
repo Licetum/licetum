@@ -195,9 +195,9 @@ var catalog = map[Key]Text{
 		ZH: "服务尚未准备好接收请求",
 	},
 	PolicyUnavailable: {
-		EN: "The access policy cannot be confirmed to be current, the request is refused",
-		RU: "Актуальность политики доступа не подтверждена, запрос отклонён",
-		ZH: "无法确认访问策略是最新的，请求已被拒绝",
+		EN: "The policy store cannot be reached or confirmed to be current, the request is refused; retry it shortly",
+		RU: "Хранилище политик недоступно или его актуальность не подтверждена, запрос отклонён; повторите его чуть позже",
+		ZH: "无法访问策略存储或无法确认其为最新，请求已被拒绝；请稍后重试",
 	},
 	Overloaded: {
 		EN: "The service is overloaded, retry the request shortly",

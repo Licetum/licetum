@@ -308,3 +308,66 @@ func TestF5_10_SchemaVersionIsTheLatestMigration(t *testing.T) {
 		t.Fatalf("schema version %d, latest embedded migration %d", version, db.LatestMigration())
 	}
 }
+
+// A pool of one connection (DB__POOL_SIZE=1, no overflow) is a valid setting and `migrate` must finish with it: the lock of the
+// migrations keeps a connection for the whole run (the SQL migrations run on it, so this passes with a pool of one as well; the
+// migration pool is still never smaller than two, for the day a Go migration needs another connection).
+func TestF5_10_MigrateWorksWithAPoolOfOneConnection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	infrastructure, err := support.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = infrastructure.Terminate(context.Background()) })
+
+	cfg := platformConfig(infrastructure.DBURI, 1)
+	cfg.DB.MaxOverflow = 0
+	if err := db.RunMigrate(ctx, cfg); err != nil {
+		t.Fatalf("migrate with a pool of one connection: %v", err)
+	}
+	pool, err := db.Connect(ctx, cfg.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if version, err := db.SchemaVersion(ctx, pool); err != nil || version != db.LatestMigration() {
+		t.Fatalf("schema version %d (%v), want %d", version, err, db.LatestMigration())
+	}
+}
+
+// The helpers of the tests migrate up and down on whatever pool they are given, a pooler's included: they take no
+// session-level lock, which would land on one server connection and be released on another.
+func TestF5_10_TheTestHelpersTakeNoSessionLock(t *testing.T) {
+	ctx := context.Background()
+	infrastructure, err := support.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = infrastructure.Terminate(ctx) })
+	cfg := platformConfig(infrastructure.DBURI, 3)
+	pool, err := db.Connect(ctx, cfg.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	holder, err := pgx.Connect(ctx, db.NormalizeDSN(infrastructure.DBURI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = holder.Close(ctx) })
+	if _, err := holder.Exec(ctx, `SELECT pg_advisory_lock($1)`, lock.DefaultLockID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- db.MigrateUpTo(ctx, pool, 2) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("MigrateUpTo waited for the lock of the migrations")
+	}
+}

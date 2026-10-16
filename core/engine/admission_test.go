@@ -142,3 +142,20 @@ func TestDependencyHealthIsDegradedUntilACallSucceeds(t *testing.T) {
 		t.Fatal("a success after the failure ends it")
 	}
 }
+
+func TestAReadingIsHungOnlyAfterItHasLastedLongerThanAHealthyOne(t *testing.T) {
+	a := &App{}
+	now := time.Now()
+	if a.readingHung(now) {
+		t.Fatal("no reading in progress is not a hung reading")
+	}
+	a.local.reading.Store(1)
+	a.local.readingFrom.Store(now.Add(-hungReading / 2).UnixNano())
+	if a.readingHung(now) {
+		t.Fatal("a reading that has just begun is waited for, as any renewal is")
+	}
+	a.local.readingFrom.Store(now.Add(-2 * hungReading).UnixNano())
+	if !a.readingHung(now) {
+		t.Fatal("a reading that lasts longer than a healthy one is hung: the requests stop waiting for it")
+	}
+}

@@ -42,6 +42,7 @@ type viewState struct {
 	failedAt    atomic.Int64 // unix nanoseconds of the last failed build of a snapshot
 	failedRenew atomic.Int64 // unix nanoseconds of the last reading of the revisions that failed
 	reading     atomic.Int32 // readings of the revisions in progress (see readView)
+	readingFrom atomic.Int64 // unix nanoseconds at which the reading in progress began
 	oversized   atomic.Int64 // revision + 1 of a policy that did not fit, 0 for none
 	renewFlight singleflight.Group
 }
@@ -107,11 +108,12 @@ func (a *App) currentView(ctx context.Context) *localView {
 			return v
 		}
 	}
-	// A view that is only old, while a reading is on its way or one failed a moment ago: the request does not join the
-	// reading (a database that does not answer would hold every request for as long as the reading lasts) and does not
-	// start another; the view is served as it is, marked degraded.
+	// A view that is only old, while a reading is hung or one failed a moment ago: the request does not join the reading (a
+	// database that does not answer would hold every request for as long as the reading lasts) and does not start another;
+	// the view is served as it is, marked degraded. A reading that has just begun is not hung: a healthy one takes a
+	// millisecond, and the request waits for it, as it would for any renewal.
 	if v != nil && ageStale && v.epoch == a.local.epoch.Load() && minRevisionFrom(ctx) <= v.state.version &&
-		(a.local.reading.Load() > 0 || now.Sub(time.Unix(0, a.local.failedRenew.Load())) < t.revisionPoll) {
+		(a.readingHung(now) || now.Sub(time.Unix(0, a.local.failedRenew.Load())) < t.revisionPoll) {
 		return degraded(v, now, t)
 	}
 	if nv := a.renewView(ctx); nv != nil {
@@ -122,6 +124,18 @@ func (a *App) currentView(ctx context.Context) *localView {
 		return degraded(v, now, t)
 	}
 	return nil
+}
+
+// hungReading is how long a reading of the revisions may take before the requests stop waiting for it.
+const hungReading = 50 * time.Millisecond
+
+// readingHung: a reading of the revisions has been going on for longer than a reading of a healthy database takes.
+func (a *App) readingHung(now time.Time) bool {
+	if a.local.reading.Load() == 0 {
+		return false
+	}
+	from := a.local.readingFrom.Load()
+	return from != 0 && now.Sub(time.Unix(0, from)) > hungReading
 }
 
 // staleLimit is the age at which a request no longer trusts the view without reading the revisions first. The view is renewed in
@@ -230,8 +244,14 @@ const (
 
 // readView does the reading. A failure leaves the previous view in place (and returns nil: the caller cannot trust it).
 func (a *App) readView(ctx context.Context) *localView {
-	a.local.reading.Add(1)
-	defer a.local.reading.Add(-1)
+	if a.local.reading.Add(1) == 1 {
+		a.local.readingFrom.Store(time.Now().UnixNano())
+	}
+	defer func() {
+		if a.local.reading.Add(-1) == 0 {
+			a.local.readingFrom.Store(0)
+		}
+	}()
 	ctx = context.WithoutCancel(ctx)
 	epoch := a.local.epoch.Load()
 	readCtx, cancel := context.WithTimeout(ctx, revisionReadTimeout)

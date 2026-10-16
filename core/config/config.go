@@ -212,7 +212,9 @@ type HTTP struct {
 type Policy struct {
 	// MaxStaleness is how long the process goes on answering from its copy of the policy after it last read the revision
 	// of the policy from PostgreSQL. Beyond it a request is refused with 503 (policy_unavailable): the process fails
-	// closed rather than decide from rules that may have been revoked. Zero means no limit.
+	// closed rather than decide from rules that may have been revoked. Zero, the default, means no limit: the process then
+	// answers from its copy for as long as PostgreSQL cannot be reached, and a revocation made meanwhile is not seen. Set it
+	// where that is not acceptable.
 	MaxStaleness time.Duration
 }
 

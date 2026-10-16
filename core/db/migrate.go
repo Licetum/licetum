@@ -33,16 +33,21 @@ func migrationsFS() (fs.FS, error) { return fs.Sub(migrationFS, "migrations") }
 // parallel `licetum migrate`, as the pods of a release start) before it gives up.
 const migrateLockTries = 600
 
-// newProvider is the goose provider of the embedded migrations. It takes the session-level advisory lock of goose for
-// the whole run, so two parallel runs never apply the same migration: the second one waits, then finds nothing to do.
+// newProvider is the goose provider of the embedded migrations. With locked it takes the session-level advisory lock of
+// goose for the whole run, so two parallel runs never apply the same migration: the second one waits, then finds nothing to
+// do. MigrateUpTo and MigrateDownTo, which tests use on pools of any kind, do not lock.
 // The lock belongs to the connection that took it, so a run needs a connection that stays the same for its whole
 // duration: PostgreSQL itself, or PgBouncer in session mode, not in transaction mode (see config.Database.MigrateURI).
-func newProvider(sqlDB *sql.DB, migrations fs.FS) (*goose.Provider, error) {
-	locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, migrateLockTries))
-	if err != nil {
-		return nil, fmt.Errorf("init the migration lock: %w", err)
+func newProvider(sqlDB *sql.DB, migrations fs.FS, locked bool) (*goose.Provider, error) {
+	var options []goose.ProviderOption
+	if locked {
+		locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, migrateLockTries))
+		if err != nil {
+			return nil, fmt.Errorf("init the migration lock: %w", err)
+		}
+		options = append(options, goose.WithSessionLocker(locker))
 	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations, goose.WithSessionLocker(locker))
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations, options...)
 	if err != nil {
 		return nil, fmt.Errorf("init goose: %w", err)
 	}
@@ -87,7 +92,7 @@ func MigrateUpTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	provider, err := newProvider(sqlDB, migrations)
+	provider, err := newProvider(sqlDB, migrations, false)
 	if err != nil {
 		return err
 	}
@@ -108,7 +113,7 @@ func MigrateDownTo(ctx context.Context, pool *pgxpool.Pool, version int64) error
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	provider, err := newProvider(sqlDB, migrations)
+	provider, err := newProvider(sqlDB, migrations, false)
 	if err != nil {
 		return err
 	}
@@ -130,6 +135,12 @@ func RunMigrate(ctx context.Context, cfg *config.Config) error {
 		slog.Warn("DB__PGBOUNCER is set and DB__MIGRATE_URI is not: the migrations lock the database for their run, which " +
 			"PgBouncer in transaction mode cannot hold; point DB__MIGRATE_URI at PostgreSQL itself")
 	}
+	// The session lock keeps one connection of the pool for the whole run. The SQL migrations run on that very connection, but a
+	// Go migration (goose gives it the pool) would need another, and a pool of one (DB__POOL_SIZE=1, no overflow) would wait for
+	// itself for ever: the migration pool is never smaller than two.
+	if conn.MaxConns() < 2 {
+		conn.MaxOverflow = 2 - conn.PoolSize
+	}
 	pool, err := Connect(ctx, conn)
 	if err != nil {
 		return err
@@ -148,7 +159,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) error 
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
 
-	provider, err := newProvider(sqlDB, migrations)
+	provider, err := newProvider(sqlDB, migrations, true)
 	if err != nil {
 		return err
 	}
