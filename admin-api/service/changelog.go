@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/licetum/licetum/core/engine"
@@ -24,8 +25,34 @@ type ChangeFilter struct {
 	Limit   int
 }
 
-// changePollInterval is how often WaitChanges looks at the log again.
-const changePollInterval = 250 * time.Millisecond
+// changeHeadEvery is the most often a process asks the log where it ends, however many clients wait on it.
+const changeHeadEvery = time.Second
+
+// changeHead caches the id of the last record of the change log for changeHeadEvery.
+type changeHead struct {
+	mu   sync.Mutex
+	id   int64
+	read time.Time
+}
+
+// get returns the id of the last record, at most changeHeadEvery old, and when it was read.
+func (h *changeHead) get(ctx context.Context, a *App) (int64, time.Time, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.read.IsZero() && time.Since(h.read) < changeHeadEvery {
+		return h.id, h.read, nil
+	}
+	// The query serves every waiter of the process, so it does not end with the request that happened to run it.
+	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	var id int64
+	if err := a.DB.QueryRow(qctx, `SELECT COALESCE(max(id), 0) FROM authz_change`).Scan(&id); err != nil {
+		return 0, time.Time{}, err
+	}
+	h.id, h.read = id, started
+	return id, started, nil
+}
 
 // changeColumns are the columns collectChanges reads.
 const changeColumns = `id, at, actor, service_id, entity, entity_id, action, before, after`
@@ -45,18 +72,38 @@ func (a *App) ListChanges(ctx context.Context, f ChangeFilter) ([]model.ChangeRe
 }
 
 // WaitChanges is ListChanges for a client that follows the log: when no record comes after the position yet, it waits
-// up to wait for the first one. It polls the log itself, so the records of every replica are seen.
+// up to wait for the first one. The waiters of a process share one query for the end of the log, asked at most once a
+// second; a waiter reads its own records only when the log has moved past what it has seen. The records of every
+// replica are seen, because the log is the table.
 func (a *App) WaitChanges(ctx context.Context, f ChangeFilter, wait time.Duration) ([]model.ChangeRecord, error) {
+	if wait <= 0 {
+		return a.ListChanges(ctx, f)
+	}
 	deadline := time.Now().Add(wait)
+	seen := f.After // the log is known to hold nothing of interest in (f.After, seen]
 	for {
-		out, err := a.ListChanges(ctx, f)
-		if err != nil || len(out) > 0 || !time.Now().Before(deadline) {
-			return out, err
+		head, read, err := a.changes.get(ctx, a)
+		if err != nil {
+			return nil, err
 		}
+		if head > seen {
+			out, err := a.ListChanges(ctx, f)
+			if err != nil || len(out) > 0 {
+				return out, err
+			}
+			// Nothing for this filter up to the head read above (the ListChanges ran later, so it covers it).
+			seen = head
+		}
+		next := read.Add(changeHeadEvery)
+		if !time.Now().Before(deadline) {
+			return []model.ChangeRecord{}, nil
+		}
+		timer := time.NewTimer(min(time.Until(next), time.Until(deadline)) + time.Millisecond)
 		select {
 		case <-ctx.Done():
-			return out, nil
-		case <-time.After(changePollInterval):
+			timer.Stop()
+			return []model.ChangeRecord{}, nil
+		case <-timer.C:
 		}
 	}
 }

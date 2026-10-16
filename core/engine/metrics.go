@@ -41,6 +41,7 @@ type metrics struct {
 	snapshotFallback  prometheus.Counter
 	l1Cache           *prometheus.CounterVec // cache: token | answer, result: hit | miss
 	jwksFetches       *prometheus.CounterVec // result: ok | error
+	auditDropped      prometheus.Counter
 }
 
 func newMetrics() *metrics {
@@ -126,6 +127,11 @@ func newMetrics() *metrics {
 		Buckets: prometheus.ExponentialBuckets(0.0002, 2, 16),
 	}, []string{"operation"})
 
+	m.auditDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "licetum_audit_dropped_total",
+		Help: "Delegated-call records dropped because the async audit buffer was full (or could not be flushed at shutdown).",
+	})
+
 	m.backgroundDropped = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "licetum_background_dropped_total",
 		Help: "Background tasks (cache writes, refreshes) dropped because the queue was full.",
@@ -145,7 +151,7 @@ func newMetrics() *metrics {
 
 	for _, c := range []prometheus.Collector{
 		m.permissionCompute, m.permissionCache, m.checkCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls, m.breakerOpen,
-		m.backgroundDropped, m.snapshotFallback, m.l1Cache, m.jwksFetches,
+		m.auditDropped, m.backgroundDropped, m.snapshotFallback, m.l1Cache, m.jwksFetches,
 		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
 		m.httpRequests, m.httpDuration,
 	} {

@@ -44,8 +44,12 @@ type App struct {
 	// Logs is the process logger the log settings are applied to (see log_settings.go). Nil when the process logs
 	// through the default handler only, as the OpenAPI printer and the tests that build an App directly do.
 	Logs *logx.Switch
-	// logVersion is the version of the log settings this process applied (see WatchLogSettings).
+	// logVersion is the version of the log settings this process applied.
 	logVersion atomic.Int64
+	// logRevision is the revision_state revision of the log settings this process applied; logLoading is set while
+	// a load runs (see noteLogSettingsRevision).
+	logRevision atomic.Int64
+	logLoading  atomic.Bool
 	// jobFlights makes one poller of a synchronization job serve all the waiters of the job in this process.
 	jobFlights singleflight.Group
 	// syncAsked remembers when this process last asked for the refresh of a type (see requestInBackground).
@@ -59,10 +63,11 @@ type App struct {
 	doneCh chan struct{}
 	// answers collapses the concurrent computations of the same answer (see cachedAnswer).
 	answers singleflight.Group
-	// delegationPruned is when the retention of the delegated-call audit was last applied (unix nanoseconds).
-	delegationPruned atomic.Int64
-	// subjectNotes remembers which subjects were written to the registry lately (see NoteSubject).
-	subjectNotes subjectNotes
+	// auditSink is the buffer of the async audit mode (see audit); auditOnce starts it on first use.
+	auditOnce sync.Once
+	auditSink atomic.Pointer[auditSink]
+	// subjects is the buffer of the subjects waiting to be written to the registry (see NoteSubject).
+	subjects subjectBuffer
 	// bg runs the background work (cache writes, refreshes) on a bounded pool, started on first use; Close waits for it.
 	bg     *backgroundPool
 	bgOnce sync.Once
@@ -128,6 +133,11 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 // Close stops new background work, waits for the work in progress (a little while), then closes the connections
 // to the SQL sources.
 func (a *App) Close() {
+	// The buffers are flushed first: the work still in progress may be waiting for the same connections.
+	if sink := a.auditSink.Load(); sink != nil {
+		sink.close()
+	}
+	a.subjects.close()
 	if !a.background().close(closeWait) {
 		slog.Warn("background work did not finish before the shutdown", "wait", closeWait)
 	}
