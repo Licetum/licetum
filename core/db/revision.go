@@ -12,6 +12,8 @@ const (
 	// ScopeRules numbers the changes of everything a decision is made from except the resource data: rules, memberships,
 	// groups, roles and their items, access groups, services, types and synchronizers.
 	ScopeRules = "rules"
+	// ScopeLogSettings numbers the changes of the log settings: a process that sees it move loads them.
+	ScopeLogSettings = "log_settings"
 	// dataScopePrefix starts the scope of the resource data of a service.
 	dataScopePrefix = "data:"
 )
@@ -40,6 +42,8 @@ func BumpRevision(ctx context.Context, q Querier, scope string) (int64, error) {
 type Revisions struct {
 	// Rules is the revision of ScopeRules.
 	Rules int64
+	// LogSettings is the revision of ScopeLogSettings.
+	LogSettings int64
 	// Data is the revision of the resource data of each service (its id as text); a service that is absent has 0.
 	Data map[string]int64
 }
@@ -62,6 +66,8 @@ func LoadRevisions(ctx context.Context, q Querier) (Revisions, error) {
 			out.Data[service] = revision
 		} else if scope == ScopeRules {
 			out.Rules = revision
+		} else if scope == ScopeLogSettings {
+			out.LogSettings = revision
 		}
 	}
 	return out, rows.Err()

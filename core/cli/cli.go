@@ -112,7 +112,6 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	if err := app.LoadLogSettings(ctx); err != nil {
 		slog.WarnContext(ctx, "the stored log settings are not applied, the defaults stay in force", "error", err)
 	}
-	go app.WatchLogSettings(ctx)
 	go app.WatchRevision(ctx)
 
 	srv := &http.Server{
@@ -216,7 +215,9 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 	if err := app.LoadLogSettings(ctx); err != nil {
 		slog.WarnContext(ctx, "the stored log settings are not applied, the defaults stay in force", "error", err)
 	}
-	go app.WatchLogSettings(ctx)
+	go app.WatchRevision(ctx)
+	// The retention runs here only: the check and the admin processes do not delete.
+	go app.WatchRetention(ctx)
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", app.MetricsHandler())

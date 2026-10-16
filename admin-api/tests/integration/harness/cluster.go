@@ -491,7 +491,7 @@ func (c *Cluster) WaitForSyncIdle() {
 }
 
 // Warm sends the request until the replica is in a steady state for it: the answer and the token are cached and the
-// background work of the earlier requests (writing the cache, refreshing a source) has ended, which is when two
+// background work of the earlier requests (writing the cache, refreshing a source, the batch of known subjects) has ended, which is when two
 // requests in a row cost the same. It returns the last of them. The cost of a request is meaningful only then.
 func (r *Replica) Warm(c *Cluster, method, path, token string) *Result {
 	c.T.Helper()
@@ -510,6 +510,9 @@ func (r *Replica) Warm(c *Cluster, method, path, token string) *Result {
 		last = res
 		if same >= 2 {
 			c.WaitForSyncIdle()
+			// The subjects the requests noted are written in batches once a second: write them now, so that the
+			// batch does not fall into the request a test measures next.
+			r.App.FlushSubjects(context.Background())
 			time.Sleep(100 * time.Millisecond) // let the background work of the last request end
 			return r.Do(c, method, path, token, nil)
 		}

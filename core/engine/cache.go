@@ -61,6 +61,7 @@ func (a *App) readCacheState(ctx context.Context) cacheState {
 		slog.WarnContext(ctx, "failed to read the revision of the policy", "error", err)
 		return cacheState{}
 	}
+	a.noteLogSettingsRevision(rev.LogSettings)
 	state := cacheState{ok: true, version: rev.Rules, data: rev.Data}
 	state.tag = dataTag(state.data)
 	if memo := a.attrsMemo.Load(); memo != nil && memo.revision == rev.Rules {

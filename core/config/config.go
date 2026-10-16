@@ -172,6 +172,11 @@ type Subjects struct {
 type Delegation struct {
 	// AuditRetentionDays is how long a record is kept; 0 keeps them for good.
 	AuditRetentionDays int
+	// AuditMode is "strict" (a call is answered only after its record is committed) or "async" (the record is
+	// buffered and written in batches: a crash loses at most the buffer of the last flush window).
+	AuditMode string
+	// AuditBuffer is how many records the async buffer holds; a record that does not fit is dropped and counted.
+	AuditBuffer int
 }
 
 type HTTP struct {
@@ -286,11 +291,19 @@ func Load() (*Config, error) {
 		},
 		Delegation: Delegation{
 			AuditRetentionDays: e.int("DELEGATION__AUDIT_RETENTION_DAYS", 365),
+			AuditMode:          strings.ToLower(e.str("DELEGATION__AUDIT_MODE", "strict")),
+			AuditBuffer:        e.int("DELEGATION__AUDIT_BUFFER", 100_000),
 		},
 		HTTP: HTTP{
 			Addr:      e.str("HTTP__ADDR", ""),
 			PublicURL: strings.TrimRight(e.str("HTTP__PUBLIC_URL", ""), "/"),
 		},
+	}
+	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
+		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))
+	}
+	if cfg.Delegation.AuditBuffer < 1 {
+		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_BUFFER must be positive, got %d", cfg.Delegation.AuditBuffer))
 	}
 	if u := cfg.HTTP.PublicURL; u != "" {
 		if parsed, err := url.Parse(u); err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" ||
