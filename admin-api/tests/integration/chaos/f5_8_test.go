@@ -204,7 +204,7 @@ func TestF5_8_ThreeTimesTheSustainableRateIsShedNotQueued(t *testing.T) {
 	if over.maxInflight > float64(limit) {
 		t.Errorf("the replica reported %.0f requests in flight with a limit of %d", over.maxInflight, limit)
 	}
-	// The issue asks for 2×. The figures of this test: 1.7 to 2.0 in four runs on a laptop, 1.7 and 3.1 on a GitHub runner. A p99
+	// The issue asks for 2×. The figures of this test: 1.7 to 2.0 in six runs on a laptop; on a GitHub runner (4 shared vCPUs) 1.7 once and 3.1 twice, with a limit of 8. A p99
 	// of a few tens of milliseconds, measured on a machine that also runs the load, PostgreSQL and Redis, moves by more than that
 	// from one run to the next, so the test fails at 5×, which the default limit exceeds by an order of magnitude (20 to 150×),
 	// and logs everything above 2×.

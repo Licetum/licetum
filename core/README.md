@@ -167,7 +167,7 @@ requests that are admitted wait behind at most that many others, so under overlo
 goodput (Little's law): in the load test of F5-8 (`TestF5_8_*`, 4 shared vCPUs, a request that reads the policy from PostgreSQL,
 three times the sustainable rate) the default admits everything it can hold and the p99 of the admitted requests is 20 to 80
 times the p99 at the sustainable rate, while a limit of three quarters of *sustainable rate × p99 at that rate* (at least twice the
-CPUs) keeps it near twice (1.7 to 2.0 in four runs on a laptop, 1.7 and 3.1 on a shared CI runner) and refuses about two thirds of the offered requests, with the goodput above
+CPUs) keeps it near twice (1.7 to 2.0 in six runs on a laptop; on a 4-vCPU shared CI runner 1.7 once and 3.1 twice, with a limit of 8, where the CPU spent on the refusals is a larger part of the little there is) and refuses about two thirds of the offered requests, with the goodput above
 the capacity measured flat out. To keep the latency of what is served under overload, measure the sustainable rate and its p99
 (the highest step of the ramp of `admin-api/loadtest` that meets its objectives), set the limit to the product, and check it with
 the same test. The price of a tight limit is that a burst that would have been queued is refused: a limit under the number of
