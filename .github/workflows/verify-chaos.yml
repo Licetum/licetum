@@ -1,0 +1,42 @@
+name: Verify chaos (temporary)
+
+# Temporary: chaos.yml is not on the default branch, so GitHub neither schedules it nor lets it be started by hand.
+# This file runs the same tests on a GitHub runner for this branch, once per change of this file. It is removed before
+# the branch is merged.
+on:
+  push:
+    branches: [ccr-36b5903b-kne74a]
+    paths: [.github/workflows/verify-chaos.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  chaos:
+    name: Fault injection (verification)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fault injection tests
+        run: |
+          cd admin-api
+          go test -race -count=1 -timeout 40m -tags chaos -v ./tests/integration/... 2>&1 | tee /tmp/chaos.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Result of each test
+        if: always()
+        run: grep -E '^(--- |=== RUN|ok|FAIL|PASS)' /tmp/chaos.log | grep -E '^(--- |ok|FAIL|PASS)' || true
