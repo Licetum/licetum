@@ -438,6 +438,13 @@ func (s *snapshot) expandRoles(rules []model.AssignmentRule, relevant map[uuid.U
 // windows: until the nearest moment after now a rule on one of the types (or a role assignment) or a membership starts
 // or stops being in force, at most ResultCacheTTL.
 func (s *snapshot) ttl(relevant map[uuid.UUID]bool, now time.Time) time.Duration {
+	ttl, _ := s.validity(relevant, now)
+	return ttl
+}
+
+// validity is ttl together with hold: how long the answer stays correct with respect to validity windows alone, without the
+// cap of ResultCacheTTL (holdUnbounded when no window ends or starts).
+func (s *snapshot) validity(relevant map[uuid.UUID]bool, now time.Time) (ttl, hold time.Duration) {
 	var until *time.Time
 	for i := range s.bounds {
 		b := &s.bounds[i]
@@ -451,10 +458,7 @@ func (s *snapshot) ttl(relevant map[uuid.UUID]bool, now time.Time) time.Duration
 			until = &b.at
 		}
 	}
-	if until == nil {
-		return ResultCacheTTL
-	}
-	return min(ResultCacheTTL, max(time.Second, until.Sub(now)))
+	return validityUntil(until, now)
 }
 
 // service returns a copy of the live service with the id.

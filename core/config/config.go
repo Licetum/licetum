@@ -26,7 +26,17 @@ type Database struct {
 	// SyncPoolSize is the size of the pool the synchronization transactions run on (the worker only): it is separate
 	// from the request pool, so waiting synchronizations never starve the requests.
 	SyncPoolSize int
+	// PgBouncer says the URI points at PgBouncer in transaction mode: statements go by the simple protocol and are not
+	// prepared, because a prepared statement belongs to one server connection and the next transaction may get another.
+	PgBouncer bool
+	// MigrateURI is the connection string `licetum migrate` uses, when it must differ from URI: the migrations hold a
+	// session-level advisory lock, which needs the same server connection for the whole run, so behind PgBouncer in
+	// transaction mode it points at PostgreSQL itself. Empty: URI.
+	MigrateURI string
 }
+
+// MaxConns is how many connections the request pool of a process may hold: the pool size plus the overflow.
+func (d Database) MaxConns() int { return d.PoolSize + d.MaxOverflow }
 
 type Auth struct {
 	StateSecret string
@@ -137,6 +147,10 @@ type Sync struct {
 	Engine string
 	// DBOSSchema is the schema of the DBOS system tables (engine dbos).
 	DBOSSchema string
+	// DBOSURI is the connection string of the DBOS client when it must differ from DB__URI: DBOS prepares its statements,
+	// which PgBouncer in transaction mode carries only from version 1.21 with max_prepared_statements set, so behind an older
+	// one it points at PostgreSQL itself. Empty: DB__URI.
+	DBOSURI string
 
 	// Lease is how long a worker owns a synchronization job without renewing it; it renews every Lease/3. A job whose
 	// lease ran out is taken over by another worker.
@@ -183,9 +197,32 @@ type HTTP struct {
 	// Addr is the address the HTTP server listens on. Empty means the app's own default
 	// (:8000 for admin, :8001 for check).
 	Addr string
+	// MaxInflight is how many requests a process serves at once; a request above it is refused with 503 and Retry-After
+	// (see server.WithAdmission). Zero takes the default (GOMAXPROCS × 256), a negative value turns the limit off.
+	MaxInflight int
+	// RequestTimeout is the deadline put on the context of a request. Zero takes the default of the process (10 s for the
+	// check API, 60 s for the admin API, whose requests may wait for a synchronization), a negative value sets none.
+	RequestTimeout time.Duration
 	// PublicURL is the address clients reach the check API at, without a trailing slash (https://licetum.example.com).
 	// The AuthZEN discovery document is built from it; without it the document is not served.
 	PublicURL string
+}
+
+// Policy tunes what the check API does while it cannot confirm that its copy of the policy is current.
+type Policy struct {
+	// MaxStaleness is how long the process goes on answering from its copy of the policy after it last read the revision
+	// of the policy from PostgreSQL. Beyond it a request is refused with 503 (policy_unavailable): the process fails
+	// closed rather than decide from rules that may have been revoked. Zero means no limit.
+	MaxStaleness time.Duration
+}
+
+// Shutdown tunes how a process stops on SIGTERM (see cli.Serve).
+type Shutdown struct {
+	// Drain is how long the process says it is not ready, and goes on serving, before it stops listening: the time the
+	// balancer needs to stop sending it requests.
+	Drain time.Duration
+	// Timeout is how long the requests in progress have to finish once the process stops listening.
+	Timeout time.Duration
 }
 
 type Config struct {
@@ -203,6 +240,8 @@ type Config struct {
 	Background Background
 	Revision   Revision
 	Compute    Compute
+	Policy     Policy
+	Shutdown   Shutdown
 }
 
 // Load reads the whole environment. Required variables are checked only for the sections the
@@ -219,6 +258,8 @@ func Load() (*Config, error) {
 			Echo:               e.bool("DB__ECHO", false),
 			StatementCacheSize: e.int("DB__STATEMENT_CACHE_SIZE", 100),
 			SyncPoolSize:       e.int("DB__SYNC_POOL_SIZE", 4),
+			PgBouncer:          e.bool("DB__PGBOUNCER", false),
+			MigrateURI:         e.str("DB__MIGRATE_URI", ""),
 		},
 		Auth: Auth{
 			StateSecret: e.str("AUTH__STATE_SECRET", ""),
@@ -245,6 +286,11 @@ func Load() (*Config, error) {
 			WaitMax:      e.duration("REVISION__WAIT_MAX", 500*time.Millisecond),
 		},
 		Compute: Compute{Concurrency: e.int("COMPUTE__CONCURRENCY", 0)},
+		Policy:  Policy{MaxStaleness: e.duration("POLICY__MAX_STALENESS", 0)},
+		Shutdown: Shutdown{
+			Drain:   e.duration("SHUTDOWN__DRAIN", 10*time.Second),
+			Timeout: e.duration("SHUTDOWN__TIMEOUT", 30*time.Second),
+		},
 		Background: Background{
 			Workers: e.int("BACKGROUND__WORKERS", 16),
 			Queue:   e.int("BACKGROUND__QUEUE", 1024),
@@ -275,6 +321,7 @@ func Load() (*Config, error) {
 			DBOSPoolSize:     e.int("SYNC__DBOS_POOL_SIZE", 20),
 			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "dbos")),
 			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
+			DBOSURI:          e.str("SYNC__DBOS_URI", ""),
 			Lease:            e.seconds("SYNC__LEASE", 30),
 			RequestWait:      e.seconds("SYNC__REQUEST_WAIT", 5),
 			AdminWait:        e.seconds("SYNC__ADMIN_WAIT", 30),
@@ -295,12 +342,27 @@ func Load() (*Config, error) {
 			AuditBuffer:        e.int("DELEGATION__AUDIT_BUFFER", 100_000),
 		},
 		HTTP: HTTP{
-			Addr:      e.str("HTTP__ADDR", ""),
-			PublicURL: strings.TrimRight(e.str("HTTP__PUBLIC_URL", ""), "/"),
+			Addr:           e.str("HTTP__ADDR", ""),
+			PublicURL:      strings.TrimRight(e.str("HTTP__PUBLIC_URL", ""), "/"),
+			MaxInflight:    e.int("HTTP__MAX_INFLIGHT", 0),
+			RequestTimeout: e.duration("HTTP__REQUEST_TIMEOUT", 0),
 		},
 	}
 	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
 		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))
+	}
+	if cfg.DB.PoolSize < 1 {
+		e.errs = append(e.errs, fmt.Errorf("DB__POOL_SIZE must be positive, got %d", cfg.DB.PoolSize))
+	}
+	if cfg.DB.MaxOverflow < 0 {
+		e.errs = append(e.errs, fmt.Errorf("DB__MAX_OVERFLOW must not be negative, got %d", cfg.DB.MaxOverflow))
+	}
+	if cfg.Policy.MaxStaleness < 0 {
+		e.errs = append(e.errs, fmt.Errorf("POLICY__MAX_STALENESS must not be negative (0 means no limit), got %s", cfg.Policy.MaxStaleness))
+	}
+	if cfg.Shutdown.Drain < 0 || cfg.Shutdown.Timeout <= 0 {
+		e.errs = append(e.errs, fmt.Errorf("SHUTDOWN__DRAIN must not be negative and SHUTDOWN__TIMEOUT must be positive, got %s and %s",
+			cfg.Shutdown.Drain, cfg.Shutdown.Timeout))
 	}
 	if cfg.Delegation.AuditBuffer < 1 {
 		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_BUFFER must be positive, got %d", cfg.Delegation.AuditBuffer))

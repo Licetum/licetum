@@ -5,9 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net"
 	"strings"
+	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -75,8 +79,23 @@ func Connect(ctx context.Context, cfg config.Database) (*pgxpool.Pool, error) {
 	if cfg.PoolRecycle > 0 {
 		poolCfg.MaxConnLifetime = cfg.PoolRecycle
 	}
-	if cfg.StatementCacheSize > 0 {
+	switch {
+	case cfg.PgBouncer:
+		// Behind PgBouncer in transaction mode the next statement may run on another server connection, which has not
+		// prepared what this one prepared: nothing is prepared, and the statements travel by the simple protocol.
+		poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+		poolCfg.ConnConfig.StatementCacheCapacity = 0
+		poolCfg.ConnConfig.DescriptionCacheCapacity = 0
+	case cfg.StatementCacheSize > 0:
 		poolCfg.ConnConfig.StatementCacheCapacity = cfg.StatementCacheSize
+	}
+	// The simple protocol sends the arguments as text and has no description of the statement to say their types, so pgx
+	// derives the type from the Go type of the argument: the ones it does not know are told to it here.
+	poolCfg.AfterConnect = func(_ context.Context, conn *pgx.Conn) error {
+		types := conn.TypeMap()
+		types.RegisterDefaultPgType(uuid.UUID{}, "uuid")
+		types.RegisterDefaultPgType([]uuid.UUID{}, "_uuid")
+		return nil
 	}
 	// The tracer is always there: it counts statements for the metrics and for the tests (see Observe); DB__ECHO
 	// only adds the log of every SQL text.
@@ -116,4 +135,29 @@ func IsUniqueViolation(err error) bool {
 func IsPrimaryKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.HasSuffix(pgErr.ConstraintName, "_pkey")
+}
+
+// IsUnavailable reports that the database could not be reached, dropped the connection, or had no connection to give —
+// as opposed to an error of the statement itself (a constraint, a syntax error, a missing row). The caller can do nothing
+// about the first kind but wait, so it answers 503 and not 500. A deadline of the caller's own context is not this kind.
+func IsUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch {
+		case strings.HasPrefix(pgErr.Code, "08"): // connection_exception
+			return true
+		case pgErr.Code == "53300", // too_many_connections
+			pgErr.Code == "57P01", pgErr.Code == "57P02", pgErr.Code == "57P03": // admin_shutdown, crash_shutdown, cannot_connect_now
+			return true
+		}
+		return false
+	}
+	var connErr *pgconn.ConnectError
+	var opErr *net.OpError
+	return errors.As(err, &connErr) || errors.As(err, &opErr) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }

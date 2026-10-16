@@ -146,3 +146,65 @@ func TestFastFailPipelineMarksEveryCommandSkipped(t *testing.T) {
 		}
 	}
 }
+
+// The probe of a half-open breaker needs a connection, and go-redis sets it up with commands (HELLO, CLIENT SETINFO, ...)
+// that pass through the same hooks while the probe is in progress. They must not be taken for second commands of a
+// half-open breaker and skipped, or the probe fails on them and a Redis that is back is never tried again (F5-4).
+func TestFastFailTheSetupOfAConnectionDuringTheProbeIsNotSkipped(t *testing.T) {
+	f, clk := newTestFastFail()
+	for range 3 {
+		_, _ = send(f, timeout)
+	}
+	clk.now = clk.now.Add(FastFailCooldown)
+
+	ctx := context.Background()
+	setup := []redis.Cmder{redis.NewStringCmd(ctx, "hello", "3"), redis.NewStringCmd(ctx, "client", "setinfo", "LIB-NAME", "go-redis")}
+	setupSent := false
+	setupHook := f.ProcessPipelineHook(func(context.Context, []redis.Cmder) error { setupSent = true; return nil })
+
+	var setupErr error
+	probe := f.ProcessHook(func(ctx context.Context, cmd redis.Cmder) error {
+		// The connection the probe needs is opened inside it, and its setup runs through the hooks.
+		setupErr = setupHook(ctx, setup)
+		return setupErr
+	})
+	err := probe(ctx, redis.NewStringCmd(ctx, "get", "k"))
+
+	if !setupSent || setupErr != nil || err != nil {
+		t.Fatalf("setup sent=%v, setup err=%v, probe err=%v: the probe must go through with its connection setup", setupSent, setupErr, err)
+	}
+	if f.Open() {
+		t.Fatal("a successful probe must close the breaker")
+	}
+	// A single setup command is not gated either.
+	sent := false
+	hello := f.ProcessHook(func(context.Context, redis.Cmder) error { sent = true; return nil })
+	for range 3 {
+		_, _ = send(f, timeout)
+	}
+	if err := hello(ctx, redis.NewStringCmd(ctx, "hello", "3")); err != nil || !sent {
+		t.Fatalf("a HELLO while the breaker is open: sent=%v err=%v", sent, err)
+	}
+}
+
+// Tripped stays true from the third failure until a command succeeds, also in the half-open state in which Open is false.
+func TestFastFailTrippedUntilAProbeSucceeds(t *testing.T) {
+	f, clk := newTestFastFail()
+	if f.Tripped() {
+		t.Fatal("a new breaker is not tripped")
+	}
+	for range 3 {
+		_, _ = send(f, timeout)
+	}
+	if !f.Tripped() || !f.Open() {
+		t.Fatal("three failures trip the breaker")
+	}
+	clk.now = clk.now.Add(FastFailCooldown)
+	if f.Open() || !f.Tripped() {
+		t.Fatalf("half-open: Open=%v Tripped=%v, want false and true", f.Open(), f.Tripped())
+	}
+	_, _ = send(f, nil) // the probe
+	if f.Tripped() {
+		t.Fatal("a successful probe closes the breaker")
+	}
+}

@@ -83,12 +83,18 @@ func (a *App) dbosPoolSize() int {
 	return 20
 }
 
-// dbosURL is the connection string of the DBOS system database: the application's own with room for the waiters.
+// dbosURL is the connection string of the DBOS system database: SYNC__DBOS_URI, or the application's own with room for the
+// waiters. DBOS prepares its statements, so behind PgBouncer in transaction mode it needs either PgBouncer 1.21 or newer with
+// max_prepared_statements set, or a URI of its own that goes to PostgreSQL directly.
 func (a *App) dbosURL() (string, error) {
 	if a.Cfg == nil {
 		return "", errors.New("dbos: no configuration")
 	}
-	u, err := url.Parse(db.NormalizeDSN(a.Cfg.DB.URI))
+	raw := a.Cfg.DB.URI
+	if a.Cfg.Sync.DBOSURI != "" {
+		raw = a.Cfg.Sync.DBOSURI
+	}
+	u, err := url.Parse(db.NormalizeDSN(raw))
 	if err != nil {
 		return "", err
 	}

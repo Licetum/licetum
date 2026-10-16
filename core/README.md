@@ -77,7 +77,7 @@ lists accept a JSON array or a comma-separated string.
 
 | Prefix | Variables |
 |---|---|
-| `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE`, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO` |
+| `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE` default 10, `DB__MAX_OVERFLOW` default 20, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO`; behind PgBouncer: `DB__PGBOUNCER` (simple protocol, nothing prepared) and `DB__MIGRATE_URI` (where `licetum migrate` connects, PostgreSQL itself) — see [Resilience and operations](#resilience-and-operations) |
 | `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the check API's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
 | `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
 | `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `at_least_as_fresh` waits for its revision before the answer is computed from the data) |
@@ -91,6 +91,9 @@ lists accept a JSON array or a comma-separated string.
 | | The retention of both runs in the **worker** only (`licetum worker`): give it the same `SUBJECTS__RETENTION_DAYS` and `DELEGATION__AUDIT_RETENTION_DAYS` as the other processes, or the defaults (90 and 365 days) apply. |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person), `DELEGATION__AUDIT_MODE` (`strict`, default: the record is committed before the answer; `async`: buffered and written in batches), `DELEGATION__AUDIT_BUFFER` (async buffer size, default 100000) |
 | `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address; the address clients reach the check API at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
+| `HTTP__MAX_INFLIGHT`, `HTTP__REQUEST_TIMEOUT` | admission control: the requests served at once (default `GOMAXPROCS × 256`, a negative value removes the limit) and the deadline of a request (default `10s` for the check API, `60s` for the admin API, a negative value sets none) |
+| `POLICY__MAX_STALENESS` | how long a process goes on answering from its copy of the policy when it cannot confirm it against PostgreSQL; beyond it requests fail closed (503 `policy_unavailable`). Default `0`: no limit |
+| `SHUTDOWN__DRAIN`, `SHUTDOWN__TIMEOUT` | on SIGTERM: how long the process is not ready but serves (default `10s`) and how long it waits for the requests in progress (default `30s`) |
 | `LOG__LEVEL` | `debug` for debug logs |
 
 ## Synchronization pipeline
@@ -106,13 +109,84 @@ Redis. The pieces, all per process:
 - **The view** (`engine/localstate.go`): the revision of the rules and of the data of each service as read from PostgreSQL
   (one statement), with the snapshot of that revision. It is renewed every `REVISION__POLL_INTERVAL` (`WatchRevision`, and
   the requests), and at once after a write made through the process or a request that asks for `at_least_as_fresh` a newer
-  revision. When the revisions cannot be read the last view is served for up to `SNAPSHOT__MAX_AGE`, and answers are kept in
-  memory only. The revision and the data change in one transaction, so a replica never sees a revision before its data.
+  revision. When the revisions cannot be read the last view is served as it is, marked degraded, for as long as
+  `POLICY__MAX_STALENESS` allows (no limit by default), and answers are kept in memory only. The revision and the data change in
+  one transaction, so a replica never sees a revision before its data.
 - **Answers and tokens** are kept in memory first (`CACHE__ANSWER_L1_SIZE`, ten seconds at most; `AUTH__TOKEN_L1_SIZE`, a
   minute at most) and in Redis second: a request that finds its answer only in Redis makes one round trip.
 - **Key sets** of the identity providers are kept per URL (`AUTH__JWKS_TTL`), fetched once for all the requests that wait
   for them, and fetched again for an unknown key id at most once per `AUTH__JWKS_MIN_REFRESH`; a token that failed
   verification is remembered for `AUTH__INVALID_TOKEN_TTL`.
+
+## Resilience and operations
+
+### Probes
+
+- `GET /healthz` is liveness: 200 while the process answers, whatever its dependencies do. Use it for the liveness probe.
+- `GET /readyz` is readiness: 200 when PostgreSQL answers within a second, the schema of the database is **at least** the version
+  of the binary (a newer schema is fine: during a rolling update the pods of the previous release stay in service on the schema
+  the new release has migrated) and the copy of the policy is loaded (a policy too large for `SNAPSHOT__MAX_BYTES` is not copied by
+  decision, and does not hold readiness back); 503 `not_ready` with the reason (`database`, `schema`, `snapshot`, `draining`)
+  otherwise. The result of the database check is reused for a second. **Redis is not part of readiness**: without it the process
+  is degraded, not unavailable. The worker answers `/readyz` too (database and schema only).
+- The metric `licetum_degraded{component="redis"|"postgres"}` is 1 while the process runs without that dependency, and
+  `licetum_snapshot_age_seconds` is the time since it last confirmed its copy of the policy against PostgreSQL.
+
+Note that a balancer which takes a pod out of rotation on a failing readiness probe takes it out when PostgreSQL is gone, too: the
+degraded mode below is for clients that reach the pod anyway (a probe with a longer failure threshold, a mesh that retries,
+liveness-only probing), or for a PostgreSQL that is gone for less than the probe tolerates.
+
+### Degraded mode
+
+- **Redis gone, slow or read-only**: the check API skips Redis after three failures in a row (`REDIS__HOT_TIMEOUT`), keeps its
+  tokens, key sets and answers in memory (answers are kept until they stop being current while Redis is down, not ten seconds),
+  and computes what it does not find, bounded by `COMPUTE__CONCURRENCY`. Failures of Redis are logged once a second per kind,
+  with the count of the records left out (`licetum_log_suppressed_total`).
+- **PostgreSQL gone**: requests are answered from the copy of the policy and the answers in memory, also past their time
+  as long as no validity window has started or ended since (`licetum_permission_cache_total{result="stale"}`), until the copy
+  was last confirmed longer ago than `POLICY__MAX_STALENESS`. A request that cannot be answered from memory, or comes after
+  that, is refused with 503 `policy_unavailable` and `Retry-After`: the process fails closed. It recovers by itself when
+  PostgreSQL is back.
+
+### Shutdown
+
+On SIGTERM the process turns not ready (`/readyz` is 503 with the reason `draining`, responses carry `Connection: close`),
+goes on serving for `SHUTDOWN__DRAIN` (10 s) so that the balancer stops sending it requests, stops listening and waits up
+to `SHUTDOWN__TIMEOUT` (30 s) for the requests in progress, then closes the engine. In Kubernetes set
+`terminationGracePeriodSeconds` to at least drain + timeout + 10, and a `preStop` sleep equal to the drain when the endpoint is
+removed only as the pod is deleted.
+
+### Admission control
+
+At most `HTTP__MAX_INFLIGHT` requests are served at once; a request above it is refused at once with 503 `overloaded` and
+`Retry-After: 1` (`licetum_shed_total`, `licetum_http_inflight`). `/healthz`, `/readyz` and `/metrics` are never refused. A request has
+`HTTP__REQUEST_TIMEOUT` to finish; past it the answer is 503 `request_timeout`.
+
+### Connections
+
+One process may hold `DB__POOL_SIZE + DB__MAX_OVERFLOW` connections in its request pool, `DB__SYNC_POOL_SIZE` in the pool of the
+synchronization transactions (the worker and the admin API) and `SYNC__DBOS_POOL_SIZE` for the DBOS client (not with
+`SYNC__ENGINE=postgres`); each process logs its total at start and warns when it alone reaches `max_connections`. The total
+against the server is
+
+    connections = replicas × (pool + overflow + DBOS pool) + workers × (sync pool + request pool + DBOS pool) + admin API + a few for you
+
+and must stay under `max_connections` of PostgreSQL (or `default_pool_size` of PgBouncer). The defaults (10 + 20 + 20) are for a
+few replicas: with many, lower `DB__POOL_SIZE`, `DB__MAX_OVERFLOW` and `SYNC__DBOS_POOL_SIZE`, or put PgBouncer in front. The
+metrics `licetum_db_pool_connections`, `licetum_db_pool_max_connections`, `licetum_db_pool_acquire_total`,
+`licetum_db_pool_empty_acquire_total` and `licetum_db_pool_acquire_seconds_total` (label `pool` is `request` or `sync`) say whether a
+pool is too small (acquires that waited) or too large for the server.
+
+**PgBouncer in transaction mode**: set `DB__PGBOUNCER=true` (the statements go by the simple protocol and nothing is prepared).
+`licetum migrate` holds a session-level advisory lock for its whole run, which transaction pooling cannot carry: give it
+`DB__MIGRATE_URI` pointing at PostgreSQL itself. DBOS prepares its statements: use PgBouncer 1.21 or newer with
+`max_prepared_statements` set, or point `SYNC__DBOS_URI` at PostgreSQL directly, or use `SYNC__ENGINE=postgres`.
+
+### Migrations
+
+`licetum migrate` takes an advisory lock, so several runs started together (one per pod) apply each migration once; the seed of the
+self-service runs under another one. A migration must work with the previous release (expand/contract), see
+[CONTRIBUTING.md](../CONTRIBUTING.md#migrations-must-work-with-the-previous-release).
 
 ## Synchronization worker
 

@@ -257,7 +257,7 @@ func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, 
 			INSERT INTO sync_demand (type_resource_id, last_asked_at) SELECT unnest($1::uuid[]), now()
 			ON CONFLICT (type_resource_id) DO UPDATE SET last_asked_at = now()`, typeIDs); err != nil {
 			// Only the schedule's view of the demand is lost; the job itself must still be asked for.
-			slog.WarnContext(ctx, "failed to remember the demand for the resource types", "error", err)
+			logDependency(ctx, slog.LevelWarn, "failed to remember the demand for the resource types", err)
 		}
 	}
 	return a.backend().enqueue(ctx, typeIDs, fresh, source)

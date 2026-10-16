@@ -41,6 +41,7 @@ type viewState struct {
 	renewing    atomic.Bool
 	failedAt    atomic.Int64 // unix nanoseconds of the last failed build of a snapshot
 	failedRenew atomic.Int64 // unix nanoseconds of the last reading of the revisions that failed
+	reading     atomic.Int32 // readings of the revisions in progress (see readView)
 	oversized   atomic.Int64 // revision + 1 of a policy that did not fit, 0 for none
 	renewFlight singleflight.Group
 }
@@ -87,8 +88,10 @@ func (a *App) policySnapshot(ctx context.Context) *snapshot {
 // or is too old to trust without a reading (staleLimit). It is nil when the revisions cannot be read and the process has no view
 // it may fall back to.
 //
-// When the revisions cannot be read, the last view is served for a while longer (SNAPSHOT__MAX_AGE) and marked degraded, so
-// that the requests go on from memory instead of each waiting for the database; the answers are not kept in Redis then.
+// When the revisions cannot be read, the last view is served and marked degraded, so that the requests go on from memory
+// instead of each waiting for the database; the answers are not kept in Redis then. It is served for as long as
+// POLICY__MAX_STALENESS says (no limit by default); beyond it there is no view, and the request fails closed (the queries
+// of the computation need the database too, and an unreachable one is a 503 policy_unavailable).
 func (a *App) currentView(ctx context.Context) *localView {
 	t := a.tuningOrDefault()
 	v := a.local.view.Load()
@@ -104,9 +107,11 @@ func (a *App) currentView(ctx context.Context) *localView {
 			return v
 		}
 	}
-	// A view that is only old, after a failed reading a moment ago: do not ask again for every request.
+	// A view that is only old, while a reading is on its way or one failed a moment ago: the request does not join the
+	// reading (a database that does not answer would hold every request for as long as the reading lasts) and does not
+	// start another; the view is served as it is, marked degraded.
 	if v != nil && ageStale && v.epoch == a.local.epoch.Load() && minRevisionFrom(ctx) <= v.state.version &&
-		now.Sub(time.Unix(0, a.local.failedRenew.Load())) < t.revisionPoll {
+		(a.local.reading.Load() > 0 || now.Sub(time.Unix(0, a.local.failedRenew.Load())) < t.revisionPoll) {
 		return degraded(v, now, t)
 	}
 	if nv := a.renewView(ctx); nv != nil {
@@ -124,13 +129,10 @@ func (a *App) currentView(ctx context.Context) *localView {
 // has renewed, or whose renewals fail.
 func staleLimit(t tuning) time.Duration { return max(8*t.revisionPoll, 2*time.Second) }
 
-// degraded returns the view marked degraded when it is not too old, otherwise nil.
+// degraded returns the view marked degraded when it was confirmed within POLICY__MAX_STALENESS (always, when there is no
+// limit), otherwise nil: the process does not decide from rules it could not confirm for that long.
 func degraded(v *localView, now time.Time, t tuning) *localView {
-	limit := t.snapshotMaxAge
-	if limit <= 0 {
-		limit = defaultSnapshotMaxAge
-	}
-	if now.Sub(v.readAt) >= limit {
+	if t.policyMaxStaleness > 0 && now.Sub(v.readAt) >= t.policyMaxStaleness {
 		return nil
 	}
 	d := *v
@@ -218,15 +220,29 @@ func (a *App) WatchRevision(ctx context.Context) {
 	}
 }
 
+// revisionReadTimeout bounds the reading of the revisions (one statement): a database that does not answer must not hold
+// the renewal, and the requests that wait for it, for longer. snapshotLoadTimeout bounds the build of a snapshot, which
+// reads the whole policy and may legitimately take seconds.
+const (
+	revisionReadTimeout = time.Second
+	snapshotLoadTimeout = 30 * time.Second
+)
+
 // readView does the reading. A failure leaves the previous view in place (and returns nil: the caller cannot trust it).
 func (a *App) readView(ctx context.Context) *localView {
+	a.local.reading.Add(1)
+	defer a.local.reading.Add(-1)
 	ctx = context.WithoutCancel(ctx)
 	epoch := a.local.epoch.Load()
-	state := a.readCacheState(ctx)
+	readCtx, cancel := context.WithTimeout(ctx, revisionReadTimeout)
+	state := a.readCacheState(readCtx)
+	cancel()
 	if !state.ok {
 		return nil
 	}
-	snap := a.snapshotFor(ctx, state.version, a.local.view.Load())
+	loadCtx, cancelLoad := context.WithTimeout(ctx, snapshotLoadTimeout)
+	defer cancelLoad()
+	snap := a.snapshotFor(loadCtx, state.version, a.local.view.Load())
 	if snap != nil {
 		state.snap, state.attrs, state.attrsOK = snap, snap.attrs, true
 	}
@@ -259,7 +275,7 @@ func (a *App) snapshotFor(ctx context.Context, revision int64, previous *localVi
 		a.logSnapshotFallback(revision, err)
 	default:
 		a.local.failedAt.Store(time.Now().UnixNano())
-		slog.WarnContext(ctx, "failed to build the policy snapshot: the queries read the policy until the next try", "error", err)
+		logDependency(ctx, slog.LevelWarn, "failed to build the policy snapshot: the queries read the policy until the next try", err)
 	}
 	return nil
 }

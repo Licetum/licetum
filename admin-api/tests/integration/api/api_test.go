@@ -31,7 +31,6 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/licetum/licetum/admin-api/api"
@@ -104,36 +103,14 @@ func startWorker(t *testing.T, app *engine.App) (stop func()) {
 }
 
 func setup(t *testing.T) *env {
-	dbURI, redisURI := testInfrastructure.DBURI, testInfrastructure.RedisURI
+	redisURI := testInfrastructure.RedisURI
 	ctx := context.Background()
 
-	// An isolated schema per run.
-	schema := fmt.Sprintf("it_%d", time.Now().UnixNano())
-	adminConn, err := pgx.Connect(ctx, db.NormalizeDSN(dbURI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminConn.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS ltree SCHEMA public"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminConn.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = adminConn.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-		_ = adminConn.Close(context.Background())
-	})
-
-	u, err := url.Parse(db.NormalizeDSN(dbURI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := u.Query()
-	// public stays on the path: extensions (ltree) may already be installed there.
-	q.Set("search_path", schema+",public")
-	u.RawQuery = q.Encode()
+	// An isolated schema per run (a database of its own behind PgBouncer).
+	iso := testInfrastructure.Isolate(ctx, t)
 
 	e := &env{t: t}
+	var err error
 	e.key, err = rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -145,11 +122,11 @@ func setup(t *testing.T) *env {
 	// platform admin.
 	m := e.mock.URL
 	cfg := &config.Config{
-		DB:   config.Database{URI: u.String(), PoolSize: 5},
+		DB:   config.Database{URI: iso.URI, PoolSize: 5, PgBouncer: iso.PgBouncer, MigrateURI: iso.MigrateURI},
 		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Cors: config.Cors{AllowOrigins: []string{"http://localhost:5173"}},
 		// Tests that ask for higher consistency in a loop must not be spaced out to one source call per second.
-		Sync: config.Sync{FreshMinInterval: time.Millisecond, Engine: syncEngine(), DBOSSchema: "dbos_" + schema},
+		Sync: config.Sync{FreshMinInterval: time.Millisecond, Engine: syncEngine(), DBOSSchema: "dbos_" + iso.Name},
 		// The registry of known subjects is on, as by default.
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
@@ -160,14 +137,14 @@ func setup(t *testing.T) *env {
 			AdminClaimValues: []string{"admin"},
 		},
 	}
+	if err := db.RunMigrate(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
 	pool, err := db.Connect(ctx, cfg.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if err := db.Migrate(ctx, pool, cfg); err != nil {
-		t.Fatal(err)
-	}
 
 	rdb, err := redisx.Connect(ctx, redisURI)
 	if err != nil {

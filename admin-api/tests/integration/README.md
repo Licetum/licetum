@@ -69,3 +69,45 @@ share one Redis (`LICETUM_TEST_REDIS_URI`).
 
 Not covered yet: the read replica that lags by two seconds (F2-3, F2-4 in full) needs the read pool of F6; F2-11 (stage 2, scoped
 bumps) is a separate pull request.
+
+## Resilience and operations (F5)
+
+| test | what it proves |
+|---|---|
+| `core/tests/integration/redisx` `TestF5_12_*` | random sequences of failures, successes and time never leave the failure counter of the breaker without an expiry; a counter the previous release left without one is repaired; concurrent failures are all counted (`LICETUM_BREAKER_SEED` repeats a run) |
+| `core/tests/integration/db` `TestF5_10_*` | five `migrate` runs started together on an empty database apply each migration once and seed once (repeated over fresh schemas); `migrate` waits for the lock held by another run (deterministic); the schema version equals the latest embedded migration |
+| `cluster/f5_test.go` `TestF5_1_*` | `/readyz` is 503 with PostgreSQL cut or the schema older than the binary and 200 otherwise (also with a *newer* schema), `/healthz` stays 200, the result is reused for a second, Redis is not part of readiness (`licetum_degraded{component="redis"}`) |
+| `TestF5_3_*`, `TestF5_8_*` | a draining replica is not ready, serves, and asks for `Connection: close`; above `HTTP__MAX_INFLIGHT` the rest get 503 with `Retry-After` while the probes and the metrics are answered; a request past `HTTP__REQUEST_TIMEOUT` is answered 503 `request_timeout` |
+| `TestF5_9_*` | a pool never holds more than `DB__POOL_SIZE + DB__MAX_OVERFLOW` connections under more concurrent users than connections, and the pool metrics say that acquires waited |
+| `chaos/f5_test.go` `TestF5_2_*`, `TestF5_5_*` | Redis cut, black-holed or read-only (a spare Redis, see below) for a minute (`LICETUM_CHAOS_REDIS_OUTAGE` shortens it) at 600 requests a second: at most 1 % fail, PostgreSQL gets at most twice the statements of the healthy baseline, no key set is fetched again, at most 5 log lines of level warning a second, and the 99th percentile is back within the budget after Redis returns |
+| `TestF5_6_*` | PostgreSQL cut: the replica answers from memory until `POLICY__MAX_STALENESS` has passed since it last confirmed the policy, then 503 `policy_unavailable`; with no limit it keeps answering; it recovers without a restart |
+| `TestF5_7_*` | a rolling restart of three replicas at 600 requests a second behind a balancer that probes `/readyz`: no connection error and no 5xx (and 61 failures without the drain) |
+
+Not covered here: F5-8 at three times the sustainable rate (a load test: `admin-api/loadtest`), and F5-11 (the previous release against the
+schema of this one, `.github/workflows/ci.yml`, job `previous-release`).
+
+### Through PgBouncer (F5-9)
+
+`LICETUM_TEST_PGBOUNCER_ADDR=host:port` makes the suites connect through a PgBouncer in **transaction mode** that stands in front of the
+PostgreSQL of `LICETUM_TEST_POSTGRES_URI`, with `DB__PGBOUNCER=true`. PgBouncer does not carry the `search_path` of a connection from one
+transaction to the next, so each test gets a database of its own (`Infrastructure.Isolate`) instead of a schema, and the migrations connect
+to PostgreSQL directly (`DB__MIGRATE_URI`). The pooler needs `max_prepared_statements` (1.21 or newer) for DBOS, which prepares its
+statements. A configuration that works (`task go:test:integration:pgbouncer` runs the suites with it):
+
+```ini
+[databases]
+* = host=127.0.0.1 port=5432
+
+[pgbouncer]
+listen_addr = 127.0.0.1
+listen_port = 6432
+auth_type = trust
+auth_file = /etc/pgbouncer/userlist.txt   ; "licetum" ""
+pool_mode = transaction
+max_client_conn = 2000
+default_pool_size = 60
+max_prepared_statements = 200
+```
+
+`TestF5_5` needs a Redis it can make read-only: it starts a container, or uses the running server named by
+`LICETUM_TEST_REDIS_SPARE_URI` (and makes it writable again afterwards).

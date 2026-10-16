@@ -22,8 +22,10 @@ import (
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/config"
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/i18n"
+	"github.com/licetum/licetum/core/logx"
 )
 
 // Version is the API version in the OpenAPI document.
@@ -140,13 +142,28 @@ func Register[I, O any](api huma.API, op huma.Operation, h func(context.Context,
 // *apperr.Error as is, anything else as a 500 without details. Logs the errors worth seeing
 // (5xx, 424, errors with a cause).
 func LocalizeError(ctx context.Context, operationID string, err error) *apperr.Error {
+	// When a dependency is down every request fails the same way: one line a second per kind of failure (logx.Repeated).
 	apiErr, ok := apperr.As(err)
 	if !ok {
-		slog.ErrorContext(ctx, "internal error", "operation", operationID, "error", err)
+		// Not the fault of the request, and not an error of the program either: the time it was given ran out, or the
+		// database cannot be reached. The caller may try again, which a 500 does not tell it.
+		switch {
+		case errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled):
+			// The client went away: nobody reads the answer, and under load many clients give up, so it is not logged.
+			return apperr.ServiceUnavailable(i18n.RequestTimeout).Localize(i18n.FromContext(ctx))
+		case errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded):
+			apiErr, ok = apperr.ServiceUnavailable(i18n.RequestTimeout).WithHeader("Retry-After", "1").Wrap(err), true
+		case db.IsUnavailable(err):
+			apiErr, ok = apperr.ServiceUnavailable(i18n.PolicyUnavailable).WithHeader("Retry-After", "1").Wrap(err), true
+		}
+	}
+	if !ok {
+		logx.Repeated.Log(ctx, slog.LevelError, "internal error|"+operationID, "internal error", "operation", operationID, "error", err)
 		return apperr.Internal().Localize(i18n.FromContext(ctx))
 	}
 	if apiErr.Status >= http.StatusInternalServerError || apiErr.Status == http.StatusFailedDependency || apiErr.Unwrap() != nil {
-		slog.WarnContext(ctx, "request failed", "operation", operationID, "status", apiErr.Status, "error", err)
+		logx.Repeated.Log(ctx, slog.LevelWarn, "request failed|"+operationID+"|"+strconv.Itoa(apiErr.Status)+"|"+apiErr.Extra.Code,
+			"request failed", "operation", operationID, "status", apiErr.Status, "error", err)
 	}
 	return apiErr.Localize(i18n.FromContext(ctx))
 }
@@ -367,6 +384,51 @@ type healthOutput struct {
 	}
 }
 
+type readyOutput struct {
+	Body struct {
+		Status string `json:"status" example:"ok" doc:"ok when the process may take requests"`
+	}
+}
+
+// admissionExempt: the probes and the scrape of the metrics are always answered, however loaded the process is.
+func admissionExempt(path string) bool {
+	switch strings.TrimRight(path, "/") {
+	case "/healthz", "/readyz", "/metrics":
+		return true
+	}
+	return false
+}
+
+// withAdmission refuses a request with 503 and Retry-After when the process already serves as many as it was told to
+// (HTTP__MAX_INFLIGHT), and puts the deadline of a request (HTTP__REQUEST_TIMEOUT) on the context of the others. It stands
+// before everything else: a refused request costs the process as little as possible and is neither logged nor timed.
+func withAdmission(app *engine.App, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if app.Draining() {
+			// The process is leaving: ask the client to open its next connection elsewhere, so that no request is sent on a
+			// connection that is about to be closed.
+			w.Header().Set("Connection", "close")
+		}
+		if admissionExempt(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		release, ok := app.Admit()
+		if !ok {
+			w.Header().Set("Retry-After", "1")
+			writeJSONError(w, apperr.ServiceUnavailable(i18n.Overloaded).Localize(requestLang(r)))
+			return
+		}
+		defer release()
+		if timeout := app.RequestTimeout(); timeout > 0 {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+			r = r.WithContext(ctx)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // NewServer assembles the common stack: Huma API + /healthz + localized docs + JSON 404 + middleware.
 func NewServer(app *engine.App, title string, tags []*huma.Tag, registerRoutes func(api huma.API)) (http.Handler, huma.API) {
 	mux := http.NewServeMux()
@@ -389,11 +451,36 @@ func NewServer(app *engine.App, title string, tags []*huma.Tag, registerRoutes f
 		out.Body.Status = "ok"
 		return out, nil
 	})
+	Register(api, huma.Operation{
+		OperationID: "readyz",
+		Method:      http.MethodGet,
+		Path:        "/readyz",
+		Summary:     "Readiness check",
+		Description: `Answers 200 when the process may take requests and 503 when it may not: PostgreSQL does not answer within a second,
+the schema of the database is older than the release (run ` + "`licetum migrate`" + `), the copy of the policy is not loaded yet, or
+the process is shutting down and waits for the balancer to stop sending it requests. A schema newer than the release is
+fine. Redis is not checked: without it the process still answers, only slower (see the metric licetum_degraded).
+The result is reused for a second. Use it as the readiness probe and ` + "`/healthz`" + ` as the liveness probe.`,
+		Tags:   []string{"System"},
+		Errors: []int{http.StatusServiceUnavailable},
+	}, func(ctx context.Context, _ *struct{}) (*readyOutput, error) {
+		if err := app.Ready(ctx); err != nil {
+			reason := "unknown"
+			var notReady *engine.NotReadyError
+			if errors.As(err, &notReady) {
+				reason = notReady.Reason
+			}
+			return nil, apperr.ServiceUnavailable(i18n.NotReady).WithSuffix(reason).Wrap(err)
+		}
+		out := &readyOutput{}
+		out.Body.Status = "ok"
+		return out, nil
+	})
 	registerDocs(mux, api)
 	// Prometheus metrics; not part of the API description.
 	mux.Handle("GET /metrics", app.MetricsHandler())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, apperr.NotFound(i18n.RouteNotFound).Localize(i18n.FromContext(r.Context())))
 	})
-	return logAndRecover(app, withGzip(withCORS(app.Cfg.Cors, stripTrailingSlash(withLang(mux))))), api
+	return withAdmission(app, logAndRecover(app, withGzip(withCORS(app.Cfg.Cors, stripTrailingSlash(withLang(mux)))))), api
 }

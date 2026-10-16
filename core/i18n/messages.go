@@ -12,6 +12,12 @@ const (
 	InternalError    Key = "internal_error"
 	RouteNotFound    Key = "route_not_found"
 	ValidationFailed Key = "validation_failed"
+	// availability: the 503 answers of a process that is not ready, cannot trust its copy of the policy, is overloaded or ran
+	// out of time for a request
+	NotReady          Key = "not_ready"
+	PolicyUnavailable Key = "policy_unavailable"
+	Overloaded        Key = "overloaded"
+	RequestTimeout    Key = "request_timeout"
 
 	// input validation
 	FieldRequired                 Key = "field_required"
@@ -182,6 +188,26 @@ var catalog = map[Key]Text{
 		EN: "Validation failed",
 		RU: "Ошибка валидации",
 		ZH: "验证失败",
+	},
+	NotReady: {
+		EN: "The service is not ready to take requests",
+		RU: "Сервис не готов принимать запросы",
+		ZH: "服务尚未准备好接收请求",
+	},
+	PolicyUnavailable: {
+		EN: "The access policy cannot be confirmed to be current, the request is refused",
+		RU: "Актуальность политики доступа не подтверждена, запрос отклонён",
+		ZH: "无法确认访问策略是最新的，请求已被拒绝",
+	},
+	Overloaded: {
+		EN: "The service is overloaded, retry the request shortly",
+		RU: "Сервис перегружен, повторите запрос чуть позже",
+		ZH: "服务过载，请稍后重试",
+	},
+	RequestTimeout: {
+		EN: "The request took too long and was cancelled, retry it",
+		RU: "Запрос выполнялся слишком долго и был отменён, повторите его",
+		ZH: "请求耗时过长已被取消，请重试",
 	},
 
 	FieldRequired: {

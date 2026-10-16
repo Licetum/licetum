@@ -50,12 +50,7 @@ func Migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	pool, err := db.Connect(ctx, cfg.DB)
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
-	return db.Migrate(ctx, pool, cfg)
+	return db.RunMigrate(ctx, cfg)
 }
 
 // Serve runs an HTTP application until the context ends. name is the application's name in the logs, defaultAddr its
@@ -82,6 +77,7 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 		return err
 	}
 	defer pool.Close()
+	logConnectionBudget(ctx, pool, cfg, name, name == "admin")
 
 	// The check API answers within a budget: its Redis client times out fast, does not retry, and skips Redis for a while
 	// after repeated failures (see redisx.FastFail). The admin API waits for Redis as long as the default allows.
@@ -138,10 +134,40 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	case <-ctx.Done():
 	}
 
-	slog.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	return StopServing(srv, app, cfg.Shutdown, errCh)
+}
+
+// StopServing is the shutdown after SIGTERM, in the order that lets the balancer take the pod out without a request lost:
+//
+//  1. readiness turns false (GET /readyz is 503) and the responses carry Connection: close, so the clients move to other
+//     pods; the process goes on serving what still arrives;
+//  2. it waits SHUTDOWN__DRAIN, the time the balancer needs to notice;
+//  3. it stops listening and waits SHUTDOWN__TIMEOUT for the requests in progress (http.Server.Shutdown);
+//  4. the caller closes the engine (the background work, the buffers) and the connections.
+//
+// The pod needs terminationGracePeriodSeconds of at least drain + timeout + 10, and a preStop sleep of the drain when the
+// balancer is told of the pod's end only by the pod's deletion.
+func StopServing(srv *http.Server, app *engine.App, cfg config.Shutdown, errCh <-chan error) error {
+	slog.Info("shutting down: not ready, serving while the balancer stops sending requests", "drain", cfg.Drain, "timeout", cfg.Timeout)
+	app.SetDraining()
+	if cfg.Drain > 0 {
+		select {
+		case err := <-errCh: // the listener died while draining
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			return nil
+		case <-time.After(cfg.Drain):
+		}
+	}
+	slog.Info("shutting down: stopped listening, waiting for the requests in progress")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		_ = srv.Close() // the requests that did not finish in time are cut off
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	return nil
 }
 
 // roleOf is the role of the application of that name in the synchronization pipeline.
@@ -159,6 +185,51 @@ func warnDeprecated() {
 	for _, name := range config.DeprecatedSettings() {
 		slog.Warn("the setting no longer has an effect: the Redis lock of the synchronization was replaced by the job table (see SYNC__LEASE)",
 			"setting", name)
+	}
+}
+
+// connectionBudget is the most connections to PostgreSQL a process may hold: the request pool (DB__POOL_SIZE +
+// DB__MAX_OVERFLOW), the pool of the synchronization transactions where the process has one (DB__SYNC_POOL_SIZE: the
+// worker and the admin API) and the pool of the DBOS client (SYNC__DBOS_POOL_SIZE, outside the others, when the
+// synchronization runs on DBOS). The connections of all the replicas add up against max_connections of the server, or
+// against default_pool_size of PgBouncer.
+func connectionBudget(cfg *config.Config, withSyncPool bool) (total int, parts []any) {
+	request := cfg.DB.MaxConns()
+	total = request
+	parts = []any{"request_pool", request}
+	if withSyncPool {
+		syncPool := max(cfg.DB.SyncPoolSize, 1)
+		total += syncPool
+		parts = append(parts, "sync_pool", syncPool)
+	}
+	if cfg.Sync.Engine != "postgres" {
+		dbosPool := cfg.Sync.DBOSPoolSize
+		if dbosPool <= 0 {
+			dbosPool = 20
+		}
+		total += dbosPool
+		parts = append(parts, "dbos_pool", dbosPool)
+	}
+	return total, parts
+}
+
+// logConnectionBudget tells the operator how many connections the process may take, and warns when PostgreSQL would not
+// give even one process that many: many replicas with the default pool settings exhaust max_connections.
+func logConnectionBudget(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, app string, withSyncPool bool) {
+	total, parts := connectionBudget(cfg, withSyncPool)
+	slog.InfoContext(ctx, "database connections: the most this process may hold, to be multiplied by the replicas against "+
+		"max_connections of PostgreSQL (or default_pool_size of PgBouncer)", append([]any{"app", app, "total", total}, parts...)...)
+	if cfg.DB.PgBouncer {
+		return // SHOW max_connections would be answered by the pooler, not by the server the connections end at
+	}
+	var limit int
+	if err := pool.QueryRow(db.Uncounted(ctx), `SELECT current_setting('max_connections')::int`).Scan(&limit); err != nil {
+		return
+	}
+	if total >= limit {
+		slog.WarnContext(ctx, "the connections of one process alone reach max_connections of PostgreSQL: lower DB__POOL_SIZE, "+
+			"DB__MAX_OVERFLOW and SYNC__DBOS_POOL_SIZE, or raise max_connections, or use PgBouncer (DB__PGBOUNCER)",
+			"app", app, "total", total, "max_connections", limit)
 	}
 }
 
@@ -195,6 +266,7 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 		return err
 	}
 	defer pool.Close()
+	logConnectionBudget(ctx, pool, cfg, "worker", true)
 	syncPool, err := connectSyncPool(ctx, cfg)
 	if err != nil {
 		return err
@@ -224,6 +296,14 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
 			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	// Ready: PostgreSQL answers and the schema is the release's (the worker keeps no copy of the policy).
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := app.Ready(r.Context()); err != nil {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)

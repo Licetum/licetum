@@ -83,12 +83,12 @@ func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subjec
 				return computed[*permissionData]{}, err
 			}
 			started := time.Now()
-			data, deps, ttl, err := a.computePermissionData(ctx, serviceID, subject, env, state, consistency)
+			data, deps, ttl, hold, err := a.computePermissionData(ctx, serviceID, subject, env, state, consistency)
 			if err != nil {
 				return computed[*permissionData]{}, err
 			}
 			a.metrics.permissionCompute.Observe(time.Since(started).Seconds())
-			return computed[*permissionData]{value: data, deps: deps, ttl: ttl}, nil
+			return computed[*permissionData]{value: data, deps: deps, ttl: ttl, hold: hold}, nil
 		})
 }
 
@@ -103,7 +103,7 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 	attrs, err := a.RequestAttributes(ctx)
 	if err != nil {
 		// Without the list, fall back to every attribute the request carries: correct, only less shared.
-		slog.WarnContext(ctx, "failed to read the attributes the rules look at", "error", err)
+		logDependency(ctx, slog.LevelWarn, "failed to read the attributes the rules look at", err)
 		return fingerprint(allRequestAttributes(env), env)
 	}
 	if state.ok {
@@ -480,10 +480,24 @@ func RuleOrigin(rule model.AssignmentRule) string {
 	return who
 }
 
+// holdUnbounded is the hold of an answer that no validity window limits.
+const holdUnbounded = 24 * time.Hour
+
+// validityUntil turns the next moment a rule or a membership starts or stops being in force (nil: there is none) into how
+// long an answer stays cached (ttl: at most ResultCacheTTL) and how long it stays correct at all (hold: the time to that
+// moment; the answer may be served that long when the database cannot be reached and nothing newer can be had).
+func validityUntil(until *time.Time, now time.Time) (ttl, hold time.Duration) {
+	if until == nil {
+		return ResultCacheTTL, holdUnbounded
+	}
+	hold = max(time.Second, until.Sub(now))
+	return min(ResultCacheTTL, hold), hold
+}
+
 // cacheTTL returns how long the cached result stays correct with respect to validity periods: the
 // time until the nearest moment a rule (on the given types) or a group membership starts or stops
 // being in force. Capped at ResultCacheTTL.
-func (a *App) cacheTTL(ctx context.Context, typeIDs []uuid.UUID) time.Duration {
+func (a *App) cacheTTL(ctx context.Context, typeIDs []uuid.UUID) (ttl, hold time.Duration) {
 	var until *time.Time
 	err := a.DB.QueryRow(ctx, `
 		SELECT min(b) FROM (
@@ -496,13 +510,10 @@ func (a *App) cacheTTL(ctx context.Context, typeIDs []uuid.UUID) time.Duration {
 			UNION ALL SELECT expires_at FROM group_member WHERE expires_at > now()
 		) x`, typeIDs).Scan(&until)
 	if err != nil {
-		slog.WarnContext(ctx, "failed to read the next validity boundary", "error", err)
-		return time.Second
+		logDependency(ctx, slog.LevelWarn, "failed to read the next validity boundary", err)
+		return time.Second, time.Second
 	}
-	if until == nil {
-		return ResultCacheTTL
-	}
-	return min(ResultCacheTTL, max(time.Second, time.Until(*until)))
+	return validityUntil(until, time.Now())
 }
 
 // ServiceTypes returns the live types owned by a service.
@@ -546,6 +557,9 @@ type Prepared struct {
 	syncTypes   map[uuid.UUID]bool // the service types with a live synchronizer
 	resultTypes []uuid.UUID        // the sync types of the service whose data is current
 	ttl         time.Duration
+	// hold is how long the answer stays correct with respect to validity windows and the state of the data it was made from
+	// (see validityUntil): never less than ttl.
+	hold time.Duration
 	// deps are the data versions of the services whose resource data the decision reads (see prepare).
 	deps map[string]int64
 }
@@ -606,7 +620,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	if snap != nil {
 		now := time.Now()
 		rules, missing, rulesUseNow = applicableFromSnapshot(snap, relevant, identity, env, now)
-		p.ttl = snap.ttl(relevant, now)
+		p.ttl, p.hold = snap.validity(relevant, now)
 		p.syncTypes = map[uuid.UUID]bool{}
 		for _, id := range p.serviceType {
 			if snap.synced[id] {
@@ -620,7 +634,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 			return err
 		})
 		eg.Go(func() error {
-			p.ttl = a.cacheTTL(ectx, relevantIDs)
+			p.ttl, p.hold = a.cacheTTL(ectx, relevantIDs)
 			return nil
 		})
 		eg.Go(func() (err error) {
@@ -634,6 +648,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	// An answer that reads the hour or the weekday is correct until the next minute only.
 	if identityUsesNow || rulesUseNow {
 		p.ttl = min(p.ttl, max(untilNextMinute(env.Now), time.Second))
+		p.hold = min(p.hold, max(untilNextMinute(env.Now), time.Second))
 	}
 
 	// The types the applicable rules reach (the type itself, its descendants and the lookup type of
@@ -667,6 +682,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 			t.setSyncPending()
 		}
 		p.ttl = min(p.ttl, pendingAnswerTTL)
+		p.hold = min(p.hold, pendingAnswerTTL) // an answer that lacks data is never served beyond its short life
 	}
 	p.syncedTypes(synced)
 
@@ -993,14 +1009,14 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 
 // computePermissionData computes the permissions of a subject in a service. Along with the answer it returns
 // the data versions it read (see prepare) and how long it stays correct.
-func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency) (*permissionData, map[string]int64, time.Duration, error) {
+func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency) (*permissionData, map[string]int64, time.Duration, time.Duration, error) {
 	p, err := a.prepare(ctx, serviceID, subject, env, state, consistency, nil)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
 	nodes, err := a.coverNodes(ctx, p)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
 
 	data := &permissionData{
@@ -1050,7 +1066,7 @@ func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, su
 			}
 		}
 	}
-	return data, p.deps, p.ttl, nil
+	return data, p.deps, p.ttl, p.hold, nil
 }
 
 func Keys[K comparable, V any](m map[K]V) []K {

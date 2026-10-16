@@ -53,6 +53,15 @@ func (f *FastFail) Open() bool {
 	return !f.openUntil.IsZero() && f.clock().Before(f.openUntil)
 }
 
+// Tripped reports whether the breaker has not been closed yet by a successful command: it is open, or it is half-open and
+// waits for its probe. Redis is not to be counted on in either state, unlike Open, which is false in the half-open state
+// (the probe is let through then).
+func (f *FastFail) Tripped() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.openUntil.IsZero()
+}
+
 func (f *FastFail) clock() time.Time {
 	if f.now != nil {
 		return f.now()
@@ -117,8 +126,15 @@ func (f *FastFail) DialHook(next redis.DialHook) redis.DialHook {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) { return next(ctx, network, addr) }
 }
 
+// A command the client sends to set a connection up (HELLO, AUTH, SELECT, ...) runs inside the command that needed the
+// connection, through the same hooks. It is not gated and not counted: the command it belongs to was admitted already, and
+// its outcome is the outcome of the command. Gated, it would be skipped while that command is the probe of a half-open
+// breaker, the probe would fail on it, and a Redis that is back would never be tried again.
 func (f *FastFail) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
+		if isSetup(cmd) {
+			return next(ctx, cmd)
+		}
 		allow, probe := f.admit()
 		if !allow {
 			f.skipped.Add(1)
@@ -132,6 +148,9 @@ func (f *FastFail) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 
 func (f *FastFail) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
+		if isSetup(cmds...) {
+			return next(ctx, cmds)
+		}
 		allow, probe := f.admit()
 		if !allow {
 			f.skipped.Add(int64(len(cmds)))
@@ -144,4 +163,13 @@ func (f *FastFail) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pro
 		f.record(err, probe)
 		return err
 	}
+}
+
+// Degraded reports whether the client's FastFail has tripped and not recovered yet (false for a client without one): Redis
+// is skipped, or the next command is the probe that will tell. It is how the process knows that it runs without its cache.
+func Degraded(rdb *redis.Client) bool {
+	if v, ok := fastFails.Load(rdb); ok {
+		return v.(*FastFail).Tripped()
+	}
+	return false
 }

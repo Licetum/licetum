@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/redisx"
 )
 
@@ -14,6 +15,9 @@ import (
 type observer struct{ a *App }
 
 func (o observer) ObserveQuery(ctx context.Context, operation string, took time.Duration, err error) {
+	if err == nil || db.IsUnavailable(err) {
+		o.a.health.postgres.note(err != nil)
+	}
 	if m := o.a.metrics; m != nil {
 		m.dbQueries.WithLabelValues(operation, resultOf(err)).Inc()
 		m.dbQueryDuration.WithLabelValues(operation).Observe(took.Seconds())
@@ -28,6 +32,9 @@ func (o observer) ObserveQuery(ctx context.Context, operation string, took time.
 func (o observer) ObserveRedis(ctx context.Context, operation string, commands int, took time.Duration, err error) {
 	if errors.Is(err, redisx.ErrSkipped) {
 		return // nothing was sent: not a round trip, not part of the cost of the request (redisx.Skipped counts them)
+	}
+	if err == nil || redisDown(err) {
+		o.a.health.redis.note(err != nil)
 	}
 	if m := o.a.metrics; m != nil {
 		m.redisOps.WithLabelValues(operation, commandsLabel(commands), resultOf(err)).Inc()
