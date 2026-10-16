@@ -75,9 +75,16 @@ func TestF5_1_ReadyzFollowsPostgreSQLAndTheSchema(t *testing.T) {
 	eventually(t, 5*time.Second, "/readyz is 503 while PostgreSQL is cut", func() bool {
 		return readyz(c, r).Status == http.StatusServiceUnavailable
 	})
-	res := readyz(c, r)
-	if code := errorCode(t, res); code != "not_ready" || !strings.Contains(string(res.Body), "database") {
-		t.Fatalf("503 with %s, want not_ready and the reason database", res.Body)
+	// The first refusal may name the snapshot: the result of the database check is kept for a second, and a revision that moved
+	// just before the cut (the synchronization of the policy just seeded) leaves the copy of the policy to be read again. The
+	// reason is the database once that result has expired.
+	var res *harness.Result
+	eventually(t, 5*time.Second, "/readyz names the database as the reason", func() bool {
+		res = readyz(c, r)
+		return res.Status == http.StatusServiceUnavailable && strings.Contains(string(res.Body), "database")
+	})
+	if code := errorCode(t, res); code != "not_ready" {
+		t.Fatalf("503 with %s, want not_ready", res.Body)
 	}
 	if h := healthz(c, r); h.Status != http.StatusOK {
 		t.Fatalf("/healthz is %d with PostgreSQL cut: liveness must not depend on it", h.Status)

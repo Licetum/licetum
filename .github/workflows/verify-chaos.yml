@@ -2,7 +2,7 @@ name: Verify chaos (temporary)
 
 # Temporary: chaos.yml is not on the default branch, so GitHub neither schedules it nor lets it be started by hand. This
 # file runs the same tests on a GitHub runner for this branch (head) and for the commit it is based on (base), once per
-# change of this file, so that a failure can be told from one that was there before. It is removed before the merge.
+# change of this file (the last: the F5-8 load test is in the run), so that a failure can be told from one that was there before. It is removed before the merge.
 on:
   push:
     branches: [ccr-36b5903b-kne74a]
@@ -47,5 +47,7 @@ jobs:
         run: |
           echo "== ${{ matrix.name }} =="
           grep -E '^--- (PASS|FAIL|SKIP)' /tmp/chaos.log || true
+          echo "== figures of F5-8 =="
+          grep -E 'f5_8_test.go' /tmp/chaos.log || true
           echo "== messages of the failures =="
           grep -A8 -E '^--- FAIL' /tmp/chaos.log | grep -vE ' INFO | WARN ' || true

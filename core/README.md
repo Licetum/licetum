@@ -162,6 +162,17 @@ At most `HTTP__MAX_INFLIGHT` requests are served at once; a request above it is 
 `Retry-After: 1` (`licetum_shed_total`, `licetum_http_inflight`). `/healthz`, `/readyz` and `/metrics` are never refused. A request has
 `HTTP__REQUEST_TIMEOUT` to finish; past it the answer is 503 `request_timeout`.
 
+**Sizing `HTTP__MAX_INFLIGHT`.** The default (`GOMAXPROCS × 256`) is a guard against exhaustion; it does not keep a latency. The
+requests that are admitted wait behind at most that many others, so under overload their latency is about the limit over the
+goodput (Little's law): in the load test of F5-8 (`TestF5_8_*`, 4 shared vCPUs, a request that reads the policy from PostgreSQL,
+three times the sustainable rate) the default admits everything it can hold and the p99 of the admitted requests is 20 to 80
+times the p99 at the sustainable rate, while a limit of three quarters of *sustainable rate × p99 at that rate* (at least twice the
+CPUs) keeps it near twice (1.7 to 2.0 in four runs) and refuses about two thirds of the offered requests, with the goodput above
+the capacity measured flat out. To keep the latency of what is served under overload, measure the sustainable rate and its p99
+(the highest step of the ramp of `admin-api/loadtest` that meets its objectives), set the limit to the product, and check it with
+the same test. The price of a tight limit is that a burst that would have been queued is refused: a limit under the number of
+requests in flight when PostgreSQL is slow turns that slowness into 503 `overloaded`.
+
 ### Connections
 
 One process may hold `DB__POOL_SIZE + DB__MAX_OVERFLOW` connections in its request pool, `DB__SYNC_POOL_SIZE` in the pool of the
