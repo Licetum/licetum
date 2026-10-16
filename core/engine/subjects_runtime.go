@@ -31,6 +31,9 @@ const (
 type subjectBuffer struct {
 	mu      sync.Mutex
 	pending map[string]pendingSubject
+	// queued is when each subject was last put in the buffer by this process: a busy API verifies the same token many times
+	// a second, and a subject is queued again only after subjectNoteEvery, so a warm request costs a map lookup and no write.
+	queued  map[string]time.Time
 	closed  bool
 	flusher *flusher
 }
@@ -55,13 +58,22 @@ func (a *App) NoteSubject(subject string, claims Claims) {
 	if b.flusher == nil {
 		b.flusher = startFlusher(subjectFlushEvery, a.flushSubjects)
 	}
-	if _, ok := b.pending[subject]; !ok && len(b.pending) >= subjectNoteLimit {
+	now := time.Now()
+	if last, ok := b.queued[subject]; ok && now.Sub(last) < subjectNoteEvery {
+		b.mu.Unlock()
+		return
+	}
+	if len(b.pending) >= subjectNoteLimit {
 		b.mu.Unlock()
 		return
 	}
 	if b.pending == nil {
 		b.pending = map[string]pendingSubject{}
 	}
+	if b.queued == nil || len(b.queued) >= subjectNoteLimit {
+		b.queued = map[string]time.Time{}
+	}
+	b.queued[subject] = now
 	b.pending[subject] = pendingSubject{name: displayName(claims), claims: claims}
 	full := len(b.pending) >= subjectBatch
 	f := b.flusher

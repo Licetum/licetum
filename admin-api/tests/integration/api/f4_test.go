@@ -129,31 +129,32 @@ func TestF4_2_AsyncAuditCountsWhatItDrops(t *testing.T) {
 
 func TestF4_3_KnownSubjectChangesOncePerIntervalAcrossReplicas(t *testing.T) {
 	w := newWorld(t)
-	replicas := make([]*engine.App, 5)
-	for i := range replicas {
-		replicas[i] = w.replica(func(*config.Config) {})
-	}
-	note := func() {
-		for _, r := range replicas {
+	// round notes the subject once on each of five fresh replicas (a process queues a subject once per interval itself).
+	round := func() {
+		for i := 0; i < 5; i++ {
+			r := w.replica(func(*config.Config) {})
 			r.NoteSubject("alice", engine.Claims{"preferred_username": "alice", "name": "Alice"})
 			r.FlushSubjects(context.Background())
 		}
 	}
-	note()
-	note()
-	var count int
-	var xmin string
-	row := w.pool.QueryRow(context.Background(), `SELECT seen_count, xmin::text FROM known_subject WHERE subject = 'alice'`)
-	if err := row.Scan(&count, &xmin); err != nil || count != 1 {
-		t.Fatalf("after 10 notes within the interval seen_count = %d (%v), want 1", count, err)
+	seen := func() int {
+		var n int
+		if err := w.pool.QueryRow(context.Background(), `SELECT seen_count FROM known_subject WHERE subject = 'alice'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	round()
+	if got := seen(); got != 1 {
+		t.Fatalf("5 replicas within the interval: seen_count = %d, want 1", got)
 	}
 	// The interval passes: one change cluster-wide, not one per replica.
 	if _, err := w.pool.Exec(context.Background(), `UPDATE known_subject SET last_seen = now() - interval '11 minutes'`); err != nil {
 		t.Fatal(err)
 	}
-	note()
-	if err := w.pool.QueryRow(context.Background(), `SELECT seen_count FROM known_subject WHERE subject = 'alice'`).Scan(&count); err != nil || count != 2 {
-		t.Fatalf("after the interval seen_count = %d (%v), want 2", count, err)
+	round()
+	if got := seen(); got != 2 {
+		t.Fatalf("after the interval seen_count = %d, want 2", got)
 	}
 }
 
