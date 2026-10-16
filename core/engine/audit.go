@@ -156,18 +156,18 @@ func (s *auditSink) write(ctx context.Context, batch []auditRecord) error {
 	callerSubject := make([]string, n)
 	subject := make([]string, n)
 	operation := make([]string, n)
-	questions := make([]int32, n)
-	allowed := make([]int32, n)
+	questions := make([]int, n)
+	allowed := make([]int, n)
 	requestID := make([]string, n)
 	for i, r := range batch {
 		at[i], service[i], client[i] = r.at, r.serviceID.String(), r.call.CallerClient
 		callerSubject[i], subject[i], operation[i] = r.call.CallerSubject, r.call.Subject, r.call.Operation
-		questions[i], allowed[i], requestID[i] = int32(r.call.Questions), int32(r.call.Allowed), r.requestID
+		questions[i], allowed[i], requestID[i] = r.call.Questions, r.call.Allowed, r.requestID
 	}
 	_, err := s.app.DB.Exec(ctx, `
 		INSERT INTO delegated_call (at, service_id, caller_client, caller_subject, subject, operation, questions, allowed, request_id)
-		SELECT at, service_id, caller_client, NULLIF(caller_subject, ''), subject, operation, questions, allowed, NULLIF(request_id, '')
-		FROM unnest($1::timestamptz[], $2::uuid[], $3::text[], $4::text[], $5::text[], $6::text[], $7::int[], $8::int[], $9::text[])
+		SELECT at, service_id, caller_client, NULLIF(caller_subject, ''), subject, operation, questions::int, allowed::int, NULLIF(request_id, '')
+		FROM unnest($1::timestamptz[], $2::uuid[], $3::text[], $4::text[], $5::text[], $6::text[], $7::bigint[], $8::bigint[], $9::text[])
 		     AS t(at, service_id, caller_client, caller_subject, subject, operation, questions, allowed, request_id)`,
 		at, service, client, callerSubject, subject, operation, questions, allowed, requestID)
 	return err

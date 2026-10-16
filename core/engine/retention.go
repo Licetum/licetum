@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -33,7 +34,7 @@ func (a *App) WatchRetention(ctx context.Context) {
 
 func (a *App) runRetentionGuarded(ctx context.Context) {
 	ok, err := a.Redis.SetNX(ctx, retentionKey, "1", retentionEvery-5*time.Minute).Result()
-	if err != nil && err != redis.Nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		slog.WarnContext(ctx, "retention lock unavailable, running without it", "error", err)
 	} else if !ok {
 		return
