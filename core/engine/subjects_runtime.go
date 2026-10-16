@@ -34,6 +34,9 @@ const (
 // subjectBuffer holds the subjects of verified tokens until the next batch upsert. A subject seen many times in a window
 // is one entry (the last claims win).
 type subjectBuffer struct {
+	// flushMu lets one flush run at a time: a flush asked for (a test, the shutdown) waits for the one the ticker is in the
+	// middle of, instead of finding the buffer empty and returning while the rows are still being written.
+	flushMu sync.Mutex
 	mu      sync.Mutex
 	pending map[string]pendingSubject
 	// queued is when each subject was last put in the buffer by this process: a busy API verifies the same token many times
@@ -101,6 +104,8 @@ func (b *subjectBuffer) close() {
 
 // FlushSubjects writes the waiting subjects now (the flusher does it every second; tests and shutdown call it).
 func (a *App) FlushSubjects(ctx context.Context) {
+	a.subjects.flushMu.Lock()
+	defer a.subjects.flushMu.Unlock()
 	for {
 		batch := a.subjects.take(subjectBatch)
 		if len(batch) == 0 {
