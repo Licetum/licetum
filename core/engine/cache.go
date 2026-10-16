@@ -172,7 +172,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		results.WithLabelValues("bypass").Inc()
 		flight += ":fresh"
 	} else {
-		now := time.Now()
+		now := a.now()
 		if v, ok := a.answersL1.Get(key, now); ok {
 			// While the revisions cannot be read an answer is served past its time, as long as no validity window has started or
 			// ended since: the process cannot compute another (the data it needs is in PostgreSQL), and the policy it holds is
@@ -221,6 +221,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 				return nil, cctx.Err()
 			}
 		}
+		started := a.now()
 		c, err := compute(cctx)
 		if err != nil {
 			return nil, err
@@ -228,9 +229,11 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		if !store {
 			return c.value, nil
 		}
-		written := time.Now()
+		written := a.now()
+		// Hold is counted from the start of the computation, which is not later than the moment its hold was measured from:
+		// an answer is never served stale after the boundary it was made to stop at, however long the computation took.
 		entry := cachedEntry[T]{Value: c.value, Deps: c.deps, Exp: written.Add(c.ttl).UnixMilli(),
-			Hold: written.Add(max(c.hold, c.ttl)).UnixMilli()}
+			Hold: started.Add(c.hold).UnixMilli()}
 		a.keepAnswerInMemory(key, &entry, written)
 		if raw, err := json.Marshal(entry); err == nil && !state.degraded {
 			a.Background(func(ctx context.Context) {

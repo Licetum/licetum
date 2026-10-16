@@ -367,3 +367,103 @@ func TestF5_9_APoolNeverExceedsItsSizeAndTheMetricsSayWhenItIsTooSmall(t *testin
 		t.Fatal("no acquire waited for a connection of a pool of 3 under 24 concurrent users: the metric does not move")
 	}
 }
+
+// F5-6: what a replica keeps answering from memory while PostgreSQL is gone ends at the next moment a rule starts or stops
+// being in force: it does not serve the allowance of a rule that has expired, nor the absence of a rule that has started,
+// nor the allowance of a person against whom a denial has started. The replica cannot compute the new answer, so it refuses.
+func TestF5_6_AnAnswerKeptWithoutPostgreSQLEndsAtTheNextValidityBoundary(t *testing.T) {
+	c := startReplicas(t, 1, harness.WithFaultProxies())
+	p := c.SeedPolicy("org", 0)
+	r := c.Replicas[0]
+	path := "/service/" + p.Slug + "/permission"
+	r.Warm(c, http.MethodGet, path, c.UserToken("alice")) // the types are synchronized
+
+	// The rules change at a whole second (the format of the times is RFC 3339 to the second), far enough ahead for the
+	// answers to be asked for and PostgreSQL to be cut.
+	boundary := time.Now().Add(10 * time.Second).UTC().Truncate(time.Second)
+	at := boundary.Format(time.RFC3339)
+	rule := func(subject string, extra map[string]any) {
+		body := map[string]any{"type_resource_id": p.Branch, "access": []string{"read"}, "subject": subject}
+		for k, v := range extra {
+			body[k] = v
+		}
+		c.Must(http.MethodPost, "/assignment_rule", body)
+	}
+	rule("bob", map[string]any{"expires_at": at})                    // an allowance that ends
+	rule("carol", map[string]any{"valid_from": at})                  // an allowance that starts
+	rule("dave", nil)                                                // an allowance ...
+	rule("dave", map[string]any{"effect": "deny", "valid_from": at}) // ... that a denial overrides from then on
+
+	people := []string{"bob", "carol", "dave"}
+	before := map[string]string{}
+	for _, name := range people {
+		res := r.Permission(c, p.Slug, c.UserToken(name))
+		if res.Status != http.StatusOK {
+			t.Fatalf("%s before the boundary: %d %s", name, res.Status, res.Body)
+		}
+		before[name] = string(res.Body)
+	}
+	if before["bob"] != before["dave"] || before["bob"] == before["carol"] {
+		t.Fatalf("before the boundary bob and dave can read and carol cannot:\nbob   %s\ncarol %s\ndave  %s", before["bob"], before["carol"], before["dave"])
+	}
+	if time.Until(boundary) < 5*time.Second {
+		t.Fatalf("only %v to the boundary: the setup was too slow for the test", time.Until(boundary))
+	}
+
+	c.PostgresFault.Cut()
+	type sample struct {
+		at     time.Duration // from the boundary
+		status int
+		body   string
+	}
+	timeline := map[string][]sample{}
+	tokens := map[string]string{}
+	for _, name := range people {
+		tokens[name] = c.UserToken(name)
+	}
+	for time.Now().Before(boundary.Add(3 * time.Second)) {
+		for _, name := range people {
+			start := time.Now()
+			status, body, err := r.TryGet(c, path, tokens[name], 3*time.Second)
+			if err != nil {
+				t.Fatalf("%s at %v: %v", name, start.Sub(boundary), err)
+			}
+			timeline[name] = append(timeline[name], sample{at: start.Sub(boundary), status: status, body: string(body)})
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+
+	const margin = 1500 * time.Millisecond // the precision of a cached answer: a second at least, and the computation
+	for _, name := range people {
+		answered, refused := 0, 0
+		for _, s := range timeline[name] {
+			switch {
+			case s.at < -time.Second:
+				// Before the boundary the replica answers from its memory: PostgreSQL being gone is no reason to refuse.
+				if s.status != http.StatusOK || s.body != before[name] {
+					t.Fatalf("%s at %v before the boundary: %d %s, want the answer it had", name, s.at, s.status, s.body)
+				}
+				answered++
+			case s.at > margin:
+				// After it the answer it had is wrong, and there is no other to give: the replica refuses.
+				if s.status != http.StatusServiceUnavailable {
+					t.Fatalf("%s at %v after the boundary: %d %s, want 503 (the answer it had is not true any more)", name, s.at, s.status, s.body)
+				}
+				refused++
+			}
+		}
+		if answered < 5 || refused < 5 {
+			t.Fatalf("%s: %d answers before and %d refusals after the boundary: the timeline is too thin", name, answered, refused)
+		}
+	}
+
+	// PostgreSQL is back: the answers are those of the rules as they are now, the reverse of the ones before.
+	c.PostgresFault.Reset()
+	want := map[string]string{"bob": before["carol"], "carol": before["bob"], "dave": before["carol"]}
+	for _, name := range people {
+		eventually(t, 20*time.Second, name+" is answered again, as the rules stand now", func() bool {
+			status, body, err := r.TryGet(c, path, tokens[name], 3*time.Second)
+			return err == nil && status == http.StatusOK && string(body) == want[name]
+		})
+	}
+}

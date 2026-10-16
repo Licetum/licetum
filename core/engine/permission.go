@@ -485,13 +485,15 @@ const holdUnbounded = 24 * time.Hour
 
 // validityUntil turns the next moment a rule or a membership starts or stops being in force (nil: there is none) into how
 // long an answer stays cached (ttl: at most ResultCacheTTL) and how long it stays correct at all (hold: the time to that
-// moment; the answer may be served that long when the database cannot be reached and nothing newer can be had).
+// moment; the answer may be served that long when the database cannot be reached and nothing newer can be had). The ttl has a
+// floor of a second so that an answer is worth keeping; the hold has none, it is the exact distance to the boundary (zero or
+// less when the boundary is already here: such an answer is not served stale).
 func validityUntil(until *time.Time, now time.Time) (ttl, hold time.Duration) {
 	if until == nil {
 		return ResultCacheTTL, holdUnbounded
 	}
-	hold = max(time.Second, until.Sub(now))
-	return min(ResultCacheTTL, hold), hold
+	hold = until.Sub(now)
+	return min(ResultCacheTTL, max(time.Second, hold)), hold
 }
 
 // cacheTTL returns how long the cached result stays correct with respect to validity periods: the
@@ -648,7 +650,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	// An answer that reads the hour or the weekday is correct until the next minute only.
 	if identityUsesNow || rulesUseNow {
 		p.ttl = min(p.ttl, max(untilNextMinute(env.Now), time.Second))
-		p.hold = min(p.hold, max(untilNextMinute(env.Now), time.Second))
+		p.hold = min(p.hold, untilNextMinute(env.Now))
 	}
 
 	// The types the applicable rules reach (the type itself, its descendants and the lookup type of

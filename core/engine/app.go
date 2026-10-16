@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -98,6 +99,16 @@ type App struct {
 	computeSlots chan struct{}
 	// snapshotWarn logs once that the policy does not fit in memory.
 	snapshotWarn sync.Once
+	// clock is the time of the answer cache; nil is time.Now. Tests replace it to follow hours of validity windows at once.
+	clock func() time.Time
+}
+
+// now is the time the answer cache reasons with (see cachedAnswer).
+func (a *App) now() time.Time {
+	if a.clock != nil {
+		return a.clock()
+	}
+	return time.Now()
 }
 
 func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {

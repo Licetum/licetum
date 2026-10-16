@@ -89,8 +89,8 @@ func TestValidityUntilKeepsTheHoldPastTheCap(t *testing.T) {
 		t.Errorf("a window in 5 s: ttl %v hold %v, both at most 5 s", ttl, hold)
 	}
 	imminent := now.Add(100 * time.Millisecond)
-	if ttl, hold := validityUntil(&imminent, now); ttl != time.Second || hold != time.Second {
-		t.Errorf("a window within a second keeps the floor of a second: ttl %v hold %v", ttl, hold)
+	if ttl, hold := validityUntil(&imminent, now); ttl != time.Second || hold != 100*time.Millisecond {
+		t.Errorf("a window within a second keeps the floor of a second for the ttl and the exact distance for the hold: ttl %v hold %v", ttl, hold)
 	}
 }
 
