@@ -18,6 +18,11 @@ const (
 	subjectFlushEvery = time.Second
 	subjectBatch      = 500
 	subjectFlushLimit = 10 * time.Second
+	// subjectRowGuard is how old a row must be to be written again. It is shorter than subjectNoteEvery by two flush
+	// intervals: a process queues a subject subjectNoteEvery after the last time, but its flush may come a tick earlier
+	// than the previous one did, and a guard of exactly subjectNoteEvery would then skip the write and delay it by
+	// another whole interval.
+	subjectRowGuard = subjectNoteEvery - 2*subjectFlushEvery
 
 	subjectMaxClaims    = 32
 	subjectMaxValue     = 1024
@@ -102,6 +107,15 @@ func (a *App) FlushSubjects(ctx context.Context) {
 			return
 		}
 		if err := a.upsertSubjects(ctx, batch); err != nil {
+			if rejectedByServer(err) && len(batch) > 1 {
+				// One subject the database refuses (a NUL in a claim, say) must not take the others with it.
+				for subject, p := range batch {
+					if err := a.upsertSubjects(ctx, map[string]pendingSubject{subject: p}); err != nil {
+						slog.WarnContext(ctx, "failed to note a subject", "error", err)
+					}
+				}
+				continue
+			}
 			slog.WarnContext(ctx, "failed to note subjects", "subjects", len(batch), "error", err)
 			return
 		}
@@ -202,7 +216,7 @@ func (a *App) upsertSubjects(ctx context.Context, batch map[string]pendingSubjec
 		SELECT subject, display_name, claims::jsonb FROM unnest($1::text[], $2::text[], $3::text[]) AS t(subject, display_name, claims)
 		ON CONFLICT (subject) DO UPDATE SET display_name = EXCLUDED.display_name, claims = EXCLUDED.claims,
 		    last_seen = now(), seen_count = known_subject.seen_count + 1
-		WHERE known_subject.last_seen < now() - make_interval(secs => $4)`, subjects, names, claims, subjectNoteEvery.Seconds())
+		WHERE known_subject.last_seen < now() - make_interval(secs => $4)`, subjects, names, claims, subjectRowGuard.Seconds())
 	return err
 }
 

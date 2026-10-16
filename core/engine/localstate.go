@@ -207,7 +207,8 @@ func (a *App) WatchRevision(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		if !a.localEnabled() {
+		if !a.localEnabled() || a.Role == RoleWorker {
+			// Nothing to renew: the revisions are read for the log settings (the worker decides nothing, so it keeps no snapshot).
 			a.readCacheState(context.WithoutCancel(ctx))
 			continue
 		}

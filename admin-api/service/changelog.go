@@ -33,6 +33,7 @@ type changeHead struct {
 	mu   sync.Mutex
 	id   int64
 	read time.Time
+	err  error // the failure of the reading at read: it is the answer for changeHeadEvery too, so a down database is asked once
 }
 
 // get returns the id of the last record, at most changeHeadEvery old, and when it was read.
@@ -40,7 +41,7 @@ func (h *changeHead) get(ctx context.Context, a *App) (int64, time.Time, error) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if !h.read.IsZero() && time.Since(h.read) < changeHeadEvery {
-		return h.id, h.read, nil
+		return h.id, h.read, h.err
 	}
 	// The query serves every waiter of the process, so it does not end with the request that happened to run it.
 	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -48,9 +49,10 @@ func (h *changeHead) get(ctx context.Context, a *App) (int64, time.Time, error) 
 	started := time.Now()
 	var id int64
 	if err := a.DB.QueryRow(qctx, `SELECT COALESCE(max(id), 0) FROM authz_change`).Scan(&id); err != nil {
-		return 0, time.Time{}, err
+		h.read, h.err = started, err
+		return 0, started, err
 	}
-	h.id, h.read = id, started
+	h.id, h.read, h.err = id, started, nil
 	return id, started, nil
 }
 

@@ -2,11 +2,14 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -90,6 +93,9 @@ func (s *auditSink) drop(n int) {
 
 // add buffers a record; a record that does not fit (or comes after Close) is dropped and counted.
 func (s *auditSink) add(r auditRecord) {
+	// PostgreSQL refuses a NUL byte or invalid UTF-8 in text, and one such record would otherwise fail the whole batch.
+	r.call.CallerClient, r.call.CallerSubject = cleanText(r.call.CallerClient), cleanText(r.call.CallerSubject)
+	r.call.Subject, r.call.Operation, r.requestID = cleanText(r.call.Subject), cleanText(r.call.Operation), cleanText(r.requestID)
 	s.mu.Lock()
 	if s.closed || len(s.buf) >= s.cap {
 		s.mu.Unlock()
@@ -122,11 +128,12 @@ func (s *auditSink) flush(final bool) {
 		s.mu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), auditFlushLimit)
-		err := s.write(ctx, batch)
+		rest, err := s.writeBatch(ctx, batch)
 		cancel()
 		if err == nil {
 			continue
 		}
+		batch = rest
 		slog.Warn("failed to write the delegated-call audit", "records", len(batch), "error", err)
 		s.mu.Lock()
 		if final {
@@ -145,6 +152,38 @@ func (s *auditSink) flush(final bool) {
 		s.mu.Unlock()
 		return
 	}
+}
+
+// cleanText removes what PostgreSQL does not accept in a text value.
+func cleanText(v string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(v, "\uFFFD"), "\x00", "")
+}
+
+// rejectedByServer reports an error that comes from the data (a data exception or a constraint): trying the same
+// statement again cannot succeed, unlike a lost connection.
+func rejectedByServer(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (strings.HasPrefix(pgErr.Code, "22") || strings.HasPrefix(pgErr.Code, "23"))
+}
+
+// writeBatch writes a batch. When the server refuses the data, the records are written one by one and the ones it
+// refuses are dropped and counted, so a record that can never be written does not hold back the ones behind it. On
+// any other error it returns the records not written yet, for the next attempt.
+func (s *auditSink) writeBatch(ctx context.Context, batch []auditRecord) ([]auditRecord, error) {
+	err := s.write(ctx, batch)
+	if err == nil || !rejectedByServer(err) {
+		return batch, err
+	}
+	for i, r := range batch {
+		if err := s.write(ctx, []auditRecord{r}); err != nil {
+			if !rejectedByServer(err) {
+				return batch[i:], err
+			}
+			slog.Warn("dropped a delegated-call record the database refuses", "error", err)
+			s.drop(1)
+		}
+	}
+	return nil, nil
 }
 
 // write inserts a batch with one statement.
