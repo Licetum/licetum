@@ -30,6 +30,9 @@ type SyncHooks struct {
 	// NoHeartbeat, when it returns true, stops the renewal of a lease, as a paused process would. The postgres engine asks
 	// per job (with the types of the job), the dbos engine for the whole executor (with nil).
 	NoHeartbeat func(typeIDs []uuid.UUID) bool
+	// LockTimeout replaces syncLockTimeout when it is positive: how long a synchronization waits for the lock of its
+	// component.
+	LockTimeout time.Duration
 }
 
 var errLeaseLost = errors.New("the lease of the synchronization job was lost")
@@ -351,6 +354,20 @@ func (a *App) failJob(ctx context.Context, job syncJob, cause error) {
 		slog.ErrorContext(ctx, "failed to record the failure of a synchronization job", "job", job.ID, "error", err)
 	}
 }
+
+// markBusy postpones a type whose component lock was held too long: it is due again in a few seconds, and the attempts
+// (and so the backoff) are untouched, because the source did not fail. A type that has no state row is left alone: it has
+// no data yet, and whoever needs it asks again.
+func markBusy(ctx context.Context, tx pgx.Tx, typeID uuid.UUID, reason string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE sync_state SET next_due_at = now() + make_interval(secs => $2), last_error = $3
+		WHERE type_resource_id = $1 AND next_due_at < now() + make_interval(secs => $2)`,
+		typeID, busyRetry.Seconds(), reason)
+	return err
+}
+
+// busyRetry is when a type whose component lock was busy is due again.
+const busyRetry = 5 * time.Second
 
 // markUnanswered starts or lengthens the backoff of a type whose source did not answer: min(30 s · 2^attempts, 10 min),
 // for all replicas at once, because the state is in the database.

@@ -132,7 +132,7 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   - **Breaker**: `redisx.RecordFailure` is one Lua script (INCR, PEXPIRE on the first failure or when the key has none, SET of the open key); `redisx.Breaker`
     carries the parameters for tests. `FastFail` does not gate the connection-setup commands (HELLO, ...) that run inside the probe. **Logs**: failures of a
     dependency on the request path go through `logx.Repeated` (`logDependency`, `errKind`; `licetum_log_suppressed_total`): one record per kind per second.
-  - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_REDIS_OUTAGE` shortens the minute), `core/tests/integration/{db,redisx}`. The
+  - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_REDIS_OUTAGE` shortens the minute, `LICETUM_CHAOS_POSTGRES_OUTAGE` the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
 - The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
   `snapshot.ttl`, ...): a policy that does not fit, `consistency=higher` and the admin simulations use it. Change one, change the other;

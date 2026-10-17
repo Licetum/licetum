@@ -300,7 +300,11 @@ func redisOutage(t *testing.T, c *harness.Cluster, r *harness.Replica, p *harnes
 }
 
 func outageLength(def time.Duration) time.Duration {
-	if v := os.Getenv("LICETUM_CHAOS_REDIS_OUTAGE"); v != "" {
+	return outageLengthOf("LICETUM_CHAOS_REDIS_OUTAGE", def)
+}
+
+func outageLengthOf(env string, def time.Duration) time.Duration {
+	if v := os.Getenv(env); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}
@@ -479,7 +483,10 @@ func TestF5_6_WithoutALimitTheReplicaKeepsAnsweringFromItsCopy(t *testing.T) {
 	want := string(r.Do(c, http.MethodGet, path, alice, nil).Body)
 
 	c.PostgresFault.Cut()
-	until := time.Now().Add(12 * time.Second) // beyond the 2 s after which a view is no longer trusted unread, and the 10 s of a cached answer
+	// F5-6: thirty seconds, well beyond the 2 s after which a view is no longer trusted unread, and the 10 s of a cached
+	// answer. LICETUM_CHAOS_POSTGRES_OUTAGE shortens it.
+	outage := outageLengthOf("LICETUM_CHAOS_POSTGRES_OUTAGE", 30*time.Second)
+	until := time.Now().Add(outage)
 	n := 0
 	for time.Now().Before(until) {
 		status, body, err := r.TryGet(c, path, alice, 3*time.Second)
@@ -489,7 +496,7 @@ func TestF5_6_WithoutALimitTheReplicaKeepsAnsweringFromItsCopy(t *testing.T) {
 		n++
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Logf("%d answers in 12 s without PostgreSQL", n)
+	t.Logf("%d answers in %v without PostgreSQL", n, outage)
 }
 
 func eventuallyOK(t *testing.T, within time.Duration, what string, f func() bool) {

@@ -322,6 +322,13 @@ func (a *App) dbosSyncWorkflow(ctx dbos.Context, in dbosSyncIn) (dbosSyncOut, er
 	case ctx.Err() != nil:
 		// The worker is shutting down: the workflow is recovered or taken over, and no backoff is due.
 		return out, err
+	case isLockTimeout(err):
+		// The lock of the component stayed busy through every attempt. That is not a failure of the source: the type is
+		// due again soon, the data stays, and the waiters are told the source did not answer, as for a job that is requeued.
+		slog.WarnContext(ctx, "a synchronization workflow waited too long for the graph lock, the type is postponed", "workflow", workflowID, "type_resource_id", typeID)
+		a.recordBusy(context.WithoutCancel(ctx), []uuid.UUID{typeID}, err)
+		out, err = dbosSyncOut{Unanswered: []string{typeID.String()}}, nil
+		state = "requeued"
 	default:
 		slog.ErrorContext(ctx, "a synchronization workflow failed", "workflow", workflowID, "type_resource_id", typeID, "error", err)
 		a.recordFailure(context.WithoutCancel(ctx), []uuid.UUID{typeID}, err)
@@ -457,6 +464,22 @@ func (a *App) dbosPrune(ctx context.Context, c dbos.Context) {
 	}
 	if err := dbos.DeleteWorkflows(c, ids); err != nil && ctx.Err() == nil {
 		slog.WarnContext(ctx, "failed to delete the old synchronization workflows", "error", err)
+	}
+}
+
+// recordBusy postpones the types whose component lock stayed busy through every attempt: they are tried again soon, with
+// no backoff (see markBusy).
+func (a *App) recordBusy(ctx context.Context, typeIDs []uuid.UUID, cause error) {
+	err := a.syncTx(ctx, nil, func(tx pgx.Tx) error {
+		for _, id := range typeIDs {
+			if err := markBusy(ctx, tx, id, cause.Error()); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to postpone a synchronization", "error", err)
 	}
 }
 

@@ -241,18 +241,22 @@ func TestSyncPoolsAreBounded(t *testing.T) {
 	}
 }
 
-// F3-6 (the p99 part, scaled down): while a synchronization of one component is held for seconds, the p99 of warm check
-// requests degrades by at most 20 %.
+// F3-6 (the p99 part): while a synchronization of one component is held for 30 s (LICETUM_SYNC_HOLD shortens it), the p99
+// of warm check requests degrades by at most 20 %.
 func TestSyncHeldSynchronizationDoesNotSlowTheChecks(t *testing.T) {
+	hold := 30 * time.Second
+	if v, err := time.ParseDuration(os.Getenv("LICETUM_SYNC_HOLD")); err == nil && v > 0 {
+		hold = v
+	}
 	e := setup(t)
 	held := e.syncFixture("held", newSource(t, branches("h1")...))
 	warm := e.syncFixture("warm", newSource(t, branches("w1", "w2")...))
-	r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = 15 * time.Second })
+	r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = hold + 15*time.Second })
 	r.permission(t, warm, "")
 
-	measure := func(n int) time.Duration {
-		lat := make([]time.Duration, 0, n)
-		for range n {
+	measure := func(d time.Duration) time.Duration {
+		var lat []time.Duration
+		for end := time.Now().Add(d); time.Now().Before(end); {
 			started := time.Now()
 			if status, _, _ := r.permission(t, warm, ""); status != http.StatusOK {
 				t.Fatal("a check failed")
@@ -260,10 +264,10 @@ func TestSyncHeldSynchronizationDoesNotSlowTheChecks(t *testing.T) {
 			lat = append(lat, time.Since(started))
 		}
 		slices.Sort(lat)
-		return lat[n*99/100]
+		return lat[len(lat)*99/100]
 	}
-	measure(100) // warm up
-	baseline := measure(500)
+	measure(time.Second) // warm up
+	baseline := measure(5 * time.Second)
 
 	g, err := e.app.LoadTypeGraph(context.Background())
 	if err != nil {
@@ -279,11 +283,11 @@ func TestSyncHeldSynchronizationDoesNotSlowTheChecks(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() { r.permission(t, held, "") }) // waits for the lock inside the worker
 	time.Sleep(300 * time.Millisecond)
-	during := measure(500)
+	during := measure(hold)
 	_ = tx.Rollback(context.Background())
 	wg.Wait()
 
-	t.Logf("p99 of a warm check: %v without a held synchronization, %v with one", baseline, during)
+	t.Logf("p99 of a warm check: %v without a held synchronization, %v with one held for %v", baseline, during, hold)
 	if limit := max(baseline*12/10, baseline+3*time.Millisecond); during > limit {
 		t.Fatalf("p99 degraded from %v to %v (limit %v)", baseline, during, limit)
 	}
@@ -339,5 +343,50 @@ func TestSyncWorkerMemory(t *testing.T) {
 	}
 	if got := e.resourceCount(f.typ); got != n {
 		t.Fatalf("%d resources, want %d", got, n)
+	}
+}
+
+// F3 (lock timeout): a synchronization whose component lock stays busy through every attempt does not start the backoff
+// of the source (it did not fail): once the lock is free the type is synchronized by the next request, not after the
+// 30 s or more of a backoff. On the dbos engine; the postgres engine requeues the job, as before.
+func TestSyncBusyComponentLockDoesNotStartABackoff(t *testing.T) {
+	if syncEngine() != "dbos" {
+		t.Skip("the table engine requeues the job instead")
+	}
+	e := setup(t)
+	f := e.syncFixture("busy", newSource(t, branches("b1")...))
+	e.stopWorker()
+	_, _ = e.worker(func(c *config.Config) { c.Sync.FreshMinInterval = time.Millisecond }, engine.SyncHooks{LockTimeout: 200 * time.Millisecond})
+	r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = 20 * time.Second })
+
+	g, err := e.app.LoadTypeGraph(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := e.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) }) // a failed assertion must not leave the lock held
+	if _, err := tx.Exec(context.Background(), `SELECT pg_advisory_xact_lock($1)`, engine.ComponentKeys(g, []uuid.UUID{uuid.MustParse(f.typ)})[0]); err != nil {
+		t.Fatal(err)
+	}
+	// The first synchronization of the type waits for the lock, gives up, and the request is answered without the data.
+	r.permission(t, f, "")
+
+	var attempts int
+	err = e.pool.QueryRow(context.Background(), `SELECT attempts FROM sync_state WHERE type_resource_id = $1`, f.typ).Scan(&attempts)
+	if err == nil && attempts > 0 {
+		t.Fatalf("a busy lock started a backoff: attempts = %d", attempts)
+	}
+	if err := tx.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
+		t.Fatalf("after the lock was free: %d %s", status, body)
+	}
+	if took := time.Since(started); took > 10*time.Second {
+		t.Fatalf("the type was synchronized only after %v", took)
 	}
 }
