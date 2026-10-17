@@ -1,0 +1,45 @@
+# Everything switched on: the web interface, the ingresses, the network policy, the service monitor, a region-aware worker on the
+# table engine, and the custom-metric autoscaling.
+region: eu
+publicUrl: https://licetum.example.com
+existingSecret: licetum-secrets
+policyMaxStaleness: 30s
+db:
+  pgbouncer: true
+  lagAction: primary
+platform:
+  url: https://admin.example.com
+  icon: https://admin.example.com/favicon.ico
+  authorizationUrl: https://idp.example.com/auth
+  tokenUrl: https://idp.example.com/token
+  jwksUrl: https://idp.example.com/keys
+  issuer: https://idp.example.com
+  clientId: licetum
+check:
+  maxInflight: "512"
+  autoscaling:
+    targetInflight: 200
+worker:
+  engine: postgres
+  regionAware: true
+admin:
+  corsAllowOrigins: '["https://app.example.com"]'
+web:
+  enabled: true
+  appBaseUrl: https://app.example.com
+  adminApiPublicUrl: https://admin.example.com
+  checkApiPublicUrl: https://licetum.example.com
+  ingress:
+    enabled: true
+    className: nginx
+    host: app.example.com
+ingress:
+  enabled: true
+  className: nginx
+  host: licetum.example.com
+networkPolicy:
+  enabled: true
+  dbCidrs: [10.20.0.0/24]
+  redisCidrs: [10.20.1.0/24]
+serviceMonitor:
+  enabled: true

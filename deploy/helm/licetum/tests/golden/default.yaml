@@ -1,0 +1,646 @@
+---
+# Source: licetum/templates/check.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: release-licetum-check
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+    app.kubernetes.io/component: check
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: licetum
+      app.kubernetes.io/instance: release
+      app.kubernetes.io/component: check
+---
+# Source: licetum/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-licetum
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+automountServiceAccountToken: false
+---
+# Source: licetum/templates/admin.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-licetum-admin
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+    app.kubernetes.io/component: admin
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/component: admin
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+# Source: licetum/templates/check.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-licetum-check
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+    app.kubernetes.io/component: check
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/component: check
+  ports:
+    - name: http
+      port: 8001
+      targetPort: http
+---
+# Source: licetum/templates/admin.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-licetum-admin
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+    app.kubernetes.io/component: admin
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: licetum
+      app.kubernetes.io/instance: release
+      app.kubernetes.io/component: admin
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: licetum-0.1.0
+        app.kubernetes.io/name: licetum
+        app.kubernetes.io/instance: release
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/managed-by: Helm
+        licetum.io/region: "eu"
+        app.kubernetes.io/component: admin
+      annotations:
+        checksum/config: 090240a5fd011e7bd6d3518ce69d8f9c1eedc17723ff9c392ffcbd20763a8ccb
+    spec:
+      serviceAccountName: release-licetum
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: licetum
+              app.kubernetes.io/instance: release
+              app.kubernetes.io/component: admin
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: licetum
+                    app.kubernetes.io/instance: release
+                    app.kubernetes.io/component: admin
+      containers:
+        - name: admin
+          image: "ghcr.io/licetum/licetum-admin:0.1.0"
+          imagePullPolicy: IfNotPresent
+          args: ["admin", "-addr", ":8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: release-licetum-config
+          env:
+            - name: DB__URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: DB__URI
+            - name: REDIS__URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: REDIS__URI
+            - name: AUTH__STATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: AUTH__STATE_SECRET
+            - name: PLATFORM__CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: PLATFORM__CLIENT_SECRET
+            - name: CORS__ALLOW_ORIGINS
+              value: "[]"
+          startupProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+---
+# Source: licetum/templates/check.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-licetum-check
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+    app.kubernetes.io/component: check
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: licetum
+      app.kubernetes.io/instance: release
+      app.kubernetes.io/component: check
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: licetum-0.1.0
+        app.kubernetes.io/name: licetum
+        app.kubernetes.io/instance: release
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/managed-by: Helm
+        licetum.io/region: "eu"
+        app.kubernetes.io/component: check
+      annotations:
+        checksum/config: 090240a5fd011e7bd6d3518ce69d8f9c1eedc17723ff9c392ffcbd20763a8ccb
+    spec:
+      serviceAccountName: release-licetum
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: licetum
+              app.kubernetes.io/instance: release
+              app.kubernetes.io/component: check
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: licetum
+                    app.kubernetes.io/instance: release
+                    app.kubernetes.io/component: check
+      containers:
+        - name: check
+          image: "ghcr.io/licetum/licetum:0.1.0"
+          imagePullPolicy: IfNotPresent
+          args: ["check", "-addr", ":8001"]
+          ports:
+            - name: http
+              containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: release-licetum-config
+          env:
+            - name: DB__URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: DB__URI
+            - name: DB__READ_URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: DB__READ_URI
+                  optional: true
+            - name: REDIS__URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: REDIS__URI
+            - name: AUTH__STATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: AUTH__STATE_SECRET
+            - name: PLATFORM__CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: PLATFORM__CLIENT_SECRET
+          startupProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+---
+# Source: licetum/templates/worker.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-licetum-worker
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: licetum
+      app.kubernetes.io/instance: release
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: licetum-0.1.0
+        app.kubernetes.io/name: licetum
+        app.kubernetes.io/instance: release
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/managed-by: Helm
+        licetum.io/region: "eu"
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/config: 090240a5fd011e7bd6d3518ce69d8f9c1eedc17723ff9c392ffcbd20763a8ccb
+    spec:
+      serviceAccountName: release-licetum
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: licetum
+              app.kubernetes.io/instance: release
+              app.kubernetes.io/component: worker
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: licetum
+                    app.kubernetes.io/instance: release
+                    app.kubernetes.io/component: worker
+      containers:
+        - name: worker
+          image: "ghcr.io/licetum/licetum:0.1.0"
+          imagePullPolicy: IfNotPresent
+          args: ["worker", "-addr", ":8002"]
+          ports:
+            - name: http
+              containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: release-licetum-config
+          env:
+            - name: DB__URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: DB__URI
+            - name: REDIS__URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: REDIS__URI
+            - name: AUTH__STATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: AUTH__STATE_SECRET
+            - name: PLATFORM__CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: PLATFORM__CLIENT_SECRET
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+---
+# Source: licetum/templates/check.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: release-licetum-check
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+    app.kubernetes.io/component: check
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: release-licetum-check
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+# Source: licetum/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: release-licetum-secrets
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+  annotations:
+    # Hooks, so that they exist when the migration Job of a pre-install / pre-upgrade runs (a hook runs before the rest of the release
+    # is created). They are kept after the hook and replaced at every install and upgrade; `helm uninstall` does not remove them.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+type: Opaque
+stringData:
+  DB__URI: "postgres://licetum:licetum@db-primary.example.internal:5432/licetum"
+  REDIS__URI: "redis://redis.example.internal:6379/0"
+  AUTH__STATE_SECRET: "ci-only-state-secret"
+  PLATFORM__CLIENT_SECRET: "ci-only-client-secret"
+  DB__READ_URI: "postgres://licetum:licetum@db-replica.example.internal:5432/licetum"
+---
+# Source: licetum/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-licetum-config
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+  annotations:
+    # Hooks, so that they exist when the migration Job of a pre-install / pre-upgrade runs (a hook runs before the rest of the release
+    # is created). They are kept after the hook and replaced at every install and upgrade; `helm uninstall` does not remove them.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  DB__PGBOUNCER: "false"
+  DB__POOL_SIZE: "10"
+  DB__MAX_OVERFLOW: "20"
+  DB__SYNC_POOL_SIZE: "4"
+  DB__MAX_REPLICA_LAG: "10s"
+  DB__LAG_ACTION: "unready"
+  SHUTDOWN__DRAIN: "10s"
+  SHUTDOWN__TIMEOUT: "30s"
+  SYNC__ENGINE: "dbos"
+  HTTP__PUBLIC_URL: "https://licetum.example.com"
+  PLATFORM__NAME: "Licetum"
+  PLATFORM__URL: "https://admin.example.com"
+  PLATFORM__ICON: "https://admin.example.com/favicon.ico"
+  PLATFORM__AUTHORIZATION_URL: "https://idp.example.com/auth"
+  PLATFORM__TOKEN_URL: "https://idp.example.com/token"
+  PLATFORM__JWKS_URL: "https://idp.example.com/keys"
+  PLATFORM__ISSUER: "https://idp.example.com"
+  PLATFORM__CLIENT_ID: "licetum"
+  PLATFORM__ADMIN_GROUP_NAME: "Platform administrator"
+  PLATFORM__ADMIN_CLAIM: "preferred_username"
+  PLATFORM__ADMIN_CLAIM_VALUES: "[\"admin\"]"
+---
+# Source: licetum/templates/migrate.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: release-licetum-migrate
+  labels:
+    helm.sh/chart: licetum-0.1.0
+    app.kubernetes.io/name: licetum
+    app.kubernetes.io/instance: release
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+    licetum.io/region: "eu"
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: licetum-0.1.0
+        app.kubernetes.io/name: licetum
+        app.kubernetes.io/instance: release
+        app.kubernetes.io/version: "0.1.0"
+        app.kubernetes.io/managed-by: Helm
+        licetum.io/region: "eu"
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: release-licetum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: "ghcr.io/licetum/licetum:0.1.0"
+          imagePullPolicy: IfNotPresent
+          args: ["migrate"]
+          envFrom:
+            - configMapRef:
+                name: release-licetum-config
+          env:
+            - name: DB__URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: DB__URI
+            - name: DB__MIGRATE_URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: DB__MIGRATE_URI
+                  optional: true
+            - name: REDIS__URI
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: REDIS__URI
+            - name: AUTH__STATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: AUTH__STATE_SECRET
+            - name: PLATFORM__CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: release-licetum-secrets
+                  key: PLATFORM__CLIENT_SECRET
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
