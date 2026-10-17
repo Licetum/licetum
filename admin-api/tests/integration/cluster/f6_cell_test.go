@@ -126,6 +126,11 @@ func remotePorts() (map[int]bool, error) {
 }
 
 func TestF6_10_ACellOpensNoConnectionOutsideItself(t *testing.T) {
+	// What the test binary held before the cell started (the connection of Testcontainers to its reaper, for one) is not the cell's.
+	baseline, err := remotePorts()
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := startReplicas(t, 2)
 	p := c.SeedPolicy("org", 0)
 	otherPG, otherRedis := newDecoy(t), newDecoy(t)
@@ -187,7 +192,7 @@ func TestF6_10_ACellOpensNoConnectionOutsideItself(t *testing.T) {
 	defer mu.Unlock()
 	var outside []int
 	for port := range seen {
-		if !allowed[port] {
+		if !allowed[port] && !baseline[port] {
 			outside = append(outside, port)
 		}
 	}
