@@ -64,7 +64,8 @@ func portOf(t *testing.T, raw string) int {
 	return port
 }
 
-// remotePorts are the remote ports of the TCP sockets this process holds right now.
+// remotePorts are the remote ports of the connections this process opened (the client side of its TCP sockets right now): a socket
+// whose local port is one this process listens on is the server end of a connection somebody opened to it, and is left out.
 func remotePorts() (map[int]bool, error) {
 	inodes := map[string]bool{}
 	fds, err := os.ReadDir("/proc/self/fd")
@@ -77,7 +78,22 @@ func remotePorts() (map[int]bool, error) {
 			inodes[strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")] = true
 		}
 	}
-	out := map[int]bool{}
+	type socket struct {
+		local, remote int
+		listen        bool
+	}
+	var sockets []socket
+	port := func(addr string) int {
+		i := strings.LastIndex(addr, ":")
+		if i < 0 {
+			return 0
+		}
+		n, err := strconv.ParseUint(addr[i+1:], 16, 16)
+		if err != nil {
+			return 0
+		}
+		return int(n)
+	}
 	for _, file := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
 		f, err := os.Open(file)
 		if err != nil {
@@ -90,21 +106,21 @@ func remotePorts() (map[int]bool, error) {
 			if len(fields) < 10 || !inodes[fields[9]] {
 				continue
 			}
-			state := fields[3]
-			if state == "0A" { // LISTEN
-				continue
-			}
-			remote := fields[2]
-			i := strings.LastIndex(remote, ":")
-			if i < 0 {
-				continue
-			}
-			port, err := strconv.ParseUint(remote[i+1:], 16, 16)
-			if err == nil && port != 0 {
-				out[int(port)] = true
-			}
+			sockets = append(sockets, socket{local: port(fields[1]), remote: port(fields[2]), listen: fields[3] == "0A"})
 		}
 		_ = f.Close()
+	}
+	listening := map[int]bool{}
+	for _, s := range sockets {
+		if s.listen {
+			listening[s.local] = true
+		}
+	}
+	out := map[int]bool{}
+	for _, s := range sockets {
+		if !s.listen && !listening[s.local] && s.remote != 0 {
+			out[s.remote] = true
+		}
 	}
 	return out, nil
 }
