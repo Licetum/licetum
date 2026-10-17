@@ -86,6 +86,19 @@ bumps) is a separate pull request.
 Not covered here: F5-8 at three times the sustainable rate (a load test: `admin-api/loadtest`), and F5-11 (the previous release against the
 schema of this one, `.github/workflows/ci.yml`, job `previous-release`).
 
+### Read replica (F6)
+
+`cluster/f6_test.go` needs a real streaming replica of the PostgreSQL of `LICETUM_TEST_POSTGRES_URI`: `LICETUM_TEST_REPLICA_ADDR=host:port`
+(skipped without it). `scripts/pg-replica.sh up` starts a primary and a replica from the server binaries of the machine (no Docker) and prints
+the two exports; `task go:test:integration:replica` does all of it. `harness.WithReadReplica()` gives the check replicas a read pool on it;
+`Cluster.PauseReplay`/`ResumeReplay` (`pg_wal_replay_pause`) make it lag.
+
+| test | proves |
+|---|---|
+| `TestF6_3_*` | with `at_least_as_fresh` the answer is current while the replica replays nothing (40 writes, 0 stale answers); a plain request is answered from the replica; nothing is kept under a revision the answer did not reflect |
+| `TestF6_4_*` | the lag above `DB__MAX_REPLICA_LAG` makes `/readyz` 503 `replica_lag` (`unready`) or moves the reads to the primary (`primary`), within 15 s, and recovers by itself; `/healthz` stays 200 |
+| `TestF6_5_*` | a replica behind `POLICY__MAX_STALENESS` fails closed with 503 `policy_unavailable` and recovers |
+
 ### Through PgBouncer (F5-9)
 
 `LICETUM_TEST_PGBOUNCER_ADDR=host:port` makes the suites connect through a PgBouncer in **transaction mode** that stands in front of the

@@ -134,6 +134,13 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
     dependency on the request path go through `logx.Repeated` (`logDependency`, `errKind`; `licetum_log_suppressed_total`): one record per kind per second.
   - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_REDIS_OUTAGE` shortens the minute, `LICETUM_CHAOS_POSTGRES_OUTAGE` the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
+- **Read replica** (F6; `engine/replica.go`, `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL`; `core/README.md` has the description): a check process
+  may set `App.ReadDB` (`UseReadReplica`, `cli.Serve`). `App.reader(ctx)` is the pool of a read of the policy: the replica, or `DB` when there is none, when
+  the request needs a current read (`withPrimary`: `consistency=higher`, or a revision the view did not reach, set in `cachedAnswer`; such an answer is not kept)
+  or while the replica lags with `DB__LAG_ACTION=primary`. Reads of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) use `reader(ctx)`;
+  writes, the worker, the sync pool and the OAuth reads use `DB`. `WatchReplica` measures the lag (replay lag and the time the revision has been behind the
+  primary's); `/readyz` fails with `replica_lag` under the `unready` action; `replicaGate` makes a replica behind `POLICY__MAX_STALENESS` fail closed (503). Tests:
+  `cluster/f6_test.go` against a real streaming replica (`scripts/pg-replica.sh`, `LICETUM_TEST_REPLICA_ADDR`, `task go:test:integration:replica`).
 - The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
   `snapshot.ttl`, ...): a policy that does not fit, `consistency=higher` and the admin simulations use it. Change one, change the other;
   `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` (random policies, both paths, answers and explanations) keeps them equal.

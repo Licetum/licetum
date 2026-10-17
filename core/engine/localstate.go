@@ -267,6 +267,17 @@ func (a *App) readView(ctx context.Context) *localView {
 		state.snap, state.attrs, state.attrsOK = snap, snap.attrs, true
 	}
 	v := &localView{state: state, snap: snap, readAt: time.Now(), epoch: epoch}
+	if prev := a.local.view.Load(); prev != nil && state.version < prev.state.version {
+		// The revision went backwards: the database this process reads is not the one it read before (a failover to a replica that
+		// had not received the last writes, or a restore). Revisions it used for other content may be used again, so what is
+		// kept under them in this process is dropped; `licetum failover` raises the revisions above everything seen.
+		if a.metrics != nil {
+			a.metrics.revisionRegress.Inc()
+		}
+		a.answersL1.Clear()
+		slog.ErrorContext(ctx, "the revision of the policy went backwards: run `licetum failover` against the primary",
+			"was", prev.state.version, "now", state.version)
+	}
 	a.local.view.Store(v)
 	return v
 }

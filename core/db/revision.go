@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -36,6 +37,36 @@ func BumpRevision(ctx context.Context, q Querier, scope string) (int64, error) {
 		ON CONFLICT (scope) DO UPDATE SET revision = revision_state.revision + 1
 		RETURNING revision`, scope).Scan(&revision)
 	return revision, err
+}
+
+// DefaultFailoverJump is how far Failover raises the revisions: well beyond the revisions a primary can have given out that a
+// replica missed, and small enough to stay far from the end of an int64.
+const DefaultFailoverJump int64 = 1_000_000
+
+// BumpAllRevisions adds jump to every revision of revision_state, and creates the revision of the rules when there is none. It is
+// what an operator does after promoting a replica (licetum failover): a replica that missed the last transactions of the old
+// primary missed their revisions too, and would number its next writes with revisions the regions already used for other content.
+func BumpAllRevisions(ctx context.Context, q Querier, jump int64) (map[string]int64, error) {
+	if jump < 1 {
+		return nil, fmt.Errorf("the jump must be positive, got %d", jump)
+	}
+	rows, err := q.Query(ctx, `
+		WITH ensure AS (INSERT INTO revision_state (scope, revision) VALUES ($2, 0) ON CONFLICT (scope) DO NOTHING)
+		UPDATE revision_state SET revision = revision + $1 RETURNING scope, revision`, jump, ScopeRules)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var scope string
+		var revision int64
+		if err := rows.Scan(&scope, &revision); err != nil {
+			return nil, err
+		}
+		out[scope] = revision
+	}
+	return out, rows.Err()
 }
 
 // Revisions are the revisions of the policy as of one reading.
