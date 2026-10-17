@@ -173,7 +173,7 @@ func ComponentKeys(g *TypeGraph, typeIDs []uuid.UUID) []int64 {
 func (a *App) syncTx(ctx context.Context, keys []int64, fn func(tx pgx.Tx) error) error {
 	return db.InTx(ctx, a.syncPool(), func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true)`,
-			fmt.Sprintf("%dms", syncLockTimeout.Milliseconds()), fmt.Sprintf("%dms", a.statementTimeout().Milliseconds())); err != nil {
+			fmt.Sprintf("%dms", a.lockTimeout().Milliseconds()), fmt.Sprintf("%dms", a.statementTimeout().Milliseconds())); err != nil {
 			return err
 		}
 		for _, key := range keys {
@@ -183,6 +183,13 @@ func (a *App) syncTx(ctx context.Context, keys []int64, fn func(tx pgx.Tx) error
 		}
 		return fn(tx)
 	})
+}
+
+func (a *App) lockTimeout() time.Duration {
+	if a.Hooks.LockTimeout > 0 {
+		return a.Hooks.LockTimeout
+	}
+	return syncLockTimeout
 }
 
 // isLockTimeout reports a lock wait that ran out (SQLSTATE 55P03), or a statement that did (57014).
