@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"sync"
@@ -38,11 +39,16 @@ const (
 // env is the process side of a run: the database and the cache the harness seeds through the admin application, and
 // the identity provider that signs the tokens the check API verifies.
 type env struct {
-	pool        *pgxpool.Pool
-	app         *engine.App
-	admin       *adminsvc.App
-	dbURI       string
-	redisURI    string
+	pool     *pgxpool.Pool
+	app      *engine.App
+	admin    *adminsvc.App
+	dbURI    string
+	redisURI string
+	// checkDBURI and checkRedisURI are what the check servers connect to: the same servers, or, when the run adds latency,
+	// the Toxiproxy links in front of them. The harness itself (seeding, the admin writes) always goes direct.
+	checkDBURI, checkRedisURI string
+	// links are the proxies in front of PostgreSQL and Redis (nil without added latency).
+	links       []*support.Link
 	stateSecret string
 	idp         *identityProvider
 	closers     []func() error
@@ -55,7 +61,7 @@ func newEnv(ctx context.Context, infra *support.Infrastructure) (*env, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &env{dbURI: infra.DBURI, redisURI: infra.RedisURI, stateSecret: secret}
+	e := &env{dbURI: infra.DBURI, redisURI: infra.RedisURI, checkDBURI: infra.DBURI, checkRedisURI: infra.RedisURI, stateSecret: secret}
 	for name, value := range map[string]string{"DB__URI": e.dbURI, "REDIS__URI": e.redisURI, "AUTH__STATE_SECRET": secret} {
 		if err := os.Setenv(name, value); err != nil {
 			return nil, fmt.Errorf("set %s: %w", name, err)
@@ -83,6 +89,14 @@ func newEnv(ctx context.Context, infra *support.Infrastructure) (*env, error) {
 	e.closers = append(e.closers, rdb.Close)
 	e.app = engine.New(pool, rdb, cfg)
 	e.closers = append(e.closers, func() error { e.app.Close(); return nil })
+	// The synchronization jobs are executed by a worker: the harness runs one in-process next to the APIs under test.
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		_ = e.app.RunWorker(workerCtx)
+	}()
+	e.closers = append(e.closers, func() error { stopWorker(); <-workerDone; return nil })
 	e.admin = adminsvc.New(e.app)
 
 	e.idp, err = newIdentityProvider()
@@ -94,8 +108,45 @@ func newEnv(ctx context.Context, infra *support.Infrastructure) (*env, error) {
 	return e, nil
 }
 
+// insertLinks puts a Toxiproxy link in front of PostgreSQL and in front of Redis for the check servers. The links add no
+// latency yet (see addLatency): the warm-up runs on the plain link, since the first synchronization is not what is measured.
+func (e *env) insertLinks() error {
+	for _, l := range []struct {
+		name string
+		uri  *string
+		to   string
+	}{{"postgres", &e.checkDBURI, e.dbURI}, {"redis", &e.checkRedisURI, e.redisURI}} {
+		u, err := url.Parse(db.NormalizeDSN(l.to))
+		if err != nil {
+			return fmt.Errorf("parse the %s address: %w", l.name, err)
+		}
+		link, err := support.StartLink(l.name, u.Host)
+		if err != nil {
+			return fmt.Errorf("start the %s link: %w", l.name, err)
+		}
+		e.links = append(e.links, link)
+		if *l.uri, err = link.Rewrite(l.to); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addLatency makes every round trip to PostgreSQL and to Redis take rtt longer: half of it in each direction.
+func (e *env) addLatency(rtt time.Duration) error {
+	for _, l := range e.links {
+		if err := l.SetLatency(rtt/2, 0); err != nil {
+			return fmt.Errorf("add latency: %w", err)
+		}
+	}
+	return nil
+}
+
 // close releases the connections, last opened first.
 func (e *env) close() {
+	for _, l := range e.links {
+		l.Close()
+	}
 	for i := len(e.closers) - 1; i >= 0; i-- {
 		_ = e.closers[i]()
 	}

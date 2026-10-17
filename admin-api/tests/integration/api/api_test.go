@@ -22,6 +22,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,7 +31,6 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/licetum/licetum/admin-api/api"
@@ -59,6 +59,14 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// syncEngine is the engine of the synchronization the suite runs against: LICETUM_SYNC_ENGINE=postgres, or dbos (the default).
+func syncEngine() string {
+	if v := os.Getenv("LICETUM_SYNC_ENGINE"); v != "" {
+		return v
+	}
+	return "dbos"
+}
+
 type env struct {
 	t     *testing.T
 	admin *httptest.Server
@@ -70,39 +78,39 @@ type env struct {
 	cfg   *config.Config
 	// adminToken is sent to the admin API by default (see do).
 	adminToken string
+	// stopWorker stops the worker the test process runs (a test that needs the jobs to wait calls it).
+	stopWorker func()
+}
+
+// startWorker runs a synchronization worker on app until the returned function is called or the test ends.
+func startWorker(t *testing.T, app *engine.App) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = app.RunWorker(ctx)
+	}()
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func setup(t *testing.T) *env {
-	dbURI, redisURI := testInfrastructure.DBURI, testInfrastructure.RedisURI
+	redisURI := testInfrastructure.RedisURI
 	ctx := context.Background()
 
-	// An isolated schema per run.
-	schema := fmt.Sprintf("it_%d", time.Now().UnixNano())
-	adminConn, err := pgx.Connect(ctx, db.NormalizeDSN(dbURI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminConn.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS ltree SCHEMA public"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminConn.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = adminConn.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-		_ = adminConn.Close(context.Background())
-	})
-
-	u, err := url.Parse(db.NormalizeDSN(dbURI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := u.Query()
-	// public stays on the path: extensions (ltree) may already be installed there.
-	q.Set("search_path", schema+",public")
-	u.RawQuery = q.Encode()
+	// An isolated schema per run (a database of its own behind PgBouncer).
+	iso := testInfrastructure.Isolate(ctx, t)
 
 	e := &env{t: t}
+	var err error
 	e.key, err = rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -114,9 +122,11 @@ func setup(t *testing.T) *env {
 	// platform admin.
 	m := e.mock.URL
 	cfg := &config.Config{
-		DB:   config.Database{URI: u.String(), PoolSize: 5},
+		DB:   config.Database{URI: iso.URI, PoolSize: 5, PgBouncer: iso.PgBouncer, MigrateURI: iso.MigrateURI},
 		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Cors: config.Cors{AllowOrigins: []string{"http://localhost:5173"}},
+		// Tests that ask for higher consistency in a loop must not be spaced out to one source call per second.
+		Sync: config.Sync{FreshMinInterval: time.Millisecond, Engine: syncEngine(), DBOSSchema: "dbos_" + iso.Name},
 		// The registry of known subjects is on, as by default.
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
@@ -127,14 +137,14 @@ func setup(t *testing.T) *env {
 			AdminClaimValues: []string{"admin"},
 		},
 	}
+	if err := db.RunMigrate(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
 	pool, err := db.Connect(ctx, cfg.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if err := db.Migrate(ctx, pool, cfg); err != nil {
-		t.Fatal(err)
-	}
 
 	rdb, err := redisx.Connect(ctx, redisURI)
 	if err != nil {
@@ -147,6 +157,8 @@ func setup(t *testing.T) *env {
 
 	app := service.New(engine.New(pool, rdb, cfg))
 	t.Cleanup(app.Close)
+	// The synchronization jobs are executed by a worker; the test process runs one next to the APIs it serves.
+	e.stopWorker = startWorker(t, app.App)
 	e.app = app
 	e.pool = pool
 	e.cfg = cfg
@@ -156,6 +168,17 @@ func setup(t *testing.T) *env {
 	t.Cleanup(e.check.Close)
 	e.adminToken = e.token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
 	return e
+}
+
+// externalChange tells the app about a change made to the policy by other means than the admin API (SQL in a test, or
+// restore-admin in another process): the revision is bumped as every write does, and the app reads it again at once.
+func (e *env) externalChange(ctx context.Context) {
+	e.t.Helper()
+	revision, err := db.BumpRevision(ctx, e.pool, db.ScopeRules)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.app.AfterWrite(ctx, revision)
 }
 
 func newTestServer(t *testing.T, handler http.Handler) *httptest.Server {

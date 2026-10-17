@@ -1,0 +1,50 @@
+name: Chaos
+
+# Tier C of the production-load plan: the check API with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole)
+# and a read-only Redis, nightly and on demand. The tests are the ones of admin-api/tests/integration/chaos, built with the
+# `chaos` tag; the pull request jobs do not run them.
+#
+# A schedule fires only from the default branch. To test another branch (the epic branch production-load-readiness until
+# it reaches main) start the workflow by hand with `ref`, or set the repository variable CHAOS_REF, which the scheduled
+# runs check out.
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test (default, the one the workflow is started on)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaos-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chaos:
+    name: Fault injection
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || vars.CHAOS_REF || github.ref }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fault injection tests
+        run: task go:test:chaos

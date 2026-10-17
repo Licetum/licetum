@@ -12,6 +12,8 @@ x-env-app: &env-app
   REDIS__URI: "${REDIS__URI:-redis://redis:6379/0}"
   # The registry of known subjects is off unless asked for; the development stack asks, so the people screens have data.
   SUBJECTS__ENABLED: "${SUBJECTS__ENABLED:-true}"
+  # air restarts the apps on every change: no drain on shutdown in development (the default of 10 s is for a balancer).
+  SHUTDOWN__DRAIN: "${SHUTDOWN__DRAIN:-0}"
   # The address clients reach the check API at: the AuthZEN discovery document is built from it.
   HTTP__PUBLIC_URL: "${HTTP__PUBLIC_URL:-http://localhost:8001}"
   CORS__ALLOW_ORIGINS: '${CORS__ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
@@ -88,6 +90,22 @@ services:
       - --build.exclude_dir=schema,tmp
     ports:
       - "8001:8001"
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+  worker:
+    <<: [*conf-go, *core]
+    container_name: licetum_worker
+    working_dir: /src/core
+    # The synchronization worker: the check and admin APIs queue the jobs that fetch the resource sources, this one runs
+    # them (metrics on :8002 inside the network).
+    command:
+      - air
+      - --tmp_dir=/tmp/air
+      - --build.cmd=go build -o /tmp/air/licetum ./cmd/licetum
+      - --build.entrypoint=/tmp/air/licetum
+      - --build.args_bin=worker
+      - --build.exclude_dir=schema,tmp
     depends_on:
       postgres_init:
         condition: service_completed_successfully

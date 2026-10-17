@@ -19,7 +19,6 @@ import (
 
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 func decodeList(t *testing.T, raw []byte) []map[string]any {
@@ -286,9 +285,7 @@ func TestRestoreAdminAccessPutsTheAdminsBack(t *testing.T) {
 	        VALUES ($1, ARRAY['*'], 'admin', '[]'::jsonb, true, 'deny')`, typeID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := redisx.BumpVersion(ctx, e.app.Redis); err != nil {
-		t.Fatal(err)
-	}
+	e.externalChange(ctx)
 	status, _ := e.do("GET", e.admin.URL+"/assignment_rule", nil)
 	if status != http.StatusForbidden {
 		t.Fatalf("locked out: want 403, got %d", status)
@@ -301,9 +298,7 @@ func TestRestoreAdminAccessPutsTheAdminsBack(t *testing.T) {
 	if report.DisabledDenials != 1 || report.Members != 2 {
 		t.Fatalf("report: %+v", report)
 	}
-	if _, err := redisx.BumpVersion(ctx, e.app.Redis); err != nil {
-		t.Fatal(err)
-	}
+	e.externalChange(ctx)
 	if status, raw := e.do("GET", e.admin.URL+"/assignment_rule", nil); status != http.StatusOK {
 		t.Fatalf("the admin is back: %d %s", status, raw)
 	}

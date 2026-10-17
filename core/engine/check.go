@@ -25,7 +25,7 @@ const (
 )
 
 // checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format.
-const checkResultFormat = "t2"
+const checkResultFormat = "t3"
 
 // CheckAccess answers the questions "may the caller do X with Y" without building the whole permission map: the
 // rules are loaded once, and the questions are answered together, each from the ancestors of its resource. The
@@ -37,19 +37,19 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 		return nil, err
 	}
 	sum := sha256.Sum256(questions)
-	state := a.readCacheState(ctx)
-	key := fmt.Sprintf("authz:check:%s:v%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
+	state := a.cacheState(ctx).forConsistency(ctx, consistency)
+	key := fmt.Sprintf("authz:check:%s:r%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env), explain, hex.EncodeToString(sum[:]))
 	results, err := cachedAnswer(ctx, a, key, state, consistency, a.metrics.checkCache,
 		func(ctx context.Context) (computed[[]model.CheckResult], error) {
-			if _, err := a.GetExistingService(ctx, a.DB, serviceID); err != nil {
+			if err := a.serviceExists(ctx, state, serviceID); err != nil {
 				return computed[[]model.CheckResult]{}, err
 			}
-			results, deps, ttl, err := a.checkAccess(ctx, serviceID, subject, env, requests, explain, state, consistency)
+			results, deps, ttl, hold, err := a.checkAccess(ctx, serviceID, subject, env, requests, explain, state, consistency)
 			if err != nil {
 				return computed[[]model.CheckResult]{}, err
 			}
-			return computed[[]model.CheckResult]{value: results, deps: deps, ttl: ttl}, nil
+			return computed[[]model.CheckResult]{value: results, deps: deps, ttl: ttl, hold: hold}, nil
 		})
 	if err != nil {
 		return nil, err
@@ -65,20 +65,20 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 }
 
 // checkAccess computes the answers of one request (the cache around it is in CheckAccess).
-func (a *App) checkAccess(ctx context.Context, serviceID uuid.UUID, subject string, env Env, requests []model.CheckRequest, explain bool, state cacheState, consistency Consistency) ([]model.CheckResult, map[string]int64, time.Duration, error) {
+func (a *App) checkAccess(ctx context.Context, serviceID uuid.UUID, subject string, env Env, requests []model.CheckRequest, explain bool, state cacheState, consistency Consistency) ([]model.CheckResult, map[string]int64, time.Duration, time.Duration, error) {
 	asked := make([]string, len(requests))
 	for i, r := range requests {
 		asked[i] = r.Type
 	}
 	p, err := a.prepare(ctx, serviceID, subject, env, state, consistency, asked)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
 	results, err := a.decideChecks(ctx, p, serviceID, requests, explain)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
-	return results, p.deps, p.ttl, nil
+	return results, p.deps, p.ttl, p.hold, nil
 }
 
 // checkInputs is what the questions of one request are answered from, read once for all of them.

@@ -21,7 +21,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 const hierarchySubject = "user-1"
@@ -177,7 +176,10 @@ func TestIntegrationHierarchyCascade(t *testing.T) {
 	}
 	// The hash of every synchronized source is kept, so an unchanged source is not written again.
 	for _, name := range []string{"division", "rrs", "branch", "item"} {
-		n, err := w.app.Redis.Exists(context.Background(), "authz:resource_sync:hash:"+w.typeByName[name]).Result()
+		var n int
+		err := w.pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM sync_state WHERE type_resource_id = $1 AND data_hash <> '' AND applied_at IS NOT NULL`,
+			w.typeByName[name]).Scan(&n)
 		if err != nil || n != 1 {
 			t.Fatalf("no sync hash for %s: %d %v", name, n, err)
 		}
@@ -313,9 +315,7 @@ func TestIntegrationTypeModes(t *testing.T) {
 
 	// The check API returns the typed shape. The result cache is keyed by subject, not by claims, so
 	// reset it after the cashier computation above.
-	if _, err := redisx.BumpVersion(context.Background(), w.app.Redis); err != nil {
-		t.Fatal(err)
-	}
+	w.externalChange(context.Background())
 	token := w.token(jwt.MapClaims{"preferred_username": hierarchySubject, "position": "manager"})
 	status, perm := w.env.permission(w.appSvc, token)
 	if status != http.StatusOK {

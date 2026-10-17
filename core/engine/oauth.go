@@ -11,15 +11,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
@@ -376,40 +377,77 @@ func tokenResponseFrom(token map[string]any) (*model.TokenResponse, bool) {
 
 var verifyGroup singleflight.Group
 
-// VerifyToken verifies the token signature against the service JWKS and returns its claims. A success
-// is cached in Redis under sha256(token) with TTL = min(DefaultTokenCacheTTL, exp - now), so that
-// /permission does not hit the JWKS on every request.
+// VerifyToken verifies the token signature against the service JWKS and returns its claims. A success is kept in
+// two levels under the service and sha256(token): in this process (the first level, at most a minute) and in Redis, with
+// TTL = min(DefaultTokenCacheTTL, exp - now), so that /permission does not hit the JWKS on every request. A token that
+// failed verification is remembered for a few seconds (AUTH__INVALID_TOKEN_TTL), so that a bad token sent again and
+// again does not reach the identity provider or Redis.
 //
 // Difference from the Python version: an invalid or expired token is a 401 and does NOT count as a
 // JWKS failure for the circuit breaker (previously five garbage tokens opened the breaker and
 // blocked /permission for every user of the service for 30 seconds). 424 only when the JWKS is down.
 func (a *App) VerifyToken(ctx context.Context, svc *model.Service, token string) (Claims, error) {
-	sum := sha256.Sum256([]byte(token))
-	tokenHash := hex.EncodeToString(sum[:])
-	cacheKey := "authz:token:" + tokenHash
+	tokenHash := tokenDigest(token)
+	// A token is verified against the keys and the issuer of one service, so every level is keyed by the service as
+	// well: a token verified for one service must never be accepted from the cache for another.
+	scoped := svc.ID.String() + ":" + tokenHash
+	cacheKey := "authz:token:" + scoped
+	invalidKey := scoped
+	now := time.Now()
+
+	if err, ok := a.invalidTokens.Get(invalidKey, now); ok {
+		return nil, err
+	}
+	if claims, ok := a.tokensL1.Get(scoped, now); ok {
+		a.metrics.l1Lookup("token", true)
+		return maps.Clone(claims), nil
+	}
+	a.metrics.l1Lookup("token", false)
 
 	if cached, err := a.Redis.Get(ctx, cacheKey).Bytes(); err == nil {
 		if claims, err := decodeClaims(cached); err == nil {
+			a.keepTokenInMemory(scoped, claims, now)
 			return claims, nil
 		}
 	} else if !errors.Is(err, redis.Nil) {
-		slog.WarnContext(ctx, "failed to read the token cache", "error", err)
+		logRedis(ctx, slog.LevelWarn, "failed to read the token cache", err)
 	}
 
 	claims, err := a.verifyTokenLive(ctx, svc, token, tokenHash)
 	if err != nil {
+		if apiErr, ok := apperr.As(err); ok && apiErr.Status == http.StatusUnauthorized {
+			a.invalidTokens.Add(invalidKey, err, a.tuningOrDefault().invalidTokenTTL, now)
+		}
 		return nil, err
 	}
 
 	if exp, ok := claimInt(claims["exp"]); ok {
 		ttl := min(DefaultTokenCacheTTL, time.Until(time.Unix(exp, 0)).Truncate(time.Second))
 		if ttl > 0 {
+			a.keepTokenInMemory(scoped, claims, now)
 			if payload, err := json.Marshal(claims); err == nil {
 				a.Background(func(ctx context.Context) { a.Redis.Set(ctx, cacheKey, payload, ttl) })
 			}
 		}
 	}
 	return claims, nil
+}
+
+// tokenDigest is what the token caches are keyed by (together with the service): the token itself is never stored.
+func tokenDigest(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// keepTokenInMemory keeps verified claims in the first level of the token cache until the token expires, and at most
+// a minute.
+func (a *App) keepTokenInMemory(key string, claims Claims, now time.Time) {
+	exp, ok := claimInt(claims["exp"])
+	if !ok {
+		return
+	}
+	ttl := min(maxTokenL1TTL, time.Unix(exp, 0).Sub(now))
+	a.tokensL1.Add(key, maps.Clone(claims), ttl, now)
 }
 
 func decodeClaims(raw []byte) (Claims, error) {
@@ -479,30 +517,16 @@ func (a *App) fetchAndVerify(ctx context.Context, svc *model.Service, token stri
 	}
 	kid, hasKid := unverified.Header["kid"]
 
-	jwks, err := a.fetchJWKS(ctx, *svc.JwksURL)
+	key, err := a.jwksKeyFor(ctx, *svc.JwksURL, kid, hasKid)
 	if err != nil {
 		return nil, err
 	}
-
-	var matching json.RawMessage
-	for _, raw := range jwks.Keys {
-		var meta map[string]any
-		if json.Unmarshal(raw, &meta) != nil {
-			continue
-		}
-		keyKid, keyHasKid := meta["kid"]
-		if keyHasKid == hasKid && (!hasKid || keyKid == kid) {
-			matching = raw
-			break
-		}
-	}
-	if matching == nil {
+	if key == nil {
 		return nil, apperr.InvalidToken(i18n.TokenKidNotFound)
 	}
-
-	var jwk jose.JSONWebKey
-	if err := jwk.UnmarshalJSON(matching); err != nil {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSKeyInvalid, err)}
+	jwk, err := key.parsed()
+	if err != nil {
+		return nil, err
 	}
 	alg := jwk.Algorithm
 	if alg == "" {
@@ -524,33 +548,6 @@ func (a *App) fetchAndVerify(ctx context.Context, svc *model.Service, token stri
 		return nil, apperr.InvalidToken(i18n.TokenIssuerMismatch)
 	}
 	return Claims(claims), nil
-}
-
-type jwksDocument struct {
-	Keys []json.RawMessage `json:"keys"`
-}
-
-func (a *App) fetchJWKS(ctx context.Context, jwksURL string) (*jwksDocument, error) {
-	ctx, cancel := context.WithTimeout(ctx, jwksTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
-	if err != nil {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
-	}
-	resp, err := a.HTTP.Do(req)
-	if err != nil {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSRejected, resp.StatusCode)}
-	}
-	var doc jwksDocument
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSBadJSON, err)}
-	}
-	return &doc, nil
 }
 
 // SubjectFromClaims uses preferred_username, not sub: with some IdPs (identity brokering to an
@@ -576,6 +573,15 @@ func TokenFragment(token map[string]any) string {
 }
 
 // GetServiceForCheck returns the service for /permission (404 if not found).
+// It carries what the check path needs and not the client secret.
 func (a *App) GetServiceForCheck(ctx context.Context, serviceID uuid.UUID) (*model.Service, error) {
-	return a.GetExistingService(ctx, a.DB, serviceID)
+	if snap := a.policySnapshot(ctx); snap != nil {
+		return snap.service(serviceID)
+	}
+	s, err := ScanServiceCheck(a.DB.QueryRow(ctx,
+		`SELECT `+ServiceCheckColumns+` FROM service WHERE id = $1 AND deleted_at IS NULL`, serviceID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.NotFound(i18n.ServiceNotFound, serviceID)
+	}
+	return s, err
 }
