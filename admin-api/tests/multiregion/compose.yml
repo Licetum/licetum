@@ -110,6 +110,8 @@ services:
       <<: *env
       DB__URI: postgres://licetum:licetum@pg-primary:5432/licetum?sslmode=disable
       REDIS__URI: redis://redis-a:6379/0
+      # Takes the jobs of the types whose source can be reached from region a (the synchronizer of the test lists it).
+      WORKER__REGION: a
     depends_on:
       migrate: {condition: service_completed_successfully}
     networks: [net-a]

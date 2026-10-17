@@ -38,40 +38,51 @@ func (a *App) checkRuleTarget(ctx context.Context, q db.Querier, in *model.Assig
 // checkAssignmentRuleRefs checks the referenced entities: the role, or the type with its access groups and the lookup
 // type of a claim; the target (see checkRuleTarget) when checkTarget is set; the group the rule is bound to and the
 // group the rule is guarded by.
-func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *model.AssignmentRuleInput, checkTarget bool) error {
+//
+// It returns the service the inline permission's type belongs to (nil for a role), which the change log records: the type is read
+// once, for both. Every statement of a write is a round trip to the primary, and the admin API of a region that is not the
+// primary's pays the latency of the link for each.
+func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *model.AssignmentRuleInput, checkTarget bool) (*uuid.UUID, error) {
+	var serviceID *uuid.UUID
 	if in.RoleID != nil {
 		if _, err := a.GetExistingRole(ctx, q, *in.RoleID); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
-		if _, err := a.GetExistingTypeResourceAnyService(ctx, q, *in.TypeResourceID); err != nil {
-			return err
+		var owner uuid.UUID
+		err := q.QueryRow(ctx, `SELECT service_id FROM type_resource WHERE id = $1 AND deleted_at IS NULL`, *in.TypeResourceID).Scan(&owner)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound(i18n.TypeResourceNotFound, *in.TypeResourceID)
 		}
+		if err != nil {
+			return nil, err
+		}
+		serviceID = &owner
 		if checkTarget {
 			if err := a.checkRuleTarget(ctx, q, in); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if err := a.checkAccessGroupRefs(ctx, q, *in.TypeResourceID, in.Access); err != nil {
-			return err
+			return nil, err
 		}
 		if in.ResourceFromClaim != nil {
 			if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromClaim.LookupTypeResourceID); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 	if in.MemberOfGroupID != nil {
 		if _, err := a.GetExistingGroup(ctx, q, *in.MemberOfGroupID); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if in.RequiresGroupID != nil {
 		if _, err := a.GetExistingGroup(ctx, q, *in.RequiresGroupID); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return serviceID, nil
 }
 
 // fromClaimParam: SQL NULL (not JSON null) for a missing resource_from_claim, otherwise the
@@ -94,12 +105,6 @@ func whereParam(conds []model.PredicateCondition) *string {
 }
 
 // ruleServiceID is the service a rule belongs to: the one that owns its resource type (none for a role rule).
-func ruleServiceID(ctx context.Context, q db.Querier, in *model.AssignmentRuleInput) (*uuid.UUID, error) {
-	if in.TypeResourceID == nil || in.RoleID != nil {
-		return nil, nil
-	}
-	return serviceOfType(ctx, q, *in.TypeResourceID)
-}
 
 // onMissingOf is what a denial does when a condition reads an attribute the request does not carry (see
 // model.AssignmentRuleInput.OnMissingAttribute). Given explicitly, that is it. Otherwise a deny rule that was a deny
@@ -137,10 +142,7 @@ func (a *App) CreateAssignmentRule(ctx context.Context, in *model.AssignmentRule
 func (a *App) createAssignmentRule(ctx context.Context, in *model.AssignmentRuleInput, id *uuid.UUID) (*model.AssignmentRule, error) {
 	var r *model.AssignmentRule
 	err := a.mutate(ctx, func(q db.Querier) (change, error) {
-		if err := a.checkAssignmentRuleRefs(ctx, q, in, true); err != nil {
-			return change{}, err
-		}
-		serviceID, err := ruleServiceID(ctx, q, in)
+		serviceID, err := a.checkAssignmentRuleRefs(ctx, q, in, true)
 		if err != nil {
 			return change{}, err
 		}
@@ -248,10 +250,7 @@ func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *mo
 		if err != nil {
 			return change{}, err
 		}
-		if err := a.checkAssignmentRuleRefs(ctx, q, in, ruleTargetChanged(old, in)); err != nil {
-			return change{}, err
-		}
-		serviceID, err := ruleServiceID(ctx, q, in)
+		serviceID, err := a.checkAssignmentRuleRefs(ctx, q, in, ruleTargetChanged(old, in))
 		if err != nil {
 			return change{}, err
 		}

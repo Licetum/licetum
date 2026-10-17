@@ -133,6 +133,13 @@ tasks:
         eval "$(scripts/pg-replica.sh up "$dir")"
         (cd admin-api && go test -race -count=1 -timeout 30m -tags integration ./tests/integration/cluster -run 'TestF6')
 
+  go:test:multiregion:
+    desc: The multi-region environment (three regions, latency between them, a primary and replicas) and the F6 scenarios, needs Docker
+    cmds:
+      - docker build -f core/Dockerfile --target runtime -t licetum:mr .
+      - docker build -f admin-api/Dockerfile --target runtime -t licetum-admin:mr .
+      - cd admin-api/tests/multiregion && go test -count=1 -timeout 60m -tags multiregion -v .
+
   go:test:chaos:
     desc: Fault injection tests with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole, read-only Redis), needs Docker
     cmds:

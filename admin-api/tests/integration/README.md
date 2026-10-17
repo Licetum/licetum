@@ -97,7 +97,12 @@ the two exports; `task go:test:integration:replica` does all of it. `harness.Wit
 |---|---|
 | `TestF6_3_*` | with `at_least_as_fresh` the answer is current while the replica replays nothing (40 writes, 0 stale answers); a plain request is answered from the replica; nothing is kept under a revision the answer did not reflect |
 | `TestF6_4_*` | the lag above `DB__MAX_REPLICA_LAG` makes `/readyz` 503 `replica_lag` (`unready`) or moves the reads to the primary (`primary`), within 15 s, and recovers by itself; `/healthz` stays 200 |
-| `TestF6_5_*` | a replica behind `POLICY__MAX_STALENESS` fails closed with 503 `policy_unavailable` and recovers |
+| `TestF6_5_*` | a replica behind `POLICY__MAX_STALENESS` fails closed with 503 `policy_unavailable` and recovers; with the link to the replica cut the region answers within the limit, then refuses, and enforces a revocation made meanwhile within the SLO once the link is back |
+| `TestF6_1_*`, `TestF6_2_*` | the p99 of a warm request with 150 ms to the primary; the propagation of 50 revocations (`LICETUM_F6_REVOCATIONS`) |
+| `TestF6_10_*` | while a cell works, the sockets of the process go only to the cell's own endpoints (`/proc/net/tcp`), and nothing connects to the decoys standing for a neighbouring cell |
+| `TestF6_11_*` | after a promotion that lost the last writes, `licetum failover` makes the regions drop what they kept under the reused revisions (the test shows the stale answer without it) |
+| `chaos/f6_test.go` | `TestF6_7_*`: an admin write with 150 ms to the primary costs at most six round trips; `TestF6_8_*`, `TestF6_9_*`: 600 requests a second over three regions split 50/30/20 (`LICETUM_F6_LOAD_SECONDS`), one region removed |
+| `api/regions_test.go` | `synchronizer.regions` and `WORKER__REGION`: a source of one region is asked only by the workers of that region |
 
 ### Through PgBouncer (F5-9)
 

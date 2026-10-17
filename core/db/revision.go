@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"strings"
 
 	"github.com/google/uuid"
@@ -32,12 +33,18 @@ func ServiceOfDataScope(scope string) (string, bool) {
 // administrators write rarely, and a synchronization writes once per change of a service's data.
 func BumpRevision(ctx context.Context, q Querier, scope string) (int64, error) {
 	var revision int64
-	err := q.QueryRow(ctx, `
-		INSERT INTO revision_state (scope, revision) VALUES ($1, 1)
-		ON CONFLICT (scope) DO UPDATE SET revision = revision_state.revision + 1
-		RETURNING revision`, scope).Scan(&revision)
+	err := q.QueryRow(ctx, bumpRevisionSQL, scope).Scan(&revision)
 	return revision, err
 }
+
+const bumpRevisionSQL = `
+	INSERT INTO revision_state (scope, revision) VALUES ($1, 1)
+	ON CONFLICT (scope) DO UPDATE SET revision = revision_state.revision + 1
+	RETURNING revision`
+
+// QueueBumpRevision adds the bump of the scope to a batch that runs in the transaction of the write, so that it travels with the
+// other statements of the batch in one round trip; the new revision is the result of the statement (a row with one column).
+func QueueBumpRevision(b *pgx.Batch, scope string) { b.Queue(bumpRevisionSQL, scope) }
 
 // DefaultFailoverJump is how far Failover raises the revisions: well beyond the revisions a primary can have given out that a
 // replica missed, and small enough to stay far from the end of an int64.
