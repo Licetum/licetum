@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/licetum/licetum/admin-api/service"
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"

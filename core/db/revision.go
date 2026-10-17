@@ -3,10 +3,10 @@ package db
 import (
 	"context"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Scopes of the revision_state table (see migration 00002).
