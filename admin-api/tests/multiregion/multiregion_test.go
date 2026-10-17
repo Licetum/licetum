@@ -263,7 +263,7 @@ func TestF6_9_ARegionIsRemovedAndTheOthersTakeItsTraffic(t *testing.T) {
 		cDown.Store(true)
 		_ = compose("stop", "-t", "5", "check-c1", "check-c2")
 	}()
-	sent, failed, wrong, took := regionLoad(t, 600, steady, []int{50, 30, 20}, func(r int) bool { return !(r == 2 && cDown.Load()) })
+	sent, failed, wrong, took := regionLoad(t, 600, steady, []int{50, 30, 20}, func(r int) bool { return r != 2 || !cDown.Load() })
 	t.Logf("%d requests, %d failed, %d wrong, p99 %v", sent, failed, wrong, p99(took))
 	if float64(failed) > 0.001*float64(sent) {
 		t.Errorf("%d of %d requests failed", failed, sent)

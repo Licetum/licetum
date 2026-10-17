@@ -15,7 +15,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -50,7 +49,6 @@ type regionsLoad struct {
 	client  *http.Client
 	wrong   atomic.Int64
 	perReg  []atomic.Int64
-	wrongMu sync.Mutex
 }
 
 func newRegionsLoad(t *testing.T, weights []int) *regionsLoad {

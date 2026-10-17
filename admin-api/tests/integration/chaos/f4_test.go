@@ -8,6 +8,7 @@ package chaos_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"testing"
@@ -57,7 +58,7 @@ func storedCalls(t *testing.T, c *harness.Cluster) int {
 
 func scrapeApp(app *engine.App) string {
 	rec := httptest.NewRecorder()
-	app.MetricsHandler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	app.MetricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	return rec.Body.String()
 }
 

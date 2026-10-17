@@ -341,7 +341,6 @@ func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing
 	}
 	// The regions notice that the revision went backwards.
 	for _, r := range c.Replicas {
-		r := r
 		eventually(t, 15*time.Second, fmt.Sprintf("replica %d to read the older revision", r.Index), func() bool { return r.App.PolicyRevision() == last })
 		if !strings.Contains(r.Metrics(c), "licetum_revision_regressions_total 1") {
 			t.Errorf("replica %d did not count the revision going backwards", r.Index)
@@ -352,7 +351,6 @@ func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing
 		t.Fatalf("the write after the promotion: %d revision %d, want %d: %s", status, rev, deniedAt, raw)
 	}
 	for _, r := range c.Replicas {
-		r := r
 		eventually(t, 15*time.Second, fmt.Sprintf("replica %d to read the reused revision", r.Index), func() bool { return r.App.PolicyRevision() == deniedAt })
 	}
 	served := hasAccess(c.Replicas[0].Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", token, nil))
@@ -363,7 +361,6 @@ func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing
 		t.Fatal(err)
 	}
 	for _, r := range c.Replicas {
-		r := r
 		eventually(t, 15*time.Second, fmt.Sprintf("replica %d to read the raised revision", r.Index), func() bool {
 			return r.App.PolicyRevision() >= db.DefaultFailoverJump
 		})
