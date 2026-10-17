@@ -20,7 +20,8 @@ spec:
         app.kubernetes.io/component: migrate
     spec:
       restartPolicy: Never
-      serviceAccountName: {{ include "licetum.serviceAccountName" . }}
+      # No service account of the release: the Job runs before the rest of the release exists (it is a pre-install hook), and needs
+      # no access to the Kubernetes API.
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

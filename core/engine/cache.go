@@ -159,12 +159,9 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		return c.value, nil
 	}
 
-	store := true
 	// With a read replica a consistency=higher answer is computed from the primary, whose data may be newer than the revision the
 	// replica showed: it is not kept under that revision.
-	if a.ReadDB != nil && consistency.fresh() {
-		store = false
-	}
+	store := a.ReadDB == nil || !consistency.fresh()
 	if minRevisionFrom(ctx) > state.version {
 		// This process did not reach the revision the caller asks for (see WithMinRevision) within REVISION__WAIT_MAX:
 		// the answer is computed from the data, and not kept under a revision it could not be confirmed to reflect.

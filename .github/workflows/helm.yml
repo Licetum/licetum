@@ -79,5 +79,7 @@ jobs:
         if: failure()
         run: |
           kubectl get pods -A
+          kubectl -n licetum-ci get jobs,events
+          kubectl -n licetum-ci describe jobs | tail -n 80
           kubectl -n licetum-ci describe pods | tail -n 200
-          kubectl -n licetum-ci logs -l app.kubernetes.io/instance=licetum --all-containers --tail=100 --prefix
+          kubectl -n licetum-ci logs -l app.kubernetes.io/instance=licetum --all-containers --tail=100 --prefix || true
