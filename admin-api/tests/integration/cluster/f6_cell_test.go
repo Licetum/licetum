@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	support "github.com/licetum/licetum/core/testsupport"
 )
 
 // decoy listens where a neighbouring cell's PostgreSQL or Redis would, and counts who knocks.
@@ -142,6 +144,10 @@ func TestF6_10_ACellOpensNoConnectionOutsideItself(t *testing.T) {
 	}
 	for _, r := range c.Replicas {
 		allowed[portOf(t, r.Server.URL)] = true
+	}
+	// The suites through PgBouncer reach the cell's PostgreSQL by way of the pooler.
+	if addr := os.Getenv(support.EnvPgBouncerAddr); addr != "" {
+		allowed[portOf(t, "tcp://"+addr)] = true
 	}
 	for _, port := range []int{otherPG.port(), otherRedis.port()} {
 		if allowed[port] {
