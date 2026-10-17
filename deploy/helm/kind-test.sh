@@ -50,7 +50,7 @@ for i in \$(seq 1 150); do
 done | sort | uniq -c"
 sleep 5
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-helm upgrade $release $chart -n "$ns" "${values[@]}" --set check.podAnnotations.rollout="$(date +%s)" --wait --timeout 6m
+helm upgrade $release $chart -n "$ns" "${values[@]}" --set-string check.podAnnotations.rollout="$(date +%s)" --wait --timeout 6m
 kubectl -n "$ns" wait --for=jsonpath='{.status.phase}'=Succeeded pod/load --timeout=600s
 result=$(kubectl -n "$ns" logs load)
 echo "$result"
