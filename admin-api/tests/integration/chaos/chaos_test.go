@@ -55,6 +55,13 @@ func setup(t *testing.T) (*harness.Cluster, *harness.Replica, *harness.Policy, s
 	return c, r, p, alice
 }
 
+// stranger returns the token of a person nothing is cached for, in this process or in Redis: its request verifies the
+// token and computes the answer, so it reads Redis (a request of a warm replica, or a consistency=higher one, may not).
+func stranger(c *harness.Cluster, n *int) string {
+	*n++
+	return c.UserToken(fmt.Sprintf("stranger-%d", *n))
+}
+
 func timed(f func()) time.Duration {
 	start := time.Now()
 	f()
@@ -62,21 +69,24 @@ func timed(f func()) time.Duration {
 }
 
 func TestF0_4_LatencyOnRedisSlowsTheRequest(t *testing.T) {
-	c, r, p, alice := setup(t)
-	fast := timed(func() { r.Fresh(c, p.Slug, alice) })
+	c, r, p, _ := setup(t)
+	var n int
+	fast := timed(func() { r.Permission(c, p.Slug, stranger(c, &n)) })
 
 	c.RedisFault.Latency(delay, 0)
 	var res *harness.Result
-	slow := timed(func() { res = r.Fresh(c, p.Slug, alice) })
+	token := stranger(c, &n)
+	slow := timed(func() { res = r.Permission(c, p.Slug, token) })
 	// Every round trip waits the delay in each direction.
 	min := time.Duration(res.Trace.RedisRoundTrips()) * 2 * delay
-	if res.Status != http.StatusOK || slow < min {
+	if res.Status != http.StatusOK || res.Trace.RedisRoundTrips() == 0 || slow < min {
 		t.Fatalf("with %v on Redis the request took %v (status %d), want at least %v for %d round trips; it took %v before",
 			delay, slow, res.Status, min, res.Trace.RedisRoundTrips(), fast)
 	}
 
 	c.RedisFault.Reset()
-	if again := timed(func() { r.Fresh(c, p.Slug, alice) }); again > slow/2 {
+	token = stranger(c, &n)
+	if again := timed(func() { r.Permission(c, p.Slug, token) }); again > slow/2 {
 		t.Fatalf("after the fault ended the request still took %v", again)
 	}
 }
@@ -159,8 +169,9 @@ func redisErrors(metrics string) bool {
 
 func TestF0_4_BlackHoleOnRedisMakesTheRequestHang(t *testing.T) {
 	c, r, p, alice := setup(t)
+	var n int
 	c.RedisFault.BlackHole()
-	_, _, err := r.TryGet(c, "/service/"+p.Slug+"/permission?consistency=higher", alice, time.Second)
+	_, _, err := r.TryGet(c, "/service/"+p.Slug+"/permission", stranger(c, &n), time.Second)
 	if err == nil {
 		t.Fatal("the request was answered although Redis swallows the traffic")
 	}
