@@ -88,6 +88,7 @@ const (
 	ServiceSlugInvalid            Key = "service_slug_invalid"
 	ServiceSlugTaken              Key = "service_slug_taken"
 	CacheTTLInvalid               Key = "synchronizer_cache_ttl_invalid"
+	SynchronizerRegionsInvalid    Key = "synchronizer_regions_invalid"
 	SynchronizerHeaderInvalid     Key = "synchronizer_header_invalid"
 
 	// service
@@ -529,6 +530,11 @@ var catalog = map[Key]Text{
 		EN: "config.cache_ttl must be between 0 and %d seconds",
 		RU: "config.cache_ttl должен быть от 0 до %d секунд",
 		ZH: "config.cache_ttl 必须在 0 到 %d 秒之间",
+	},
+	SynchronizerRegionsInvalid: {
+		EN: "regions: at most 16 names of lowercase letters, digits and hyphens (up to 32 characters each); %s",
+		RU: "regions: не более 16 имён из строчных латинских букв, цифр и дефисов (до 32 символов каждое); %s",
+		ZH: "regions：最多 16 个名称，由小写字母、数字和连字符组成（每个最长 32 个字符）；%s",
 	},
 	ServiceUpdateEmpty: {
 		EN: "At least one field must be set",
