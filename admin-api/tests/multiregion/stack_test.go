@@ -332,4 +332,3 @@ func resetLinks(t testing.TB) {
 		cutLink(t, r, false)
 	}
 }
-
