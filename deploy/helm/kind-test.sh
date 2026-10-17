@@ -61,9 +61,9 @@ if [[ $failed -ne 0 ]]; then
 fi
 
 log "the migration ran exactly once for the upgrade"
-migrations | python3 - "$started" <<'PY'
-import json, sys
-jobs = json.load(sys.stdin)["items"]
+JOBS=$(migrations) python3 - "$started" <<'PY'
+import json, os, sys
+jobs = json.loads(os.environ["JOBS"])["items"]
 started = sys.argv[1]
 if len(jobs) != 1:
     sys.exit(f"{len(jobs)} migration jobs, want exactly 1")
