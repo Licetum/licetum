@@ -113,7 +113,7 @@ func ScanSynchronizer(row pgx.Row) (*model.Synchronizer, error) {
 	var s model.Synchronizer
 	var kind string
 	var raw []byte
-	if err := row.Scan(&s.ID, &s.TypeResourceID, &kind, &raw); err != nil {
+	if err := row.Scan(&s.ID, &s.TypeResourceID, &kind, &raw, &s.Regions); err != nil {
 		return nil, err
 	}
 	cfg, err := model.ConfigFromDB(kind, raw)
@@ -121,10 +121,13 @@ func ScanSynchronizer(row pgx.Row) (*model.Synchronizer, error) {
 		return nil, err
 	}
 	s.Config = cfg
+	if s.Regions == nil {
+		s.Regions = []string{}
+	}
 	return &s, nil
 }
 
-const SynchronizerColumns = `id, type_resource_id, kind::text, config`
+const SynchronizerColumns = `id, type_resource_id, kind::text, config, regions`
 
 // ActiveSynchronizer returns the first non-deleted synchronizer of a type (or nil).
 func (a *App) ActiveSynchronizer(ctx context.Context, typeResourceID uuid.UUID) (*model.Synchronizer, error) {

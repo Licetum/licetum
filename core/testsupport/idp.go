@@ -1,10 +1,12 @@
 package support
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -21,6 +23,8 @@ import (
 // Issuer(), JWKSURL() and the other addresses verifies its tokens against it.
 type IdP struct {
 	server *httptest.Server
+	// base is the address the provider is reached at: its own, or the one containers use to reach the host (NewIdPForContainers).
+	base string
 
 	mu       sync.Mutex
 	keys     []*idpKey // the last one signs
@@ -37,7 +41,13 @@ type idpKey struct {
 }
 
 // NewIdP starts a fake provider with one key (kid "k1"); it stops with the test.
-func NewIdP(t testing.TB) *IdP {
+func NewIdP(t testing.TB) *IdP { return newIdP(t, "") }
+
+// NewIdPForContainers starts the provider on all interfaces and names itself by publicHost (for example host.docker.internal), so
+// that services that run in containers reach it at the addresses it gives out.
+func NewIdPForContainers(t testing.TB, publicHost string) *IdP { return newIdP(t, publicHost) }
+
+func newIdP(t testing.TB, publicHost string) *IdP {
 	t.Helper()
 	i := &IdP{}
 	i.addKey()
@@ -48,7 +58,20 @@ func NewIdP(t testing.TB) *IdP {
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write([]byte("png"))
 	})
-	i.server = httptest.NewServer(mux)
+	if publicHost == "" {
+		i.server = httptest.NewServer(mux)
+		i.base = i.server.URL
+	} else {
+		ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp4", "0.0.0.0:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		i.server = httptest.NewUnstartedServer(mux)
+		i.server.Listener = ln
+		i.server.Start()
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		i.base = "http://" + net.JoinHostPort(publicHost, port)
+	}
 	t.Cleanup(i.server.Close)
 	return i
 }
@@ -65,17 +88,17 @@ func (i *IdP) addKey() *idpKey {
 }
 
 // URL is the base address of the provider.
-func (i *IdP) URL() string { return i.server.URL }
+func (i *IdP) URL() string { return i.base }
 
 // Issuer is the iss of the tokens; AuthorizationURL, TokenURL and JWKSURL are the addresses a service is registered with.
-func (i *IdP) Issuer() string           { return i.server.URL + "/realm" }
-func (i *IdP) AuthorizationURL() string { return i.server.URL + "/realm/auth" }
-func (i *IdP) TokenURL() string         { return i.server.URL + "/realm/token" }
-func (i *IdP) JWKSURL() string          { return i.server.URL + "/jwks" }
+func (i *IdP) Issuer() string           { return i.base + "/realm" }
+func (i *IdP) AuthorizationURL() string { return i.base + "/realm/auth" }
+func (i *IdP) TokenURL() string         { return i.base + "/realm/token" }
+func (i *IdP) JWKSURL() string          { return i.base + "/jwks" }
 
 // AppURL and IconURL answer 200, for a service that is registered with an address and an icon.
-func (i *IdP) AppURL() string  { return i.server.URL + "/app" }
-func (i *IdP) IconURL() string { return i.server.URL + "/icon.png" }
+func (i *IdP) AppURL() string  { return i.base + "/app" }
+func (i *IdP) IconURL() string { return i.base + "/icon.png" }
 
 // Token signs a token with the current key. The issuer and a validity of an hour are added when claims has none.
 func (i *IdP) Token(claims jwt.MapClaims) string { return i.TokenValidFor(claims, time.Hour) }

@@ -37,6 +37,9 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 		return nil, err
 	}
 	sum := sha256.Sum256(questions)
+	if err := a.replicaGate(); err != nil {
+		return nil, err
+	}
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
 	key := fmt.Sprintf("authz:check:%s:r%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env), explain, hex.EncodeToString(sum[:]))

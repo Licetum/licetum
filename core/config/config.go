@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +34,17 @@ type Database struct {
 	// session-level advisory lock, which needs the same server connection for the whole run, so behind PgBouncer in
 	// transaction mode it points at PostgreSQL itself. Empty: URI.
 	MigrateURI string
+	// ReadURI is the connection string of the read replica a check process reads the policy from (the snapshot, the
+	// revisions, the closure). Empty: URI, that is, one pool for everything. Writes, the synchronization and the reads that
+	// must be current (consistency=higher, a revision the replica has not reached) always use URI.
+	ReadURI string
+	// MaxReplicaLag is how far behind the primary the replica may be before LagAction applies.
+	MaxReplicaLag time.Duration
+	// LagAction is what a process does when the replica lags more than MaxReplicaLag: "unready" (readiness fails, the
+	// balancer sends the traffic to another region) or "primary" (the reads move to the primary until the replica catches up).
+	LagAction string
+	// LagInterval is how often the lag of the replica is measured.
+	LagInterval time.Duration
 }
 
 // MaxConns is how many connections the request pool of a process may hold: the pool size plus the overflow.
@@ -136,7 +148,14 @@ func (p Platform) IsConfigured() bool {
 }
 
 // Sync tunes resource synchronization (see service.ensureSynced and synchronizer.Adapter).
+// regionName is the form of a region name (see model.ValidRegion).
+var regionName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
 type Sync struct {
+	// WorkerRegion is the region a worker runs in (WORKER__REGION): it claims the synchronization jobs of the types whose source
+	// can be reached from there (the regions of the synchronizer, see model.Synchronizer.Regions) or from anywhere. Empty: every
+	// job. Needs the postgres engine, which claims jobs from a table; the dbos queue cannot be filtered by region.
+	WorkerRegion string
 	// FetchTTL is how long a fetched list of a source's resources is kept in Redis, so that requests
 	// in this window do not go to the source. A synchronizer's own cache_ttl overrides it; 0 — no cache.
 	FetchTTL time.Duration
@@ -262,6 +281,10 @@ func Load() (*Config, error) {
 			SyncPoolSize:       e.int("DB__SYNC_POOL_SIZE", 4),
 			PgBouncer:          e.bool("DB__PGBOUNCER", false),
 			MigrateURI:         e.str("DB__MIGRATE_URI", ""),
+			ReadURI:            e.str("DB__READ_URI", ""),
+			MaxReplicaLag:      e.duration("DB__MAX_REPLICA_LAG", 10*time.Second),
+			LagAction:          strings.ToLower(e.str("DB__LAG_ACTION", "unready")),
+			LagInterval:        e.duration("DB__LAG_INTERVAL", time.Second),
 		},
 		Auth: Auth{
 			StateSecret: e.str("AUTH__STATE_SECRET", ""),
@@ -321,6 +344,7 @@ func Load() (*Config, error) {
 		Sync: Sync{
 			FetchTTL:         e.seconds("SYNC__FETCH_TTL", 10),
 			DBOSPoolSize:     e.int("SYNC__DBOS_POOL_SIZE", 20),
+			WorkerRegion:     strings.ToLower(e.str("WORKER__REGION", "")),
 			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "dbos")),
 			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
 			DBOSURI:          e.str("SYNC__DBOS_URI", ""),
@@ -359,6 +383,12 @@ func Load() (*Config, error) {
 	if cfg.DB.MaxOverflow < 0 {
 		e.errs = append(e.errs, fmt.Errorf("DB__MAX_OVERFLOW must not be negative, got %d", cfg.DB.MaxOverflow))
 	}
+	if a := cfg.DB.LagAction; a != "unready" && a != "primary" {
+		e.errs = append(e.errs, fmt.Errorf("DB__LAG_ACTION must be unready or primary, got %q", a))
+	}
+	if cfg.DB.MaxReplicaLag <= 0 || cfg.DB.LagInterval <= 0 {
+		e.errs = append(e.errs, fmt.Errorf("DB__MAX_REPLICA_LAG and DB__LAG_INTERVAL must be positive, got %s and %s", cfg.DB.MaxReplicaLag, cfg.DB.LagInterval))
+	}
 	if cfg.Policy.MaxStaleness < 0 {
 		e.errs = append(e.errs, fmt.Errorf("POLICY__MAX_STALENESS must not be negative (0 means no limit), got %s", cfg.Policy.MaxStaleness))
 	}
@@ -374,6 +404,12 @@ func Load() (*Config, error) {
 			parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 			e.errs = append(e.errs, fmt.Errorf("HTTP__PUBLIC_URL must be an http(s) URL without a path, a query or a fragment, got %q", u))
 		}
+	}
+	if r := cfg.Sync.WorkerRegion; r != "" && !regionName.MatchString(r) {
+		e.errs = append(e.errs, fmt.Errorf("WORKER__REGION must be lowercase letters, digits and hyphens (at most 32 characters), got %q", r))
+	}
+	if cfg.Sync.WorkerRegion != "" && cfg.Sync.Engine == "dbos" {
+		e.errs = append(e.errs, errors.New("WORKER__REGION needs SYNC__ENGINE=postgres: the dbos queue cannot be filtered by region"))
 	}
 	if cfg.Sync.Engine != "postgres" && cfg.Sync.Engine != "dbos" {
 		e.errs = append(e.errs, fmt.Errorf("SYNC__ENGINE must be postgres or dbos, got %q", cfg.Sync.Engine))

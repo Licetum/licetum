@@ -1,0 +1,14 @@
+Licetum {{ .Chart.AppVersion }} is installed{{ with .Values.region }} in the region {{ . }}{{ end }}.
+
+  check API:   {{ include "licetum.fullname" . }}-check:{{ .Values.check.port }}{{ with .Values.publicUrl }} ({{ . }}){{ end }}
+{{- if .Values.admin.enabled }}
+  admin API:   {{ include "licetum.fullname" . }}-admin:{{ .Values.admin.port }}
+{{- end }}
+{{- if .Values.worker.enabled }}
+  worker:      {{ .Values.worker.replicas }} replica(s), engine {{ .Values.worker.engine }}
+{{- end }}
+{{- if .Values.secrets.dbReadUri }}
+  The check pods read the policy from the replica (DB__READ_URI), lag limit {{ .Values.db.maxReplicaLag }}, action {{ .Values.db.lagAction }}.
+{{- end }}
+
+The ConfigMap and the Secret of the release are Helm hooks (the migration Job needs them first): `helm uninstall` leaves them behind.

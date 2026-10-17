@@ -32,7 +32,7 @@ func ruleFromInput(in *model.AssignmentRuleInput) model.AssignmentRule {
 // cancels what it grants, one inside it carves a part out). The body is that of POST /assignment_rule and is checked the
 // same way.
 func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (*model.GrantPreview, error) {
-	if err := a.checkAssignmentRuleRefs(ctx, a.DB, in, true); err != nil {
+	if _, err := a.checkAssignmentRuleRefs(ctx, a.DB, in, true); err != nil {
 		return nil, err
 	}
 	g, err := a.LoadTypeGraph(ctx)

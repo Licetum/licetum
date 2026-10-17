@@ -40,6 +40,7 @@ type metrics struct {
 	redisOpDuration   *prometheus.HistogramVec // operation
 	backgroundDropped prometheus.Counter
 	snapshotFallback  prometheus.Counter
+	revisionRegress   prometheus.Counter
 	l1Cache           *prometheus.CounterVec // cache: token | answer, result: hit | miss
 	jwksFetches       *prometheus.CounterVec // result: ok | error
 	auditDropped      prometheus.Counter
@@ -141,6 +142,10 @@ func newMetrics() *metrics {
 		Name: "licetum_snapshot_fallback_total",
 		Help: "Policy snapshots that were not used because the policy does not fit SNAPSHOT__MAX_BYTES: the queries read the policy.",
 	})
+	m.revisionRegress = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "licetum_revision_regressions_total",
+		Help: "Times the revision of the policy read from the database was lower than the one the process had: the database was restored or a replica promoted after a failover. Run `licetum failover`.",
+	})
 	m.l1Cache = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_l1_cache_total",
 		Help: "Lookups in the in-process caches in front of Redis, by cache (token | answer) and result (hit | miss).",
@@ -152,7 +157,7 @@ func newMetrics() *metrics {
 
 	for _, c := range []prometheus.Collector{
 		m.permissionCompute, m.permissionCache, m.checkCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls, m.breakerOpen,
-		m.auditDropped, m.backgroundDropped, m.snapshotFallback, m.l1Cache, m.jwksFetches,
+		m.auditDropped, m.backgroundDropped, m.snapshotFallback, m.revisionRegress, m.l1Cache, m.jwksFetches,
 		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
 		m.httpRequests, m.httpDuration,
 	} {
@@ -270,6 +275,12 @@ func (c *poolCollector) Collect(ch chan<- prometheus.Metric) {
 			name string
 			pool *pgxpool.Pool
 		}{"sync", c.app.SyncDB})
+	}
+	if c.app.ReadDB != nil {
+		pools = append(pools, struct {
+			name string
+			pool *pgxpool.Pool
+		}{"read", c.app.ReadDB})
 	}
 	for _, p := range pools {
 		if p.pool == nil {

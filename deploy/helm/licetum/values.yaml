@@ -1,0 +1,215 @@
+# Licetum: one release is one region (or one cell). Run it in every region with its own db.readUri and redis.uri; the pods that
+# write (admin, worker, migrate) belong in the region of the primary only. docs/deployment.md describes the topology.
+
+# The image of the check API, the worker and the migrations (the core module), of the admin API, and of the web interface.
+image:
+  core:
+    repository: ghcr.io/licetum/licetum
+    tag: ""            # empty: the appVersion of the chart
+  admin:
+    repository: ghcr.io/licetum/licetum-admin
+    tag: ""
+  web:
+    repository: ghcr.io/licetum/licetum-web
+    tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The name of the region (or the cell) this release runs in: a label on every object, and WORKER__REGION of the worker when
+# worker.regionAware is set.
+region: ""
+
+# The address clients reach the check API at (HTTP__PUBLIC_URL): the AuthZEN discovery document is built from it.
+publicUrl: ""
+
+# The secrets. Either name a Secret that holds the keys below (existingSecret, the way to go in production) or give the values and
+# the chart creates one. DB__URI, REDIS__URI, AUTH__STATE_SECRET and PLATFORM__CLIENT_SECRET are required; DB__READ_URI,
+# DB__MIGRATE_URI and SESSION_SECRET (the web interface) are optional.
+existingSecret: ""
+secrets:
+  dbUri: ""
+  dbReadUri: ""
+  dbMigrateUri: ""
+  redisUri: ""
+  authStateSecret: ""
+  platformClientSecret: ""
+  sessionSecret: ""
+
+db:
+  # PgBouncer in transaction mode in front of PostgreSQL (DB__PGBOUNCER): the simple protocol, nothing prepared. Give the migrations
+  # a direct address then (secrets.dbMigrateUri).
+  pgbouncer: false
+  poolSize: 10
+  maxOverflow: 20
+  syncPoolSize: 4
+  # Reading from a replica (secrets.dbReadUri set): how far behind the replica may be, and what the check API does beyond it:
+  # "unready" (the pod leaves the rotation) or "primary" (the reads move to the primary meanwhile).
+  maxReplicaLag: 10s
+  lagAction: unready
+
+# The self-service: Licetum registered within itself, and the administrators (PLATFORM__*).
+platform:
+  name: Licetum
+  url: ""
+  icon: ""
+  authorizationUrl: ""
+  tokenUrl: ""
+  jwksUrl: ""
+  issuer: ""
+  clientId: ""
+  adminGroupName: Platform administrator
+  adminClaim: preferred_username
+  adminClaimValues: '["admin"]'
+
+# How long a pod that is going away is not ready but serves (SHUTDOWN__DRAIN), and how long it waits for the requests in
+# progress (SHUTDOWN__TIMEOUT). The pods get preStop sleep = drain and terminationGracePeriodSeconds = drain + timeout + 10.
+shutdown:
+  drain: 10
+  timeout: 30
+
+# POLICY__MAX_STALENESS: how long a pod answers from a policy it could not confirm. Empty: no limit.
+policyMaxStaleness: ""
+
+# Extra environment variables for every pod (name: value).
+env: {}
+
+# The check API: the only thing clients call at request time. It reads the policy from the replica (secrets.dbReadUri) and writes
+# nothing to the graph.
+check:
+  replicas: 2
+  port: 8001
+  resources:
+    requests: {cpu: 500m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  # Requests in flight one pod admits (HTTP__MAX_INFLIGHT); empty: GOMAXPROCS x 256.
+  maxInflight: ""
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 60
+    # The pods in flight per pod (licetum_http_inflight) that adds replicas; needs a custom metrics adapter (prometheus-adapter).
+    # 0 leaves the CPU as the only metric.
+    targetInflight: 0
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  service:
+    type: ClusterIP
+    annotations: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+
+# The admin API (and the web interface behind it): writes the policy, so it runs in the region of the primary only.
+admin:
+  enabled: true
+  replicas: 1
+  port: 8000
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  corsAllowOrigins: '[]'
+  service:
+    type: ClusterIP
+    annotations: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+
+# The synchronization worker: fetches the sources into the local copy. One region runs it (the one of the primary, or the ones that
+# can reach the sources). Enable it only where it belongs.
+worker:
+  enabled: true
+  replicas: 1
+  port: 8002
+  # dbos (default) or postgres. Across regions use postgres: DBOS needs a fast link to the database.
+  engine: dbos
+  # Start the worker with WORKER__REGION set to `region`: it takes only the jobs of the types whose source can be reached from
+  # there (synchronizer regions). Needs engine: postgres.
+  regionAware: false
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 2Gi}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+
+# `licetum migrate` before an install and an upgrade, one Job (a hook): the migrations take an advisory lock, so a second run waits.
+# In a region with only a replica set it to false.
+migrate:
+  enabled: true
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 256Mi}
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+
+# The web interface (optional).
+web:
+  enabled: false
+  replicas: 1
+  port: 3000
+  appBaseUrl: ""
+  adminApiPublicUrl: ""
+  checkApiPublicUrl: ""
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    annotations: {}
+    tls: []
+
+ingress:
+  # An Ingress for the check API.
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls: []
+
+# Spread the pods over zones, and keep two pods of a deployment off one node.
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: ScheduleAnyway
+podAntiAffinity:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+
+# NetworkPolicy: the check pods may talk to PostgreSQL, Redis, the identity provider and the sources, and to nothing else;
+# ingress only on their port. Give the CIDRs and ports (a policy cannot name a managed database by its host name).
+networkPolicy:
+  enabled: false
+  # Where clients and the probes come from (empty: from anywhere in the cluster).
+  ingressFrom: []
+  dbCidrs: []
+  dbPort: 5432
+  redisCidrs: []
+  redisPort: 6379
+  # The identity provider and the sources: egress on these ports to anywhere that is not a private range.
+  httpsPorts: [443]
+  # Allow DNS to the cluster resolver.
+  dns: true
+
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  labels: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile: {type: RuntimeDefault}
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}

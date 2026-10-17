@@ -578,7 +578,7 @@ func (a *App) GetServiceForCheck(ctx context.Context, serviceID uuid.UUID) (*mod
 	if snap := a.policySnapshot(ctx); snap != nil {
 		return snap.service(serviceID)
 	}
-	s, err := ScanServiceCheck(a.DB.QueryRow(ctx,
+	s, err := ScanServiceCheck(a.reader(ctx).QueryRow(ctx,
 		`SELECT `+ServiceCheckColumns+` FROM service WHERE id = $1 AND deleted_at IS NULL`, serviceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound(i18n.ServiceNotFound, serviceID)

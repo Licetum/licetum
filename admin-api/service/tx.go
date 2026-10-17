@@ -79,10 +79,7 @@ func (a *App) mutate(ctx context.Context, fn func(q db.Querier) (change, error))
 				return err
 			}
 		}
-		if err := recordChange(ctx, tx, c); err != nil {
-			return err
-		}
-		revision, err = db.BumpRevision(ctx, tx, db.ScopeRules)
+		revision, err = recordChangeAndBump(ctx, tx, c)
 		return err
 	})
 	if err != nil {
@@ -94,19 +91,51 @@ func (a *App) mutate(ctx context.Context, fn func(q db.Querier) (change, error))
 
 // recordChange writes one change-log record through q. The actor is the subject of the request.
 func recordChange(ctx context.Context, q db.Querier, c change) error {
-	before, err := snapshot(c.before)
+	args, err := changeArgs(ctx, c)
 	if err != nil {
 		return err
+	}
+	_, err = q.Exec(ctx, insertChangeSQL, args...)
+	return err
+}
+
+const insertChangeSQL = `
+	INSERT INTO authz_change (actor, service_id, entity, entity_id, action, before, after)
+	VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`
+
+func changeArgs(ctx context.Context, c change) ([]any, error) {
+	before, err := snapshot(c.before)
+	if err != nil {
+		return nil, err
 	}
 	after, err := snapshot(c.after)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = q.Exec(ctx, `
-		INSERT INTO authz_change (actor, service_id, entity, entity_id, action, before, after)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-		engine.ActorFrom(ctx), engine.ToNullUUID(c.serviceID), c.entity, uuidOrNull(c.entityID), c.action, before, after)
-	return err
+	return []any{engine.ActorFrom(ctx), engine.ToNullUUID(c.serviceID), c.entity, uuidOrNull(c.entityID), c.action, before, after}, nil
+}
+
+// recordChangeAndBump writes the change-log record and bumps the revision of the rules in one round trip (a batch in the
+// transaction tx) and returns the new revision. The statements of a write are sequential round trips to the primary; the
+// admin API of a region far from it feels each.
+func recordChangeAndBump(ctx context.Context, tx pgx.Tx, c change) (int64, error) {
+	args, err := changeArgs(ctx, c)
+	if err != nil {
+		return 0, err
+	}
+	b := &pgx.Batch{}
+	b.Queue(insertChangeSQL, args...)
+	db.QueueBumpRevision(b, db.ScopeRules)
+	results := tx.SendBatch(ctx, b)
+	defer func() { _ = results.Close() }()
+	if _, err := results.Exec(); err != nil {
+		return 0, err
+	}
+	var revision int64
+	if err := results.QueryRow().Scan(&revision); err != nil {
+		return 0, err
+	}
+	return revision, results.Close()
 }
 
 // snapshot is the JSON of an entity for the change log (NULL for none).
