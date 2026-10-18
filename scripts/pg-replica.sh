@@ -27,8 +27,10 @@ case $cmd in
     "$bin/pg_ctl" -D "$dir/primary" -w -l "$dir/primary.log" \
       -o "-p $primary_port -k $dir -c fsync=off -c max_connections=300 -c wal_level=replica -c max_wal_senders=10 -c hot_standby=on -c wal_keep_size=256MB" start >/dev/null
     "$bin/pg_basebackup" -h 127.0.0.1 -p "$primary_port" -U postgres -D "$dir/replica" -R -X stream >/dev/null
+    # The tests pause the replay (Cluster.PauseReplay) for longer than max_standby_streaming_delay (30 s by default): the replica
+    # would then cancel the queries in conflict with the WAL it applies on resume, the tests' own included. It waits for them instead.
     "$bin/pg_ctl" -D "$dir/replica" -w -l "$dir/replica.log" \
-      -o "-p $replica_port -k $dir -c max_connections=300 -c hot_standby=on" start >/dev/null
+      -o "-p $replica_port -k $dir -c max_connections=300 -c hot_standby=on -c hot_standby_feedback=on -c max_standby_streaming_delay=-1" start >/dev/null
     echo "export LICETUM_TEST_POSTGRES_URI='postgres://postgres@127.0.0.1:$primary_port/postgres?sslmode=disable'"
     echo "export LICETUM_TEST_REPLICA_ADDR='127.0.0.1:$replica_port'"
     ;;
