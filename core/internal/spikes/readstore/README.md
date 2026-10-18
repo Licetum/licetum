@@ -62,7 +62,9 @@ scripts/du.sh DATA licetum
 docker exec C nodetool flush;          scripts/du.sh DATA licetum
 docker exec C nodetool compact KS;     docker exec C nodetool compact licetum_log;  scripts/du.sh DATA licetum
 scripts/restart.sh C;  $B read -hosts H -gen 1 -conc 1 -key-seed 1   # pass 1 cold, pass 2 warm
-scripts/restart.sh C;  $B read -hosts H -gen 1 -conc 32 -key-seed 2 -passes 3
+scripts/restart.sh C;  $B read -hosts H -gen 1 -conc 32 -key-seed 2 -passes 2   # Cassandra: -passes 3
+$B read -hosts H -gen 1 -conc 32 -key-seed 2 -passes 1           # ScyllaDB: pass 3, the ADR's warm row
+$B read -hosts H -gen 1 -conc 32 -key-seed 2 -passes 3           # Cassandra: passes 4 to 6; the 6th is the ADR's warm row
 for g in 2:16 3:64 4:256; do                                     # concurrency, first 300,000 rows per table
   $B load -hosts H -gen ${g%:*} -conc ${g#*:} -max-rows 300000 -tables resource_v,descendant_v,type_member_v,attr_v
 done                                                             # then DROP KEYSPACE and nodetool clearsnapshot

@@ -1124,3 +1124,16 @@ Execution Time: 3.386 ms
 | 2 | closure page of 1,000 (division -> items) | 200 | 210.18 | 387.37 | 435.02 | 454.14 | 1000.00 | 134 |
 | 3 | resource row + closure (point decision) | 10000 | 0.43 | 6.43 | 10.01 | 20.75 | 3.89 | 20744 |
 | 3 | closure page of 1,000 (division -> items) | 200 | 211.00 | 343.17 | 414.80 | 428.93 | 1000.00 | 140 |
+
+
+## Observations outside the tool output
+
+The ADR states these from the runs; the tool does not print them, so they are not in the output above:
+
+- the load average of the host was 4 to 5 during the runs (other agents ran PostgreSQL tests on it);
+- the client used 15.9 s of CPU in 15.2 s of wall time at 256 in flight; that is not the time of the writes printed
+  above (12.5 s on ScyllaDB, 13.7 s on Cassandra);
+- no batch or large-partition warning in the logs of ScyllaDB and Cassandra, and no tombstone warning in the
+  Cassandra log (`tombstone_warn_threshold` 1000);
+- ScyllaDB's `system.large_cells` stayed empty (it records cells above 1 MB,
+  `compaction_large_cell_warning_threshold_mb: 1`).

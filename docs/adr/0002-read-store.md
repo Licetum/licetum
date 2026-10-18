@@ -1,6 +1,7 @@
 # ADR 0002: the read store of the regional PDP
 
-- Status: proposed
+- Status: accepted
+- Context: ADR 0001, `docs/adr/0001-regional-pdp.md` (section 5, the CQL read model)
 - Issue: [#51](https://github.com/Licetum/licetum/issues/51) (phase P0.5 of [#49](https://github.com/Licetum/licetum/issues/49))
 - Measurements: `core/internal/spikes/readstore` (how to reproduce), raw output in [`0002/results.md`](0002/results.md)
 
@@ -61,22 +62,36 @@ eligibility clause):
   this section (including exceeding the Usage Limit set forth below), Licensee must: (i) refrain from any Use of the
   Software; and (ii) unless Licensee is a Never Customer, purchase a commercial paid license".
 - Eligibility (new in 1.1): "The license granted under this Agreement is strictly limited to Never Customers", an
-  entity that "does not have, and has not had within the previous twelve (12) months, a paid commercial subscription,
-  professional services agreement, or any other commercial relationship with Licensor". A commercial customer may use
-  the free license "exclusively for non-production purposes", within the usage limit.
+  entity "(including its Affiliates) that does not have, and has not had within the previous twelve (12) months, a paid
+  commercial subscription, professional services agreement, or any other commercial relationship with Licensor". A
+  "Commercial Customer" is an entity "(including its Affiliates)" that has entered into a transaction with ScyllaDB "or
+  an authorized reseller/distributor" for any of its products or services: a subscription, DBaaS, support, professional
+  services, consulting or training, also when paid with cloud marketplace credits. An affiliate is an entity that
+  controls the customer, is controlled by it or is under common control with it (more than 50% of the voting stock or
+  decision-making authority). A commercial customer may use the free license "exclusively for non-production
+  purposes", within the usage limit.
 - Restrictions: "Licensee may not offer the Software as a software-as-a-service (SaaS) or commercial
   database-as-as-service (dBaaS) offering." "Licensor reserves the right to modify this Agreement at any time."
   The software may send telemetry and may require a license key.
-- The grant lists "copying, distributing, evaluating (…) and improving the Software" and creating modified versions.
-  ScyllaDB's FAQ (<https://www.scylladb.com/source-available-faq>; not reachable from the measurement host, read
-  through a search engine summary) describes the free tier as the full product, free in production up to 50 vCPUs and
-  10 TB. We have no legal review of it.
+- The grant lists "Copying, distributing, evaluating (…) and improving the Software and ScyllaDB" and creating modified
+  versions, which must keep "all or substantially all of the functions and features of the Software" and become "the
+  sole property of the Licensor" (they are assigned to ScyllaDB on creation). Running the software in production is not
+  among the purposes the grant names. That the free tier covers production rests on the FAQ below and, in 1.1, on the
+  contrast with the carve-out that limits commercial customers to non-production use. ScyllaDB's FAQ
+  (<https://www.scylladb.com/source-available-faq>; not reachable from the measurement host, read through a search
+  engine summary) describes the free tier as the full product, free in production up to 50 vCPUs and 10 TB. We have
+  no legal review of it.
 
 For Licetum this means: a customer may run ScyllaDB under this license without a commercial agreement only while all
-of its ScyllaDB clusters together stay within 50 vCPUs and 10 TB and it has had no commercial relationship with
-ScyllaDB in the last twelve months. A regional deployment of the plan (RF 3 per data center) passes 50 vCPUs early:
-three data centers of three 8-vCPU nodes are 72 vCPUs. Above the limit the customer needs a commercial license.
-Licetum cannot be offered as a service on the free license. Cassandra and PostgreSQL have no such conditions.
+of its ScyllaDB clusters together stay within 50 vCPUs and 10 TB of available storage and neither it nor any of its
+affiliates has had a commercial relationship with ScyllaDB in the last twelve months. A regional deployment of the
+plan (RF 3 per data center) passes 50 vCPUs early: three data centers of three 8-vCPU nodes are 72 vCPUs. Above the
+limit the license says to "refrain from any Use of the Software" and, unless the licensee is a Never Customer, to buy
+a commercial license. A customer that buys one is a commercial customer, and under 1.1 all ScyllaDB use of it and its
+affiliates then has to run under the paid agreement (the clause No "Hybrid" Usage), not only the part above the limit.
+Whether a hosted Licetum that keeps its read model in ScyllaDB counts as offering the Software "as a
+software-as-a-service (SaaS)" (the restriction above), the text does not say, and we have no legal review of it.
+Cassandra and PostgreSQL have no such conditions.
 
 ## Measurements
 
@@ -97,7 +112,9 @@ Licetum cannot be offered as a service on the free license. Cassandra and Postgr
   codes. The lineage of a resource is itself and its ancestors (4 entries for an item).
 
 Absolute numbers from one node in a container on a shared 4-vCPU host are indicative. The ratios between the stores,
-measured with the same client on the same host, are what matters.
+measured with the same client on the same host, are what matters. A few observations are not in the tool output (the
+load of the host, the CPU of the client, warnings in the logs of the stores, `system.large_cells`); the end of
+`0002/results.md` lists them.
 
 ### Payload of the first synchronization
 
@@ -170,17 +187,23 @@ with the largest partitions, so their rates are higher than in the full run):
 | 64 | 94,245 | 43,508 (1.29 / 4.89) | 69,785 | 26,755 (1.57 / 22.05) |
 | 256 | 100,436 | 49,901 (4.28 / 18.28) | 91,252 | 39,217 (4.51 / 36.51) |
 
-The client used about one core at 256 in flight (15.9 s of CPU in 15.2 s). Both stores saturate their two vCPUs
-between 64 and 256 in flight; ScyllaDB gives 1.3 to 1.7 times the single-row write rate of Cassandra, batched rows are
-on par.
+The client used about one core at 256 in flight (15.9 s of CPU in 15.2 s of wall time, measured outside the tool).
+Both stores saturate their two vCPUs between 64 and 256 in flight; ScyllaDB gives 1.3 to 1.7 times the single-row
+write rate of Cassandra, and the batched rows of the two stores are within about 20% of each other at 64 and 256 in
+flight.
 
 ### Cold and warm reads at LOCAL_QUORUM
 
 After `nodetool flush`, a major compaction and a restart of the node, and after `echo 3 > /proc/sys/vm/drop_caches`
 (permitted on this host). Pass 1 is the first touch of 10,000 random keys (cold), pass 2 the same keys again (warm).
-ScyllaDB reads sstables with O_DIRECT, so the OS page cache does not serve it; its row cache is empty after the
-restart. Cassandra has no row cache by default and reads through the OS page cache, which the drop emptied. The VM's
-disk may still be cached by the hypervisor. Pages are 1,000 rows of one partition: `descendant_v` (division → items,
+Under 32 in flight the warm row is the last pass over the same keys: the 3rd on ScyllaDB and PostgreSQL, the 6th on
+Cassandra. The pages of pass 1 are not all first touches. The 200 `descendant_v` pages come from 320 partitions
+(20 divisions × 16 buckets): 156 and 153 distinct for key seeds 1 and 2, so 44 and 47 pages re-read a partition of the
+same pass. The 200 PostgreSQL pages come from the 20 divisions only, and one of them is read by the `EXPLAIN` before
+the pass, so at most 19 cold PostgreSQL pages are first touches and its cold page p50 is a re-read. ScyllaDB reads
+sstables with O_DIRECT, so the OS page cache does not serve it; its row cache is empty after the restart. Cassandra
+has no row cache by default and reads through the OS page cache, which the drop emptied. The VM's disk may still be
+cached by the hypervisor. Pages are 1,000 rows of one partition: `descendant_v` (division → items,
 one bucket, about 2,800 rows) and `type_member_v` (items after a random item). Milliseconds, p50 / p95 / p99 / max:
 
 | read | in flight | pass | ScyllaDB | Cassandra | PostgreSQL |
@@ -195,19 +218,28 @@ one bucket, about 2,800 rows) and `type_member_v` (items after a random item). M
 | | 32 | warm | 35.7 / 73.1 / 77.3 / 80.1 (790 pages/s) | 35.3 / 84.6 / 97.9 / 104.8 (761 pages/s, 6th pass) | 211.0 / 343.2 / 414.8 / 428.9 (140 pages/s) |
 | page of 1,000 `type_member_v` | 1 | cold | 4.56 / 6.27 / 8.05 / 8.7 | 4.71 / 6.76 / 16.27 / 20.4 | |
 | | 1 | warm | 2.72 / 3.95 / 6.44 / 7.8 | 3.97 / 5.25 / 7.04 / 8.1 | |
-| | 32 | warm | 33.8 / 47.4 / 62.9 / 64.0 (935 pages/s) | 32.3 / 83.8 / 90.1 / 105.8 (788 pages/s) | |
+| | 32 | warm | 33.8 / 47.4 / 62.9 / 64.0 (935 pages/s) | 42.8 / 96.9 / 134.0 / 135.6 (607 pages/s, 6th pass; 788 in the 4th) | |
 
 - At one request in flight both CQL stores answer a point read in about 2 ms, most of it the round trip through the
-  driver and the container network (ScyllaDB's traces of the MVCC reads put the server side at 0.1 to 0.8 ms). Cold costs 0.3 to 0.5 ms
-  more. A point decision of one to three reads costs 2 to 6 ms read one after the other, about 2 ms read in parallel.
+  driver and the container network (ScyllaDB's traces of the MVCC reads put the server side at 0.06 to 1.5 ms, median
+  0.13 ms, when the memtable or the row cache answers, and at 0.4 to 3.6 ms with `BYPASS CACHE`). Cold costs 0.3 to
+  0.5 ms more. A point decision of one to three reads costs 2 to 6 ms read one after the other, about 2 ms read in
+  parallel.
 - Under 32 in flight ScyllaDB serves 3.6 times the point reads of Cassandra on the same two vCPUs, with a p99 of 8 ms
   against 42 ms. Cassandra warmed up over several passes after the restart (pass 2: 3,346 reads/s, pass 6: 5,256),
   as a JVM does.
 - PostgreSQL is not comparable as a store (four vCPUs, shared, no replication, `shared_buffers` not emptied: the cold
   plan read 11 of 13 buffers from the OS) but gives the scale: the point decision of today's engine (row plus closure
-  by one index range scan) costs 0.13 ms warm at one in flight. Its closure page touches about 1,140 buffers, one per row:
-  the primary key orders the rows of an ancestor by random descendant ids, the heap does not. The CQL page is one
-  contiguous slice of a partition.
+  by one index range scan) costs 0.13 ms warm at one in flight. Its page rows overstate what a closure page costs the
+  engine, for two reasons. The page touches about 1,140 buffers, about one per row: the spike copied the rows of an
+  ancestor in depth-first order, while the primary key orders them by random descendant ids. The engine inserts the
+  closure `ORDER BY` ancestor, descendant (`rebuildClosureSQL`), so a page of a closure built in one go is a contiguous
+  run of the heap. And the working set of a pass (10,000 point reads, then the pages) does not fit in the 128 MB of
+  `shared_buffers`, so a warm page is likely to read its buffers from the OS page cache again: the same page with all
+  its buffers in `shared_buffers` took 3.4 ms in the server (the second `EXPLAIN` in `0002/results.md`, rows not sent)
+  against a measured p50 of 17.7 ms, and under 32 in flight the cold pass (317 pages/s) was faster than the warm ones
+  (134 and 140). P5 measures the pages again with the engine's row order and a `shared_buffers` that holds the
+  working set. The CQL page is one contiguous slice of a partition.
 
 ### Range tombstones of the MVCC garbage collection
 
@@ -215,7 +247,9 @@ one bucket, about 2,800 rows) and `type_member_v` (items after a random item). M
 `resource_v` (LCS, `ver DESC`). The GC fires on every write (`rv_k1`, 999,000 range deletes) or on every 10th
 (`rv_k10`, 99,000), each previous version counting as older than the retention; the delete and the new version go in
 one unlogged batch. Reads `ver <= P LIMIT 1` of every key at five positions: the newest, v1 (the oldest retained
-version), a random P between them, and two positions below v1 (garbage collected).
+version), a random P between them, and two positions below v1 (garbage collected). Each store ran it twice: the first
+run written into memtables, then flushed once, compacted and purged; the second run flushed every 100 versions with
+autocompaction off (ten flushes), then compacted and purged, read on ScyllaDB with `BYPASS CACHE`.
 
 Writes, 64 keys in flight:
 
@@ -228,11 +262,11 @@ Read latency, p50 in ms over 1,000 keys, one request in flight, the same for eve
 
 | state | ScyllaDB | Cassandra |
 |---|---|---|
-| in memtables | 1.55–1.63 (row cache) | 1.75–1.86 |
-| flushed once | 1.55–1.63 (row cache) | 1.71–1.77 |
+| in memtables | 1.57–1.63 (row cache) | 1.75–1.86 |
+| flushed once | 1.55–1.61 (row cache) | 1.71–1.77 |
 | 10 flushes, autocompaction off (20 sstables on ScyllaDB's 2 shards, 10 on Cassandra) | 3.16–3.32 `rv_k1`, 2.84–3.09 `rv_k10` (`BYPASS CACHE`) | 1.84–1.89 at P ≥ v1, 1.95–2.12 below v1 |
-| major compaction, `gc_grace_seconds` 864000 | 2.02–2.09 (`BYPASS CACHE`), 1.53–1.58 (cache) | 1.73–1.81 |
-| major compaction, `gc_grace_seconds` 0 | 1.94–2.11 (`BYPASS CACHE`) | 1.65–1.91 |
+| major compaction, `gc_grace_seconds` 864000 | 2.04–2.09 (`BYPASS CACHE`), 1.53–1.58 (cache) | 1.73–1.81 |
+| major compaction, `gc_grace_seconds` 0 | 1.94–2.11 (`BYPASS CACHE`, range tombstones not purged in this run), 1.55–1.92 (cache, purged) | 1.65–1.91 |
 
 What a read touches, from query tracing (three keys per class and stage):
 
@@ -240,12 +274,19 @@ What a read touches, from query tracing (three keys per class and stage):
   0 range tombstone(s)"; Cassandra: "Read 1 live rows and 0 tombstone cells". The slice starts at P and stops at the
   first live row, so it never reaches the deleted range. With ten sstables Cassandra merged one of them at the newest P
   ("Merged data from memtables and 1 sstables").
-- P below v1: no row, the two bounds of one range tombstone ("2 range tombstone(s)"; "Read 0 live rows and 2 tombstone
-  cells"), with ten sstables merged on Cassandra. The deleted rows did not reach the sstables: both stores drop the rows
-  a range tombstone shadows already in the memtable (one million versions flushed to 0.15 MB on ScyllaDB, ten flushes
-  to 1.0 MB on Cassandra).
-- After the purge (`gc_grace_seconds` 0 and a major compaction): no tombstone left ("0 range tombstone(s)", "Skipped
-  1/1 non-slice-intersecting sstables").
+- P below v1: no live row, the two bounds of one range tombstone ("2 range tombstone(s)"; "Read 0 live rows and 2
+  tombstone cells"), with ten sstables merged on Cassandra. Most deleted rows did not reach the sstables: both stores
+  drop the rows a range tombstone shadows already in the memtable (one million versions flushed to 0.15 MB on
+  ScyllaDB, ten flushes to 1.0 MB on Cassandra). The versions still live at a flush and deleted after it stay in the
+  older sstables until a compaction: with ten flushes, ScyllaDB's read at the middle position below v1 passed 10
+  (`rv_k1`) and 55 (`rv_k10`) dead rows, 12 and 57 after the late re-insert, and none after the major compaction.
+  Cassandra's trace does not count shadowed rows.
+- After the purge (`gc_grace_seconds` 0 and a major compaction), Cassandra kept no tombstone in either run ("Read 0
+  live rows and 0 tombstone cells", "Skipped 1/1 non-slice-intersecting sstables"; `rv_k1` 100,744 → 85,986 bytes in
+  the first run, 101,868 → 85,875 in the second). ScyllaDB kept none in the first run ("0 range tombstone(s)"; `rv_k1`
+  124,475 → 106,323 bytes). In its second run it kept them: the reads below v1 still met "2 range tombstone(s)" (in
+  "0 partition(s)"), and the tables shrank only from 125,748 to 124,638 bytes (`rv_k1`) and from 377,981 to 377,855
+  (`rv_k10`). Why was not established.
 - No tombstone warning in the Cassandra log (`tombstone_warn_threshold` 1000).
 
 The correctness claims, checked on every key at every stage on both stores (no deviation between them):
@@ -256,7 +297,8 @@ The correctness claims, checked on every key at every stage on both stores (no d
 3. A late re-insert of a collected version with its original timestamp `ts(old, 1)` stays invisible while the range
    tombstone exists: 0 visible in memtables, in sstables and after a major compaction with the default
    `gc_grace_seconds`. Once the tombstone is purged, a re-insert written after the purge is visible at positions below
-   v1 (1,000 of 1,000 on both stores). Reads at P ≥ v1 are not affected, since the slice meets v1 first.
+   v1 (1,000 of 1,000 on both stores, in the first run, where both purged). Reads at P ≥ v1 are not affected, since
+   the slice meets v1 first.
 
 ## Decision
 
@@ -270,27 +312,48 @@ The plan's default is confirmed:
 Why:
 
 - License. Cassandra (Apache-2.0) and PostgreSQL (PostgreSQL License) can run at any customer at any size. ScyllaDB's
-  free use stops at 50 vCPUs and 10 TB across all clusters of the customer, a regional deployment with RF 3 passes the
-  vCPU limit at about three data centers, the 1.1 terms exclude from it any organization that had a commercial
-  relationship with ScyllaDB in the last year, and the terms may change at any time. A product that customers install themselves
-  cannot make it the default.
-- The model works the same on both stores. The MVCC reads, the range tombstones, the late re-inserts and the purge
-  behaved identically; no schema change was needed between them. Nothing in the measurements calls for a
-  ScyllaDB-only feature.
+  free use stops at 50 vCPUs and 10 TB of available storage across all clusters of the customer, a regional deployment
+  with RF 3 on 8-vCPU nodes passes the vCPU limit at about three data centers, a license bought above the limit puts
+  all of the customer's ScyllaDB use under the paid agreement, the 1.1 terms exclude from the free license any
+  organization that, itself or through an affiliate, had a commercial relationship with ScyllaDB in the last year,
+  and the terms may change at any time. A product that customers install themselves cannot make it the default.
+- The model works on both stores. The MVCC reads, the range tombstones and the late re-inserts gave the same answers
+  on both, and no schema change was needed between them. Nothing in the measurements calls for a ScyllaDB-only
+  feature. The purge did not behave the same: Cassandra purged the range tombstones in both runs, ScyllaDB in the
+  first run only. A tombstone that stays changes no answer (it lies below v1, and a late re-insert stays invisible),
+  but on ScyllaDB it is not yet known when the tombstones of the GC go away (P6).
 - Performance does not override the license. ScyllaDB is ahead where a node is CPU-bound: 3.6 times the point reads
-  under 32 in flight, a p99 of 8 ms against 42 ms, 1.3 to 1.7 times the single-row writes. At one request in flight
-  the two are within 0.4 ms, the full first synchronization took the same time (223 s and 225 s), the batched writes
-  and the pages are on par, and Cassandra's data is 7% smaller. An operator who needs the higher read rate per vCPU
-  can choose ScyllaDB and its license.
+  under 32 in flight, a p99 of 8 ms against 42 ms, 1.3 to 1.7 times the single-row writes, 1.5 times the warm
+  `type_member_v` pages under 32 in flight (935 and 607 pages/s), and a cold `descendant_v` page under 32 in flight
+  at a p50 of 63 ms against 483 ms. At one request in flight a point read differs by at most 0.4 ms and a warm page by
+  about 1 ms. The full first synchronization took the same time (223 s and 225 s); Cassandra wrote the batched
+  `type_member_v` and `attr_v` rows about 30% faster. The warm `descendant_v` pages under 32 in flight are on par (790
+  and 761 pages/s), and Cassandra's data is 7% smaller after a major compaction (4% flushed). An operator who needs
+  the higher read rate per vCPU can choose ScyllaDB and its license.
 - PostgreSQL as the default: the closure of today's engine answers a point decision in 0.13 ms warm, is already
   operated by every installation, and a streaming replica keeps a region reading when the primary is gone. A CQL store
   is for installations that need regional writes of the read model to be independent of one primary, or more read
   capacity than replicas give.
 
 The measurements found no design problem in the read path: the range tombstones of the GC are never read at P ≥ v1.
-They found three things to change in the model, listed under P6.
+They found three things to change in the model, listed under P6, and left one question open for P6: when ScyllaDB
+purges the range tombstones of the GC.
 
 ## Consequences
+
+This record amends section 5 of ADR 0001 on:
+
+- no `NULL` bind values: an absent mask or an empty `unresolved_up` is left unset (5.3; a missing mask still means all
+  levels);
+- no self rows in `descendant_v`: the anchor itself is read from `resource_v` (5.3);
+- bucket counts sized by the size of the type, for `descendant_v` by the pair of types, instead of a fixed 16 and 8
+  (5.3);
+- an explicit compaction strategy for every table, with a value both stores accept, instead of the engine's default or
+  a choice per engine (5.1);
+- a short `gc_grace_seconds` for the region tables, together with the two horizon rules: the PDP never reads below the
+  GC horizon, an applier never writes a version older than the horizon of its key (5.7);
+- the payload format, frozen for P3: length-prefixed binary records, zstd, chunks of at most 1 MiB that hold whole
+  records (5.2).
 
 ### P3 (the outbox and payload format, frozen)
 
@@ -312,13 +375,16 @@ They found three things to change in the model, listed under P6.
   `github.com/scylladb/gocql` (Apache-2.0) is an option for ScyllaDB behind the same port; it was not measured.
 - The schema states every option that differs between the stores, with values both accept: LCS for `resource_v`, an
   explicit strategy for the other region tables (ScyllaDB 2025.1 defaults to its own `IncrementalCompactionStrategy`,
-  Cassandra to STCS), `TimeWindowCompactionStrategy` for the log tables with their TTL. Store-specific options
+  Cassandra to STCS), `SizeTieredCompactionStrategy` stated explicitly for the log tables with their TTL (not
+  time-window compaction: their write timestamps are positions, ADR 0001 section 5.1). Store-specific options
   (ScyllaDB `tombstone_gc`, Cassandra `memtable` or UCS) belong to a per-store profile, not to the shared schema.
   ScyllaDB 2025.1 creates keyspaces with tablets enabled; the model uses nothing tablets forbid.
 - `gc_grace_seconds`: a purged range tombstone only lets old versions reappear below v1, where no correct read goes
   (claim 3 above). The region tables can therefore use a short value, at least the hinted-handoff window (3 hours by
-  default), instead of the 10-day default, so tombstones do not accumulate. On ScyllaDB set `tombstone_gc = {'mode':
-  'timeout'}` explicitly (the 2025.1 default here). This holds only with the two rules below.
+  default), instead of the 10-day default, so tombstones do not accumulate. A short value is safe only with the two
+  rules below. Cassandra purged in both runs. On ScyllaDB set `tombstone_gc = {'mode': 'timeout'}` explicitly (the
+  2025.1 default here); its second run kept the range tombstones through a major compaction at `gc_grace_seconds` 0,
+  so P6 finds out when ScyllaDB purges them before the region tables count on it there.
 - Two rules follow from claim 3 and need enforcing: the PDP never reads at a position older than the GC horizon
   (regional position minus `MVCC__RETENTION`), and an applier never writes a version older than the horizon of its key
   (a lagging applier stops and rebuilds the generation instead).
@@ -328,8 +394,8 @@ They found three things to change in the model, listed under P6.
   - Drop the self rows of `descendant_v`. They are 1,000,000 of its 3.9 million rows and 1,000,000 of its 1.8 million
     statements (each its own partition): the PDP already reads the anchor itself from `resource_v`. This takes a
     quarter of the statements of a first synchronization.
-  - Size the buckets by type size: at 8 buckets the largest `attr_v` partition is 90,186 rows (4.9 MB) for 0.9 million
-    items; at 10 million resources a type would reach a million rows per partition. Choose `buckets(type)` so that a
+  - Size the buckets by type size: at 8 buckets the largest `attr_v` partition is 90,186 rows for 0.9 million items;
+    at 10 million resources a type would reach about 900,000 rows per partition. Choose `buckets(type)` so that a
     partition stays under 100,000 rows (ScyllaDB's `compaction_rows_count_warning_threshold`), and record it in the
     state of the generation. The other way round, 16 buckets split the nine or so items of a branch into about seven
     partitions: a listing of them reads 16 partitions and the first synchronization writes about seven statements. The buckets of
@@ -343,17 +409,18 @@ They found three things to change in the model, listed under P6.
   bounded by statements per second, which grow with the nodes of the region.
 - Not measured here, for P6: RF 3 with three nodes per data center and two data centers (LOCAL_QUORUM with real
   replicas), Cassandra with `cassandra_latest.yaml` (BTI sstables, trie memtables, UCS), pages of `descendant_v` with
-  versions and the GC (a page reads the versions and range tombstones of all its rows, unlike a point read), and a regional
-  PostgreSQL replica (expected to read like the primary).
+  versions and the GC (a page reads the versions and range tombstones of all its rows, unlike a point read), when
+  ScyllaDB purges the range tombstones of the GC, and a regional PostgreSQL replica (expected to read like the
+  primary).
 
-### Contracts (proposed, `contracts.yaml` is not changed here)
+### Contracts (in `contracts.yaml`)
 
-- ST07: add that the write helper never binds `NULL` (a cell tombstone); unset instead.
-- ST08: add that a late re-insert below the newest GC range tombstone stays invisible, and that reads at P ≥ v1 are
-  unchanged after the tombstone is purged and a collected version is written again.
-- New (cql, P6): the applier refuses a write older than the GC horizon of its key, and the PDP refuses a read
-  position older than the GC horizon.
-- New (cql, P6, nightly for the second store): the CQL schema and the store tests pass on Apache Cassandra 5 and on
-  ScyllaDB.
-- New (unit, P3): every `log_chunk.body` is at most 1 MiB of zstd and holds whole records.
-- ST02: if the self rows leave `descendant_v`, its oracle (the PostgreSQL closure) excludes the anchor itself.
+- ST07: the write helper never binds `NULL` (a cell tombstone); an absent value is left unset.
+- ST08: a late re-insert of a collected version stays invisible while the range tombstone exists, and reads at P ≥ v1
+  are unchanged after the tombstone is purged.
+- ST02: its oracle, the PostgreSQL closure, excludes the anchor itself, since `descendant_v` has no self rows.
+- ST09 (new, cql, P6): the applier refuses to write a version older than the GC horizon of its key, and the PDP
+  refuses a read position older than the GC horizon.
+- ST10 (new, cql, P6): the CQL schema and the store tests pass on Apache Cassandra 5 and on ScyllaDB, the second store
+  nightly.
+- PUB05 (new, unit, P3): every `log_chunk.body` is at most 1 MiB of zstd and holds whole records.

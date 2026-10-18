@@ -121,7 +121,9 @@ func pgLoad(ctx context.Context, uri string, seed uint64) error {
 	}
 	fmt.Printf("| COPY resource_cache | %d | %.1f |\n", nres, time.Since(t0).Seconds())
 
-	// The closure in the order the engine writes it (by ancestor), the resource itself included.
+	// The closure grouped by ancestor, the resource itself included. Within an ancestor the rows are in depth-first
+	// order, not in the engine's order (rebuildClosureSQL inserts ORDER BY ancestor, descendant), so a page read by the
+	// primary key touches about one heap page per row: ADR 0002 states this next to the page numbers.
 	t0 = time.Now()
 	type frame struct {
 		x    int32
