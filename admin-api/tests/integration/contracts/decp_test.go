@@ -4,8 +4,9 @@ package contracts_test
 
 // DECP of contracts.yaml: on generated policies and resource graphs (core/testsupport/policygen), the engine of the check
 // API and the reference evaluator (core/testsupport/refeval, which shares no code with the engine) give the same answers
-// and explanations. Each seed is loaded into a cluster of its own and every question of every case is asked; a failure
-// names the seed, and LICETUM_DECP_SEEDS=<seed> runs that one again.
+// and explanations, and the permission list of each case agrees with the check answers. Each seed is loaded into a
+// cluster of its own and every question of every case is asked; a failure names the seed, and LICETUM_DECP_SEEDS=<seed>
+// runs that one again.
 
 import (
 	"os"
@@ -39,6 +40,9 @@ func TestContract_DECP_TheEngineAnswersLikeTheReferenceOnGeneratedPolicies(t *te
 						t.Errorf("seed %d, case %q, question %d, %s: %s (engine) against the reference\n\tthe engine: %+v",
 							seed, c.Name, j+1, describe(f, c, q), mismatch, answers[j])
 					}
+				}
+				for _, d := range l.CrossCheck(c, answers) {
+					t.Errorf("seed %d, case %q, GET /permission against POST /check: %s", seed, c.Name, d)
 				}
 			}
 			if t.Failed() {

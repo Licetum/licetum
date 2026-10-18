@@ -62,11 +62,12 @@ The decision contracts (DEC01–DEC14, DECP) are tables, not code: `core/testsup
 types, resources, groups, roles, rules, cases with claims, context and a time, questions with the expected decision and
 explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides answer them: the engine through the check API
 (`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its resources, `Ask` asks
-at the case's time through `App.SetClock`; level `pg`), and `core/testsupport/refeval`, a reference evaluator written from the
-semantics that shares no code with the engine (depguard keeps it away from engine, server and db). `core/testsupport/policygen`
-generates random valid fixtures; DECP compares the two sides on them (seeds 1–20 per pull request, `LICETUM_DECP_SEEDS`,
-`task go:test:decp`, `decp.yml` nightly over 21–520). A disagreement is a defect of one side or an open point of the semantics:
-settle it in both, then pin it in a table.
+at the case's time through `App.SetClock`, `CrossCheck` asks the case's `GET /permission` and fails every DEC and DECP test
+where the list (`coverNodes`) disagrees with the check answers (`CoversOf`); level `pg`), and `core/testsupport/refeval`, a
+reference evaluator written from the semantics that shares no code with the engine (depguard keeps it away from engine, server
+and db). `core/testsupport/policygen` generates random valid fixtures; DECP compares the two sides on them (seeds 1–20 per pull
+request, `LICETUM_DECP_SEEDS`, `task go:test:decp`, `decp.yml` nightly over 21–520). A disagreement is a defect of one side or
+an open point of the semantics: settle it in both, then pin it in a table.
 
 Backend (run from `backend/`, Go 1.26):
 ```

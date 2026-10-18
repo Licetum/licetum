@@ -26,12 +26,18 @@ parents, by the name of the parent type, and the attributes; a parent no resourc
 the case's subject (`preferred_username`) with its claims and request attributes, at the case's time: the replica's clock
 (`engine.App.SetClock`) is the time of the case, so the validity windows and the conditions on the hour are decided then. The answers
 name the rules of the fixture. `contracts.Compare` lists every difference from the expectations; `Loaded.ReplaceRules` swaps the policy
-(and the resources) on the same types, for the property test.
+(and the resources) on the same types, for the property test. `Loaded.CrossCheck(case, answers)` asks the case's
+`GET /service/{slug}/permission?consistency=higher` (same token, request attributes and time) and lists every question on which the
+list disagrees with the check: a resource of a sync type is allowed exactly when the list names it with the action, a not_sync type as
+a whole exactly when the action is among its levels (a sync type as a whole, `type_not_found` and `resource_not_found` are not compared).
+The check decides the asked resources (`CoversOf`), the list every resource (`coverNodes`): the cross-check keeps the two paths equal.
 
 | test | what it proves |
 |---|---|
-| `TestContract_DEC01_*` … `TestContract_DEC13_*` | the fixtures that name the contract get the answers they expect from the engine; a fixture that names several contracts is loaded and asked once per test binary; a contract without a fixture is skipped |
-| `TestRunner_*` | every field of the fixture format reaches the engine as the fixture means it (validity windows and the hour at the case's time included), `ReplaceRules` leaves nothing of the previous policy, and `Compare` reports each mismatch |
+| `TestContract_DEC01_*` … `TestContract_DEC13_*` | the fixtures that name the contract get the answers they expect from the engine, and the permission list of each case agrees with them; a fixture that names several contracts is loaded and asked once per test binary; a contract without a fixture is skipped |
+| `TestContract_DECP_*` | on the generated fixtures of the seeds (`LICETUM_DECP_SEEDS`, default 1-20) the engine answers like the reference evaluator, and the permission list of each case agrees with the check |
+| `TestRunner_*` | every field of the fixture format reaches the engine as the fixture means it (validity windows and the hour at the case's time included), `ReplaceRules` leaves nothing of the previous policy, and `Compare` reports each mismatch; each case is cross-checked too |
+| `TestCrossCheck*` | the cross-check reports a disagreement in either direction and a resource listed twice, and leaves out what the list cannot answer |
 
 ## The harness
 

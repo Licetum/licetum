@@ -8,6 +8,10 @@
 //
 // Every question is asked with consistency=higher, so that no answer comes from a cache and each one is computed by the
 // engine from the current policy and data, and with explain, so that the rules that decided it are named.
+//
+// The check API decides only the asked resources; GET /service/{slug}/permission lists every resource the subject has
+// access to, through another path of the engine (coverNodes instead of CoversOf). CrossCheck asks the list for a case and
+// compares it with the check answers of the same case, so that the tables and the generated policies check that path too.
 package contracts
 
 import (
@@ -468,10 +472,7 @@ const maxQuestions = 100
 func (l *Loaded) Ask(c *policyfix.Case) []Answer {
 	l.t.Helper()
 	l.clock.Set(l.f.NowOf(c))
-	claims := jwt.MapClaims{}
-	maps.Copy(claims, c.Claims)
-	claims["preferred_username"] = c.Subject
-	token := l.Cluster.Token(claims)
+	token := l.tokenOf(c)
 	path := "/service/" + url.PathEscape(l.f.ServiceOf(c)) + "/check?consistency=higher"
 
 	answers := make([]Answer, 0, len(c.Questions))
@@ -485,7 +486,7 @@ func (l *Loaded) Ask(c *policyfix.Case) []Answer {
 			}
 		}
 		body := model.CheckInput{Checks: checks, Explain: true, Context: c.Context}
-		res := l.askOnce(path, token, body)
+		res := l.askOnce(http.MethodPost, path, token, body)
 		var out model.CheckResponse
 		if err := json.Unmarshal(res.Body, &out); err != nil || len(out.Results) != len(checks) {
 			l.t.Fatalf("fixture %s, case %q: the answer does not decode into %d results: %v %s", l.f.Name, c.Name, len(checks), err, res.Body)
@@ -497,20 +498,28 @@ func (l *Loaded) Ask(c *policyfix.Case) []Answer {
 	return answers
 }
 
-// askOnce sends one check request. An answer made while the synchronization of some type had not finished (X-Authz-Sync:
-// pending) lacks data the fixture declares: it is asked again a few times before the test fails.
-func (l *Loaded) askOnce(path, token string, body model.CheckInput) *harness.Result {
+// tokenOf is the token of a case: its claims, with the subject as preferred_username.
+func (l *Loaded) tokenOf(c *policyfix.Case) string {
+	claims := jwt.MapClaims{}
+	maps.Copy(claims, c.Claims)
+	claims["preferred_username"] = c.Subject
+	return l.Cluster.Token(claims)
+}
+
+// askOnce sends one request to the check replica. An answer made while the synchronization of some type had not finished
+// (X-Authz-Sync: pending) lacks data the fixture declares: it is asked again a few times before the test fails.
+func (l *Loaded) askOnce(method, path, token string, body any) *harness.Result {
 	l.t.Helper()
 	for attempt := 1; ; attempt++ {
-		res := l.replica.Do(l.Cluster, http.MethodPost, path, token, body)
+		res := l.replica.Do(l.Cluster, method, path, token, body)
 		if res.Status != http.StatusOK {
-			l.t.Fatalf("fixture %s: POST %s: %d %s", l.f.Name, path, res.Status, res.Body)
+			l.t.Fatalf("fixture %s: %s %s: %d %s", l.f.Name, method, path, res.Status, res.Body)
 		}
 		if res.Header.Get("X-Authz-Sync") != "pending" {
 			return res
 		}
 		if attempt == 3 {
-			l.t.Fatalf("fixture %s: POST %s: the answer was made without the data of some type three times", l.f.Name, path)
+			l.t.Fatalf("fixture %s: %s %s: the answer was made without the data of some type three times", l.f.Name, method, path)
 		}
 	}
 }

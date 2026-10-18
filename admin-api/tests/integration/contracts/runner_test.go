@@ -4,7 +4,7 @@ package contracts_test
 
 // Tests of the runner itself: that every field of a fixture reaches the engine as the fixture means it (the answers are
 // written from the semantics, CLAUDE.md "Decision semantics"), that ReplaceRules swaps one policy for another on the same
-// graph, and that Compare reports what differs.
+// graph, and that Compare reports what differs. Each case is also cross-checked against its permission list (CrossCheck).
 
 import (
 	"slices"
@@ -444,7 +444,8 @@ func TestRunner_CompareReportsEveryMismatch(t *testing.T) {
 	}
 }
 
-// askAndCompare asks every case of the fixture and reports each answer that differs from the expectation.
+// askAndCompare asks every case of the fixture and reports each answer that differs from the expectation, and each
+// question on which the permission list of the case disagrees with the check.
 func askAndCompare(t *testing.T, l *contracts.Loaded, f *policyfix.Fixture) {
 	t.Helper()
 	for i := range f.Cases {
@@ -455,6 +456,9 @@ func askAndCompare(t *testing.T, l *contracts.Loaded, f *policyfix.Fixture) {
 			for _, mismatch := range contracts.Compare(q, answers[j]) {
 				t.Errorf("%s, case %q, question %d (%s): %s\n\tthe answer: %+v", f.Name, c.Name, j+1, describe(f, c, q), mismatch, answers[j])
 			}
+		}
+		for _, d := range l.CrossCheck(c, answers) {
+			t.Errorf("%s, case %q, GET /permission against POST /check: %s", f.Name, c.Name, d)
 		}
 	}
 }
