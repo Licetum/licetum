@@ -66,7 +66,7 @@ func runCommand(args []string) error {
 	groups := fs.Int("groups", 0, "groups, instead of the profile's")
 	rules := fs.Int("rules", 0, "assignment rules, instead of the profile's")
 	resources := fs.Int("resources", 0, "resources, instead of the profile's")
-	fs.StringVar(&opts.Mode, "mode", opts.Mode, "warm (the caches answer), cold (every request is computed) or mix (a skewed traffic)")
+	fs.StringVar(&opts.Mode, "mode", opts.Mode, "warm (the caches answer), cold (every request asks what no earlier one asked, so no cache answers) or mix (a skewed traffic)")
 	fs.Int64Var(&opts.Seed, "seed", opts.Seed, "the seed of the traffic and of the oracle")
 	mix := fs.String("mix", loadtest.DefaultMix, "share of each request, as name=weight: search_resource, evaluation, evaluations10, evaluations100, evaluation_properties")
 	fs.StringVar(&opts.Consistency, "consistency", opts.Consistency, "minimize_latency (caches allowed) or higher (every request is computed)")

@@ -81,7 +81,7 @@ go build -o ../core/bin/licetum-loadtest ./cmd/licetum-loadtest
 
 `-profile` picks the size of the policy: `smoke` is 10,000 resources, `medium` 100,000, `500k` 500,000 and `large`
 1,000,000. `-users`, `-groups`, `-rules` and `-resources` override one value of the profile. `-mode` is `warm` (the
-caches answer), `cold` (every request is computed) or `mix` (skewed traffic). `-k6-cpus` and `-check-cpus` take the
+caches answer), `cold` (every request asks a question that no earlier request of the run asked) or `mix` (skewed traffic). `-k6-cpus` and `-check-cpus` take the
 CPU lists of your machine (`nproc`, `lscpu -e`): the check server, the load generator and the stack must not share a
 CPU. The stack runs on CPUs 8-9 (`cpuset` in `compose.yml`); `environment.json` records its CPU sets.
 
@@ -166,7 +166,7 @@ profiles, modes and ramps. It prints only relative paths.
 - The policy is generated: its shape (owner rules, group and department grants, denials with exceptions) is the shape
   the harness builds. The oracle checks the answers against that shape only.
 - Warm-up is 60 seconds. The first synchronization of a service happens before the measured window. The cold mode
-  computes every request; it does not measure the first request after a restart.
+  asks every question once, so no answer is cached for it; it does not measure the first request after a restart.
 - The harness samples the server, PostgreSQL and its own process. It does not sample the host: other load on the
   machine, CPU frequency or the steal time of a virtual machine show up only as a change of latency, not as an
   explanation of it.

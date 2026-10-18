@@ -6,7 +6,8 @@
 // over all the requests of that operation in that phase, and the summary says how many there were.
 //
 // The choices of the script come from a generator seeded with SEED. The data is deterministic (the seeding); the choices
-// are deterministic per virtual user; which iteration a virtual user runs is up to k6's scheduler.
+// are deterministic per virtual user; which iteration a virtual user runs is up to k6's scheduler. The cold mode is the
+// exception: its choices are a function of the number of the iteration, not of the virtual user.
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { SharedArray } from 'k6/data';
@@ -24,6 +25,9 @@ const backend = __ENV.BACKEND_TOKEN;
 const mode = __ENV.MODE || 'mix';
 const consistencySetting = __ENV.CONSISTENCY || 'minimize_latency';
 const seed = Number(__ENV.SEED || 1);
+// The number of the first iteration of this invocation among all the iterations of the run: the cold mode asks every
+// question once, so a later window must go on where the earlier ones stopped.
+const firstIteration = Number(__ENV.FIRST_ITERATION || 0);
 
 // The generator the current draws come from. It is declared before the warm pool is drawn at start-up.
 let rng = null;
@@ -96,8 +100,10 @@ export default function () {
     subjectIndex = pair.subject;
     doc = pair.doc;
   } else if (mode === 'cold') {
-    subjectIndex = Math.floor(random() * users);
-    doc = accessibleDoc(subjectIndex);
+    // Every request asks what no earlier request of the run asked, so no answer a cache holds fits it.
+    const n = firstIteration + exec.scenario.iterationInTest;
+    subjectIndex = coldSubject(n);
+    doc = coldDoc(subjectIndex, Math.floor(n / users));
   } else {
     // A Zipf-like skew (exponent 1): the subjects near the start of the range are asked about far more often.
     subjectIndex = Math.min(users - 1, Math.floor(Math.pow(users, random())) - 1);
@@ -106,8 +112,9 @@ export default function () {
   const subject = `user-${subjectIndex}`;
   const dept = `dept-${subjectIndex % groups}`;
   const token = tokens[subjectIndex];
-  // The cold mode asks the sources again on every request (consistency=higher skips the caches).
-  const consistency = mode === 'cold' ? 'higher' : consistencySetting;
+  // The cold mode sends no consistency query: its questions are new, so no cache holds an answer to them. The other modes
+  // ask with the consistency of the run.
+  const consistencyQuery = mode === 'cold' ? '' : `?consistency=${consistencySetting}`;
 
   const op = ops[pick()];
   let res;
@@ -115,29 +122,29 @@ export default function () {
     case 'search_resource':
       // One page of the documents the subject may read.
       res = http.post(
-        `${base}/service/${service}/access/v1/search/resource?consistency=${consistency}`,
+        `${base}/service/${service}/access/v1/search/resource${consistencyQuery}`,
         `{"subject":{"type":"user","id":"${subject}"},"resource":{"type":"document"},"action":{"name":"read"},"page":{"limit":20}}`,
         { headers: jsonHeaders(token) },
       );
       break;
     case 'evaluation':
       res = http.post(
-        `${base}/service/${service}/access/v1/evaluation?consistency=${consistency}`,
+        `${base}/service/${service}/access/v1/evaluation${consistencyQuery}`,
         `{"subject":{"type":"user","id":"${subject}"},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
         { headers: jsonHeaders(token) },
       );
       break;
     case 'evaluations10':
-      res = evaluationsRequest(base, token, consistency, subjectIndex, 10);
+      res = evaluationsRequest(base, token, consistencyQuery, subjectIndex, 10, doc);
       break;
     case 'evaluations100':
-      res = evaluationsRequest(base, token, consistency, subjectIndex, 100);
+      res = evaluationsRequest(base, token, consistencyQuery, subjectIndex, 100, doc);
       break;
     case 'evaluation_properties':
       // The token is the one of the client application the service trusts; the subject is another person, whose claims
       // the client brings.
       res = http.post(
-        `${base}/service/${service}/access/v1/evaluation?consistency=${consistency}`,
+        `${base}/service/${service}/access/v1/evaluation${consistencyQuery}`,
         `{"subject":{"type":"user","id":"${subject}","properties":{"department":"${dept}"}},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
         { headers: jsonHeaders(backend) },
       );
@@ -177,11 +184,16 @@ function questions(subjectIndex, n) {
   return out;
 }
 
-// evaluationsRequest is a batch of n evaluations of documents the subject may read, about the subject.
-function evaluationsRequest(base, token, consistency, subjectIndex, n) {
-  const evaluations = questions(subjectIndex, n).map((d) => `{"resource":{"type":"document","id":"${d}"}}`);
+// evaluationsRequest is a batch of n evaluations of documents the subject may read, about the subject. In the cold mode
+// the first one is the document no earlier request asked about this subject, so the batch is a question no earlier one was.
+function evaluationsRequest(base, token, consistencyQuery, subjectIndex, n, doc) {
+  const docs = questions(subjectIndex, n);
+  if (mode === 'cold') {
+    docs[0] = doc;
+  }
+  const evaluations = docs.map((d) => `{"resource":{"type":"document","id":"${d}"}}`);
   return http.post(
-    `${base}/service/${service}/access/v1/evaluations?consistency=${consistency}`,
+    `${base}/service/${service}/access/v1/evaluations${consistencyQuery}`,
     `{"subject":{"type":"user","id":"user-${subjectIndex}"},"action":{"name":"read"},"evaluations":[${evaluations.join(',')}]}`,
     { headers: jsonHeaders(token) },
   );
@@ -215,6 +227,59 @@ function accessibleDoc(subjectIndex) {
     return g < documents ? `d-${g}` : randomDoc();
   }
   return randomDoc();
+}
+
+// The cold mode walks the subjects in rounds: each round visits every subject once, in an order that scrambles them, and
+// the k-th visit of a subject asks it about the k-th document of a sequence of its own that repeats none. So no pair of
+// (subject, document) is asked twice, and a question about a subject is never the one an earlier request asked. A search
+// lists everything a subject may read, so it is new only the first time a subject comes up (the first round).
+const subjectStride = coprimeStride(users);
+
+function coldSubject(n) {
+  return ((n % users) * subjectStride) % users;
+}
+
+function coprimeStride(n) {
+  const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+  let stride = Math.max(1, Math.round(n * 0.6180339887));
+  while (gcd(stride, n) !== 1) {
+    stride++;
+  }
+  return stride % n || 1;
+}
+
+// The documents already asked of each subject by this virtual user, in the order of the visits. The sequence of a subject
+// is a function of the seed and the subject alone, so every virtual user builds the same one.
+const coldSequences = new Map();
+
+function coldDoc(subjectIndex, visit) {
+  let sequence = coldSequences.get(subjectIndex);
+  if (!sequence) {
+    sequence = { draw: mulberry32(seed * 7919 + subjectIndex), seen: new Set(), docs: [] };
+    coldSequences.set(subjectIndex, sequence);
+  }
+  while (sequence.docs.length <= visit) {
+    const doc = unaskedDoc(subjectIndex, sequence);
+    sequence.seen.add(doc);
+    sequence.docs.push(doc);
+  }
+  return sequence.docs[visit];
+}
+
+// unaskedDoc draws the documents the subject may read, as the other modes do, until one that was not asked comes up; when
+// the documents it is likely to be asked about are used up, it takes the next document of the source that was not asked.
+function unaskedDoc(subjectIndex, sequence) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const doc = accessibleDocWith(subjectIndex, sequence.draw);
+    if (!sequence.seen.has(doc)) {
+      return doc;
+    }
+  }
+  let g = Math.floor(sequence.draw() * documents);
+  while (sequence.seen.has(`d-${g}`) && sequence.seen.size < documents) {
+    g = (g + 1) % documents;
+  }
+  return `d-${g}`;
 }
 
 function randomDoc() {

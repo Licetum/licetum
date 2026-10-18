@@ -40,6 +40,10 @@ type k6Runner struct {
 	outDir string
 	// cpus is the CPU list k6 is pinned to (taskset), empty when it is not pinned.
 	cpus string
+	// issued is how many iterations the windows run so far have started. The next window numbers its iterations from
+	// there (FIRST_ITERATION), so that the cold mode, which asks each question once, does not ask a window's questions again
+	// in the next one.
+	issued int
 }
 
 // newK6Runner writes the script and the tokens of the run to workDir.
@@ -126,6 +130,7 @@ func (r *k6Runner) run(ctx context.Context, w window) (k6Result, error) {
 		"BASES="+strings.Join(replicaBases(w), ","),
 		"MODE="+w.mode,
 		"SEED="+strconv.FormatInt(w.seed, 10),
+		"FIRST_ITERATION="+strconv.Itoa(r.issued),
 		"RATE="+strconv.Itoa(w.rate),
 		"MEASURE_SECONDS="+strconv.Itoa(w.seconds),
 		"WARM_SECONDS=0",
@@ -152,6 +157,7 @@ func (r *k6Runner) run(ctx context.Context, w window) (k6Result, error) {
 	if err := json.Unmarshal(raw, &sum); err != nil {
 		return k6Result{}, fmt.Errorf("read the summary of %s: %w", w.name, err)
 	}
+	r.issued += sum.iterations()
 	cpu := cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()
 	return k6Result{summary: sum, elapsed: elapsed, cpu: cpu}, nil
 }
@@ -194,6 +200,11 @@ func (s k6Summary) value(metric, stat string) float64 {
 		return 0
 	}
 	return v
+}
+
+// iterations is how many iterations the window started (the arrivals that were dropped did not start).
+func (s k6Summary) iterations() int {
+	return int(s.value("iterations", "count") + 0.5)
 }
 
 // latency is the distribution of a trend, in milliseconds. A trend in the summary has no count of its own, so the

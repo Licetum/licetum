@@ -13,8 +13,11 @@
 tolerance: 0.15
 latency_slack_ms: 5
 budgets:
-    # cold: every request asks with consistency=higher. Since F3 such a request waits for a fresh synchronization job of the
-    # worker instead of fetching the sources itself, and the fresh jobs ask a type's source at most once per
+    # cold: these figures were measured when every request asked with consistency=higher. Since P2-07 (ADR 0001, 11.6) the
+    # cold mode sends no consistency parameter and asks questions that no earlier request of the run asked, so the new cold
+    # workload does not match these budgets. They are deferred to the recalibration after the first epic nightly (plan step
+    # 2a-5) and stay as they are until then. Since F3 such a request waits for a fresh synchronization job of the worker
+    # instead of fetching the sources itself, and the fresh jobs ask a type's source at most once per
     # SYNC__FRESH_MIN_INTERVAL (1 s): its p50 was 0.90 to 0.93 s from 2 to 8 requests/s (2.53 to 2.55 s with 100 ms added),
     # where the F0 baseline (the fetch in the request) had 0.40 s (2.27 s). The p50 and its step are those of the nightly run
     # 39121082518 (8882ff5c, ubuntu-latest) at the highest step it sustained. Its sustained rate (8 and 4 requests/s) was

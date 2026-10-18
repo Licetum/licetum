@@ -67,14 +67,19 @@ func AggregateReport(dirs []string) (string, error) {
 }
 
 // configKey is what makes two runs comparable: the same policy size (overrides included), the same server setup, the same
-// traffic, the same rate and window, and the same experiments applied to the run.
+// traffic, the same rate and window, and the same experiments applied to the run. A run that names its workload is
+// compared only with runs that name the same one: the cold runs before P2-07 are not the cold runs after it.
 func configKey(r Report) string {
 	s, p := r.Settings, r.Profile
-	return fmt.Sprintf("%s (%d subjects, %d groups, %d rules, %d resources) | mode %s | mix %s | consistency %s | rate %.0f | "+
+	key := fmt.Sprintf("%s (%d subjects, %d groups, %d rules, %d resources) | mode %s | mix %s | consistency %s | rate %.0f | "+
 		"measure %.0f s | warm %.0f s | oracle %.0f/s | db pool %d | access log %s | replicas %d | writes every %.0f s | "+
 		"redis paused %.0f s | extra SQL %s",
 		p.Name, p.Users, p.Groups, p.Rules, p.Resources, s.Mode, s.Mix, s.Consistency, s.Rate, s.MeasureSecs, s.WarmSeconds,
 		s.OracleRate, s.DBPool, onOff(s.AccessLog), s.Replicas, s.WritesEverySec, s.PauseRedisSecs, nameOrNone(s.ExtraSQL))
+	if s.Workload != "" {
+		key += " | workload " + s.Workload
+	}
+	return key
 }
 
 // nameOrNone is the name of a file, or "none" when there is none.

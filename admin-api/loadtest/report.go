@@ -58,6 +58,7 @@ type Settings struct {
 	Seed           int64   `json:"seed"`
 	Mix            string  `json:"mix"`
 	Consistency    string  `json:"consistency"`
+	Workload       string  `json:"workload,omitempty"`
 	Concurrency    int     `json:"concurrency"`
 	DBPool         int     `json:"db_pool"`
 	AccessLog      bool    `json:"access_log"`
