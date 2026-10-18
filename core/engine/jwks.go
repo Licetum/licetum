@@ -22,8 +22,8 @@ import (
 // a thousand tokens at once cost the provider one request, and a flood of tokens with random key ids costs it one per
 // interval.
 
-// jwksKey is one key of a key set. The key is parsed when a token first names it.
-type jwksKey struct {
+// Key is one key of a key set. The key is parsed when a token first names it.
+type Key struct {
 	kid    any
 	hasKid bool
 	raw    json.RawMessage
@@ -33,24 +33,24 @@ type jwksKey struct {
 	err  error
 }
 
-// parsed returns the key; an unusable key is an error that counts toward the circuit breaker, as it did when the key was
+// Parsed returns the key; an unusable key is an error that counts toward the circuit breaker, as it did when the key was
 // read for every token.
-func (k *jwksKey) parsed() (*jose.JSONWebKey, error) {
+func (k *Key) Parsed() (*jose.JSONWebKey, error) {
 	k.once.Do(func() { k.err = k.jwk.UnmarshalJSON(k.raw) })
 	if k.err != nil {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSKeyInvalid, k.err)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSKeyInvalid, k.err)}
 	}
 	return &k.jwk, nil
 }
 
 // keySet is a fetched key set.
 type keySet struct {
-	keys      []*jwksKey
+	keys      []*Key
 	fetchedAt time.Time
 }
 
 // find returns the first key whose id is the given one; a token without a key id takes the first key that has none.
-func (s *keySet) find(kid any, hasKid bool) *jwksKey {
+func (s *keySet) find(kid any, hasKid bool) *Key {
 	for _, k := range s.keys {
 		if k.hasKid == hasKid && (!hasKid || sameKid(k.kid, kid)) {
 			return k
@@ -101,9 +101,9 @@ func (c *KeySets) put(url string, set *keySet) {
 	c.sets[url] = set
 }
 
-// keyFor returns the key of the key set at jwksURL that signed a token with the given key id, or nil when the
-// provider has no such key. A transport failure is an errJWKSUnavailable.
-func (ks *KeySets) keyFor(ctx context.Context, jwksURL string, kid any, hasKid bool) (*jwksKey, error) {
+// KeyFor returns the key of the key set at jwksURL that signed a token with the given key id, or nil when the
+// provider has no such key. A transport failure is an Unavailable.
+func (ks *KeySets) KeyFor(ctx context.Context, jwksURL string, kid any, hasKid bool) (*Key, error) {
 	now := time.Now()
 	set := ks.get(jwksURL)
 	if set != nil && now.Sub(set.fetchedAt) < ks.TTL {
@@ -143,7 +143,7 @@ func (ks *KeySets) fetchKeySet(ctx context.Context, jwksURL string, asked time.T
 				continue
 			}
 			kid, hasKid := meta["kid"]
-			set.keys = append(set.keys, &jwksKey{kid: kid, hasKid: hasKid, raw: raw})
+			set.keys = append(set.keys, &Key{kid: kid, hasKid: hasKid, raw: raw})
 		}
 		ks.put(jwksURL, set)
 		return set, nil
@@ -165,19 +165,19 @@ func (ks *KeySets) fetchJWKS(ctx context.Context, jwksURL string) (*jwksDocument
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
 	if err != nil {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
 	}
 	resp, err := ks.HTTP.Do(req)
 	if err != nil {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSRejected, resp.StatusCode)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSRejected, resp.StatusCode)}
 	}
 	var doc jwksDocument
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil {
-		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSBadJSON, err)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSBadJSON, err)}
 	}
 	return &doc, nil
 }

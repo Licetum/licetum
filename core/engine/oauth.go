@@ -477,12 +477,11 @@ func claimInt(v any) (int64, bool) {
 	return 0, false
 }
 
-// errJWKSUnavailable is a failure that counts toward the circuit breaker (unlike an
-// invalid token).
-type errJWKSUnavailable struct{ err *apperr.Error }
+// Unavailable is a failure that counts toward the circuit breaker (unlike an invalid token).
+type Unavailable struct{ err *apperr.Error }
 
-func (e errJWKSUnavailable) Error() string { return e.err.Error() }
-func (e errJWKSUnavailable) Unwrap() error { return e.err }
+func (e Unavailable) Error() string { return e.err.Error() }
+func (e Unavailable) Unwrap() error { return e.err }
 
 func (a *App) verifyTokenLive(ctx context.Context, svc *model.Service, token, tokenHash string) (Claims, error) {
 	if svc.JwksURL == nil || *svc.JwksURL == "" {
@@ -497,7 +496,7 @@ func (a *App) verifyTokenLive(ctx context.Context, svc *model.Service, token, to
 		return a.fetchAndVerify(context.WithoutCancel(ctx), svc, token)
 	})
 	if err != nil {
-		var unavailable errJWKSUnavailable
+		var unavailable Unavailable
 		if errors.As(err, &unavailable) {
 			redisx.RecordFailure(ctx, a.Redis, breakerKey)
 			return nil, unavailable.err
@@ -516,14 +515,14 @@ func (a *App) fetchAndVerify(ctx context.Context, svc *model.Service, token stri
 	}
 	kid, hasKid := unverified.Header["kid"]
 
-	key, err := a.keySets().keyFor(ctx, *svc.JwksURL, kid, hasKid)
+	key, err := a.keySets().KeyFor(ctx, *svc.JwksURL, kid, hasKid)
 	if err != nil {
 		return nil, err
 	}
 	if key == nil {
 		return nil, apperr.InvalidToken(i18n.TokenKidNotFound)
 	}
-	jwk, err := key.parsed()
+	jwk, err := key.Parsed()
 	if err != nil {
 		return nil, err
 	}
