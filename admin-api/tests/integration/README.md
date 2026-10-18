@@ -53,12 +53,21 @@ Tests of a package run one after another: they share the Redis.
 ```go
 c := harness.StartReplicas(t, infra, 3)
 p := c.SeedPolicy("org", 0)                      // a service, two types fed by c.Source over HTTP, a rule for "alice"
-res := c.Replicas[1].Permission(c, p.Slug, c.UserToken("alice"))
+alice := c.UserToken("alice")
+res := c.Replicas[1].Permission(c, p.Slug, alice) // the branches alice may read: a resource search of AuthZEN
+res.IDs(t)                                       // ["b1" "b2" "b3"]
 res.Trace.DBQueries()                            // what the request cost: statements to PostgreSQL ...
 res.Trace.RedisRoundTrips()                      // ... and round trips to Redis (a pipeline is one)
-c.Replicas[1].Warm(c, "GET", "/service/org/permission", token) // until the cost of a request is steady
+c.Replicas[1].Warm(c, harness.Branches(p.Slug, alice), alice) // until the cost of a request is steady
 ```
 
+- **Requests.** The replicas are asked the way their clients ask: the AuthZEN API of the service, with the requests of
+  `core/testsupport/authzenreq`. `Replica.Permission`, `Fresh` and `TryPermission` send `harness.Branches`: the resources of the type
+  `branch` that the holder of the token may `read` (`SeedPolicy` gives alice read on every branch). `Replica.Send(c, request, token)`,
+  `Warm` and `Try` (a client that gives up after a timeout) send any `authzenreq.Request`: an evaluation, a batch, another search.
+  `Result.IDs`, `Decision` and `Sees` read the answer (`Sees` is whether a search lists anything; it is false for a refusal, which a
+  test tells from an absence of access by the status). A test with a client of its own (a balancer, a load generator) builds its
+  `http.Request` with `harness.HTTPRequest`.
 - **Counting.** The same counts are in `GET /metrics` (`licetum_db_queries_total`, `licetum_db_query_seconds`,
   `licetum_redis_ops_total`, `licetum_redis_op_seconds`). The Trace does not count what the Redis client sends when it opens a
   connection (`HELLO`, ...), nor background work (writing a cache entry); the metrics do. Assert exact counts only after
@@ -73,8 +82,11 @@ c.Replicas[1].Warm(c, "GET", "/service/org/permission", token) // until the cost
 - **Levers.** The freshness of a request is `?consistency=higher` for its caller, and `engine.WithConsistency` in the context for
   the process that serves it (it wins over the query, and no network input sets it). `harness.Levers(handler)` is the test-only
   wrapper that turns the header `X-Test-Consistency` (`higher` or `minimize_latency`) into it; it lives under `tests/`, so no
-  binary has it. `core/testsupport/authzenreq` builds the AuthZEN requests (`Fresh()`, `AtLeast(rev)`) and decodes the answers.
-  A test that needs to know whether an answer lacked the data of a type reads `Trace.SyncPending()` of its own `engine.WithTrace`.
+  binary has it. The check replicas of the harness are behind it, and a test asks for the freshest answer with the lever
+  (`Replica.Fresh`, or `harness.Higher()` as the last argument of `Send`, `Try` and `HTTPRequest`), not with `?consistency=higher`,
+  so that no test depends on a parameter of the API. The revision to reflect is `authzenreq.AtLeast(rev)` (`Replica.Permission` asks for the last
+  write of the test). A test that needs to know whether an answer lacked the data of a type reads `Trace.SyncPending()` of its own
+  `engine.WithTrace`.
 
 Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in the pull request which criteria it covers.
 
@@ -87,8 +99,8 @@ Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in
 | `chaos/f1_test.go` `TestF1_4`, `_9`, `_10` | a warm request ignores 150 ms on PostgreSQL and Redis; a Redis that answers after 5 s does not pile up goroutines or memory under 600 rps; a skipped Redis adds at most its timeout |
 
 The replicas follow the revision with a delay of up to `REVISION__POLL_INTERVAL`: `Replica.Permission` asks for at least the revision
-of the last write made through `AdminDo`/`Must`; use `Replica.Do` for a plain request. Run the packages one at a time (`-p 1`) when they
-share one Redis (`LICETUM_TEST_REDIS_URI`).
+of the last write made through `AdminDo`/`Must`; send `harness.Branches` with `Replica.Send` for a plain request. Run the packages one at
+a time (`-p 1`) when they share one Redis (`LICETUM_TEST_REDIS_URI`).
 
 ## The revision in PostgreSQL (F2)
 
