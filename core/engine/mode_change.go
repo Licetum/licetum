@@ -2,12 +2,16 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/db"
+	"github.com/licetum/licetum/core/i18n"
 )
 
 // A type is sync while it has a live synchronizer and not_sync without one (TypeGraph.IsSync). Its rows stay in the local copy
@@ -92,7 +96,24 @@ func (a *App) ChangeMode(ctx context.Context, tx db.Querier, typeID uuid.UUID, w
 		move = &ClosureMove{g: g, types: types}
 		return nil
 	})
-	return move, err
+	return move, modeChangeError(err)
+}
+
+// modeChangeError tells the caller what a timeout of the rebuild means: the component is locked by a synchronization (retry
+// the change), or the rebuild itself took longer than a statement may (the request timed out). Any other error, the unique
+// violation of a second synchronizer included, is returned as it is.
+func modeChangeError(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+	switch pgErr.Code {
+	case "55P03": // lock_not_available
+		return apperr.ServiceUnavailable(i18n.SynchronizerChangeBusy).WithHeader("Retry-After", "5").Wrap(err)
+	case "57014": // query_canceled: the statement timeout
+		return apperr.ServiceUnavailable(i18n.RequestTimeout).Wrap(err)
+	}
+	return err
 }
 
 // AfterClosureMove is for the process that committed a ChangeMode: it reads the revisions again, and tells the replicas of

@@ -387,3 +387,49 @@ func TestIntegrationASynchronizationThatStartedBeforeTheSynchronizerWasDeletedDo
 		}
 	}
 }
+
+// A synchronization that is writing the component of the type holds the lock the change waits for: the change is refused with
+// a 503 that says to retry (nothing is written), and goes through once the lock is free.
+func TestIntegrationChangingASynchronizerWaitsForTheSynchronizationOfItsComponentAndAnswersBusy(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.partBelowItem()
+	w.rule("division", "D1", nil)
+	w.checkAccess(w.appSvc, true, map[string]any{"type": "part", "resource_id": "P1", "action": "read"}) // synchronized
+	w.app.Hooks.LockTimeout = 300 * time.Millisecond
+
+	graph, err := w.app.LoadTypeGraph(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := engine.ComponentKeys(graph, []uuid.UUID{uuid.MustParse(w.item)})
+	holder, err := w.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			_ = holder.Rollback(ctx)
+		}
+	}
+	defer release()
+	for _, key := range keys {
+		if _, err := holder.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status, raw := w.do(http.MethodDelete, w.admin.URL+w.typePath("item")+"/resource/synchronizer/"+w.syncs["item"], nil)
+	requireErrorCode(t, status, raw, http.StatusServiceUnavailable, "synchronizer_change_busy")
+	if n := w.countRows(`SELECT count(*) FROM synchronizer WHERE type_resource_id = $1 AND deleted_at IS NULL`, w.item); n != 1 {
+		t.Fatalf("the synchronizer of item was changed by a refused request: %d live", n)
+	}
+
+	release()
+	w.must(http.MethodDelete, w.typePath("item")+"/resource/synchronizer/"+w.syncs["item"], nil)
+	if n := w.countRows(`SELECT count(*) FROM synchronizer WHERE type_resource_id = $1 AND deleted_at IS NULL`, w.item); n != 0 {
+		t.Fatalf("the synchronizer of item is still live after the retry: %d", n)
+	}
+}

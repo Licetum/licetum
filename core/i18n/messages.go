@@ -19,6 +19,8 @@ const (
 	Overloaded        Key = "overloaded"
 	RequestTimeout    Key = "request_timeout"
 
+	SynchronizerChangeBusy Key = "synchronizer_change_busy"
+
 	// input validation
 	FieldRequired                 Key = "field_required"
 	FieldURLInvalid               Key = "field_url_invalid"
@@ -209,6 +211,11 @@ var catalog = map[Key]Text{
 		EN: "The request took too long and was cancelled, retry it",
 		RU: "Запрос выполнялся слишком долго и был отменён, повторите его",
 		ZH: "请求耗时过长已被取消，请重试",
+	},
+	SynchronizerChangeBusy: {
+		EN: "The part of the resource hierarchy this type belongs to is being synchronized, retry the change shortly",
+		RU: "Часть иерархии ресурсов, к которой относится этот тип, сейчас синхронизируется, повторите изменение чуть позже",
+		ZH: "此类型所属的资源层级部分正在同步，请稍后重试该更改",
 	},
 
 	FieldRequired: {

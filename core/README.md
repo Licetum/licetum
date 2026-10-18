@@ -348,6 +348,15 @@ Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/
   cannot be confused. The slug `licetum` belongs to the platform itself.
 - Invalid or expired tokens are 401 and never trip the JWKS circuit breaker. 424 means that the identity provider's
   JWKS or a synchronizer source did not answer.
+- Creating or deleting the synchronizer of a type rewrites the closure of the resources below it in the same request
+  (`engine.App.ChangeMode`), under the lock of the type's component and with the timeouts of a synchronization, so that a grant
+  above stops (or starts) flowing through the rows of the type whatever the sources of the types below do. The cost is that of
+  rebuilding the rows below the type: about 12 s for 200 000 rows below a type of 20 000 rows, on a loaded four-core machine. A
+  change that finds the component locked by a synchronization is a 503 `synchronizer_change_busy` (retry it); one that does not
+  finish within `HTTP__REQUEST_TIMEOUT` (60 s for the admin API) or `SYNC__STATEMENT_TIMEOUT` is a 503 `request_timeout` and is
+  not applied, so raise them for a type with a much larger subtree. While a type has no synchronizer, a check that is not
+  answered from the cache and asks about a type below it reads the links into the rows it left (`UnresolvedParents`), about as
+  many as hang below the type (of the order of a second for 200 000).
 - Predicate regular expressions run on RE2: backreferences and lookaround are not supported. An invalid regular
   expression is rejected when the rule is saved (422).
 - Swagger UI at `/docs` loads its scripts from a CDN (unpkg). In an isolated network the page does not render, but
