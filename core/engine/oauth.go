@@ -14,7 +14,6 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -448,34 +447,6 @@ func (a *App) keepTokenInMemory(key string, claims Claims, now time.Time) {
 	}
 	ttl := min(maxTokenL1TTL, time.Unix(exp, 0).Sub(now))
 	a.tokensL1.Add(key, maps.Clone(claims), ttl, now)
-}
-
-func decodeClaims(raw []byte) (Claims, error) {
-	var claims Claims
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	err := dec.Decode(&claims)
-	return claims, err
-}
-
-func claimInt(v any) (int64, bool) {
-	switch x := v.(type) {
-	case json.Number:
-		if i, err := x.Int64(); err == nil {
-			return i, true
-		}
-		if f, err := x.Float64(); err == nil {
-			return int64(f), true
-		}
-	case float64:
-		return int64(x), true
-	case string:
-		// Some IdPs send numbers as strings (pydantic accepted them too).
-		if i, err := strconv.ParseInt(x, 10, 64); err == nil {
-			return i, true
-		}
-	}
-	return 0, false
 }
 
 func (a *App) verifyTokenLive(ctx context.Context, svc *model.Service, token, tokenHash string) (Claims, error) {
