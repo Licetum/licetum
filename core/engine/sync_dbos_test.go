@@ -191,3 +191,51 @@ func TestDBOSARequestThatReadTheStateBeforeAJobEndedSharesTheJob(t *testing.T) {
 		t.Fatalf("%d jobs were queued and %d ran for one state of the type, want one", jobs, runs.Load())
 	}
 }
+
+// The janitor cancels the workflow of a dead executor and then queues its replacement "<id>+r". A worker that stops between
+// the two (its context ends while the janitor waits for an enqueue slot) still queues the replacement: the waiters of the
+// cancelled workflow follow the chain to it.
+func TestDBOSTakeOverQueuesTheReplacementWhenTheWorkerStops(t *testing.T) {
+	f := newDBOSFixture(t, nil)
+	ctx := context.Background()
+	typeID := uuid.New()
+	h, err := dbos.Enqueue[dbosSyncOut](f.c, dbosQueue, dbosWorkflow, dbosSyncIn{TypeID: typeID.String(), Source: "request"},
+		dbos.WithEnqueueDeduplicationID(dedupKey([]uuid.UUID{typeID}, false)),
+		dbos.WithEnqueueAttributes(map[string]any{"type": typeID.String(), "fresh": false}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan := h.GetWorkflowID()
+	// It was running on an executor that died: no heartbeat in sync_executor.
+	f.exec(t, fmt.Sprintf(`UPDATE %s.workflow_status SET status = 'PENDING', executor_id = 'dead' WHERE workflow_uuid = $1`,
+		f.a.dbosSchema()), orphan)
+
+	release, err := f.a.enqueueSlot(ctx) // the only slot is busy
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerCtx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.a.dbosTakeOver(workerCtx, f.c, "worker", time.Second)
+	}()
+	waitUntil(t, "the workflow of the dead executor to be cancelled", func() bool {
+		return f.status(orphan) == string(dbos.WorkflowStatusCancelled)
+	})
+	stop() // the worker stops while the janitor waits for the slot
+	select {
+	case <-done:
+		t.Fatal("the janitor gave up the replacement of a workflow it had cancelled when the worker stopped")
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the janitor did not finish once the slot was free")
+	}
+	if got := f.status(orphan + dbosReplacement); got != string(dbos.WorkflowStatusEnqueued) {
+		t.Fatalf("the replacement of the cancelled workflow is %q, want it queued", got)
+	}
+}

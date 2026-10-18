@@ -80,8 +80,9 @@ type dbosState struct {
 // name.
 func jobName(dedupKey, version string) string { return dedupKey + "@" + version }
 
-// enqueueWait bounds how long an enqueue that the requests of the process share waits for a slot: the request that started
-// it may be gone, the others still wait for it.
+// enqueueWait bounds how long an enqueue waits for a slot when the request that asked for it does not bound it: the enqueue
+// the requests of a process share (the request that started it may be gone, the others still wait for it), and the
+// replacement of a workflow the janitor cancelled (it must be queued even if the worker stops).
 const enqueueWait = 30 * time.Second
 
 // enqueueSlot takes one of the slots of the DBOS enqueues of the process, waiting while ctx lasts; release gives it back.
@@ -503,6 +504,9 @@ func (a *App) dbosTakeOver(ctx context.Context, c dbos.Context, self string, lea
 		return
 	}
 	for _, w := range flows {
+		if ctx.Err() != nil {
+			return // the worker is stopping: a workflow cancelled now would need its replacement queued too
+		}
 		var in dbosSyncIn
 		raw, _ := json.Marshal(w.Input)
 		if inner := ""; json.Unmarshal(raw, &inner) == nil && inner != "" {
@@ -520,8 +524,13 @@ func (a *App) dbosTakeOver(ctx context.Context, c dbos.Context, self string, lea
 			slog.WarnContext(ctx, "failed to cancel the workflow of a dead synchronization executor", "workflow", w.ID, "error", err)
 			continue
 		}
-		release, err := a.enqueueSlot(ctx)
+		// The workflow is cancelled: its replacement is queued even if the worker stops while the janitor waits for a slot, or
+		// its waiters would follow the chain to nothing until a request asks for the type again.
+		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), enqueueWait)
+		release, err := a.enqueueSlot(qctx)
+		cancel()
 		if err != nil {
+			slog.WarnContext(ctx, "no enqueue slot for the replacement of a taken over workflow", "workflow", w.ID, "error", err)
 			return
 		}
 		_, err = dbos.Enqueue[dbosSyncOut](c, dbosQueue, dbosWorkflow, in,
