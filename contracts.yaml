@@ -18,9 +18,9 @@
 #   oracle  what the answer is compared with; it never shares the code under test
 contracts:
   # ---------- DEC: decision semantics (core/decide; until P5 the engine of core/engine) ----------
-  # Until P5 the engine is checked through the check API on PostgreSQL (admin-api/tests/integration/contracts, level pg), and
-  # the permission list of every case (GET /permission) must agree with its check answers; the reference evaluator
-  # core/testsupport/refeval is checked against the same tables by its unit tests.
+  # Until P5 the engine is checked through the AuthZEN API of the check API on PostgreSQL (admin-api/tests/integration/contracts,
+  # level pg): the evaluations answer every question of a case, and the resource and action searches of the case must list what
+  # the evaluations allow. The reference evaluator core/testsupport/refeval is checked against the same tables by its unit tests.
   - id: DEC01
     statement: A denial beats any allow, wherever the allow lies.
     oracle: tables of expected decisions written from the semantics (core/testsupport/policyfix/testdata/decisions); the same tables check refeval
