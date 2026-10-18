@@ -25,7 +25,7 @@ x-env: &env
   SHUTDOWN__DRAIN: 1s
   SHUTDOWN__TIMEOUT: 10s
   SYNC__ENGINE: postgres
-  SYNC__REQUEST_WAIT: 5s
+  SYNC__REQUEST_WAIT: "5" # seconds, an integer (config.seconds)
   DB__LAG_INTERVAL: 500ms
   DB__MAX_REPLICA_LAG: ${MR_MAX_REPLICA_LAG:-10s}
   DB__LAG_ACTION: ${MR_LAG_ACTION:-unready}
