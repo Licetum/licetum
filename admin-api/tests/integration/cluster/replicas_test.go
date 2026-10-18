@@ -4,9 +4,11 @@ package cluster_test
 
 import (
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // startReplicas is the entry point of the tests of this package: n check API replicas on the shared PostgreSQL and
@@ -39,8 +41,7 @@ func TestF0_1_ThreeReplicasAnswerTheSameRequestIdentically(t *testing.T) {
 			t.Fatalf("replica %d answered differently:\n%s\nwant\n%s", r.Index, res.Body, first)
 		}
 	}
-	branches, _ := c.Replicas[0].Permission(c, p.Slug, alice).JSON(t)["branch"].(map[string]any)
-	if branches["type"] != "sync" || len(branches["resources"].([]any)) != 3 {
+	if ids := c.Replicas[0].Permission(c, p.Slug, alice).IDs(t); !slices.Equal(ids, []string{"b1", "b2", "b3"}) {
 		t.Fatalf("alice should see the three branches: %s", first)
 	}
 
@@ -58,9 +59,9 @@ func TestF0_1_ThreeReplicasAnswerTheSameRequestIdentically(t *testing.T) {
 		"type_resource_id": p.Division, "access": []string{"read"}, "subject": "alice",
 	})
 	for _, r := range c.Replicas {
-		got := r.Permission(c, p.Slug, alice).JSON(t)
-		if _, ok := got["division"]; !ok {
-			t.Fatalf("replica %d does not see the new rule: %v", r.Index, got)
+		divisions := r.Send(c, authzenreq.SearchResource(p.Slug, "alice", "division", "read", authzenreq.AtLeast(c.LastRevision.Load())), alice)
+		if ids := divisions.IDs(t); !slices.Equal(ids, []string{"d1", "d2"}) {
+			t.Fatalf("replica %d does not see the new rule: alice reads the divisions %v (%s)", r.Index, ids, divisions.Body)
 		}
 	}
 }

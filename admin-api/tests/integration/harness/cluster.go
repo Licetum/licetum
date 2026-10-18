@@ -65,7 +65,7 @@ type Cluster struct {
 
 	// LastRevision is the revision (X-Authz-Revision) of the last write made through AdminDo or Must. The replicas
 	// follow the revision with a delay of up to REVISION__POLL_INTERVAL; Replica.Permission asks for at least this one, so
-	// that it sees the writes of the test, as a client that passes at_least_as_fresh does.
+	// that it sees the writes of the test, as a client that passes at_least_as_fresh does (authzenreq.AtLeast).
 	LastRevision atomic.Int64
 
 	proxied      bool
@@ -505,36 +505,24 @@ func (r *Replica) Try(c *Cluster, req authzenreq.Request, token string, timeout 
 	return status, body, err
 }
 
-// TryPermission is Permission for a replica that may not answer: the client gives up after timeout and the error says
-// so (a black-holed dependency makes the replica wait for it). The Trace is not returned: the request may still run.
+// TryPermission is Try of the request that Permission sends, without asking for a revision.
 func (r *Replica) TryPermission(c *Cluster, serviceRef, token string, timeout time.Duration) (status int, body []byte, err error) {
 	c.T.Helper()
-	return r.TryGet(c, "/service/"+serviceRef+"/permission", token, timeout)
+	return r.Try(c, Branches(serviceRef, token), token, timeout)
 }
 
-// TryGet is TryPermission for any path of the replica.
-func (r *Replica) TryGet(c *Cluster, path, token string, timeout time.Duration) (status int, body []byte, err error) {
-	c.T.Helper()
-	client := &http.Client{Timeout: timeout}
-	status, body, _, err = c.send(client, http.MethodGet, r.Server.URL+path, token, nil, "", nil)
-	return status, body, err
-}
-
-// Fresh asks GET /service/{ref}/permission with consistency=higher: the policy and the sources are read again, so the
-// request needs PostgreSQL and Redis even when everything is cached.
+// Fresh asks what Permission asks under the lever Higher: the policy and the sources are read again, so the request needs
+// PostgreSQL and Redis even when everything is cached.
 func (r *Replica) Fresh(c *Cluster, serviceRef, token string) *Result {
 	c.T.Helper()
-	return r.Do(c, http.MethodGet, "/service/"+serviceRef+"/permission?consistency=higher", token, nil)
+	return r.Send(c, Branches(serviceRef, token), token, Higher())
 }
 
-// Permission asks GET /service/{ref}/permission.
+// Permission asks the service for the branches the holder of the token may read, for an answer that reflects the last write
+// made through AdminDo or Must (PermissionRequest).
 func (r *Replica) Permission(c *Cluster, serviceRef, token string) *Result {
 	c.T.Helper()
-	path := "/service/" + serviceRef + "/permission"
-	if rev := c.LastRevision.Load(); rev > 0 {
-		path += "?at_least_as_fresh=" + strconv.FormatInt(rev, 10)
-	}
-	return r.Do(c, http.MethodGet, path, token, nil)
+	return r.Send(c, c.PermissionRequest(serviceRef, token), token)
 }
 
 // Metrics is the text of GET /metrics of the replica.
@@ -565,14 +553,14 @@ func (c *Cluster) WaitForSyncIdle() {
 // Warm sends the request until the replica is in a steady state for it: the answer and the token are cached and the
 // background work of the earlier requests (writing the cache, refreshing a source, the batch of known subjects) has ended, which is when two
 // requests in a row cost the same. It returns the last of them. The cost of a request is meaningful only then.
-func (r *Replica) Warm(c *Cluster, method, path, token string) *Result {
+func (r *Replica) Warm(c *Cluster, req authzenreq.Request, token string) *Result {
 	c.T.Helper()
 	var last *Result
 	same := 0
 	for i := 0; i < 40; i++ {
-		res := r.Do(c, method, path, token, nil)
+		res := r.Send(c, req, token)
 		if res.Status != http.StatusOK {
-			c.T.Fatalf("warm %s %s: %d %s", method, path, res.Status, res.Body)
+			c.T.Fatalf("warm %s %s: %d %s", req.Method, req.Path, res.Status, res.Body)
 		}
 		if last != nil && last.Trace.DBQueries() == res.Trace.DBQueries() && last.Trace.RedisRoundTrips() == res.Trace.RedisRoundTrips() {
 			same++
@@ -586,11 +574,11 @@ func (r *Replica) Warm(c *Cluster, method, path, token string) *Result {
 			// batch does not fall into the request a test measures next.
 			r.App.FlushSubjects(context.Background())
 			time.Sleep(100 * time.Millisecond) // let the background work of the last request end
-			return r.Do(c, method, path, token, nil)
+			return r.Send(c, req, token)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	c.T.Fatalf("%s %s did not settle: the last request cost db=%d redis=%d", method, path, last.Trace.DBQueries(), last.Trace.RedisRoundTrips())
+	c.T.Fatalf("%s %s did not settle: the last request cost db=%d redis=%d", req.Method, req.Path, last.Trace.DBQueries(), last.Trace.RedisRoundTrips())
 	return nil
 }
 

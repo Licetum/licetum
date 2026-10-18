@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,7 +41,7 @@ func loadSeconds(def int) time.Duration {
 type regionsLoad struct {
 	c       *harness.Cluster
 	tokens  []string
-	path    string
+	ref     string // the service the load asks about
 	want    string
 	weights []int
 	up      []atomic.Bool
@@ -56,21 +55,21 @@ func newRegionsLoad(t *testing.T, weights []int) *regionsLoad {
 		harness.WithConfig(func(cfg *config.Config) { cfg.DB.LagInterval = 500 * time.Millisecond }))
 	p := c.SeedPolicy("org", 0)
 	tokens := everyone(t, c, p, 30)
-	path := "/service/" + p.Slug + "/permission"
-	l := &regionsLoad{c: c, tokens: tokens, path: path, weights: weights, up: make([]atomic.Bool, 3), perReg: make([]atomic.Int64, 3),
+	l := &regionsLoad{c: c, tokens: tokens, ref: p.Slug, weights: weights, up: make([]atomic.Bool, 3), perReg: make([]atomic.Int64, 3),
 		client: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 64}, Timeout: 10 * time.Second}}
 	t.Cleanup(l.client.CloseIdleConnections)
+	var wantIDs []string
 	for i, r := range c.Replicas {
-		r.Warm(c, http.MethodGet, path, tokens[0])
+		r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
 		for _, token := range tokens {
 			res := r.Permission(c, p.Slug, token)
 			if i == 0 && token == tokens[0] {
-				l.want = string(res.Body)
+				l.want, wantIDs = string(res.Body), res.IDs(t)
 			}
 		}
 		l.up[i].Store(true)
 	}
-	if !strings.Contains(l.want, `"read"`) {
+	if len(wantIDs) == 0 {
 		t.Fatalf("the oracle has no access: %s", l.want)
 	}
 	return l
@@ -106,8 +105,11 @@ func (l *regionsLoad) do(i int) (int, error) {
 		return 0, fmt.Errorf("no region is up")
 	}
 	l.perReg[r].Add(1)
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, l.c.Replicas[r].Server.URL+l.path, nil)
-	req.Header.Set("Authorization", "Bearer "+l.tokens[i%len(l.tokens)])
+	token := l.tokens[i%len(l.tokens)]
+	req, err := harness.HTTPRequest(context.Background(), l.c.Replicas[r].Server.URL, harness.Branches(l.ref, token), token)
+	if err != nil {
+		return 0, err
+	}
 	resp, err := l.client.Do(req)
 	if err != nil {
 		return 0, err

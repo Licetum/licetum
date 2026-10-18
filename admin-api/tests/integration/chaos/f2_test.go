@@ -28,7 +28,6 @@ func TestF2_7_ARevisionBumpUnderHotKeysDoesNotExhaustThePool(t *testing.T) {
 		"predicate": []any{map[string]any{"attr": "preferred_username", "op": "regex", "value": "^u[0-9]+$"}},
 	})
 	r := c.Replicas[0]
-	path := "/service/" + p.Slug + "/permission"
 	tokens := make([]string, users)
 	for i := range tokens {
 		tokens[i] = c.UserToken(fmt.Sprintf("u%d", i))
@@ -41,7 +40,7 @@ func TestF2_7_ARevisionBumpUnderHotKeysDoesNotExhaustThePool(t *testing.T) {
 		go func() {
 			defer warm.Done()
 			for token := range next {
-				if status, _, err := r.TryGet(c, path, token, 30*time.Second); err != nil || status != http.StatusOK {
+				if status, _, err := r.Try(c, harness.Branches(p.Slug, token), token, 30*time.Second); err != nil || status != http.StatusOK {
 					t.Errorf("warm request: %d %v", status, err)
 				}
 			}
@@ -97,7 +96,7 @@ func TestF2_7_ARevisionBumpUnderHotKeysDoesNotExhaustThePool(t *testing.T) {
 				defer wg.Done()
 				defer func() { <-slots }()
 				start := time.Now()
-				status, _, err := r.TryGet(c, path, token, 30*time.Second)
+				status, _, err := r.Try(c, harness.Branches(p.Slug, token), token, 30*time.Second)
 				took := time.Since(start)
 				if err != nil || status != http.StatusOK {
 					failures.Add(1)

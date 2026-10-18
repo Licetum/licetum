@@ -6,6 +6,7 @@ package chaos_test
 // queueing everything until its clients time out.
 
 import (
+	"context"
 	"io"
 	"math"
 	"net/http"
@@ -21,12 +22,12 @@ import (
 	"github.com/licetum/licetum/core/config"
 )
 
-// overloadRig sends requests that cost something: a permission request with consistency=higher for a subject no one asked
-// about, which reads the policy from PostgreSQL (the answer cache is skipped), so a replica has a rate it can sustain.
+// overloadRig sends requests that cost something: a fresh permission request for a subject no one asked about, which reads
+// the policy from PostgreSQL (the answer cache is skipped), so a replica has a rate it can sustain.
 type overloadRig struct {
 	c      *harness.Cluster
 	r      *harness.Replica
-	url    string
+	ref    string // the service the requests ask about
 	tokens []string
 	client *http.Client
 	seq    atomic.Int64
@@ -42,12 +43,12 @@ func newOverloadRig(t *testing.T, maxInflight int) *overloadRig {
 	}
 	c := harness.StartReplicas(t, infra, 1, opts...)
 	p := c.SeedPolicy("org", 0)
-	rig := &overloadRig{c: c, r: c.Replicas[0], url: c.Replicas[0].Server.URL + "/service/" + p.Slug + "/permission?consistency=higher"}
+	rig := &overloadRig{c: c, r: c.Replicas[0], ref: p.Slug}
 	rig.tokens = make([]string, 4000)
 	for i := range rig.tokens {
 		rig.tokens[i] = c.UserToken("u" + strconv.Itoa(i))
 	}
-	rig.r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", rig.tokens[0]) // the types are synchronized
+	rig.r.Warm(c, harness.Branches(p.Slug, rig.tokens[0]), rig.tokens[0]) // the types are synchronized
 	rig.client = &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{MaxIdleConns: 8000, MaxIdleConnsPerHost: 8000}}
 	t.Cleanup(rig.client.CloseIdleConnections)
 	return rig
@@ -62,11 +63,11 @@ func (g *overloadRig) reset() {
 
 // do sends one request and sorts the answer: admitted (200), shed (503 overloaded with Retry-After: 1), or anything else.
 func (g *overloadRig) do(int) (int, error) {
-	req, err := http.NewRequest(http.MethodGet, g.url, nil)
+	token := g.tokens[int(g.seq.Add(1))%len(g.tokens)]
+	req, err := harness.HTTPRequest(context.Background(), g.r.Server.URL, harness.Branches(g.ref, token), token, harness.Higher())
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("Authorization", "Bearer "+g.tokens[int(g.seq.Add(1))%len(g.tokens)])
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return 0, err

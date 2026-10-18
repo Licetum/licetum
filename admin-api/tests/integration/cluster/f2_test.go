@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/redisx"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 func ruleBody(p *harness.Policy, subject string, extra map[string]any) map[string]any {
@@ -141,8 +143,8 @@ func TestF2_3_AWriteIsSeenByEveryReplicaThatAsksForItsRevision(t *testing.T) {
 		_ = json.Unmarshal(raw, &created)
 		for _, r := range c.Replicas {
 			res := r.Permission(c, p.Slug, bob)
-			if _, ok := res.JSON(t)["branch"]; !ok {
-				t.Fatalf("iteration %d: replica %d does not see the grant: %s", i, r.Index, res.Body)
+			if !res.Sees() {
+				t.Fatalf("iteration %d: replica %d does not see the grant: %d %s", i, r.Index, res.Status, res.Body)
 			}
 		}
 		// ... and is taken back, with the same promise.
@@ -151,8 +153,8 @@ func TestF2_3_AWriteIsSeenByEveryReplicaThatAsksForItsRevision(t *testing.T) {
 		}
 		for _, r := range c.Replicas {
 			res := r.Permission(c, p.Slug, bob)
-			if _, ok := res.JSON(t)["branch"]; ok {
-				t.Fatalf("iteration %d: replica %d still honours the revoked rule: %s", i, r.Index, res.Body)
+			if res.Status != http.StatusOK || res.Sees() { // a failure is no revocation
+				t.Fatalf("iteration %d: replica %d still honours the revoked rule: %d %s", i, r.Index, res.Status, res.Body)
 			}
 		}
 	}
@@ -165,7 +167,8 @@ func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) 
 	p := c.SeedPolicy("org", 0)
 	r := c.Replicas[0]
 	carol := c.UserToken("carol")
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", c.UserToken("alice"))
+	alice := c.UserToken("alice")
+	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 
 	keys := func() []string {
 		got, err := c.Redis.Keys(context.Background(), "authz:permission:*").Result()
@@ -178,7 +181,7 @@ func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) 
 	before := keys()
 	ahead := c.Revision() + 1000
 	started := time.Now()
-	res := r.Do(c, http.MethodGet, fmt.Sprintf("/service/%s/permission?at_least_as_fresh=%d", p.Slug, ahead), carol, nil)
+	res := r.Send(c, harness.Branches(p.Slug, carol, authzenreq.AtLeast(ahead)), carol)
 	if res.Status != http.StatusOK {
 		t.Fatalf("a revision from the future: %d %s", res.Status, res.Body)
 	}
@@ -194,7 +197,7 @@ func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) 
 	}
 	// The same request without the claim of freshness is kept, so the check above can fail.
 	r.Permission(c, p.Slug, carol)
-	r.Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", carol, nil)
+	r.Send(c, harness.Branches(p.Slug, carol), carol)
 	time.Sleep(300 * time.Millisecond)
 	found := false
 	for _, key := range keys() {
@@ -211,7 +214,7 @@ func TestF2_5_ARevocationReachesEveryReplicaWithinASecond(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	alice := c.UserToken("alice")
 	for _, r := range c.Replicas {
-		r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+		r.Warm(c, harness.Branches(p.Slug, alice), alice)
 	}
 	c.Must(http.MethodPost, "/assignment_rule", ruleBody(p, "alice", map[string]any{"effect": "deny"}))
 	wrote := time.Now()
@@ -223,9 +226,8 @@ func TestF2_5_ARevocationReachesEveryReplicaWithinASecond(t *testing.T) {
 			defer wg.Done()
 			// A plain request, with no at_least_as_fresh: the replicas must find the revision by themselves.
 			took, ok := waitFor(3*time.Second, func() bool {
-				res := r.Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice, nil)
-				_, granted := res.JSON(t)["branch"]
-				return res.Status == http.StatusOK && !granted
+				res := r.Send(c, harness.Branches(p.Slug, alice), alice)
+				return res.Status == http.StatusOK && !res.Sees()
 			})
 			if !ok {
 				t.Errorf("replica %d still grants after %v", r.Index, took)
@@ -245,7 +247,7 @@ func TestF2_6_ASynchronizationOfOneServiceLeavesTheAnswersOfAnotherInPlace(t *te
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
 	for _, p := range []*harness.Policy{a, b} {
-		r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+		r.Warm(c, harness.Branches(p.Slug, alice), alice)
 	}
 	waitForKeys(t, c, "authz:permission:*")
 
@@ -272,7 +274,7 @@ func TestF2_6_ASynchronizationOfOneServiceLeavesTheAnswersOfAnotherInPlace(t *te
 		// The replica reads the new revision of alpha's data within a poll interval, and alpha's answer follows it.
 		if took, ok := waitFor(3*time.Second, func() bool {
 			res := r.Permission(c, a.Slug, alice)
-			return res.Status == http.StatusOK && strings.Contains(string(res.Body), `"`+fresh+`"`)
+			return res.Status == http.StatusOK && slices.Contains(res.IDs(t), fresh)
 		}); !ok {
 			t.Fatalf("synchronization %d: alpha's answer did not show the new branch after %v", i, took)
 		}
@@ -307,7 +309,7 @@ func TestF2_8_FlushingRedisWhileServingChangesNoAnswer(t *testing.T) {
 	alice := c.UserToken("alice")
 	want := map[int]string{}
 	for _, r := range c.Replicas {
-		res := r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+		res := r.Warm(c, harness.Branches(p.Slug, alice), alice)
 		want[r.Index] = string(res.Body)
 	}
 
@@ -324,7 +326,7 @@ func TestF2_8_FlushingRedisWhileServingChangesNoAnswer(t *testing.T) {
 					return
 				default:
 				}
-				status, body, err := r.TryGet(c, "/service/"+p.Slug+"/permission", alice, 10*time.Second)
+				status, body, err := r.Try(c, harness.Branches(p.Slug, alice), alice, 10*time.Second)
 				if err != nil || status != http.StatusOK || string(body) != want[r.Index] {
 					t.Errorf("replica %d: status %d, %v, body %s (want %s)", r.Index, status, err, body, want[r.Index])
 					return
@@ -377,7 +379,8 @@ func TestF2_9_APreviousReleaseCanStillFollowTheWrites(t *testing.T) {
 	}
 	// And the keys of the answers carry the new format, so the two releases do not read each other's.
 	r := c.Replicas[0]
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", c.UserToken("alice"))
+	alice := c.UserToken("alice")
+	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 	waitForKeys(t, c, "authz:permission:t9:r*")
 	if old, _ := c.Redis.Keys(ctx, "authz:permission:t8:*").Result(); len(old) != 0 {
 		t.Fatalf("this release wrote keys of the format of the previous one: %v", old)

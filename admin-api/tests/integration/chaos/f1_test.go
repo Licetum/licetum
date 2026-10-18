@@ -61,8 +61,8 @@ func TestF1_4_AWarmRequestIgnoresTheLatencyOfPostgreSQLAndRedis(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.PostgresFault.Latency(delay, 0)
 	c.RedisFault.Latency(delay, 0)
-	path := "/service/" + p.Slug + "/permission"
-	if res := r.Do(c, http.MethodGet, path, alice, nil); res.Status != http.StatusOK {
+	asked := harness.Branches(p.Slug, alice)
+	if res := r.Send(c, asked, alice); res.Status != http.StatusOK {
 		t.Fatalf("warm request: %d %s", res.Status, res.Body)
 	}
 
@@ -72,7 +72,7 @@ func TestF1_4_AWarmRequestIgnoresTheLatencyOfPostgreSQLAndRedis(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		start := time.Now()
-		status, _, err := r.TryGet(c, path, alice, 5*time.Second)
+		status, _, err := r.Try(c, asked, alice, 5*time.Second)
 		took := time.Since(start)
 		if err != nil || status != http.StatusOK {
 			t.Fatalf("status %d, %v", status, err)
@@ -93,7 +93,7 @@ func hotSetup(t *testing.T, users int) (*harness.Cluster, *harness.Replica, *har
 	p := c.SeedPolicy("org", 0)
 	tokens := everyone(t, c, p, users)
 	r := c.Replicas[0]
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", tokens[0])
+	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
 	return c, r, p, tokens
 }
 
@@ -101,14 +101,13 @@ func hotSetup(t *testing.T, users int) (*harness.Cluster, *harness.Replica, *har
 // answer is right.
 func TestF1_10_ASkippedRedisAddsNoMoreThanItsTimeoutToARequest(t *testing.T) {
 	c, r, p, tokens := hotSetup(t, 70)
-	path := "/service/" + p.Slug + "/permission"
 
 	// What a request for a subject nobody asked for yet costs while Redis is healthy, and what it answers.
 	base := time.Duration(0)
 	var want string
 	for i, token := range tokens[:10] {
 		start := time.Now()
-		res := r.Do(c, http.MethodGet, path, token, nil)
+		res := r.Send(c, harness.Branches(p.Slug, token), token)
 		took := time.Since(start)
 		if res.Status != http.StatusOK {
 			t.Fatalf("healthy: %d %s", res.Status, res.Body)
@@ -128,7 +127,7 @@ func TestF1_10_ASkippedRedisAddsNoMoreThanItsTimeoutToARequest(t *testing.T) {
 		if time.Now().After(deadline) || next >= 30 {
 			t.Fatal("Redis was never skipped")
 		}
-		r.TryGet(c, path, tokens[next], 5*time.Second)
+		_, _, _ = r.Try(c, harness.Branches(p.Slug, tokens[next]), tokens[next], 5*time.Second)
 		next++
 	}
 	tokens = tokens[30:]
@@ -136,7 +135,7 @@ func TestF1_10_ASkippedRedisAddsNoMoreThanItsTimeoutToARequest(t *testing.T) {
 	var worst time.Duration
 	for _, token := range tokens {
 		start := time.Now()
-		status, body, err := r.TryGet(c, path, token, 5*time.Second)
+		status, body, err := r.Try(c, harness.Branches(p.Slug, token), token, 5*time.Second)
 		took := time.Since(start)
 		if err != nil || status != http.StatusOK {
 			t.Fatalf("with Redis skipped: status %d, %v", status, err)
@@ -162,9 +161,8 @@ func TestF1_9_ASlowRedisDoesNotAccumulateWorkUnderLoad(t *testing.T) {
 		users    = 30
 	)
 	c, r, p, tokens := hotSetup(t, users)
-	path := "/service/" + p.Slug + "/permission"
 	for _, token := range tokens { // the tokens and the answers are cached when the fault begins
-		if res := r.Do(c, http.MethodGet, path, token, nil); res.Status != http.StatusOK {
+		if res := r.Send(c, harness.Branches(p.Slug, token), token); res.Status != http.StatusOK {
 			t.Fatalf("warm request: %d %s", res.Status, res.Body)
 		}
 	}
@@ -215,7 +213,7 @@ load:
 				defer wg.Done()
 				defer func() { <-slots }()
 				start := time.Now()
-				status, _, err := r.TryGet(c, path, token, 5*time.Second)
+				status, _, err := r.Try(c, harness.Branches(p.Slug, token), token, 5*time.Second)
 				took := time.Since(start)
 				if err != nil || status != http.StatusOK {
 					failures.Add(1)
