@@ -5,29 +5,38 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestParseMix(t *testing.T) {
-	m, err := ParseMix("permission=2, check1=3")
+	m, err := ParseMix("search_resource=2, evaluation=3")
 	if err != nil {
 		t.Fatalf("ParseMix: %v", err)
 	}
-	if m[opPermission] != 2 || m[opCheck1] != 3 || m[opAuthzen] != 0 {
+	if m[opSearchResource] != 2 || m[opEvaluation] != 3 || m[opEvaluations10] != 0 {
 		t.Fatalf("weights = %v", m)
 	}
-	if got := m.String(); got != "permission=2,check1=3" {
+	if got := m.String(); got != "search_resource=2,evaluation=3" {
 		t.Fatalf("String = %q", got)
 	}
-	for _, bad := range []string{"nope=1", "check", "check1=x", "check1=-1", "check1=0"} {
+	for _, bad := range []string{"nope=1", "evaluation", "evaluation=x", "evaluation=-1", "evaluation=0",
+		// The requests of the check API the traffic sent before it moved to AuthZEN are gone.
+		"permission=1", "check1=1", "authzen=1", "on_behalf=1"} {
 		if _, err := ParseMix(bad); err == nil {
 			t.Errorf("ParseMix(%q) accepted", bad)
 		}
 	}
-	if _, err := ParseMix(DefaultMix); err != nil {
+	def, err := ParseMix(DefaultMix)
+	if err != nil {
 		t.Fatalf("the default mix does not parse: %v", err)
+	}
+	if def[opSearchResource] != 2 || def[opEvaluation] != 5 || def[opEvaluations10] != 2 || def[opEvaluationProperties] != 1 {
+		t.Errorf("the default mix = %v, want the shares of the traffic the budgets were measured with", def)
 	}
 }
 
@@ -37,15 +46,44 @@ func TestCountDecisions(t *testing.T) {
 		body             string
 		decisions, allow int
 	}{
-		{"check", `{"results":[{"allowed":true},{"allowed":false}]}`, 2, 1},
-		{"authzen", `{"decision":true}`, 1, 1},
-		{"authzen batch", `{"evaluations":[{"decision":false},{"decision":true},{"decision":true}]}`, 3, 2},
-		{"permission has no answers", `{"branch":{"type":"sync","resources":[{"id":"b1","access":["read"]}]}}`, 0, 0},
+		{"evaluation", `{"decision":true}`, 1, 1},
+		{"evaluations", `{"evaluations":[{"decision":false},{"decision":true},{"decision":true}]}`, 3, 2},
+		{"search has no decisions", `{"results":[{"type":"document","id":"d-1","properties":{"name":"Document 1"}}],"page":{"count":1}}`, 0, 0},
 	}
 	for _, c := range cases {
 		d, a := countDecisions([]byte(c.body))
 		if d != c.decisions || a != c.allow {
 			t.Errorf("%s: got %d decisions, %d allowed; want %d, %d", c.name, d, a, c.decisions, c.allow)
+		}
+	}
+}
+
+// TestK6ScriptNamesTheRequestsOfTheMix keeps the script and the harness together: the harness reads the metrics of the
+// requests by the names of opNames, so the script must list the same names in the same order, and its own default mix
+// (used when it is run by hand) must be the default mix of the harness.
+func TestK6ScriptNamesTheRequestsOfTheMix(t *testing.T) {
+	script := string(k6Script)
+	list := regexp.MustCompile(`(?m)^const ops = \[(.*)\];$`).FindStringSubmatch(script)
+	if list == nil {
+		t.Fatal("the script has no `const ops = [...]` line")
+	}
+	var names []string
+	for _, quoted := range strings.Split(list[1], ",") {
+		names = append(names, strings.Trim(strings.TrimSpace(quoted), "'"))
+	}
+	if !slices.Equal(names, opNames[:]) {
+		t.Errorf("the script lists the requests %v, the harness %v", names, opNames)
+	}
+	fallback := regexp.MustCompile(`__ENV\.MIX \|\| '([^']*)'`).FindStringSubmatch(script)
+	if fallback == nil {
+		t.Fatal("the script has no default mix")
+	}
+	if fallback[1] != DefaultMix {
+		t.Errorf("the script's default mix is %q, the harness's %q", fallback[1], DefaultMix)
+	}
+	for _, name := range opNames {
+		if !strings.Contains(script, "case '"+name+"':") {
+			t.Errorf("the script does not send the request %s", name)
 		}
 	}
 }
@@ -270,7 +308,7 @@ func TestRuleMix(t *testing.T) {
 
 // TestMeasurementJSON checks that a window survives the round trip to result.json, with its samples.
 func TestMeasurementJSON(t *testing.T) {
-	m := Measurement{RateAsked: 10, Operations: []Operation{{Name: "check1", Requests: 5, Latency: Latency{Samples: 5, P50: 2}}}}
+	m := Measurement{RateAsked: 10, Operations: []Operation{{Name: "evaluation", Requests: 5, Latency: Latency{Samples: 5, P50: 2}}}}
 	raw, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
@@ -281,5 +319,45 @@ func TestMeasurementJSON(t *testing.T) {
 	}
 	if back.Operations[0].Latency.Samples != 5 || math.Abs(back.Operations[0].Latency.P50-2) > 1e-9 {
 		t.Fatalf("round trip lost the samples: %+v", back)
+	}
+}
+
+// TestAggregateReadsTheRequestsByName checks that a run is read back under the names of the requests it was written
+// with: a run of an earlier mix lists other requests, and fewer or more of them, than this version sends.
+func TestAggregateReadsTheRequestsByName(t *testing.T) {
+	dir := t.TempDir()
+	var runs []string
+	for _, seed := range []int64{1, 2} {
+		rep := Report{
+			Profile:  profiles["smoke"],
+			Settings: Settings{Mode: "warm", Seed: seed, Mix: "earlier=1", Rate: 10},
+			Measurements: []Measurement{{
+				Valid: true,
+				Operations: []Operation{
+					{Name: "earlier", Requests: 20000, Latency: Latency{Samples: 20000, P50: 2, P90: 3, P95: 4, P99: 5, P999: 6}},
+					{Name: "unused"},
+				},
+			}},
+		}
+		run := filepath.Join(dir, "run-"+string(rune('0'+seed)))
+		if err := os.MkdirAll(run, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSON(filepath.Join(run, "result.json"), rep); err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, run)
+	}
+	out, err := AggregateReport(runs)
+	if err != nil {
+		t.Fatalf("AggregateReport: %v", err)
+	}
+	if !strings.Contains(out, "| earlier | 20000–20000 |") {
+		t.Errorf("the request of the earlier mix is not in the table:\n%s", out)
+	}
+	for _, name := range opNames {
+		if strings.Contains(out, "| "+name+" |") {
+			t.Errorf("%s is in the table, but the runs did not send it", name)
+		}
 	}
 }

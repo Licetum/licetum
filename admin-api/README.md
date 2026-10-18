@@ -138,9 +138,12 @@ k6 must be on the `PATH` (or pass `-k6-bin`); CI installs the version the workfl
 
 What a step measures:
 
-- **k6** sends the requests of the mix (`permission`, `check`, AuthZEN `evaluation` and `evaluations`, `on_behalf`) at the
-  rate of the step. The arrivals are an open model: a slow server does not lower the rate, it shows as late answers and
-  as `dropped` arrivals, which are the sign that a step is saturated.
+- **k6** sends the requests of the mix at the rate of the step. They are the AuthZEN API: `search_resource` (a page of
+  the documents a person may read), `evaluation`, `evaluations10` and `evaluations100` (one, ten and a hundred questions
+  about a person), and `evaluation_properties` (a question about another person, asked with the token of a client
+  application the service trusts, which brings the person's claims). The mix is set with `-mix name=weight,...`. The arrivals
+  are an open model: a slow server does not lower the rate, it shows as late answers and as `dropped` arrivals, which are
+  the sign that a step is saturated.
 - **The server** is read at the edges of each step: its CPU (from `/proc`), its cache hits and the time it spent per
   request (from `/metrics`), and the database: its blocks read, and when the server preloads `pg_stat_statements`, the
   time of its statements and the most expensive ones during the ramp.

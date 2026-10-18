@@ -44,10 +44,10 @@ type Options struct {
 	CheckBin      string        // the licetum binary that serves the check API
 	K6Bin         string        // the k6 binary that sends the traffic
 	OutDir        string        // where the results, the environment, the time series and the k6 logs are written
-	Mode          string        // warm (the caches answer), cold (every request is computed) or mix (a skewed traffic)
+	Mode          string        // warm (the caches answer), cold (the evaluations ask what none asked before; a search repeats per subject) or mix (a skewed traffic)
 	Seed          int64         // the seed of the choices of the traffic and of the oracle
 	Mix           Mix           // the share of each request
-	Consistency   string        // minimize_latency (caches allowed); the cold mode asks with higher
+	Consistency   string        // minimize_latency (caches allowed) or higher (every request is computed); the cold traffic sends none
 	Rate          float64       // arrivals per second of a fixed-rate run
 	Ramp          bool          // ramp the rate instead: start at RateStart, multiply by RateFactor, up to MaxSteps
 	RateStart     float64       // the first rate of a ramp
@@ -107,6 +107,16 @@ func DefaultOptions() Options {
 	}
 }
 
+// workloadOf names what the traffic of a mode asks, for Settings.Workload. The cold mode sends no consistency query, and its
+// evaluations ask questions no earlier request of the run asked (a search repeats per subject). The cold runs before that
+// asked every request with consistency=higher, carry no name, and so are never compared with these.
+func workloadOf(mode string) string {
+	if mode == "cold" {
+		return "cold-unrepeated-evaluations"
+	}
+	return ""
+}
+
 func (o Options) validate() error {
 	if err := o.Profile.validate(); err != nil {
 		return err
@@ -164,6 +174,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			Seed:           opts.Seed,
 			Mix:            opts.Mix.String(),
 			Consistency:    opts.Consistency,
+			Workload:       workloadOf(opts.Mode),
 			Concurrency:    opts.Concurrency,
 			DBPool:         opts.DBPool,
 			AccessLog:      opts.AccessLog,
@@ -268,7 +279,9 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		client:      newClient(1, warmUpTimeout),
 		tokens:      tokens,
 		backend:     backend,
+		profile:     opts.Profile,
 		consistency: opts.Consistency,
+		retry:       synchronizeRetry,
 	}
 	rep.WarmUp, err = warm.warmUp(ctx)
 	if err != nil {
@@ -662,9 +675,10 @@ func newClient(concurrency int, timeout time.Duration) *http.Client {
 
 // preallocated is how many virtual users k6 starts before a window: the rate itself, at least 50, and never more than the
 // most it may use. A virtual user that is started during the window initializes while an arrival waits for it, and an
-// arrival that waits too long is dropped, which makes the window invalid. In the cold mode a request waits for a fresh
-// job of the worker (seconds, by design), so the requests in flight are the rate times that wait, many more than the rate:
-// every virtual user it may use is started before the window.
+// arrival that waits too long is dropped, which makes the window invalid. The cold budgets were measured while a request
+// waited for a fresh job of the worker (seconds, by design), so the requests in flight were the rate times that wait, many
+// more than the rate; a cold request that waits for a due synchronization still can, so every virtual user it may use is
+// started before the window.
 func preallocated(rate, maxVUs int, mode string) int {
 	if mode == "cold" {
 		return maxVUs
