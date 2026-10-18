@@ -825,7 +825,7 @@ contracts:
     oracle: the catalogs
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: API03
     statement: Input bounds are enforced (sizes, counts, names).
     oracle: status codes

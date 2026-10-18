@@ -267,8 +267,8 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   became a group: its keys keep their legacy `role_*` values (`GroupNotFound` = `role_not_found`, …). The new
   roles use `role_definition_*` values. Russian texts keep the legacy Python wording.
 - API docs: write summaries/descriptions/`doc` tags in English, then add the same string with its
-  translation to `internal/api/locales/ru.json` and `zh.json`. `TestDocsTranslationsComplete` and
-  `TestCatalogComplete` fail on anything missing or unused.
+  translation to `internal/api/locales/ru.json` and `zh.json`. `TestContract_API02_DocsTranslationsComplete` and
+  `TestContract_API02_CatalogComplete` fail on anything missing or unused.
 
 ### Domain model
 
