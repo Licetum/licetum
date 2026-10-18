@@ -93,7 +93,9 @@ type checkInputs struct {
 }
 
 // decideChecks answers the questions of one request. The resources they name, their ancestors and their unresolved
-// parent links are read in a fixed number of queries, not once per question.
+// parent links are read in a fixed number of queries, not once per question. A resource of a type without resources (no
+// live synchronizer, see Prepared.sourced) is not looked up: the question about it is resource_not_found, as about any
+// resource the local copy does not have, though a deleted synchronizer may have left its row there.
 func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID, requests []model.CheckRequest, explain bool) ([]model.CheckResult, error) {
 	typeIDs := make([]uuid.UUID, len(requests))
 	found := make([]bool, len(requests))
@@ -105,8 +107,8 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 			continue
 		}
 		typeIDs[i], found[i] = id, true
-		askedTypes[id] = true
-		if r.ResourceID != nil {
+		if r.ResourceID != nil && p.hasResources(id) {
+			askedTypes[id] = true
 			refs = append(refs, anchorRef{Type: id, Ext: *r.ResourceID})
 		}
 	}
@@ -119,7 +121,7 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 		return err
 	})
 	eg.Go(func() (err error) {
-		unresolved, err = a.UnresolvedParents(ectx, Keys(askedTypes))
+		unresolved, err = a.UnresolvedParents(ectx, p.Graph, Keys(askedTypes))
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -142,7 +144,8 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 	return out, nil
 }
 
-// answerCheck answers one question. A question about a type that does not exist is type_not_found.
+// answerCheck answers one question. A question about a type that does not exist is type_not_found, and one about a resource
+// that is not there (in.rows has no row for it) is resource_not_found.
 func (p *Prepared) answerCheck(in *checkInputs, typeID uuid.UUID, found bool, r model.CheckRequest, explain bool) model.CheckResult {
 	answer := func(decision string, allowed bool, lv *levelVerdict) model.CheckResult {
 		res := model.CheckResult{Allowed: allowed}

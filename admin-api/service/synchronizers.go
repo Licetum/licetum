@@ -15,19 +15,12 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// liveSynchronizerExists is the single SQL definition of a type's mode: a type with a live (not
-// deleted) synchronizer is sync, otherwise it is not_sync. typeIDExpr is the SQL expression of the
-// type id being checked.
-func liveSynchronizerExists(typeIDExpr string) string {
-	return `EXISTS (SELECT 1 FROM synchronizer s WHERE s.type_resource_id = ` + typeIDExpr + ` AND s.deleted_at IS NULL)`
-}
-
 // hasSynchronizer reports whether the type has a live synchronizer. The type's mode depends on it:
 // with one it is sync (the type has resources), without one it is not_sync (access to the type as a
 // whole, a "capability").
 func (a *App) hasSynchronizer(ctx context.Context, q db.Querier, typeResourceID uuid.UUID) (bool, error) {
 	var ok bool
-	err := q.QueryRow(ctx, `SELECT `+liveSynchronizerExists("$1"), typeResourceID).Scan(&ok)
+	err := q.QueryRow(ctx, `SELECT `+engine.LiveSynchronizerExists("$1"), typeResourceID).Scan(&ok)
 	return ok, err
 }
 

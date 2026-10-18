@@ -51,6 +51,7 @@ type walkResource struct {
 }
 
 type walkFixture struct {
+	pool  *pgxpool.Pool
 	app   *engine.App
 	graph *engine.TypeGraph
 	types map[string]uuid.UUID
@@ -95,13 +96,15 @@ func newWalkFixture(tb testing.TB) *walkFixture {
 		tb.Fatal(err)
 	}
 
-	fx := &walkFixture{app: engine.New(pool, nil, &config.Config{}), types: map[string]uuid.UUID{}}
+	fx := &walkFixture{pool: pool, app: engine.New(pool, nil, &config.Config{}), types: map[string]uuid.UUID{}}
 	service := uuid.New()
 	mustExec(tb, pool, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'walk', '', '', 'walk')`, service)
 	for _, t := range walkTypes {
 		id := uuid.New()
 		fx.types[t.name] = id
 		mustExec(tb, pool, `INSERT INTO type_resource (id, service_id, name) VALUES ($1, $2, $3)`, id, service, t.name)
+		// The rows are written below, as a synchronization leaves them: a type has resources while it has a live synchronizer.
+		mustExec(tb, pool, `INSERT INTO synchronizer (type_resource_id, kind, config) VALUES ($1, 'SQL', '{}')`, id)
 		for _, p := range t.parents {
 			mustExec(tb, pool, `INSERT INTO type_resource_parent (type_resource_id, parent_id) VALUES ($1, $2)`, id, fx.types[p])
 		}
@@ -280,6 +283,49 @@ func TestFromClaimAnchorsOnADeepHierarchy(t *testing.T) {
 }
 
 func first(s []string) []string { return s[:min(len(s), 5)] }
+
+// A type without a live synchronizer has no resources, whatever rows its deleted synchronizer left in the local copy: the
+// lookup does not match among them, the climb does not pass through them and a rule does not anchor at them. The
+// anchors come back with the synchronizer.
+func TestFromClaimIgnoresTheRowsOfATypeWithoutASynchronizer(t *testing.T) {
+	fx := newWalkFixture(t)
+	ctx := context.Background()
+	rules, env := fx.rules(walkScenarios)
+	cases := []struct {
+		dropped string
+		// none are the scenarios that find nothing: the lookup type or the target is the dropped one, or the climb passes it.
+		none []string
+	}{
+		{"branch", []string{"document to branch", "document to division", "one document to region by name", "one project to branch by id"}},
+		{"project", []string{"project owner pattern", "document to project", "document to branch", "document to division",
+			"one document to region by name", "one project to branch by id"}},
+	}
+	check := func(label string, none []string) {
+		t.Helper()
+		var err error
+		if fx.graph, err = fx.app.LoadTypeGraph(ctx); err != nil {
+			t.Fatal(err)
+		}
+		got := fx.anchors(t, rules, env)
+		for i, s := range walkScenarios {
+			want := fx.expected(s)
+			if slices.Contains(none, s.name) {
+				want = nil
+			}
+			have := got[rules[i].ID]
+			slices.Sort(have)
+			if !slices.Equal(have, want) {
+				t.Errorf("%s, %s: %d anchors %v, want %d %v", label, s.name, len(have), first(have), len(want), first(want))
+			}
+		}
+	}
+	for _, c := range cases {
+		mustExec(t, fx.pool, `UPDATE synchronizer SET deleted_at = now() WHERE type_resource_id = $1`, fx.types[c.dropped])
+		check(c.dropped+" without a synchronizer", c.none)
+		mustExec(t, fx.pool, `UPDATE synchronizer SET deleted_at = NULL WHERE type_resource_id = $1`, fx.types[c.dropped])
+		check(c.dropped+" with a synchronizer again", nil)
+	}
+}
 
 // BenchmarkFromClaimWalk measures the lookups of the scenarios one by one, and all of them as one request (one query per
 // kind of match).

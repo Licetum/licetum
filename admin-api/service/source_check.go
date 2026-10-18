@@ -105,7 +105,9 @@ func (a *App) TestSource(ctx context.Context, serviceID, typeResourceID uuid.UUI
 }
 
 // findOrphans records the parent links that point at nothing known: not in this answer (for a parent of the same type)
-// and not in the cache of the parent type.
+// and not in the cache of the parent type. A parent type without a live synchronizer has no resources whatever rows its
+// deleted synchronizer left in the cache (TypeGraph.IsSync): the links to it are orphans too. The type being tested is
+// not asked about: it has the synchronizer being tried by the time its resources are in the cache.
 func (a *App) findOrphans(ctx context.Context, g *engine.TypeGraph, typeID uuid.UUID, incoming []engine.IncomingResource, inAnswer map[string]int, res *model.SourceTestResult) error {
 	type link struct {
 		child  string
@@ -156,7 +158,7 @@ func (a *App) findOrphans(ctx context.Context, g *engine.TypeGraph, typeID uuid.
 	}
 	counted := map[string]bool{}
 	for _, l := range links {
-		if known[l.parent] {
+		if known[l.parent] && (l.parent.ParentType == typeID || g.IsSync(l.parent.ParentType)) {
 			continue
 		}
 		if !counted[l.child] {

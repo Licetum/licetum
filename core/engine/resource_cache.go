@@ -502,6 +502,11 @@ func syncEdges(ctx context.Context, tx pgx.Tx, typeID uuid.UUID, incoming []Inco
 // several routes gets the union of the routes' levels, NULL (all levels) if any route passes all.
 // Only live resources and live type links count. Routes are deduplicated by UNION, which also makes
 // a cycle in the data terminate.
+//
+// A route does not lead through a resource of a type without a live synchronizer (parameter 2,
+// TypeGraph.withoutResources): such a type has no resources, so the link to the row its deleted
+// synchronizer left is a link to a parent that is not there (UnresolvedParents reports it). The rows
+// of such a type keep their own ancestors, ready for the day the type has a synchronizer again.
 const rebuildClosureSQL = `
 	WITH RECURSIVE up(d, a, mask) AS (
 		SELECT x.id, x.id, NULL::varchar[]
@@ -513,7 +518,7 @@ const rebuildClosureSQL = `
 		FROM up
 		JOIN resource_cache cur ON cur.id = up.a
 		JOIN resource_edge e ON e.child_id = cur.id AND e.parent_id IS NOT NULL
-		JOIN resource_cache par ON par.id = e.parent_id AND par.active
+		JOIN resource_cache par ON par.id = e.parent_id AND par.active AND par.type_resource_id <> ALL ($2::uuid[])
 		JOIN type_resource pt ON pt.id = par.type_resource_id AND pt.deleted_at IS NULL
 		JOIN type_resource_parent trp
 		    ON trp.type_resource_id = cur.type_resource_id AND trp.parent_id = e.parent_type_id
@@ -543,8 +548,9 @@ const rebuildClosureSQL = `
 
 // rebuildClosure recomputes the ancestors of the touched resources and of everything below them.
 // The rows of the affected descendants are replaced as a whole; rows ordered by ancestor keep the
-// descendants of one anchor next to each other on disk.
-func rebuildClosure(ctx context.Context, tx pgx.Tx, touched map[uuid.UUID]struct{}) error {
+// descendants of one anchor next to each other on disk. g says which types have resources: it is the
+// type graph the structure of the synchronized types is recorded with (structureOf).
+func rebuildClosure(ctx context.Context, tx pgx.Tx, g *TypeGraph, touched map[uuid.UUID]struct{}) error {
 	if len(touched) == 0 {
 		return nil
 	}
@@ -582,7 +588,7 @@ func rebuildClosure(ctx context.Context, tx pgx.Tx, touched map[uuid.UUID]struct
 	if _, err := tx.Exec(ctx, `DELETE FROM resource_ancestor WHERE descendant_id = ANY($1)`, ids); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, rebuildClosureSQL, ids)
+	_, err = tx.Exec(ctx, rebuildClosureSQL, ids, g.withoutResources())
 	return err
 }
 
@@ -594,7 +600,8 @@ type anchorRef struct {
 	Ext  string
 }
 
-// anchorRowIDs resolves resources (type, external id) to their active cache rows.
+// anchorRowIDs resolves resources (type, external id) to their active cache rows. The callers ask only for resources of
+// types that have resources (TypeGraph.IsSync): the rows a deleted synchronizer left are not resources to decide.
 func (a *App) anchorRowIDs(ctx context.Context, refs []anchorRef) (map[anchorRef]uuid.UUID, error) {
 	out := map[anchorRef]uuid.UUID{}
 	if len(refs) == 0 {
@@ -905,18 +912,38 @@ type UnresolvedLink struct {
 // so denials fail closed for them — a resource below an ancestor whose parent is missing may lie under any denial that
 // could cover that parent, as much as one whose own parent is missing. The query starts from the unresolved edges
 // (a partial index) and walks down the closure, whose row of a resource for itself carries the link of its own edges.
-func (a *App) UnresolvedParents(ctx context.Context, typeIDs []uuid.UUID) (map[uuid.UUID][]UnresolvedLink, error) {
+//
+// A link to a row of a type above that lost its synchronizer (g says which) is unresolved too, though the edge points at
+// the row: that type has no resources, so the parent is not there (the closure does not lead through it either, see
+// rebuildClosureSQL). Those links are read apart, from the rows of such types, so that the usual query keeps its plan.
+func (a *App) UnresolvedParents(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID) (map[uuid.UUID][]UnresolvedLink, error) {
 	out := map[uuid.UUID][]UnresolvedLink{}
 	if len(typeIDs) == 0 {
 		return out, nil
 	}
+	links, args := `SELECT child_id, parent_type_id FROM resource_edge WHERE parent_id IS NULL`, []any{typeIDs}
+	// A type that never had a synchronizer has no rows: the links to it are never resolved in the first place.
+	var left []uuid.UUID
+	if len(g.sourceLost) > 0 {
+		above := g.AncestorTypes(typeIDs...)
+		for _, id := range g.sourceLost {
+			if above[id] {
+				left = append(left, id)
+			}
+		}
+	}
+	if len(left) > 0 {
+		links += ` UNION ALL SELECT e.child_id, e.parent_type_id FROM resource_edge e JOIN resource_cache p ON p.id = e.parent_id
+			WHERE p.type_resource_id = ANY($2)`
+		args = append(args, left)
+	}
 	rows, err := a.reader(ctx).Query(ctx, `
 		SELECT anc.descendant_id, x.type_resource_id, e.parent_type_id, anc.inherit
-		FROM resource_edge e
+		FROM (`+links+`) e
 		JOIN resource_cache x ON x.id = e.child_id AND x.active
 		JOIN resource_ancestor anc ON anc.ancestor_id = e.child_id
 		JOIN resource_cache d ON d.id = anc.descendant_id AND d.active
-		WHERE e.parent_id IS NULL AND anc.descendant_type_id = ANY($1)`, typeIDs)
+		WHERE anc.descendant_type_id = ANY($1)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -978,7 +1005,9 @@ func parentLabels(g *TypeGraph, typeID uuid.UUID) map[uuid.UUID]string {
 	return out
 }
 
-// resourceParents reads the declared parents of the given resource rows.
+// resourceParents reads the declared parents of the given resource rows. A link to a parent of a type without a live
+// synchronizer is not resolved, though the edge points at the row its deleted synchronizer left: that type has no
+// resources (TypeGraph.IsSync), as the decisions read it (UnresolvedParents).
 func (a *App) resourceParents(ctx context.Context, g *TypeGraph, typeID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]model.ResourceParent, error) {
 	out := map[uuid.UUID][]model.ResourceParent{}
 	if len(ids) == 0 {
@@ -999,6 +1028,7 @@ func (a *App) resourceParents(ctx context.Context, g *TypeGraph, typeID uuid.UUI
 		if err := rows.Scan(&child, &parentType, &ext, &resolved); err != nil {
 			return nil, err
 		}
+		resolved = resolved && g.IsSync(parentType)
 		label, ok := labels[parentType]
 		if !ok {
 			if n, found := g.Node(parentType); found {
@@ -1012,7 +1042,12 @@ func (a *App) resourceParents(ctx context.Context, g *TypeGraph, typeID uuid.UUI
 	return out, rows.Err()
 }
 
+// CacheLookup reads one resource of a type from the local copy: nil when the type has no such active resource, and nil
+// for any resource of a type without a live synchronizer, which has none (see TypeGraph.IsSync).
 func (a *App) CacheLookup(ctx context.Context, g *TypeGraph, typeResourceID uuid.UUID, externalID string) (*cachedResource, error) {
+	if !g.IsSync(typeResourceID) {
+		return nil, nil
+	}
 	var r cachedResource
 	err := a.reader(ctx).QueryRow(ctx,
 		`SELECT id, external_id, name, meta FROM resource_cache
@@ -1076,7 +1111,7 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 				if err := applyType(ctx, tx, typeResourceID, normalized, false, true, touched, &changed); err != nil {
 					return err
 				}
-				if err := rebuildClosure(ctx, tx, touched); err != nil {
+				if err := rebuildClosure(ctx, tx, g, touched); err != nil {
 					return err
 				}
 				if changed {
@@ -1110,11 +1145,14 @@ func (a *App) GetResource(ctx context.Context, typeResourceID uuid.UUID, externa
 }
 
 // IsCovered: a grant on grantedID covers the resource if it is that resource or one of its
-// ancestors (of any type) in the hierarchy.
+// ancestors (of any type) in the hierarchy. Neither is there when its type has no live synchronizer.
 func (a *App) IsCovered(ctx context.Context, typeResourceID uuid.UUID, resourceID, grantedID string) (bool, error) {
 	g, err := a.LoadTypeGraph(ctx)
 	if err != nil {
 		return false, err
+	}
+	if !g.IsSync(typeResourceID) {
+		return false, nil
 	}
 	if _, err := a.EnsureSynced(ctx, g, []uuid.UUID{typeResourceID}, false); err != nil {
 		return false, err
@@ -1123,9 +1161,9 @@ func (a *App) IsCovered(ctx context.Context, typeResourceID uuid.UUID, resourceI
 		SELECT 1
 		FROM resource_cache d
 		JOIN resource_ancestor ra ON ra.descendant_id = d.id
-		JOIN resource_cache anc ON anc.id = ra.ancestor_id AND anc.active
+		JOIN resource_cache anc ON anc.id = ra.ancestor_id AND anc.active AND anc.type_resource_id <> ALL ($4::uuid[])
 		WHERE d.type_resource_id = $1 AND d.external_id = $2 AND d.active AND anc.external_id = $3`,
-		typeResourceID, resourceID, grantedID)
+		typeResourceID, resourceID, grantedID, g.withoutResources())
 }
 
 // ListResources returns every resource of a type, synchronized from its active synchronizer and

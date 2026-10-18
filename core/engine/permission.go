@@ -581,7 +581,12 @@ type Prepared struct {
 	Insts       []Instance
 	serviceType []uuid.UUID
 	syncTypes   map[uuid.UUID]bool // the service types with a live synchronizer
-	resultTypes []uuid.UUID        // the sync types of the service whose data is current
+	// sourced are the involved types that have resources: a live synchronizer in the type graph of the decision and in
+	// the read of the synchronization (ensure). The resources of any other type are not there for the decision, whatever
+	// rows a deleted synchronizer left in the local copy: a rule on one anchors nothing, a question about one is
+	// resource_not_found, no cascade reaches one and a link to one is unresolved.
+	sourced     map[uuid.UUID]bool
+	resultTypes []uuid.UUID // the sync types of the service whose data is current
 	ttl         time.Duration
 	// hold is how long the answer stays correct with respect to validity windows and the state of the data it was made from
 	// (see validityUntil): never less than ttl.
@@ -590,12 +595,18 @@ type Prepared struct {
 	deps map[string]int64
 }
 
-// syncedTypes keeps the service types whose data is current: the ones with a live synchronizer that were
-// synchronized now or are within their throttle.
+// syncedTypes keeps the involved types that have resources (see sourced), and the service types among them, whose data is
+// current: the ones with a live synchronizer that were synchronized now or are within their throttle.
 func (p *Prepared) syncedTypes(synced map[uuid.UUID]bool) {
+	p.sourced = map[uuid.UUID]bool{}
+	for id := range synced {
+		if p.Graph.IsSync(id) {
+			p.sourced[id] = true
+		}
+	}
 	p.resultTypes = nil
 	for _, id := range p.serviceType {
-		if synced[id] {
+		if p.sourced[id] {
 			p.resultTypes = append(p.resultTypes, id)
 		}
 	}
@@ -650,12 +661,6 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	if snap != nil {
 		rules, missing, rulesUseNow = applicableFromSnapshot(snap, relevant, identity, env, now)
 		p.ttl, p.hold = snap.validity(relevant, now)
-		p.syncTypes = map[uuid.UUID]bool{}
-		for _, id := range p.serviceType {
-			if snap.synced[id] {
-				p.syncTypes[id] = true
-			}
-		}
 	} else {
 		eg, ectx := errgroup.WithContext(ctx)
 		eg.Go(func() (err error) {
@@ -666,12 +671,15 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 			p.ttl, p.hold = a.cacheTTL(ectx, relevantIDs, now)
 			return nil
 		})
-		eg.Go(func() (err error) {
-			p.syncTypes, err = a.TypesWithSynchronizer(ectx, p.serviceType)
-			return err
-		})
 		if err := eg.Wait(); err != nil {
 			return nil, err
+		}
+	}
+	// The mode of a type is the type graph's, on both paths: it knows which types have a live synchronizer.
+	p.syncTypes = map[uuid.UUID]bool{}
+	for _, id := range p.serviceType {
+		if g.IsSync(id) {
+			p.syncTypes[id] = true
 		}
 	}
 	// An answer that reads the hour or the weekday is correct until the next minute only.
@@ -730,7 +738,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		}
 	}
 
-	if p.Insts, err = a.buildInstances(ctx, g, snap, rules, env, missing); err != nil {
+	if p.Insts, err = a.buildInstances(ctx, g, snap, rules, env, missing, p.hasResources); err != nil {
 		return nil, err
 	}
 	pairs, err := a.instancePairs(ctx, p.Insts)
@@ -741,17 +749,23 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	return p, nil
 }
 
+// hasResources reports whether the decision reads resources of a type (see sourced).
+func (p *Prepared) hasResources(typeID uuid.UUID) bool { return p.sourced[typeID] }
+
 // BuildInstances turns the applicable rules into instances anchored at whole types or at resources.
 // A rule on a resource that is not in the cache has no anchor and no effect; a rule with resource_from_claim
 // yields one instance per ancestor found, and a rule with resource_where one per resource whose attributes match.
 // The lookups of all the rules run together, in parallel with the anchors of the rules that name a resource.
-// g is the type graph the lookups climb (see findAncestorsBatch).
+// g is the type graph the lookups climb (see findAncestorsBatch); it also says which types have resources (IsSync):
+// a resource of a type without a live synchronizer is not in the cache for a rule, whatever rows its deleted
+// synchronizer left there.
 func (a *App) BuildInstances(ctx context.Context, g *TypeGraph, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
-	return a.buildInstances(ctx, g, nil, rules, env, missing)
+	return a.buildInstances(ctx, g, nil, rules, env, missing, g.IsSync)
 }
 
-// buildInstances is BuildInstances reading the access groups from the snapshot when there is one.
-func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
+// buildInstances is BuildInstances reading the access groups from the snapshot when there is one. sourced says which types
+// have resources: a rule finds its anchors among the resources of those types only.
+func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool, sourced func(uuid.UUID) bool) ([]Instance, error) {
 	var refs []anchorRef
 	var lookups []ancestorLookup
 	claimValues := map[int]string{}
@@ -772,11 +786,11 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 			pair := [2]uuid.UUID{spec.LookupTypeResourceID, *r.TypeResourceID}
 			types, ok := between[pair]
 			if !ok {
-				types = g.TypesBetween(pair[0], pair[1])
+				types = climbTypes(g, pair[0], pair[1], sourced)
 				between[pair] = types
 			}
 			if types == nil {
-				// The rule's type is neither the lookup type nor above it: no climb reaches it.
+				// The rule's type is neither the lookup type nor above it, or one of them has no resources: no climb reaches it.
 				continue
 			}
 			lookups = append(lookups, ancestorLookup{
@@ -784,7 +798,10 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 				Value: PyStr(value), MatchBy: spec.MatchBy, Between: types,
 			})
 		case r.ResourceID != nil:
-			refs = append(refs, anchorRef{Type: *r.TypeResourceID, Ext: *r.ResourceID})
+			// A resource of a type without resources is not looked up: it is not in the cache (see below).
+			if sourced(*r.TypeResourceID) {
+				refs = append(refs, anchorRef{Type: *r.TypeResourceID, Ext: *r.ResourceID})
+			}
 		}
 	}
 
@@ -801,7 +818,7 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 		return err
 	})
 	eg.Go(func() (err error) {
-		matched, err = a.ResourcesMatching(ectx, rules)
+		matched, err = a.ResourcesMatching(ectx, rules, sourced)
 		return err
 	})
 	eg.Go(func() (err error) {
@@ -860,6 +877,23 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 		}
 	}
 	return out, nil
+}
+
+// climbTypes is TypesBetween(lower, upper) for the lookup of a resource_from_claim rule: the types the climb from a matched
+// resource of the lookup type up to the rule's type may pass. Only types with resources count: a type without a live
+// synchronizer has none to match, to pass or to anchor at. It is nil when the lookup type or the rule's type has none,
+// and leaves out the types between without one, where the climb stops as at an unresolved link (findAncestorsBatch).
+func climbTypes(g *TypeGraph, lower, upper uuid.UUID, sourced func(uuid.UUID) bool) []uuid.UUID {
+	if !sourced(lower) || !sourced(upper) {
+		return nil
+	}
+	var out []uuid.UUID
+	for _, id := range g.TypesBetween(lower, upper) {
+		if sourced(id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // instancePairs relates the anchors of denials and exceptions: for every denial and exception both
@@ -963,7 +997,7 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 		return err
 	})
 	eg.Go(func() (err error) {
-		unresolved, err = a.UnresolvedParents(ectx, p.resultTypes)
+		unresolved, err = a.UnresolvedParents(ectx, g, p.resultTypes)
 		return err
 	})
 	if err := eg.Wait(); err != nil {

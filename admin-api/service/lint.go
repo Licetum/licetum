@@ -39,7 +39,7 @@ func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport,
 	if err != nil {
 		return nil, err
 	}
-	matching, err := a.ResourcesMatching(ctx, rules)
+	matching, err := a.ResourcesMatching(ctx, rules, func(id uuid.UUID) bool { return synced[id] })
 	if err != nil {
 		return nil, err
 	}

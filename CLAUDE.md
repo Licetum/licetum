@@ -114,8 +114,8 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
 - The snapshot holds what a decision reads: services (without `client_secret`: `ServiceCheckColumns`), the type graph, the enabled
   memberships and rules *with* their validity windows (compared with the clock per request, `ruleActive`/`memberActive`), the role items, the
-  access groups, the types with a live synchronizer, the request attributes and the validity boundaries (for the TTL of an answer). It is built
-  in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` and `GetServiceForCheck` answer from it (an
+  access groups, the request attributes and the validity boundaries (for the TTL of an answer); the types with a live synchronizer are in the type
+  graph (`TypeNode.Sync`). It is built in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` and `GetServiceForCheck` answer from it (an
   unknown or deleted slug is a 404 without a query). Every write that changes any of this must bump the revision (all admin writes go through
   `mutate` or the batch, which do); a change made by other means (`restore-admin` does bump) shows up at `SNAPSHOT__MAX_AGE` at the latest.
   `consistency=higher` does not use the snapshot (`cacheState.forConsistency`): it reads everything with queries, as before the snapshot.
@@ -293,7 +293,17 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   rule on a specific resource (`resource_id` / `resource_from_claim`) is only allowed on a type with
   a synchronizer (`checkRuleTarget`, 400 `assignment_rule_needs_synchronizer`; re-checked on PATCH
   only when the target changes, so a rule that died with its synchronizer can still be disabled);
-  the rule list marks such dead rules with `target_valid = false`.
+  the rule list marks such dead rules with `target_valid = false`. The SQL definition is `engine.LiveSynchronizerExists`; the engine reads it
+  once per type graph (`TypeNode.Sync`, `TypeGraph.IsSync`, so the snapshot has it).
+  **A type without a live synchronizer has no resources**, also one whose synchronizer was deleted: the rows it reported stay in
+  `resource_cache` (a synchronizer created again finds them) but no decision reads them. `IsSync` is what every path that reads a resource
+  asks: a point rule on one anchors nothing (a denial stays as an absent anchor, see "Decision semantics"), a question about one is
+  `resource_not_found` (`decideChecks`, `CacheLookup`, the reverse lookup, AuthZEN, the simulations), no cascade reaches the type (the result
+  types are the types that have resources) and `resource_where` matches none; a `resource_from_claim` rule whose lookup type has none matches
+  nothing and its climb does not pass through such a type (`climbTypes`). A link of a resource of a type below to one of those rows is
+  unresolved (`UnresolvedParents`, `resourceParents`): the closure does not lead through them (`rebuildClosureSQL`), and the structure
+  signature of the types below marks a type that lost its synchronizer (`TypeNode.SourceDeleted`), so that their closure is rebuilt when it
+  is deleted and again when there is one. The query path and the snapshot path read the same graph, so they agree.
 - **Synchronizer**: per-TypeResource adapter (SQL query or HTTP endpoint, see
   `internal/synchronizer/adapter.go`) that fetches the live list of concrete resources for a type
   from the owning service. Wrapped in a Redis circuit breaker (`internal/redisx`) and

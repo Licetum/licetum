@@ -40,7 +40,7 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationHierarchySourceChanges | dec05_source_changes, dec05_cross_service_cascade (the cache rows and the admin list are not decisions) |
 | TestIntegrationHierarchyTypeTreeChanges | dec05_retyped_parent_link |
 | TestIntegrationHierarchyDeletedMiddleType | dec05_deleted_parent_type (the closure rows are not a decision) |
-| TestIntegrationTypeModes | dec06_not_sync, dec06_synchronizer_deleted, dec06_type_without_synchronizer, dec01_what_a_rule_covers, dec05_cross_service_cascade (the refused point rule, target_valid and the PATCH of the dead rule are not decisions) |
+| TestIntegrationTypeModes | dec06_not_sync, dec06_synchronizer_deleted (and dec06_below_a_deleted_synchronizer: a type below it, whose resources name the rows it left), dec06_type_without_synchronizer, dec01_what_a_rule_covers, dec05_cross_service_cascade (the refused point rule, target_valid and the PATCH of the dead rule are not decisions) |
 | TestIntegrationTypeResourceNameUnique | not a decision test |
 | TestIntegrationSynchronizerSecrets | not a decision test |
 | TestIntegrationOAuthRefresh | not a decision test |

@@ -176,7 +176,7 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 		SELECT `+engine.AssignmentRuleColumns+`, t.service_id, s.name, t.name, ro.name,
 		       ar.role_id IS NOT NULL
 		       OR (ar.resource_id IS NULL AND ar.resource_from_claim IS NULL AND ar.resource_where IS NULL)
-		       OR `+liveSynchronizerExists("t.id")+`
+		       OR `+engine.LiveSynchronizerExists("t.id")+`
 		FROM assignment_rule ar
 		LEFT JOIN type_resource t ON t.id = ar.type_resource_id
 		LEFT JOIN service s ON s.id = t.service_id

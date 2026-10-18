@@ -571,7 +571,7 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 				movedTypes = append(movedTypes, c.typeID)
 			}
 		}
-		if err := rebuildClosure(ctx, tx, touched); err != nil {
+		if err := rebuildClosure(ctx, tx, g, touched); err != nil {
 			return err
 		}
 		// The revision of the data of these services moves in the transaction that moved the data, and only when it moved.
