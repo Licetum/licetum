@@ -38,7 +38,7 @@ func TestF6_6_ASourceOfOneRegionIsAskedOnlyByTheWorkersOfThatRegion(t *testing.T
 	e.worker(inRegion("jp"), engine.SyncHooks{})
 
 	// Only workers of other regions run: the request waits, the type has no data, and the source is not asked by anybody.
-	status, body, header := r.permission(t, f, "")
+	status, body, header := r.permission(t, f)
 	if status != http.StatusOK || strings.Contains(body, `"b1"`) || header.Get("X-Authz-Sync") != "pending" {
 		t.Fatalf("with no worker of the region: %d sync=%q %s", status, header.Get("X-Authz-Sync"), body)
 	}
@@ -53,7 +53,7 @@ func TestF6_6_ASourceOfOneRegionIsAskedOnlyByTheWorkersOfThatRegion(t *testing.T
 	if got := src.calls.Load(); got == 0 {
 		t.Fatal("the source was never asked")
 	}
-	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
+	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
 		t.Fatalf("after the worker of the region: %d %s", status, body)
 	}
 }
@@ -68,7 +68,7 @@ func TestF6_6_AWorkerWithoutARegionTakesEveryJob(t *testing.T) {
 	}
 	e.worker(inRegion(""), engine.SyncHooks{})
 	r := e.checkReplica(func(c *config.Config) { postgresEngine(c); c.Sync.RequestWait = 10 * time.Second })
-	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
+	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
 		t.Fatalf("%d %s", status, body)
 	}
 }

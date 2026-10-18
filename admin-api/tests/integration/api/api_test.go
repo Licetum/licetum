@@ -338,17 +338,6 @@ func (e *env) must(method, path string, body any) map[string]any {
 	return out
 }
 
-func (e *env) permission(serviceID, token string) (int, map[string]any) {
-	e.t.Helper()
-	status, raw := e.do(http.MethodGet, e.check.URL+"/service/"+serviceID+"/permission", nil,
-		"Authorization", "Bearer "+token)
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		e.t.Fatalf("decode permission response: %v (%s)", err, raw)
-	}
-	return status, out
-}
-
 func expectJSON(t *testing.T, name string, got any, wantJSON string) {
 	t.Helper()
 	var want any
@@ -413,36 +402,41 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "u1", "department": "sales", "branch_name": "Branch3"})
 	bob := e.token(jwt.MapClaims{"sub": "bob", "level": 5})
 
-	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a claim.
-	status, perm := e.permission(filials, alice)
-	if status != http.StatusOK {
-		t.Fatalf("permission: %d %v", status, perm)
+	// permissions is what a person may do in a service: for each type that has resources they have a level on, those
+	// resources with their levels (the searches of the AuthZEN API, one per level the test grants).
+	permissions := func(ref, token string, types ...string) map[string][]listedResource {
+		out := map[string][]listedResource{}
+		for _, typ := range types {
+			if list := e.listedLevels(ref, token, typ, "read", "write", "audit"); len(list) > 0 {
+				out[typ] = list
+			}
+		}
+		return out
 	}
-	expectJSON(t, "alice@filials", perm, `{
-		"division": {"type":"sync","resources":[{"id":"d1","name":"North","access":["read"]}]},
-		"branch": {"type":"sync","resources":[
+
+	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a claim.
+	expectJSON(t, "alice@filials", permissions("filials", alice, "division", "branch"), `{
+		"division": [{"id":"d1","name":"North","access":["read"]}],
+		"branch": [
 			{"id":"b1","name":"Branch1","access":["read"]},
 			{"id":"b2","name":"Branch2","access":["read"]},
 			{"id":"b3","name":"Branch3","access":["audit"]}
-		]}}`)
+		]}`)
 	// The cascade crosses service boundaries: division(filials) -> branch -> planogram(replan).
-	_, perm = e.permission(replan, alice)
-	expectJSON(t, "alice@replan", perm, `{"planogram": {"type":"sync","resources":[
+	expectJSON(t, "alice@replan", permissions("replan", alice, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["read"]},
-		{"id":"p3","name":"Plano3","access":["audit"]}]}}`)
+		{"id":"p3","name":"Plano3","access":["audit"]}]}`)
 	// bob: predicate level in [5,6] (an int claim is compared as a string) — the whole planogram type.
-	_, perm = e.permission(replan, bob)
-	expectJSON(t, "bob@replan", perm, `{"planogram": {"type":"sync","resources":[
+	expectJSON(t, "bob@replan", permissions("replan", bob, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["write"]},
-		{"id":"p3","name":"Plano3","access":["write"]}]}}`)
+		{"id":"p3","name":"Plano3","access":["write"]}]}`)
 
 	// Changing a rule invalidates the permission cache immediately (version in Redis).
 	e.must("PATCH", "/assignment_rule/"+directRule,
 		map[string]any{"type_resource_id": division, "resource_id": "d2", "access": []string{"read", "write"}, "subject": "alice"})
-	_, perm = e.permission(filials, alice)
-	expectJSON(t, "alice@filials after patch", perm, `{
-		"division": {"type":"sync","resources":[{"id":"d2","name":"South","access":["read","write"]}]},
-		"branch": {"type":"sync","resources":[{"id":"b3","name":"Branch3","access":["audit","read","write"]}]}}`)
+	expectJSON(t, "alice@filials after patch", permissions("filials", alice, "division", "branch"), `{
+		"division": [{"id":"d2","name":"South","access":["read","write"]}],
+		"branch": [{"id":"b3","name":"Branch3","access":["audit","read","write"]}]}`)
 
 	// Deleting a referenced type is blocked, with the list of reasons.
 	status, raw := e.do("DELETE", e.admin.URL+"/service/"+filials+"/type_resource/"+branch, nil)
@@ -458,11 +452,11 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 
 	// Garbage tokens get 401 and do not open the circuit breaker for valid users.
 	for i := range 6 {
-		if status, _ := e.permission(filials, fmt.Sprintf("garbage.%d.x", i)); status != http.StatusUnauthorized {
+		if status, _ := e.permission("filials", fmt.Sprintf("garbage.%d.x", i)); status != http.StatusUnauthorized {
 			t.Fatalf("garbage token: want 401, got %d", status)
 		}
 	}
-	if status, _ := e.permission(filials, alice); status != http.StatusOK {
+	if status, _ := e.permission("filials", alice); status != http.StatusOK {
 		t.Fatalf("a valid token must still pass after garbage tokens, got %d", status)
 	}
 

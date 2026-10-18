@@ -76,11 +76,11 @@ func TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies(t *
 	w.rule("branch", "B1", map[string]any{"effect": "deny", "access": []string{"read"}, "member_of_group_id": sales})
 
 	claims := jwt.MapClaims{"preferred_username": hierarchySubject}
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, nil, "branch", "B2", "B3", "B4")
 	claims["department"] = "sales"
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, nil, "branch", "B2", "B3", "B4")
 	claims["department"] = "hr"
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, nil, "branch", "B1", "B2", "B3", "B4")
 }
 
 // An allow turned into a deny keeps the default of a new deny, not the skip of the allow: the denial applies on an
@@ -95,8 +95,8 @@ func TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute(t *test
 		"resource_id": "B2", "access": []string{"read"}, "predicate": cidr, "effect": "deny"})
 
 	claims := jwt.MapClaims{"preferred_username": hierarchySubject}
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch", "B1", "B3", "B4")
-	expectIDs(t, w.permissionWith(w.org, claims, map[string]any{"ip": "10.1.1.1"}), "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, nil, "branch", "B1", "B3", "B4")
+	w.expectVisible(w.org, claims, map[string]any{"ip": "10.1.1.1"}, "branch", "B1", "B2", "B3", "B4")
 }
 
 // A rule that grants a role with an item on the platform grants that item: a point write on the rule does not reach to

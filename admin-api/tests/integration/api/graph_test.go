@@ -8,7 +8,6 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -245,22 +244,10 @@ func TestIntegrationOrphanAboveFailsClosed(t *testing.T) {
 	expectIDs(t, w.permission(w.org, nil), "branch", "B4", "B9")
 }
 
-// checkAccess performs POST /service/{id}/check as hierarchySubject.
+// checkAccess asks the evaluations of the checks as hierarchySubject, with consistency=higher (see checkWith).
 func (w *world) checkAccess(serviceID string, explain bool, checks ...map[string]any) []map[string]any {
 	w.t.Helper()
-	status, raw := w.do("POST", w.check.URL+"/service/"+serviceID+"/check?consistency=higher",
-		map[string]any{"checks": checks, "explain": explain},
-		"Authorization", "Bearer "+w.token(jwt.MapClaims{"preferred_username": hierarchySubject}))
-	if status != http.StatusOK {
-		w.t.Fatalf("check: %d %s", status, raw)
-	}
-	var out struct {
-		Results []map[string]any `json:"results"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		w.t.Fatal(err)
-	}
-	return out.Results
+	return w.checkWith(serviceID, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, explain, string(engine.HigherConsistency), checks...)
 }
 
 func TestIntegrationCheckExplainAuthzenMetrics(t *testing.T) {

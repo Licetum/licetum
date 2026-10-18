@@ -129,7 +129,7 @@ func TestSyncKillNineOfTheWorker(t *testing.T) {
 
 			victim := e.workerProcess(lease)
 			r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = 50 * time.Millisecond })
-			r.permission(t, f, "") // queues the job
+			r.permission(t, f) // queues the job
 
 			switch phase {
 			case "fetch":
@@ -219,7 +219,7 @@ func TestSyncPoolsAreBounded(t *testing.T) {
 	})
 	var wg sync.WaitGroup
 	for _, f := range fixtures {
-		wg.Go(func() { r.permission(t, f, "") })
+		wg.Go(func() { r.permission(t, f) })
 	}
 	wg.Wait()
 	close(stop)
@@ -252,13 +252,13 @@ func TestSyncHeldSynchronizationDoesNotSlowTheChecks(t *testing.T) {
 	held := e.syncFixture("held", newSource(t, branches("h1")...))
 	warm := e.syncFixture("warm", newSource(t, branches("w1", "w2")...))
 	r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = hold + 15*time.Second })
-	r.permission(t, warm, "")
+	r.permission(t, warm)
 
 	measure := func(d time.Duration) time.Duration {
 		var lat []time.Duration
 		for end := time.Now().Add(d); time.Now().Before(end); {
 			started := time.Now()
-			if status, _, _ := r.permission(t, warm, ""); status != http.StatusOK {
+			if status, _, _ := r.permission(t, warm); status != http.StatusOK {
 				t.Fatal("a check failed")
 			}
 			lat = append(lat, time.Since(started))
@@ -281,7 +281,7 @@ func TestSyncHeldSynchronizationDoesNotSlowTheChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	wg.Go(func() { r.permission(t, held, "") }) // waits for the lock inside the worker
+	wg.Go(func() { r.permission(t, held) }) // waits for the lock inside the worker
 	time.Sleep(300 * time.Millisecond)
 	during := measure(hold)
 	_ = tx.Rollback(context.Background())
@@ -329,7 +329,7 @@ func TestSyncWorkerMemory(t *testing.T) {
 
 	worker := e.workerProcess(600)
 	r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = 50 * time.Millisecond })
-	r.permission(t, f, "")
+	r.permission(t, f)
 	e.waitFor("the synchronization", 30*time.Minute, func() bool { return e.jobCount(f.typ, "done") > 0 })
 
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", worker.Process.Pid))
@@ -372,7 +372,7 @@ func TestSyncBusyComponentLockDoesNotStartABackoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The first synchronization of the type waits for the lock, gives up, and the request is answered without the data.
-	r.permission(t, f, "")
+	r.permission(t, f)
 
 	var attempts int
 	err = e.pool.QueryRow(context.Background(), `SELECT attempts FROM sync_state WHERE type_resource_id = $1`, f.typ).Scan(&attempts)
@@ -383,7 +383,7 @@ func TestSyncBusyComponentLockDoesNotStartABackoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
+	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
 		t.Fatalf("after the lock was free: %d %s", status, body)
 	}
 	if took := time.Since(started); took > 10*time.Second {

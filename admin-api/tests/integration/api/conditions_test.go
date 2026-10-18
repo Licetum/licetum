@@ -10,7 +10,6 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"slices"
 	"testing"
 
@@ -19,49 +18,50 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// checkWith performs POST /service/{id}/check as the subject of claims, with the request attributes context.
+// checkWith asks the AuthZEN evaluations of the checks as the subject of claims, with the request attributes context, and
+// returns each answer in the form the check API gave before them: {"allowed", "explanation"}, the explanation being there
+// when it was asked for. A check is {"type", "resource_id", "action"}; without resource_id it is about the type as a whole.
+// consistency is minimize_latency, the default, or higher. An evaluation that could not be decided fails the test: it is
+// not a denial.
 func (w *world) checkWith(serviceID string, claims jwt.MapClaims, context map[string]any, explain bool, consistency string,
 	checks ...map[string]any) []map[string]any {
 	w.t.Helper()
-	body := map[string]any{"checks": checks, "explain": explain}
+	questions := make([]authzenreq.Question, len(checks))
+	for i, c := range checks {
+		resourceType, _ := c["type"].(string)
+		id, _ := c["resource_id"].(string)
+		action, _ := c["action"].(string)
+		questions[i] = authzenreq.Question{Resource: authzenreq.Resource{Type: resourceType, ID: id}, Action: action}
+	}
+	var opts []authzenreq.Option
 	if context != nil {
-		body["context"] = context
+		opts = append(opts, authzenreq.WithContext(context))
 	}
-	status, raw := w.do("POST", w.check.URL+"/service/"+serviceID+"/check?consistency="+consistency, body,
-		"Authorization", "Bearer "+w.token(claims))
-	if status != http.StatusOK {
-		w.t.Fatalf("check: %d %s", status, raw)
+	if explain {
+		opts = append(opts, authzenreq.Explain())
 	}
-	var out struct {
-		Results []map[string]any `json:"results"`
+	switch consistency {
+	case string(engine.HigherConsistency):
+		opts = append(opts, authzenreq.Fresh())
+	case string(engine.MinimizeLatency):
+	default:
+		w.t.Fatalf("consistency %q", consistency)
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		w.t.Fatal(err)
+	token := w.token(claims)
+	status, body := w.ask(authzenreq.Evaluations(w.ref(serviceID), authzenreq.SubjectOf(token), questions, opts...), token)
+	decisions, err := authzenreq.Decisions(status, body)
+	if err != nil {
+		w.t.Fatalf("evaluations: %v", err)
 	}
-	return out.Results
-}
-
-// permissionWith performs GET /service/{id}/permission as the subject of claims, with the request attributes context
-// given as the context query parameter.
-func (w *world) permissionWith(serviceID string, claims jwt.MapClaims, context map[string]any) engine.PermissionResult {
-	w.t.Helper()
-	target := w.check.URL + "/service/" + serviceID + "/permission?consistency=higher"
-	if context != nil {
-		raw, err := json.Marshal(context)
-		if err != nil {
-			w.t.Fatal(err)
+	out := make([]map[string]any, len(decisions))
+	for i, d := range decisions {
+		out[i] = map[string]any{"allowed": d.Allowed}
+		if reason, ok := d.Context["reason_admin"]; ok {
+			out[i]["explanation"] = reason
 		}
-		target += "&context=" + url.QueryEscape(string(raw))
-	}
-	status, raw := w.do("GET", target, nil, "Authorization", "Bearer "+w.token(claims))
-	if status != http.StatusOK {
-		w.t.Fatalf("permission: %d %s", status, raw)
-	}
-	var out engine.PermissionResult
-	if err := json.Unmarshal(raw, &out); err != nil {
-		w.t.Fatal(err)
 	}
 	return out
 }
@@ -114,9 +114,9 @@ func TestIntegrationRequestAttributesDecideAndAreCachedByValue(t *testing.T) {
 	inside := map[string]any{"ip": "10.1.2.3"}
 	outside := map[string]any{"ip": "192.168.0.1"}
 
-	expectIDs(t, w.permissionWith(w.org, claims, inside), "branch", "B1", "B2", "B3", "B4")
-	expectIDs(t, w.permissionWith(w.org, claims, outside), "branch")
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch")
+	w.expectVisible(w.org, claims, inside, "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, outside, "branch")
+	w.expectVisible(w.org, claims, nil, "branch")
 
 	// The answers are cached per value of the attribute: alternating requests never see each other's answer.
 	check := map[string]any{"type": "branch", "resource_id": "B1", "action": "read"}
@@ -183,7 +183,7 @@ func TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt(t *test
 
 	// A new deny rule applies on a missing attribute: without the address, B2 is denied (fail closed).
 	denyB2 := w.rule("branch", "B2", map[string]any{"effect": "deny", "access": []string{"read"}, "predicate": cidr})
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil), "branch", "B1", "B3", "B4")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, "branch", "B1", "B3", "B4")
 	res := w.checkWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, true, "higher",
 		map[string]any{"type": "branch", "resource_id": "B2", "action": "read"})
 	denials := res[0]["explanation"].(map[string]any)["denials"].([]any)
@@ -192,15 +192,15 @@ func TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt(t *test
 		t.Fatalf("the denial on a missing attribute is not explained: %+v", res)
 	}
 	// With an address outside the denied network, the condition does not hold, and B2 is accessible again.
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject},
-		map[string]any{"ip": "10.1.1.1"}), "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject},
+		map[string]any{"ip": "10.1.1.1"}, "branch", "B1", "B2", "B3", "B4")
 
 	// A deny rule that skips a missing attribute leaves B3 alone when the address is not known.
 	w.rule("branch", "B3", map[string]any{"effect": "deny", "access": []string{"read"}, "predicate": cidr,
 		"on_missing_attribute": "skip"})
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil), "branch", "B1", "B3", "B4")
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject},
-		map[string]any{"ip": "10.99.4.4"}), "branch", "B1", "B4")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, "branch", "B1", "B3", "B4")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject},
+		map[string]any{"ip": "10.99.4.4"}, "branch", "B1", "B4")
 
 	// An allow rule grants nothing on a missing attribute, and may not be told to apply it.
 	status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
@@ -220,7 +220,7 @@ func TestIntegrationClockConditionsReadTheHourOfTheDecision(t *testing.T) {
 		map[string]any{"attr": "weekday", "source": "now", "op": "in", "value": []string{"1", "2", "3", "4", "5", "6", "7"}})})
 	w.rule("division", "D2", map[string]any{"predicate": append(slices.Clone(me),
 		map[string]any{"attr": "hour", "source": "now", "op": "lt", "value": "0"})})
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil), "division", "D1")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, "division", "D1")
 
 	// Only hour and weekday are read from the clock, and they are compared as numbers or days.
 	status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
@@ -246,9 +246,9 @@ func TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse(t *testing.T) {
 	both := jwt.MapClaims{"preferred_username": hierarchySubject, "team": "audit", "env": "prod"}
 	noTeam := jwt.MapClaims{"preferred_username": hierarchySubject, "env": "prod"}
 	noEnv := jwt.MapClaims{"preferred_username": hierarchySubject, "team": "audit"}
-	expectIDs(t, w.permissionWith(w.org, both, nil), "branch", "B1", "B2", "B3", "B4")
-	expectIDs(t, w.permissionWith(w.org, noTeam, nil), "branch")
-	expectIDs(t, w.permissionWith(w.org, noEnv, nil), "branch")
+	w.expectVisible(w.org, both, nil, "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, noTeam, nil, "branch")
+	w.expectVisible(w.org, noEnv, nil, "branch")
 
 	// The group the rule is guarded by cannot be deleted while the rule names it.
 	status, raw := w.do("DELETE", w.admin.URL+"/group/"+auditors, nil)
