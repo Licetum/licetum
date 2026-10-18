@@ -1,0 +1,103 @@
+# DEC04 with DEC05: the level hierarchy and the wildcard meet an inherit mask. Service lib: folder (write ⊃ read) with the
+# children doc (write ⊃ read) and note (no hierarchy), whose links let only write flow down, and photo (no hierarchy),
+# whose link lets only read flow down. F1 ⊃ E1, N1, H1; F2 ⊃ E2.
+#
+# The mask decides which levels reach a resource, then the hierarchy of the resource's type expands what arrived: write
+# arriving on a doc brings read with it, although read itself does not flow. The hierarchy of the anchor's type does not
+# travel: write granted on F1 includes read on F1, yet nothing reaches H1, because write does not flow to it. The same
+# mask filters denials, and the wildcard among them: * on a folder denies only the levels that flow down the link, so it
+# denies write on E1 and leaves read, which the doc's own grant gives.
+contracts: [DEC04, DEC05]
+description: The hierarchy of a type and the wildcard denial across a write-only type link.
+services: [lib]
+types:
+  - {name: folder, service: lib, sync: true, implies: {write: [read]}}
+  - {name: doc, service: lib, sync: true, parents: [{type: folder, inherit: [write]}], implies: {write: [read]}}
+  - {name: note, service: lib, sync: true, parents: [{type: folder, inherit: [write]}]}
+  - {name: photo, service: lib, sync: true, parents: [{type: folder, inherit: [read]}]}
+resources:
+  - {type: folder, id: F1}
+  - {type: folder, id: F2}
+  - {type: doc, id: E1, parents: [{type: folder, id: F1}]}
+  - {type: doc, id: E2, parents: [{type: folder, id: F2}]}
+  - {type: note, id: N1, parents: [{type: folder, id: F1}]}
+  - {type: photo, id: H1, parents: [{type: folder, id: F1}]}
+rules:
+  - {name: rw-F1, subject: rw-folder, type: folder, resource: F1, access: [read, write]}
+  - {name: r-F1, subject: read-folder, type: folder, resource: F1, access: [read]}
+  - {name: w-F1, subject: write-folder, type: folder, resource: F1, access: [write]}
+  - {name: dr-E1, subject: deny-read-folder, type: doc, resource: E1, access: [read, write]}
+  - {name: dr-N1, subject: deny-read-folder, type: note, resource: N1, access: [read, write]}
+  - {name: dr-deny-F1, subject: deny-read-folder, type: folder, resource: F1, access: [read], deny: true}
+  - {name: dw-E1, subject: deny-write-folder, type: doc, resource: E1, access: [read, write]}
+  - {name: dw-N1, subject: deny-write-folder, type: note, resource: N1, access: [read, write]}
+  - {name: dw-deny-F1, subject: deny-write-folder, type: folder, resource: F1, access: [write], deny: true}
+  - {name: ds-E1, subject: star-folder, type: doc, resource: E1, access: [read, write]}
+  - {name: ds-N1, subject: star-folder, type: note, resource: N1, access: [read, write]}
+  - {name: ds-deny-F1, subject: star-folder, type: folder, resource: F1, access: ["*"], deny: true}
+  - {name: wf-folder, subject: whole-folder, type: folder, access: [read, write]}
+  - {name: ws-doc, subject: whole-star, type: doc, access: [read, write]}
+  - {name: ws-deny-folder, subject: whole-star, type: folder, access: ["*"], deny: true}
+cases:
+  - name: write flows down the link and the doc's hierarchy adds read; the note has no hierarchy
+    subject: rw-folder
+    questions:
+      - {type: folder, resource: F1, action: read, allowed: true}
+      - {type: folder, resource: F1, action: write, allowed: true}
+      - {type: doc, resource: E1, action: write, allowed: true, decision: allowed, granted_by: [rw-F1]}
+      - {type: doc, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [rw-F1]}
+      - {type: note, resource: N1, action: write, allowed: true, decision: allowed, granted_by: [rw-F1]}
+      - {type: note, resource: N1, action: read, allowed: false, decision: no_access}
+      - {type: doc, resource: E2, action: read, allowed: false, decision: no_access}
+      - {type: photo, resource: H1, action: read, allowed: true, decision: allowed, granted_by: [rw-F1]}
+      - {type: photo, resource: H1, action: write, allowed: false, decision: no_access}
+  - name: read alone does not flow down a write-only link
+    subject: read-folder
+    questions:
+      - {type: folder, resource: F1, action: read, allowed: true}
+      - {type: doc, resource: E1, action: read, allowed: false, decision: no_access}
+      - {type: note, resource: N1, action: read, allowed: false, decision: no_access}
+  - name: the read that write includes on the folder does not flow down a read-only link
+    subject: write-folder
+    questions:
+      - {type: folder, resource: F1, action: read, allowed: true, decision: allowed, granted_by: [w-F1]}
+      - {type: folder, resource: F1, action: write, allowed: true}
+      - {type: photo, resource: H1, action: read, allowed: false, decision: no_access}
+      - {type: photo, resource: H1, action: write, allowed: false, decision: no_access}
+      - {type: doc, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [w-F1]}
+  - name: a denial of read does not flow down a write-only link
+    subject: deny-read-folder
+    questions:
+      - {type: doc, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [dr-E1]}
+      - {type: doc, resource: E1, action: write, allowed: true, decision: allowed, granted_by: [dr-E1]}
+      - {type: note, resource: N1, action: read, allowed: true, decision: allowed, granted_by: [dr-N1]}
+      - {type: folder, resource: F1, action: read, allowed: false, decision: no_access}
+  - name: a denial of write flows down and leaves read
+    subject: deny-write-folder
+    questions:
+      - {type: doc, resource: E1, action: write, allowed: false, decision: denied, granted_by: [dw-E1], denials: [{rule: dw-deny-F1}]}
+      - {type: doc, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [dw-E1]}
+      - {type: note, resource: N1, action: write, allowed: false, decision: denied, denials: [{rule: dw-deny-F1}]}
+      - {type: note, resource: N1, action: read, allowed: true}
+  - name: the wildcard denies only the levels that flow down the link
+    subject: star-folder
+    questions:
+      - {type: doc, resource: E1, action: write, allowed: false, decision: denied, granted_by: [ds-E1], denials: [{rule: ds-deny-F1}]}
+      - {type: doc, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [ds-E1]}
+      - {type: note, resource: N1, action: write, allowed: false, decision: denied, denials: [{rule: ds-deny-F1}]}
+      - {type: note, resource: N1, action: read, allowed: true, decision: allowed, granted_by: [ds-N1]}
+  - name: a whole-type grant reaches the lower types with the levels of the link, then the hierarchy expands them
+    subject: whole-folder
+    questions:
+      - {type: doc, resource: E1, action: write, allowed: true, decision: allowed, granted_by: [wf-folder]}
+      - {type: doc, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [wf-folder]}
+      - {type: doc, resource: E2, action: read, allowed: true}
+      - {type: note, resource: N1, action: write, allowed: true}
+      - {type: note, resource: N1, action: read, allowed: false, decision: no_access}
+  - name: the wildcard on a whole type reaches the lower types with the levels of the link only
+    subject: whole-star
+    questions:
+      - {type: doc, resource: E1, action: write, allowed: false, decision: denied, granted_by: [ws-doc], denials: [{rule: ws-deny-folder}]}
+      - {type: doc, resource: E2, action: write, allowed: false, decision: denied}
+      - {type: doc, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [ws-doc]}
+      - {type: doc, resource: E2, action: read, allowed: true}
