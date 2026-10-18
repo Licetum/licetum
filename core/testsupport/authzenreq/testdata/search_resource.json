@@ -1,0 +1,16 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/search/resource",
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "resource": {
+      "type": "branch"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

@@ -1,0 +1,405 @@
+package authzenreq_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"go.yaml.in/yaml/v3"
+
+	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
+)
+
+var update = flag.Bool("update", false, "rewrite the golden files of testdata")
+
+// built is a request as the tests of the callers see it.
+type built struct {
+	name string
+	req  authzenreq.Request
+}
+
+func cases() []built {
+	qs := []authzenreq.Question{
+		{Resource: authzenreq.On("branch", "b1"), Action: "read"},
+		{Resource: authzenreq.On("branch", "b2"), Action: "write"},
+		{Resource: authzenreq.Whole("flag"), Action: "enabled"},
+	}
+	props := map[string]any{"preferred_username": "bob", "department": "sales", "groups": []string{"a", "b"}}
+	return []built{
+		{"evaluation", authzenreq.Evaluation("orders", "alice", authzenreq.On("branch", "b1"), "read")},
+		{"evaluation_whole", authzenreq.Evaluation("orders", "alice", authzenreq.Whole("flag"), "enabled")},
+		{"evaluation_explain", authzenreq.Evaluation("orders", "alice", authzenreq.On("branch", "b1"), "read", authzenreq.Explain())},
+		{"evaluation_fresh", authzenreq.Evaluation("orders", "alice", authzenreq.On("branch", "b1"), "read",
+			authzenreq.Fresh(), authzenreq.AtLeast(12), authzenreq.WithContext(map[string]any{"ip": "10.0.0.7"}))},
+		{"evaluation_properties", authzenreq.Evaluation("orders", "bob", authzenreq.On("branch", "b1"), "read",
+			authzenreq.WithProperties(props), authzenreq.Explain(), authzenreq.WithContext(map[string]any{"role": "auditor", "explain": false}))},
+		{"evaluations", authzenreq.Evaluations("orders", "alice", qs)},
+		{"evaluations_semantic", authzenreq.Evaluations("orders", "alice", qs,
+			authzenreq.Semantic(model.AuthzenDenyOnFirstDeny), authzenreq.Explain(), authzenreq.AtLeast(3))},
+		{"search_resource", authzenreq.SearchResource("orders", "alice", "branch", "read")},
+		{"search_resource_page", authzenreq.SearchResource("orders", "alice", "branch", "read",
+			authzenreq.Page(20, ""), authzenreq.WithContext(map[string]any{"ip": "10.0.0.7"}))},
+		{"search_resource_next_page", authzenreq.SearchResource("orders", "alice", "branch", "read", authzenreq.Page(20, "eyJhIjoiYjIifQ"))},
+		{"search_resource_properties", authzenreq.SearchResource("orders", "bob", "branch", "read", authzenreq.WithProperties(props), authzenreq.Fresh())},
+		{"search_action", authzenreq.SearchAction("orders", "alice", authzenreq.On("branch", "b1"))},
+		{"search_action_whole", authzenreq.SearchAction("orders", "alice", authzenreq.Whole("flag"), authzenreq.AtLeast(9))},
+		{"search_subject", authzenreq.SearchSubject("orders", authzenreq.On("branch", "b1"), "read")},
+		{"search_subject_page", authzenreq.SearchSubject("orders", authzenreq.Whole("branch"), "read", authzenreq.Page(50, "tok"), authzenreq.Fresh())},
+	}
+}
+
+// goldenOf is the request as a file shows it.
+func goldenOf(t *testing.T, r authzenreq.Request) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(struct {
+		Method string `json:"method"`
+		Path   string `json:"path"`
+		Body   any    `json:"body"`
+	}{r.Method, r.Path, r.Body}); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+func TestRequestsMatchTheirGoldenFiles(t *testing.T) {
+	for _, c := range cases() {
+		t.Run(c.name, func(t *testing.T) {
+			got := goldenOf(t, c.req)
+			file := filepath.Join("testdata", c.name+".json")
+			if *update {
+				if err := os.WriteFile(file, got, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("%s differs (go test -update rewrites it):\ngot:\n%s\nwant:\n%s", file, got, want)
+			}
+		})
+	}
+}
+
+// endpointOf is the endpoint of a request below /service/orders/access/v1/: "evaluation", "search/resource", ...
+func endpointOf(t *testing.T, r authzenreq.Request) string {
+	t.Helper()
+	u, err := url.Parse(r.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, ok := strings.CutPrefix(u.Path, "/service/orders/access/v1/")
+	if !ok {
+		t.Fatalf("not the path of the AuthZEN API of the service orders: %s", u.Path)
+	}
+	return endpoint
+}
+
+// strictly decodes the JSON of v into out, refusing a member that out has no field for.
+func strictly(t *testing.T, v any, out any) {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(out); err != nil {
+		t.Fatalf("%v does not have the shape of core/model/authzen.go: %v\n%s", out, err, raw)
+	}
+}
+
+// The oracle of the shapes is core/model/authzen.go: every member a builder writes is a field of the request type of its
+// endpoint, and what the builder was given comes back out of the type.
+func TestBodiesHaveTheShapeOfTheModel(t *testing.T) {
+	for _, c := range cases() {
+		t.Run(c.name, func(t *testing.T) {
+			endpoint := endpointOf(t, c.req)
+			switch endpoint {
+			case "evaluation":
+				var m model.AuthzenEvaluationRequest
+				strictly(t, c.req.Body, &m)
+				if m.Subject == nil || m.Subject.Type != authzenreq.SubjectType || m.Subject.ID == "" || m.Resource == nil || m.Resource.Type == "" || m.Action == nil || m.Action.Name == "" {
+					t.Errorf("an evaluation must be complete: %+v", m)
+				}
+			case "evaluations":
+				var m model.AuthzenEvaluationsRequest
+				strictly(t, c.req.Body, &m)
+				if m.Subject == nil || m.Subject.ID == "" || len(m.Evaluations) == 0 {
+					t.Errorf("a batch must have a subject and evaluations: %+v", m)
+				}
+				for i, e := range m.Evaluations {
+					if e.Resource == nil || e.Action == nil || e.Subject != nil || e.Context != nil {
+						t.Errorf("evaluation %d must carry the resource and the action, and nothing the batch already says: %+v", i, e)
+					}
+				}
+				if m.Options != nil && m.Options.EvaluationsSemantic == "" {
+					t.Errorf("empty options: %+v", m.Options)
+				}
+			default:
+				var m model.AuthzenSearchRequest
+				strictly(t, c.req.Body, &m)
+				if m.Subject == nil || m.Subject.Type != authzenreq.SubjectType || m.Resource == nil || m.Resource.Type == "" {
+					t.Errorf("a search needs the subject type and the resource type: %+v", m)
+				}
+				if endpoint == "search/resource" && m.Resource.ID != "" {
+					t.Errorf("the resource search ignores resource.id: %+v", m.Resource)
+				}
+				if endpoint == "search/subject" && m.Subject.ID != "" {
+					t.Errorf("the subject search is about nobody in particular: %+v", m.Subject)
+				}
+			}
+		})
+	}
+}
+
+// The committed schema of the check API is the oracle of the routes and of the names of the freshness parameters.
+func TestRoutesAndQueriesExistInTheSchema(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schema", "check.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Paths map[string]map[string]struct {
+			Parameters []struct {
+				Name   string `yaml:"name"`
+				In     string `yaml:"in"`
+				Schema struct {
+					Enum []string `yaml:"enum"`
+					Type string   `yaml:"type"`
+				} `yaml:"schema"`
+			} `yaml:"parameters"`
+		} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases() {
+		t.Run(c.name, func(t *testing.T) {
+			u, err := url.Parse(c.req.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			op, ok := doc.Paths["/service/{service_id}/access/v1/"+endpointOf(t, c.req)][strings.ToLower(c.req.Method)]
+			if !ok {
+				t.Fatalf("%s %s is no operation of core/schema/check.yaml", c.req.Method, u.Path)
+			}
+			for name, values := range u.Query() {
+				var found bool
+				for _, p := range op.Parameters {
+					if p.In != "query" || p.Name != name {
+						continue
+					}
+					found = true
+					if len(p.Schema.Enum) > 0 && !contains(p.Schema.Enum, values[0]) {
+						t.Errorf("?%s=%s is not one of %v", name, values[0], p.Schema.Enum)
+					}
+					if p.Schema.Type == "integer" && strings.Trim(values[0], "0123456789") != "" {
+						t.Errorf("?%s=%s is not an integer", name, values[0])
+					}
+				}
+				if !found {
+					t.Errorf("the operation has no query parameter %q", name)
+				}
+			}
+		})
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// The examples of the AuthZEN Authorization API 1.0 (access evaluation, evaluations and the three searches), reduced to the
+// members Licetum reads: the builders write exactly them.
+func TestBuildersWriteTheExamplesOfTheSpecification(t *testing.T) {
+	const alice = "alice@acmecorp.com"
+	for _, c := range []struct {
+		file string
+		req  authzenreq.Request
+	}{
+		{"spec_evaluation.json", authzenreq.Evaluation("orders", alice, authzenreq.On("account", "123"), "can_read",
+			authzenreq.WithContext(map[string]any{"time": "1985-10-26T01:22-07:00"}))},
+		{"spec_evaluations.json", authzenreq.Evaluations("orders", alice, []authzenreq.Question{
+			{Resource: authzenreq.On("document", "1"), Action: "can_read"},
+			{Resource: authzenreq.On("document", "2"), Action: "can_read"},
+		}, authzenreq.WithContext(map[string]any{"time": "2024-05-31T15:22-07:00"}))},
+		{"spec_evaluations_semantic.json", authzenreq.Evaluations("orders", alice, []authzenreq.Question{
+			{Resource: authzenreq.On("document", "1"), Action: "can_read"},
+			{Resource: authzenreq.On("document", "2"), Action: "can_edit"},
+		}, authzenreq.Semantic(model.AuthzenPermitOnFirstPermit))},
+		{"spec_search_subject.json", authzenreq.SearchSubject("orders", authzenreq.On("account", "123"), "can_read")},
+		{"spec_search_resource.json", authzenreq.SearchResource("orders", alice, "account", "can_read")},
+		{"spec_search_action.json", authzenreq.SearchAction("orders", alice, authzenreq.On("account", "123"),
+			authzenreq.WithContext(map[string]any{"time": "2024-10-26T01:22-07:00"}))},
+	} {
+		t.Run(c.file, func(t *testing.T) {
+			want, err := os.ReadFile(filepath.Join("testdata", c.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wantBody any
+			if err := json.Unmarshal(want, &wantBody); err != nil {
+				t.Fatal(err)
+			}
+			if got := normalized(t, c.req.Body); got != normalized(t, wantBody) {
+				t.Errorf("got  %s\nwant %s", got, normalized(t, wantBody))
+			}
+		})
+	}
+}
+
+func normalized(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var round any
+	if err := json.Unmarshal(raw, &round); err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(round)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+func TestFreshnessTravelsInTheQuery(t *testing.T) {
+	ev := func(opts ...authzenreq.Option) string {
+		return authzenreq.Evaluation("orders", "alice", authzenreq.On("branch", "b1"), "read", opts...).Path
+	}
+	for _, c := range []struct {
+		opts []authzenreq.Option
+		want string
+	}{
+		{nil, "/service/orders/access/v1/evaluation"},
+		{[]authzenreq.Option{authzenreq.Fresh()}, "/service/orders/access/v1/evaluation?consistency=higher"},
+		{[]authzenreq.Option{authzenreq.AtLeast(41)}, "/service/orders/access/v1/evaluation?at_least_as_fresh=41"},
+		{[]authzenreq.Option{authzenreq.AtLeast(0)}, "/service/orders/access/v1/evaluation"},
+		{[]authzenreq.Option{authzenreq.AtLeast(-5)}, "/service/orders/access/v1/evaluation"},
+		{[]authzenreq.Option{authzenreq.Fresh(), authzenreq.AtLeast(7)}, "/service/orders/access/v1/evaluation?at_least_as_fresh=7&consistency=higher"},
+	} {
+		if got := ev(c.opts...); got != c.want {
+			t.Errorf("got %s, want %s", got, c.want)
+		}
+	}
+}
+
+func TestTheServiceIsOneSegmentOfThePath(t *testing.T) {
+	id := "6f1c1d52-33a5-5d0e-9d0e-0a3a8a0d7c11"
+	if got := authzenreq.SearchAction(id, "alice", authzenreq.Whole("flag")).Path; got != "/service/"+id+"/access/v1/search/action" {
+		t.Errorf("the id of a service: %s", got)
+	}
+	if got := authzenreq.SearchAction("a/b?c", "alice", authzenreq.Whole("flag")).Path; got != "/service/a%2Fb%3Fc/access/v1/search/action" {
+		t.Errorf("a reference is escaped, not interpreted: %s", got)
+	}
+}
+
+func TestOptionsAreCopiedAndMerged(t *testing.T) {
+	attrs := map[string]any{"ip": "10.0.0.7"}
+	claims := map[string]any{"preferred_username": "bob"}
+	r := authzenreq.Evaluation("orders", "bob", authzenreq.On("branch", "b1"), "read",
+		authzenreq.WithContext(attrs), authzenreq.WithContext(map[string]any{"ip": "10.0.0.8", "tier": "gold"}),
+		authzenreq.WithProperties(claims), authzenreq.WithProperties(map[string]any{"department": "sales"}))
+	attrs["ip"], claims["preferred_username"] = "changed", "changed"
+	delete(attrs, "ip")
+
+	body := normalized(t, r.Body)
+	for _, want := range []string{`"ip":"10.0.0.8"`, `"tier":"gold"`, `"preferred_username":"bob"`, `"department":"sales"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s is missing from %s", want, body)
+		}
+	}
+	// The same options build the same request twice, and the first one is not changed by the second.
+	opts := []authzenreq.Option{authzenreq.Explain(), authzenreq.WithContext(map[string]any{"a": 1})}
+	first := authzenreq.Evaluation("orders", "alice", authzenreq.Whole("flag"), "enabled", opts...)
+	second := authzenreq.Evaluation("orders", "alice", authzenreq.Whole("flag"), "enabled", opts...)
+	if normalized(t, first.Body) != normalized(t, second.Body) {
+		t.Errorf("the same options built different requests:\n%s\n%s", normalized(t, first.Body), normalized(t, second.Body))
+	}
+}
+
+// Explain has the last word on the name explain, which is the caller's request and no attribute of the rules.
+func TestExplainOverridesAnAttributeOfThatName(t *testing.T) {
+	r := authzenreq.Evaluation("orders", "alice", authzenreq.Whole("flag"), "enabled",
+		authzenreq.WithContext(map[string]any{"explain": false}), authzenreq.Explain())
+	if got := normalized(t, r.Body); !strings.Contains(got, `"context":{"explain":true}`) {
+		t.Errorf("%s", got)
+	}
+}
+
+func TestAnOptionTheRequestCannotCarryPanics(t *testing.T) {
+	eval := func(opts ...authzenreq.Option) func() {
+		return func() { authzenreq.Evaluation("orders", "alice", authzenreq.Whole("flag"), "enabled", opts...) }
+	}
+	for name, c := range map[string]struct {
+		build func()
+		names string
+	}{
+		"page on an evaluation":     {eval(authzenreq.Page(10, "")), "Evaluation cannot carry Page"},
+		"semantic on an evaluation": {eval(authzenreq.Semantic(model.AuthzenExecuteAll)), "Evaluation cannot carry Semantic"},
+		"several at once":           {eval(authzenreq.Page(1, ""), authzenreq.Semantic("x")), "Semantic, Page"},
+		"explain on a search":       {func() { authzenreq.SearchResource("orders", "alice", "branch", "read", authzenreq.Explain()) }, "SearchResource cannot carry Explain"},
+		"semantic on a search":      {func() { authzenreq.SearchAction("orders", "alice", authzenreq.Whole("flag"), authzenreq.Semantic("x")) }, "SearchAction cannot carry Semantic"},
+		"properties on the subjects": {func() {
+			authzenreq.SearchSubject("orders", authzenreq.Whole("flag"), "read", authzenreq.WithProperties(nil))
+		}, "SearchSubject cannot carry WithProperties"},
+		"page on a batch": {func() { authzenreq.Evaluations("orders", "alice", nil, authzenreq.Page(1, "")) }, "Evaluations cannot carry Page"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				msg, _ := recover().(string)
+				if !strings.Contains(msg, c.names) {
+					t.Errorf("panic %q does not say %q", msg, c.names)
+				}
+			}()
+			c.build()
+		})
+	}
+}
+
+func TestOptionsEveryRequestCanCarry(t *testing.T) {
+	all := []authzenreq.Option{authzenreq.Fresh(), authzenreq.AtLeast(2), authzenreq.WithContext(map[string]any{"ip": "10.0.0.7"})}
+	for name, build := range map[string]func(...authzenreq.Option) authzenreq.Request{
+		"evaluation": func(o ...authzenreq.Option) authzenreq.Request {
+			return authzenreq.Evaluation("s", "a", authzenreq.Whole("t"), "x", o...)
+		},
+		"evaluations": func(o ...authzenreq.Option) authzenreq.Request { return authzenreq.Evaluations("s", "a", nil, o...) },
+		"resource": func(o ...authzenreq.Option) authzenreq.Request {
+			return authzenreq.SearchResource("s", "a", "t", "x", o...)
+		},
+		"action": func(o ...authzenreq.Option) authzenreq.Request {
+			return authzenreq.SearchAction("s", "a", authzenreq.Whole("t"), o...)
+		},
+		"subject": func(o ...authzenreq.Option) authzenreq.Request {
+			return authzenreq.SearchSubject("s", authzenreq.Whole("t"), "x", o...)
+		},
+	} {
+		r := build(all...)
+		if !strings.Contains(r.Path, "consistency=higher") || !strings.Contains(r.Path, "at_least_as_fresh=2") || !strings.Contains(normalized(t, r.Body), `"ip":"10.0.0.7"`) {
+			t.Errorf("%s: %s %s", name, r.Path, normalized(t, r.Body))
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("%s: %s", name, r.Method)
+		}
+	}
+}
