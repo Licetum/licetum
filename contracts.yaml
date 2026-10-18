@@ -837,7 +837,7 @@ contracts:
     oracle: admin-api/loadtest oracle (expectedAllowed)
     level: load
     phase: P2
-    status: planned
+    status: active
   - id: LOAD02
     statement: p99, store reads per evaluation and CPU per 1k requests stay within their budgets, on both sides of the tolerance; a run better than its budget by more than the tolerance fails until the budget is set again (today the load test only asks for that in its report).
     oracle: admin-api/loadtest/budgets.yaml
