@@ -1,7 +1,7 @@
 # Build from the repository root: docker build -f admin-api/Dockerfile --target <stage> .
 # The admin API of Licetum (AGPL). It depends on the core module, which the build copies next to it (the replace of go.mod).
 
-FROM golang:1.26-alpine AS base
+FROM golang:1.27-alpine AS base
 
 WORKDIR /src
 
