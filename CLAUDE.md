@@ -301,9 +301,17 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   `resource_not_found` (`decideChecks`, `CacheLookup`, the reverse lookup, AuthZEN, the simulations), no cascade reaches the type (the result
   types are the types that have resources) and `resource_where` matches none; a `resource_from_claim` rule whose lookup type has none matches
   nothing and its climb does not pass through such a type (`climbTypes`). A link of a resource of a type below to one of those rows is
-  unresolved (`UnresolvedParents`, `resourceParents`): the closure does not lead through them (`rebuildClosureSQL`), and the structure
-  signature of the types below marks a type that lost its synchronizer (`TypeNode.SourceDeleted`), so that their closure is rebuilt when it
-  is deleted and again when there is one. The query path and the snapshot path read the same graph, so they agree.
+  unresolved (`UnresolvedParents`, `resourceParents`): the closure does not lead through them (`rebuildClosureSQL`). The closure is stored,
+  so it follows the mode in the write that changes it: creating or deleting a synchronizer runs `engine.App.ChangeMode` in the same
+  transaction (the lock of the type's component, the timeouts of a synchronization, `rebuildClosure` of the type's rows and of the rows
+  that hang below them by the declared links, the data revision of the services of the types below), and `AfterClosureMove` follows the
+  commit; the routes are cut or back when the request returns, whatever the sources and the workers of the types below do. `rebuildClosure`
+  reads the types that have resources in its own transaction (`typesWithoutResources`), not from the graph a synchronization loaded
+  before it fetched, so a synchronization that was running while the synchronizer was deleted does not write the route back. The structure
+  signature of the types below also marks a type that lost its synchronizer (`TypeNode.SourceDeleted`), so their next synchronization
+  rebuilds again (harmless, and it stores the new signature). A mode that changes by other means (`restore-admin` switching the
+  synchronizers of the platform types back on) and a change of the type links are followed by the synchronization of the types below
+  only. The query path and the snapshot path read the same graph, so they agree.
 - **Synchronizer**: per-TypeResource adapter (SQL query or HTTP endpoint, see
   `internal/synchronizer/adapter.go`) that fetches the live list of concrete resources for a type
   from the owning service. Wrapped in a Redis circuit breaker (`internal/redisx`) and

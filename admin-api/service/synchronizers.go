@@ -51,14 +51,21 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 	}
 
 	var out *model.Synchronizer
+	var move *engine.ClosureMove
 	err := a.mutate(ctx, func(q db.Querier) (change, error) {
-		// The probe only proves the source works; the resources reach the cache through the synchronization.
-		s, err := engine.ScanSynchronizer(q.QueryRow(ctx, `
-			INSERT INTO synchronizer (type_resource_id, kind, config, regions)
-			VALUES ($1, $2::synchronizer_kind, $3::jsonb, $4::text[])
-			RETURNING `+engine.SynchronizerColumns,
-			typeResourceID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()), regionsOrEmpty(in.Regions),
-		))
+		// The probe only proves the source works; the resources reach the cache through the synchronization. The type
+		// becomes sync with this row, and the closure of the types below it follows in the same transaction (ChangeMode).
+		var s *model.Synchronizer
+		var err error
+		move, err = a.ChangeMode(ctx, q, typeResourceID, func() error {
+			s, err = engine.ScanSynchronizer(q.QueryRow(ctx, `
+				INSERT INTO synchronizer (type_resource_id, kind, config, regions)
+				VALUES ($1, $2::synchronizer_kind, $3::jsonb, $4::text[])
+				RETURNING `+engine.SynchronizerColumns,
+				typeResourceID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()), regionsOrEmpty(in.Regions),
+			))
+			return err
+		})
 		if db.IsUniqueViolation(err) {
 			// Two creations racing for the same type: the second loses.
 			return change{}, apperr.Conflict(i18n.SynchronizerExists, typeResourceID)
@@ -73,6 +80,7 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 	if err != nil {
 		return nil, err
 	}
+	a.AfterClosureMove(ctx, move)
 	return out, nil
 }
 
@@ -143,6 +151,7 @@ func (a *App) UpdateSynchronizer(ctx context.Context, serviceID, typeResourceID,
 }
 
 func (a *App) DeleteSynchronizer(ctx context.Context, serviceID, typeResourceID, synchronizerID uuid.UUID) (uuid.UUID, error) {
+	var move *engine.ClosureMove
 	err := a.mutate(ctx, func(q db.Querier) (change, error) {
 		if _, err := a.GetExistingTypeResource(ctx, q, serviceID, typeResourceID); err != nil {
 			return change{}, err
@@ -151,7 +160,13 @@ func (a *App) DeleteSynchronizer(ctx context.Context, serviceID, typeResourceID,
 		if err != nil {
 			return change{}, err
 		}
-		if _, err := q.Exec(ctx, `UPDATE synchronizer SET deleted_at = now() WHERE id = $1`, synchronizerID); err != nil {
+		// The type is not_sync without it: its rows stay in the local copy, but the closure of the types below no longer
+		// leads through them, and that is written in the same transaction (ChangeMode).
+		move, err = a.ChangeMode(ctx, q, typeResourceID, func() error {
+			_, err := q.Exec(ctx, `UPDATE synchronizer SET deleted_at = now() WHERE id = $1`, synchronizerID)
+			return err
+		})
+		if err != nil {
 			return change{}, err
 		}
 		return change{entity: "synchronizer", entityID: synchronizerID, serviceID: &serviceID, action: actionDelete,
@@ -160,6 +175,7 @@ func (a *App) DeleteSynchronizer(ctx context.Context, serviceID, typeResourceID,
 	if err != nil {
 		return uuid.Nil, err
 	}
+	a.AfterClosureMove(ctx, move)
 	return synchronizerID, nil
 }
 

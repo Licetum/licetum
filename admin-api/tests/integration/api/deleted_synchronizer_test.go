@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -23,23 +24,12 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) {
-	w := newWorld(t)
-	ctx := context.Background()
-	// part (service app) below item: its source names I1 as the parent of P1.
+// partBelowItem adds the type part (service app) below item: its source names I1 as the parent of P1.
+func (w *world) partBelowItem() {
+	w.t.Helper()
 	w.exec(`CREATE TABLE src_part (id text PRIMARY KEY, name text, parent_id text)`)
 	w.source("part", "P1", "Part 1", "I1")
 	w.typeResource(w.appSvc, "part", w.item)
-	itemSource := func() map[string]any {
-		return map[string]any{
-			"config": map[string]any{
-				"kind": "sql", "dsn": w.cfg.DB.URI,
-				"query":      "SELECT id, name, parent_id FROM src_item WHERE id = :id",
-				"list_query": "SELECT id, name, parent_id FROM src_item",
-			},
-			"probe_resource_id": "I1",
-		}
-	}
 	w.must("POST", w.typePath("part")+"/resource/synchronizer", map[string]any{
 		"config": map[string]any{
 			"kind": "sql", "dsn": w.cfg.DB.URI,
@@ -48,6 +38,25 @@ func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) 
 		},
 		"probe_resource_id": "P1",
 	})
+}
+
+// itemSource is the body that creates the synchronizer of item again.
+func (w *world) itemSource() map[string]any {
+	return map[string]any{
+		"config": map[string]any{
+			"kind": "sql", "dsn": w.cfg.DB.URI,
+			"query":      "SELECT id, name, parent_id FROM src_item WHERE id = :id",
+			"list_query": "SELECT id, name, parent_id FROM src_item",
+		},
+		"probe_resource_id": "I1",
+	}
+}
+
+func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.partBelowItem()
+	itemSource := w.itemSource
 	// Read on D1, which reaches I1 and, through it, P1; and a point rule on I4, which dies with the synchronizer of item.
 	w.rule("division", "D1", nil)
 	w.rule("item", "I4", nil)
@@ -217,5 +226,164 @@ func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) 
 	}
 	if !covered("item", "I1") || !covered("part", "P1") {
 		t.Fatal("with a synchronizer again, D1 covers I1 and P1")
+	}
+}
+
+// A synchronizer deleted (or created again) cuts (or restores) the routes through the rows of its type in the closure of
+// the types below it in the same write, so that the decision about a type below does not wait for that type to be
+// synchronized: whatever its source or the worker do, P1 of part, which names I1 of item as its parent, gets nothing from
+// D1 while item has no synchronizer, and gets it again when item has one.
+func TestIntegrationADeletedSynchronizerCutsTheRoutesBelowItWhateverTheLowerSourceDoes(t *testing.T) {
+	for _, variant := range []string{"the source of part is down", "no worker runs"} {
+		t.Run(variant, func(t *testing.T) {
+			w := newWorld(t)
+			ctx := context.Background()
+			w.partBelowItem()
+			w.rule("division", "D1", nil)
+
+			id := "P1"
+			asked := []model.CheckRequest{{Type: "part", ResourceID: &id, Action: "read"}}
+			question := map[string]any{"type": "part", "resource_id": "P1", "action": "read"}
+			// The query path (consistency=higher through the API) and the snapshot path.
+			decisions := func() (queries, snapshot string) {
+				t.Helper()
+				queries = w.checkAccess(w.appSvc, true, question)[0]["explanation"].(map[string]any)["decision"].(string)
+				results, err := w.app.CheckAccess(ctx, uuid.MustParse(w.appSvc), hierarchySubject,
+					engine.NewEnv(engine.Claims{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return queries, results[0].Explanation.Decision
+			}
+			// The ancestors P1 has in the closure, by external id.
+			ancestors := func() []string {
+				t.Helper()
+				rows, err := w.pool.Query(ctx, `
+					SELECT a.external_id FROM resource_ancestor ra
+					JOIN resource_cache a ON a.id = ra.ancestor_id
+					JOIN resource_cache d ON d.id = ra.descendant_id
+					WHERE d.type_resource_id = $1 AND d.external_id = 'P1' ORDER BY 1`, w.typeByName["part"])
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer rows.Close()
+				var out []string
+				for rows.Next() {
+					var ext string
+					if err := rows.Scan(&ext); err != nil {
+						t.Fatal(err)
+					}
+					out = append(out, ext)
+				}
+				return out
+			}
+			dataRevision := func() int64 {
+				t.Helper()
+				var rev int64
+				if err := w.pool.QueryRow(ctx, `SELECT revision FROM revision_state WHERE scope = 'data:' || $1`, w.appSvc).Scan(&rev); err != nil {
+					t.Fatal(err)
+				}
+				return rev
+			}
+
+			if q, s := decisions(); q != engine.DecisionAllowed || s != engine.DecisionAllowed {
+				t.Fatalf("while item has its synchronizer: %s, %s", q, s)
+			}
+			if got, want := ancestors(), []string{"B1", "D1", "I1", "P1", "R1"}; !slices.Equal(got, want) {
+				t.Fatalf("the ancestors of P1 %v, want %v", got, want)
+			}
+
+			// From here on part is not synchronized again.
+			if variant == "no worker runs" {
+				w.stopWorker()
+			} else {
+				w.exec(`ALTER TABLE src_part RENAME TO src_part_off`)
+			}
+
+			before := dataRevision()
+			w.must(http.MethodDelete, w.typePath("item")+"/resource/synchronizer/"+w.syncs["item"], nil)
+			// The write cut the routes through the rows of item: nothing was synchronized since.
+			if got := ancestors(); !slices.Equal(got, []string{"P1"}) {
+				t.Fatalf("after the synchronizer of item was deleted, the ancestors of P1 %v, want P1 alone", got)
+			}
+			if got := dataRevision(); got <= before {
+				t.Fatalf("the data revision of the service of part did not move: %d, was %d", got, before)
+			}
+			if q, s := decisions(); q != engine.DecisionNoAccess || s != engine.DecisionNoAccess {
+				t.Fatalf("without a synchronizer of item, P1 gets nothing from D1: %s on the query path, %s on the snapshot path", q, s)
+			}
+
+			// And the routes come back with the synchronizer, before anything is synchronized.
+			before = dataRevision()
+			w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
+			if got, want := ancestors(), []string{"B1", "D1", "I1", "P1", "R1"}; !slices.Equal(got, want) {
+				t.Fatalf("after the synchronizer of item was created again, the ancestors of P1 %v, want %v", got, want)
+			}
+			if got := dataRevision(); got <= before {
+				t.Fatalf("the data revision of the service of part did not move: %d, was %d", got, before)
+			}
+			if q, s := decisions(); q != engine.DecisionAllowed || s != engine.DecisionAllowed {
+				t.Fatalf("with a synchronizer of item again: %s, %s", q, s)
+			}
+		})
+	}
+}
+
+// A synchronization of part that read the type graph before the synchronizer of item was deleted, and applies its result
+// after, writes the closure of the rows it changed under the modes of the types as the transaction sees them: P2, which it
+// brings in with I1 as its parent, gets no route through the rows of item.
+func TestIntegrationASynchronizationThatStartedBeforeTheSynchronizerWasDeletedDoesNotRestoreTheRoute(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.partBelowItem()
+	w.rule("division", "D1", nil)
+	w.checkAccess(w.appSvc, true, map[string]any{"type": "part", "resource_id": "P1", "action": "read"}) // everything synchronized
+
+	part := uuid.MustParse(w.typeByName["part"])
+	w.stopWorker()
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	w.worker(nil, engine.SyncHooks{AfterFetch: func(ctx context.Context, ids []uuid.UUID) {
+		if !slices.Contains(ids, part) {
+			return // only the job of part is held
+		}
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+	}})
+
+	// P2 appears in the source of part; the job that brings it in has read the type graph, and waits after the fetch.
+	w.source("part", "P2", "Part 2", "I1")
+	if _, err := w.app.Coordinator().Ensure(ctx, []uuid.UUID{part}, engine.SyncOptions{Fresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the job of part never fetched its source")
+	}
+
+	w.must(http.MethodDelete, w.typePath("item")+"/resource/synchronizer/"+w.syncs["item"], nil)
+	close(release)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for w.countRows(`SELECT count(*) FROM resource_cache WHERE type_resource_id = $1 AND external_id = 'P2'`, part) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the job of part never applied P2")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for _, p := range []string{"P1", "P2"} {
+		if n := w.countRows(`
+			SELECT count(*) FROM resource_ancestor ra
+			JOIN resource_cache d ON d.id = ra.descendant_id
+			WHERE d.type_resource_id = $1 AND d.external_id = $2 AND ra.ancestor_id <> ra.descendant_id`, part, p); n != 0 {
+			t.Fatalf("%s has %d ancestors in the closure, though the synchronizer of item was deleted before the job applied", p, n)
+		}
 	}
 }

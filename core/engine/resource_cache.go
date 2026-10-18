@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/licetum/licetum/core/apperr"
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
 )
@@ -504,7 +505,7 @@ func syncEdges(ctx context.Context, tx pgx.Tx, typeID uuid.UUID, incoming []Inco
 // a cycle in the data terminate.
 //
 // A route does not lead through a resource of a type without a live synchronizer (parameter 2,
-// TypeGraph.withoutResources): such a type has no resources, so the link to the row its deleted
+// typesWithoutResources): such a type has no resources, so the link to the row its deleted
 // synchronizer left is a link to a parent that is not there (UnresolvedParents reports it). The rows
 // of such a type keep their own ancestors, ready for the day the type has a synchronizer again.
 const rebuildClosureSQL = `
@@ -546,11 +547,34 @@ const rebuildClosureSQL = `
 	FROM closure c JOIN resource_cache x ON x.id = c.d
 	ORDER BY c.a, c.d`
 
+// typesWithoutResources returns the live types that have no live synchronizer, sorted, as tx sees them: no resource of such
+// a type leads anywhere in the closure (rebuildClosureSQL). It is read in the transaction that writes the closure, under
+// the lock of the component of the types it writes, and not taken from a type graph loaded before: a synchronizer deleted
+// or created since would otherwise be undone by the rows this transaction writes. It is never nil: the list is a
+// parameter of a query (x <> ALL), and a nil slice would be sent as NULL, which nothing is unequal to.
+func typesWithoutResources(ctx context.Context, tx db.Querier) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `SELECT t.id FROM type_resource t WHERE t.deleted_at IS NULL AND NOT `+
+		LiveSynchronizerExists("t.id")+` ORDER BY t.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // rebuildClosure recomputes the ancestors of the touched resources and of everything below them.
 // The rows of the affected descendants are replaced as a whole; rows ordered by ancestor keep the
-// descendants of one anchor next to each other on disk. g says which types have resources: it is the
-// type graph the structure of the synchronized types is recorded with (structureOf).
-func rebuildClosure(ctx context.Context, tx pgx.Tx, g *TypeGraph, touched map[uuid.UUID]struct{}) error {
+// descendants of one anchor next to each other on disk. The types that have resources are the ones tx sees
+// (typesWithoutResources).
+func rebuildClosure(ctx context.Context, tx db.Querier, touched map[uuid.UUID]struct{}) error {
 	if len(touched) == 0 {
 		return nil
 	}
@@ -588,7 +612,11 @@ func rebuildClosure(ctx context.Context, tx pgx.Tx, g *TypeGraph, touched map[uu
 	if _, err := tx.Exec(ctx, `DELETE FROM resource_ancestor WHERE descendant_id = ANY($1)`, ids); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, rebuildClosureSQL, ids, g.withoutResources())
+	without, err := typesWithoutResources(ctx, tx)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, rebuildClosureSQL, ids, without)
 	return err
 }
 
@@ -1111,7 +1139,7 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 				if err := applyType(ctx, tx, typeResourceID, normalized, false, true, touched, &changed); err != nil {
 					return err
 				}
-				if err := rebuildClosure(ctx, tx, g, touched); err != nil {
+				if err := rebuildClosure(ctx, tx, touched); err != nil {
 					return err
 				}
 				if changed {
