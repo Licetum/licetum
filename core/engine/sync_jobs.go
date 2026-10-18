@@ -183,10 +183,14 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 		jobs, err := a.enqueueSync(ctx, block, opts.Fresh, source)
 		if errors.Is(err, errSyncUnavailable) {
 			// The backend is not ready (the first worker has not created its tables yet): try again while the wait lasts.
+			resume := pauseComputeSlot(ctx)
 			select {
 			case <-ctx.Done():
 				return res, ctx.Err()
 			case <-time.After(min(remaining, 100*time.Millisecond)):
+			}
+			if err := resume(ctx); err != nil {
+				return res, err
 			}
 			round--
 			continue
@@ -194,8 +198,13 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 		if err != nil {
 			return res, err
 		}
+		// The wait is the worker's: the computation gives its slot back meanwhile (see computeSlot).
+		resume := pauseComputeSlot(ctx)
 		unanswered, finished := a.waitJobs(ctx, jobs, remaining)
 		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+		if err := resume(ctx); err != nil {
 			return res, err
 		}
 		if !finished {

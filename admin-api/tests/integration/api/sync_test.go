@@ -266,6 +266,44 @@ func TestSyncFreshRequestsShareTheSourceCall(t *testing.T) {
 	}
 }
 
+// A computation that waits for a synchronization job gives its slot of COMPUTE__CONCURRENCY back for the wait: concurrent
+// consistency=higher requests of different people share the fresh job instead of queueing one behind the other, each for
+// a job of its own SYNC__FRESH_MIN_INTERVAL after the last one (the cold load test collapsed at COMPUTE__CONCURRENCY / 1 s).
+func TestSyncWaitingForTheWorkerHoldsNoComputeSlot(t *testing.T) {
+	e := setup(t)
+	src := newSource(t, branches("b1", "b2")...)
+	f := e.syncFixture("slots", src)
+	e.stopWorker()
+	_, _ = e.worker(func(c *config.Config) { c.Sync.FreshMinInterval = time.Second }, engine.SyncHooks{})
+	r := e.checkReplica(func(c *config.Config) { c.Compute.Concurrency = 1 })
+	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
+		t.Fatalf("first synchronization: %d %s", status, body)
+	}
+
+	const people = 8
+	tokens := make([]string, people)
+	for i := range tokens {
+		name := fmt.Sprintf("person-%d", i)
+		e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": f.typ, "access": []string{"read"}, "subject": name})
+		tokens[i] = e.token(jwt.MapClaims{"preferred_username": name, "sub": name + "-sub"})
+	}
+	started := time.Now()
+	var wg sync.WaitGroup
+	for _, token := range tokens {
+		wg.Go(func() {
+			status, body, _ := r.permission(t, &syncFixture{service: f.service, alice: token}, "?consistency=higher")
+			if status != http.StatusOK || !strings.Contains(body, `"b2"`) {
+				t.Errorf("fresh permission: %d %s", status, body)
+			}
+		})
+	}
+	wg.Wait()
+	// One slot held through each wait would put the requests one fresh job (a second) apart: 7 s and more.
+	if elapsed := time.Since(started); elapsed > 4*time.Second {
+		t.Fatalf("%d concurrent fresh requests with one compute slot took %v: they waited for the worker one at a time", people, elapsed)
+	}
+}
+
 // F3-3: a source that fails is asked once per backoff window by the whole cluster, and the answers come from the data
 // that exists.
 func TestSyncFailingSourceIsAskedOncePerBackoff(t *testing.T) {
