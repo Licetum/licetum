@@ -14,7 +14,11 @@ servers named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI`.
 ```sh
 task go:test:integration   # tags integration: api/, cluster/, contracts/ (and core/tests/integration)
 task go:test:chaos         # tag chaos: chaos/ (slower, nightly in .github/workflows/chaos.yml)
+task go:vet:tags           # no services: compiles and vets all the tagged code (integration, chaos, multiregion), with and without -race
 ```
+
+The chaos tests and the multi-region environment run only nightly, but `task go:vet:tags` is part of `task check` (`task go:lint`, the CI job
+`go-lint`), so a change that stops them compiling fails the pull request. A new build tag goes into `GO_BUILD_TAGS` of `Taskfile.yaml`.
 
 ## The decision contracts (P1)
 

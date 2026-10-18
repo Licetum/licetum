@@ -80,7 +80,8 @@ after changing an API contract; the generated schemas in `core/schema/` and `adm
 ## Testing
 
 `task check` is the local equivalent of the CI quality job. It checks Go formatting and linting,
-module tidiness, OpenAPI schema drift, web formatting, TypeScript, and translations.
+that the code behind the build tags (`integration`, `chaos`, `multiregion`) compiles, module tidiness,
+OpenAPI schema drift, web formatting, TypeScript, and translations.
 
 Backend integration tests use disposable PostgreSQL and Redis containers:
 

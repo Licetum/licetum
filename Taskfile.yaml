@@ -5,6 +5,9 @@ version: "3"
 
 vars:
   GOLANGCI_LINT: '{{.GOLANGCI_LINT | default "golangci-lint"}}'
+  # The build tags that guard test and tool code (integration suites, fault injection, the multi-region environment):
+  # go:vet:tags compiles it on every pull request. A new tag goes here, and the task fails until it does.
+  GO_BUILD_TAGS: integration,chaos,multiregion
 
 tasks:
   default:
@@ -86,11 +89,29 @@ tasks:
     cmds:
       - (cd core && go run ./internal/tools/contractscheck -root ..)
 
+  # Code behind a build tag is compiled by no ordinary build: golangci-lint has no tags, go:coverage compiles only `integration`,
+  # and chaos and multiregion would break unseen until the nightly run. `go vet` compiles and type-checks it with its tests,
+  # with and without the race detector (the race and norace files of a package differ), and the load test is built.
+  go:vet:tags:
+    desc: Compile and vet the code behind the build tags ({{.GO_BUILD_TAGS}}) in both modules, with and without -race, and build the load test
+    cmds:
+      - |
+        known=" {{.GO_BUILD_TAGS | replace "," " "}} race linux "
+        for tag in $(grep -rh --include='*.go' '^//go:build ' core admin-api | sed 's|^//go:build ||' | tr -cs 'A-Za-z0-9_' '\n' | sort -u); do
+          case "$known" in *" $tag "*) ;; *) echo "build tag '$tag' is not in GO_BUILD_TAGS of Taskfile.yaml: add it, so that go:vet:tags compiles its code" >&2; exit 1 ;; esac
+        done
+      - |
+        for m in core admin-api; do
+          (cd $m && go vet -tags {{.GO_BUILD_TAGS}} ./... && go vet -race -tags {{.GO_BUILD_TAGS}} ./...) || exit 1
+        done
+      - cd admin-api && go build ./loadtest/... ./cmd/...
+
   # golangci-lint goes first and alone: it may change files, the rest only read them.
   go:lint:
-    desc: All Go checks of both modules (golangci-lint fixes and formats first, then go mod tidy, the schema drift check and the contracts)
+    desc: All Go checks of both modules (golangci-lint fixes and formats first, then the tagged code compiles, go mod tidy, the schema drift check and the contracts)
     cmds:
       - task: go:golangci
+      - task: go:vet:tags
       - task: go:tidy
       - task: go:schema:check
       - task: contracts:check
