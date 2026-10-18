@@ -1,0 +1,112 @@
+# DEC08: conditions over the time of the decision (source now): hour (0-23) and weekday (1-7, Monday is 1), both in UTC,
+# compared with the operators like any other value. 2030-01-01 is a Tuesday, 2030-01-05 a Saturday, 2030-01-06 a Sunday
+# and 2030-01-07 a Monday.
+contracts: [DEC08]
+description: hour and weekday of the time of the decision, at the boundaries of the hours and of the days, in UTC.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: desk, service: org, sync: false}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+rules:
+  - {name: d1-at-any-time, type: division, resource: D1, access: [read], predicate: [{attr: preferred_username, op: eq, value: user-1}, {attr: hour, source: now, op: ge, value: "0"}, {attr: weekday, source: now, op: in, value: ["1", "2", "3", "4", "5", "6", "7"]}]}
+  - {name: d2-never, type: division, resource: D2, access: [read], predicate: [{attr: preferred_username, op: eq, value: user-1}, {attr: hour, source: now, op: lt, value: "0"}]}
+  - {name: business-hours, type: desk, access: [business_hours], predicate: [{attr: hour, source: now, op: ge, value: "9"}, {attr: hour, source: now, op: lt, value: "17"}]}
+  - {name: noon-hour, type: desk, access: [noon], predicate: [{attr: hour, source: now, op: eq, value: "12"}]}
+  - {name: weekend, type: desk, access: [weekend], predicate: [{attr: weekday, source: now, op: in, value: ["6", "7"]}]}
+  - {name: monday, type: desk, access: [monday], predicate: [{attr: weekday, source: now, op: eq, value: "1"}]}
+cases:
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationClockConditionsReadTheHourOfTheDecision
+  - name: a condition that always holds and one that never does
+    subject: user-1
+    claims: {preferred_username: user-1}
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [d1-at-any-time]}
+      - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
+  - name: the same at the last second of a Sunday
+    subject: user-1
+    claims: {preferred_username: user-1}
+    at: 2030-01-06T23:59:59Z
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed}
+      - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
+  - name: the same at midnight
+    subject: user-1
+    claims: {preferred_username: user-1}
+    at: 2030-01-07T00:00:00Z
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed}
+      - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
+  - name: the second before business hours on a Tuesday
+    subject: clerk
+    at: 2030-01-01T08:59:59Z
+    questions:
+      - {type: desk, action: business_hours, allowed: false, decision: no_access}
+      - {type: desk, action: noon, allowed: false, decision: no_access}
+      - {type: desk, action: weekend, allowed: false, decision: no_access}
+      - {type: desk, action: monday, allowed: false, decision: no_access}
+  - name: business hours begin at 09:00
+    subject: clerk
+    at: 2030-01-01T09:00:00Z
+    questions:
+      - {type: desk, action: business_hours, allowed: true, decision: allowed, granted_by: [business-hours]}
+  - name: noon on a Tuesday
+    subject: clerk
+    at: 2030-01-01T12:00:00Z
+    questions:
+      - {type: desk, action: business_hours, allowed: true, decision: allowed}
+      - {type: desk, action: noon, allowed: true, decision: allowed, granted_by: [noon-hour]}
+      - {type: desk, action: weekend, allowed: false, decision: no_access}
+  - name: the hour is the hour, whatever the minute
+    subject: clerk
+    at: 2030-01-01T12:59:59Z
+    questions:
+      - {type: desk, action: noon, allowed: true, decision: allowed}
+  - name: the last second of business hours
+    subject: clerk
+    at: 2030-01-01T16:59:59Z
+    questions:
+      - {type: desk, action: business_hours, allowed: true, decision: allowed}
+  - name: business hours end at 17:00
+    subject: clerk
+    at: 2030-01-01T17:00:00Z
+    questions:
+      - {type: desk, action: business_hours, allowed: false, decision: no_access}
+  - name: the hour is read in UTC, 10:00 at +03:00 is 07:00
+    subject: clerk
+    at: 2030-01-01T10:00:00+03:00
+    questions:
+      - {type: desk, action: business_hours, allowed: false, decision: no_access}
+  - name: the hour is read in UTC, 07:00 at -03:00 is 10:00
+    subject: clerk
+    at: 2030-01-01T07:00:00-03:00
+    questions:
+      - {type: desk, action: business_hours, allowed: true, decision: allowed}
+  - name: noon on a Saturday
+    subject: clerk
+    at: 2030-01-05T12:00:00Z
+    questions:
+      - {type: desk, action: weekend, allowed: true, decision: allowed, granted_by: [weekend]}
+      - {type: desk, action: business_hours, allowed: true, decision: allowed}
+      - {type: desk, action: monday, allowed: false, decision: no_access}
+  - name: the last second of a Sunday
+    subject: clerk
+    at: 2030-01-06T23:59:59Z
+    questions:
+      - {type: desk, action: weekend, allowed: true, decision: allowed}
+      - {type: desk, action: monday, allowed: false, decision: no_access}
+  - name: Monday begins at midnight
+    subject: clerk
+    at: 2030-01-07T00:00:00Z
+    questions:
+      - {type: desk, action: weekend, allowed: false, decision: no_access}
+      - {type: desk, action: monday, allowed: true, decision: allowed, granted_by: [monday]}
+  - name: the weekday is read in UTC, Sunday 22:00 at -03:00 is Monday 01:00
+    subject: clerk
+    at: 2030-01-06T22:00:00-03:00
+    questions:
+      - {type: desk, action: weekend, allowed: false, decision: no_access}
+      - {type: desk, action: monday, allowed: true, decision: allowed}
+      - {type: desk, action: business_hours, allowed: false, decision: no_access}
