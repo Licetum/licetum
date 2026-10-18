@@ -107,12 +107,12 @@ func DefaultOptions() Options {
 	}
 }
 
-// workloadOf names what the traffic of a mode asks, for Settings.Workload. The cold mode asks questions no earlier request
-// of the run asked and sends no consistency query; the cold runs before that asked every request with consistency=higher,
-// carry no name, and so are never compared with these.
+// workloadOf names what the traffic of a mode asks, for Settings.Workload. The cold mode sends no consistency query, and its
+// evaluations ask questions no earlier request of the run asked (a search repeats per subject). The cold runs before that
+// asked every request with consistency=higher, carry no name, and so are never compared with these.
 func workloadOf(mode string) string {
 	if mode == "cold" {
-		return "cold-unrepeated"
+		return "cold-unrepeated-evaluations"
 	}
 	return ""
 }
