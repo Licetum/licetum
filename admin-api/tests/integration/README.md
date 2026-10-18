@@ -26,22 +26,32 @@ The chaos tests and the multi-region environment run only nightly, but `task go:
 cluster of its own (`harness.StartReplicas`, one check replica, a database per fixture): the services by slug, the types with their
 parents, inherit masks and `access_implies`, an http synchronizer per type with resources fed by the fake source (names, the declared
 parents, by the name of the parent type, and the attributes; a parent no resource has is an unresolved link), and the policy through
-`POST /batch`. `Loaded.Ask(case)` asks the questions of a case through `POST /service/{slug}/check?consistency=higher` with `explain`, as
-the case's subject (`preferred_username`) with its claims and request attributes, at the case's time: the replica's clock
-(`engine.App.SetClock`) is the time of the case, so the validity windows and the conditions on the hour are decided then. The answers
-name the rules of the fixture. `contracts.Compare` lists every difference from the expectations; `Loaded.ReplaceRules` swaps the policy
-(and the resources) on the same types, for the property test. `Loaded.CrossCheck(case, answers)` asks the case's
-`GET /service/{slug}/permission?consistency=higher` (same token, request attributes and time) and lists every question on which the
-list disagrees with the check: a resource of a sync type is allowed exactly when the list names it with the action, a not_sync type as
-a whole exactly when the action is among its levels (a sync type as a whole, `type_not_found` and `resource_not_found` are not compared).
-The check decides the asked resources (`CoversOf`), the list every resource (`coverNodes`): the cross-check keeps the two paths equal.
+`POST /batch`. `Loaded.Ask(case)` asks the questions of a case through `POST /service/{slug}/access/v1/evaluations?consistency=higher` with
+`explain` (requests built by `core/testsupport/authzenreq`, the explanation read from `context.reason_admin`; an evaluation the API
+could not decide is a failure, not a denial), as the case's subject (`preferred_username`) with its claims in the token and the
+request attributes in the context, at the case's time: the replica's clock (`engine.App.SetClock`) is the time of the case, so the
+validity windows and the conditions on the hour are decided then. The answers name the rules of the fixture. `contracts.Compare`
+lists every difference from the expectations; `Loaded.ReplaceRules` swaps the policy (and the resources) on the same types, for the
+property test. `Loaded.CrossCheck(case, answers)` asks the searches of the case (`…/access/v1/search/resource` for each type with
+resources and action that a question asks about a resource, `…/search/action` for each type without resources asked as a whole, and
+one `search/resource` for that type, which must list nothing; same token, request attributes and time, read page by page) and lists
+every question on which they disagree with the evaluations: a resource of a type with resources is allowed exactly when the search
+lists it, a type without resources as a whole exactly when the action is among its levels (a type with resources as a whole,
+a resource of a type without resources and `type_not_found` are not compared; a `resource_not_found` on a resource of a type with
+resources is the exception: the resource search of its type and action must not list the resource). The evaluations decide the
+asked resources (`CoversOf`), the searches every resource (`coverNodes`): the cross-check keeps the two paths equal.
+
+While the check API has the routes that AuthZEN replaces, `Loaded.SecondOpinion(case, answers)` asks the case through `POST
+/service/{slug}/check` and `GET /service/{slug}/permission` too and lists every difference from the evaluations, and every question on
+which the permission list disagrees with them (including what the searches state more weakly: the mode of a type, a resource listed
+twice). It lives in `contracts/legacy.go` and goes with those routes.
 
 | test | what it proves |
 |---|---|
-| `TestContract_DEC01_*` … `TestContract_DEC13_*` | the fixtures that name the contract get the answers they expect from the engine, and the permission list of each case agrees with them; a fixture that names several contracts is loaded and asked once per test binary; a contract without a fixture is skipped |
-| `TestContract_DECP_*` | on the generated fixtures of the seeds (`LICETUM_DECP_SEEDS`, default 1-20) the engine answers like the reference evaluator, and the permission list of each case agrees with the check |
-| `TestRunner_*` | every field of the fixture format reaches the engine as the fixture means it (validity windows and the hour at the case's time included), `ReplaceRules` leaves nothing of the previous policy, and `Compare` reports each mismatch; each case is cross-checked too |
-| `TestCrossCheck*` | the cross-check reports a disagreement in either direction and a resource listed twice, and leaves out what the list cannot answer |
+| `TestContract_DEC01_*` … `TestContract_DEC13_*` | the fixtures that name the contract get the answers they expect from the engine, and the searches and the older routes of each case agree with them; a fixture that names several contracts is loaded and asked once per test binary; a contract without a fixture is skipped |
+| `TestContract_DECP_*` | on the generated fixtures of the seeds (`LICETUM_DECP_SEEDS`, default 1-20) the engine answers like the reference evaluator, and the searches and the older routes of each case agree with the evaluations |
+| `TestRunner_*` | every field of the fixture format reaches the engine as the fixture means it (validity windows and the hour at the case's time included), `ReplaceRules` leaves nothing of the previous policy, and `Compare` and `Same` report each mismatch; each case is cross-checked and asked through the older routes too |
+| `TestCrossCheck*`, `TestSearchesFor*`, `TestEvaluationsOf*` | the cross-check reports a disagreement in either direction, a resource listed twice and a resource listed for a type without resources, and leaves out what the searches cannot answer; each search is asked once; a case is asked as one evaluations request that does not change the fixture |
 
 ## The harness
 

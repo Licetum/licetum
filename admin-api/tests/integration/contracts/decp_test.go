@@ -4,9 +4,10 @@ package contracts_test
 
 // DECP of contracts.yaml: on generated policies and resource graphs (core/testsupport/policygen), the engine of the check
 // API and the reference evaluator (core/testsupport/refeval, which shares no code with the engine) give the same answers
-// and explanations, and the permission list of each case agrees with the check answers. Each seed is loaded into a
+// and explanations, and what the searches of each case list agrees with the evaluations. Each seed is loaded into a
 // cluster of its own and every question of every case is asked; a failure names the seed, and LICETUM_DECP_SEEDS=<seed>
-// runs that one again.
+// runs that one again. While the check API has the routes that AuthZEN replaces, each case is asked through them as well
+// (contracts.Loaded.SecondOpinion) and they must agree with the evaluations.
 
 import (
 	"os"
@@ -42,7 +43,10 @@ func TestContract_DECP_TheEngineAnswersLikeTheReferenceOnGeneratedPolicies(t *te
 					}
 				}
 				for _, d := range l.CrossCheck(c, answers) {
-					t.Errorf("seed %d, case %q, GET /permission against POST /check: %s", seed, c.Name, d)
+					t.Errorf("seed %d, case %q, the searches against the evaluations: %s", seed, c.Name, d)
+				}
+				for _, d := range l.SecondOpinion(c, answers) {
+					t.Errorf("seed %d, case %q, POST /check and GET /permission against the evaluations: %s", seed, c.Name, d)
 				}
 			}
 			if t.Failed() {
