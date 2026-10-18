@@ -4,6 +4,10 @@
 # type is the rule's type (the owner pattern), else their ancestors of the rule's type, possibly in another service. Every
 # match gives an anchor. A claim that is missing or empty, or a value nothing matches, gives none: the rule has no effect,
 # whatever its effect, which is not the unknown outcome of a condition.
+#
+# A lookup by meta.<name> reads that attribute alone: dave is among the owners of P3, not its owner. Several matches that
+# climb to the same resource of the rule's type give it once (carol owns P4 and P5, both under B1), and the permission
+# list names that resource once.
 contracts: [DEC10]
 description: Lookups by name, id and meta attribute, the owner pattern, anchors above the match and across services, several matches, no match.
 services: [org, app]
@@ -33,6 +37,9 @@ resources:
   - {type: project, id: P1, name: Project 1, parents: [{type: branch, id: B1}], meta: {owner: alice, owners: [alice]}}
   - {type: project, id: P2, name: Project 2, parents: [{type: branch, id: B1}], meta: {owner: bob, owners: [bob]}}
   - {type: project, id: P3, name: Project 3, parents: [{type: branch, id: B3}], meta: {owner: alice, owners: [alice, dave]}}
+  # Two projects of one owner under one branch: in the test, bob owns P1 and P2 under B1 once the source gives him P1.
+  - {type: project, id: P4, name: Project 4, parents: [{type: branch, id: B1}], meta: {owner: carol}}
+  - {type: project, id: P5, name: Project 5, parents: [{type: branch, id: B1}], meta: {owner: carol}}
 rules:
   # The rules of TestIntegrationResourceAttributes, one subject per step of the test.
   - {name: projects-of-owner, subject: owner-user, type: project, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owner}}
@@ -77,6 +84,16 @@ cases:
       - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
       - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
       - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes (once the source gives P1 to bob,
+  # its owners still name alice, and alice reads P3 alone: a lookup by meta.owner does not match the owners)
+  - name: the owner pattern reads its own attribute, not another one that holds the claim
+    subject: owner-user
+    service: app
+    claims: {username: dave}
+    questions:
+      - {type: project, resource: P3, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
   - name: a list attribute holds the claim as one of its items
     subject: owners-user
@@ -112,6 +129,29 @@ cases:
       - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
       - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
       - {type: project, resource: P2, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects, projects-of-owners-again]}
+      - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes (once the source gives P1 to bob,
+  # his two projects P1 and P2 lie under B1, and the permission list names exactly B1)
+  - name: two matches under one branch anchor the rule at that branch once
+    subject: user-1
+    claims: {username: carol}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
+  - name: the branch both matches climb to cascades into the other service
+    subject: user-1
+    service: app
+    claims: {username: carol}
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P4, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: project, resource: P5, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
       - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
   - name: the owner of projects under two branches gets both branches
     subject: user-1

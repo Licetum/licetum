@@ -31,9 +31,11 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
 	support "github.com/licetum/licetum/core/testsupport"
@@ -50,6 +52,11 @@ type Answer struct {
 	GrantedBy []string
 	// Denials are the denials that apply to the level, one per rule (see byRule).
 	Denials []Denial
+	// Repeated describes each entry the explanation lists more than once where a rule written inline has one: the same
+	// denial (anchor, level, and whether it is assumed) twice, or an exception at the same anchor twice among those that
+	// lift one denial. An inline rule has one instance per anchor; a role assignment has one per item of the role, so its
+	// entries are not counted. Compare reports every one: the integration tests assert one denial with one exception.
+	Repeated []string
 }
 
 // Denial is a denial of an explanation.
@@ -75,6 +82,15 @@ func (d Denial) String() string {
 	return b.String()
 }
 
+// withMissing is the denial in words with whether it applies on a missing attribute, for the denials whose expectation
+// states it.
+func (d Denial) withMissing() string {
+	if d.MissingAttribute {
+		return d.String() + " (missing attribute)"
+	}
+	return d.String() + " (no missing attribute)"
+}
+
 // Loaded is a fixture loaded into a cluster of its own: a database, an admin API, a synchronization worker and one check
 // replica whose clock the runner sets to the time of each case.
 type Loaded struct {
@@ -87,6 +103,7 @@ type Loaded struct {
 	services map[string]uuid.UUID // slug -> id
 	types    map[string]uuid.UUID // type name -> id
 	kinds    map[string]string    // type name -> the kind of the fake source that feeds it
+	syncs    map[string]uuid.UUID // type name -> the id of its synchronizer
 	policy   writtenPolicy
 }
 
@@ -94,6 +111,7 @@ type Loaded struct {
 // read back through the names of the rules.
 type writtenPolicy struct {
 	ruleNames    map[uuid.UUID]string
+	roleRules    map[uuid.UUID]bool // the rules that assign a role
 	rules, roles []uuid.UUID
 	groups       []uuid.UUID
 	members      []childID // parent: the group
@@ -127,7 +145,8 @@ const syncWait = time.Minute
 // Load starts a cluster on a database of its own (harness.StartReplicas with one check replica) and loads the fixture into
 // it: the services by slug, the resource types with their parents, inherit masks and access_implies, a synchronizer of kind
 // http per type with resources (the fake source reports their names, parents and attributes), and the policy. The types are
-// synchronized before it returns, so that every parent the fixture declares is resolved or not as the fixture says. Any
+// synchronized before it returns, so that every parent the fixture declares is resolved or not as the fixture says. A
+// fixture with a Before state is loaded in that state first, then changed into its own (see changeToTheFixture). Any
 // failure fails t; the cluster stops with t.
 func Load(t testing.TB, infra *support.Infrastructure, f *policyfix.Fixture) *Loaded {
 	t.Helper()
@@ -139,7 +158,7 @@ func Load(t testing.TB, infra *support.Infrastructure, f *policyfix.Fixture) *Lo
 	}))
 	l := &Loaded{
 		t: t, Cluster: c, replica: c.Replicas[0], clock: &manualClock{t: policyfix.DefaultNow}, f: f,
-		services: map[string]uuid.UUID{}, types: map[string]uuid.UUID{}, kinds: map[string]string{},
+		services: map[string]uuid.UUID{}, types: map[string]uuid.UUID{}, kinds: map[string]string{}, syncs: map[string]uuid.UUID{},
 	}
 	// The replica decides at the time of the case (see Ask). It has not served a request yet.
 	l.replica.App.SetClock(l.clock.Now)
@@ -147,7 +166,7 @@ func Load(t testing.TB, infra *support.Infrastructure, f *policyfix.Fixture) *Lo
 	for _, slug := range f.Services {
 		l.services[slug] = uuid.MustParse(c.Must(http.MethodPost, "/service", c.ServicePayload(slug))["id"].(string))
 	}
-	order, err := typeOrder(f)
+	order, err := typeOrder(f.TypesAtFirstSync())
 	if err != nil {
 		t.Fatalf("fixture %s: %v", f.Name, err)
 	}
@@ -170,24 +189,124 @@ func Load(t testing.TB, infra *support.Infrastructure, f *policyfix.Fixture) *Lo
 			l.kinds[typ.Name] = "t" + strconv.Itoa(i)
 		}
 	}
+	resources := f.ResourcesAtFirstSync()
 	for _, typ := range order {
 		if typ.Sync {
-			l.addSynchronizer(typ)
+			l.addSynchronizer(typ, sourceRows(resources, typ.Name))
 		}
 	}
-	l.writePolicy(f)
-	l.synchronize()
+	l.writePolicy(f, accessGroupsAtWrite(f))
+	l.synchronize(slices.Collect(maps.Keys(l.kinds)))
+	if f.Before != nil {
+		l.changeToTheFixture()
+	}
 	return l
 }
 
-// typeOrder returns the types of the fixture parents first.
-func typeOrder(f *policyfix.Fixture) ([]*policyfix.Type, error) {
+// accessGroupsAtWrite returns the access groups of a fixture with the levels they had when the policy was written.
+func accessGroupsAtWrite(f *policyfix.Fixture) []policyfix.AccessGroup {
+	out := slices.Clone(f.AccessGroups)
+	if f.Before == nil {
+		return out
+	}
+	for i, g := range out {
+		for _, b := range f.Before.AccessGroups {
+			if b.Type == g.Type && b.Name == g.Name {
+				out[i].Levels = b.Levels
+			}
+		}
+	}
+	return out
+}
+
+// changeToTheFixture turns the state of Before, loaded and synchronized, into the fixture's: the access groups get the
+// fixture's levels (PATCH), the synchronizers of the types that have none in the fixture are deleted (their resources stay
+// in the local copy), the deleted types get their deleted_at with a revision of the rules in the same transaction (as
+// hierarchy_test.go:TestIntegrationHierarchyDeletedMiddleType does: the admin API refuses to delete a type that a live type
+// names as its parent), the sources report the fixture's resources (with the parents of deleted types they still name),
+// and the types that have a synchronizer are synchronized again.
+func (l *Loaded) changeToTheFixture() {
+	l.t.Helper()
+	f := l.f
+	atWrite := accessGroupsAtWrite(f)
+	for i, g := range f.AccessGroups {
+		if slices.Equal(g.Levels, atWrite[i].Levels) {
+			continue
+		}
+		typ, _ := f.TypeByName(g.Type)
+		id := l.policy.accessGroups[i].id
+		path := "/service/" + l.services[typ.Service].String() + "/type_resource/" + l.types[g.Type].String() + "/access_group/" + id.String()
+		l.Cluster.Must(http.MethodPatch, path, model.AccessGroupInput{Name: g.Name, Levels: g.Levels})
+	}
+
+	deleted := f.DeletedTypes()
+	for _, then := range f.TypesAtFirstSync() {
+		now, live := f.TypeByName(then.Name)
+		if !then.Sync || !live || now.Sync {
+			continue
+		}
+		path := "/service/" + l.services[then.Service].String() + "/type_resource/" + l.types[then.Name].String() +
+			"/resource/synchronizer/" + l.syncs[then.Name].String()
+		l.Cluster.Must(http.MethodDelete, path, nil)
+		delete(l.kinds, then.Name)
+	}
+	if len(deleted) > 0 {
+		ctx := context.Background()
+		err := pgx.BeginFunc(ctx, l.Cluster.Pool, func(tx pgx.Tx) error {
+			for _, name := range deleted {
+				if _, err := tx.Exec(ctx, `UPDATE type_resource SET deleted_at = now() WHERE id = $1`, l.types[name]); err != nil {
+					return err
+				}
+			}
+			_, err := db.BumpRevision(ctx, tx, db.ScopeRules)
+			return err
+		})
+		if err != nil {
+			l.t.Fatalf("fixture %s: delete the types %v: %v", f.Name, deleted, err)
+		}
+		for _, name := range deleted {
+			delete(l.kinds, name)
+		}
+	}
+
+	var synced []string
+	for name, kind := range l.kinds {
+		l.Cluster.Source.Set(kind, l.reportedNow(name)...)
+		synced = append(synced, name)
+	}
+	l.synchronize(synced)
+}
+
+// reportedNow is what the source of a type of the fixture reports once the fixture's state is reached: its resources, each
+// with the parents of deleted types its earlier version named (the type was deleted, not the source's data).
+func (l *Loaded) reportedNow(typeName string) []map[string]any {
+	f := l.f
+	deleted := f.DeletedTypes()
+	resources := slices.Clone(f.Resources)
+	for i := range resources {
+		r := &resources[i]
+		for _, b := range f.Before.Resources {
+			if b.Type != r.Type || b.ID != r.ID {
+				continue
+			}
+			for _, p := range b.Parents {
+				if slices.Contains(deleted, p.Type) {
+					r.Parents = append(slices.Clone(r.Parents), p)
+				}
+			}
+		}
+	}
+	return sourceRows(resources, typeName)
+}
+
+// typeOrder returns the types parents first.
+func typeOrder(types []policyfix.Type) ([]*policyfix.Type, error) {
 	var out []*policyfix.Type
 	placed := map[string]bool{}
-	for len(out) < len(f.Types) {
+	for len(out) < len(types) {
 		progress := false
-		for i := range f.Types {
-			typ := &f.Types[i]
+		for i := range types {
+			typ := &types[i]
 			if placed[typ.Name] || slices.ContainsFunc(typ.Parents, func(p policyfix.TypeParent) bool { return !placed[p.Type] }) {
 				continue
 			}
@@ -202,13 +321,12 @@ func typeOrder(f *policyfix.Fixture) ([]*policyfix.Type, error) {
 	return out, nil
 }
 
-// addSynchronizer gives a type its source: the fake source serves the fixture's resources of the type under a kind of
-// its own. Creating a synchronizer probes the source for one resource; a type the fixture gives no resources is probed on
-// a row that is gone before the first synchronization.
-func (l *Loaded) addSynchronizer(typ *policyfix.Type) {
+// addSynchronizer gives a type its source: the fake source serves the rows under a kind of its own. Creating a
+// synchronizer probes the source for one resource; a type with no rows is probed on a row that is gone before the first
+// synchronization.
+func (l *Loaded) addSynchronizer(typ *policyfix.Type, rows []map[string]any) {
 	l.t.Helper()
 	kind := l.kinds[typ.Name]
-	rows := l.sourceRows(l.f, typ.Name)
 	probe := "probe"
 	if len(rows) > 0 {
 		probe = rows[0]["id"].(string)
@@ -217,20 +335,21 @@ func (l *Loaded) addSynchronizer(typ *policyfix.Type) {
 		l.Cluster.Source.Set(kind, map[string]any{"id": probe, "name": probe})
 	}
 	path := "/service/" + l.services[typ.Service].String() + "/type_resource/" + l.types[typ.Name].String() + "/resource/synchronizer"
-	l.Cluster.Must(http.MethodPost, path, map[string]any{
+	created := l.Cluster.Must(http.MethodPost, path, map[string]any{
 		// No list is kept in Redis: a synchronization always reads what the source has now.
 		"config":            map[string]any{"kind": "http", "url": l.Cluster.Source.ListURL(kind), "cache_ttl": 0},
 		"probe_resource_id": probe,
 	})
+	l.syncs[typ.Name] = uuid.MustParse(created["id"].(string))
 	l.Cluster.Source.Set(kind, rows...)
 }
 
 // sourceRows are the resources of a type as its source reports them: id, name, the declared parents (by the name of the
 // parent type) and the attributes.
-func (l *Loaded) sourceRows(f *policyfix.Fixture, typeName string) []map[string]any {
+func sourceRows(resources []policyfix.Resource, typeName string) []map[string]any {
 	var rows []map[string]any
-	for i := range f.Resources {
-		r := &f.Resources[i]
+	for i := range resources {
+		r := &resources[i]
 		if r.Type != typeName {
 			continue
 		}
@@ -250,12 +369,12 @@ func (l *Loaded) sourceRows(f *policyfix.Fixture, typeName string) []map[string]
 	return rows
 }
 
-// synchronize brings every type with a source up to what the source reports, and fails the test when a source did not
-// answer or the worker did not finish in time.
-func (l *Loaded) synchronize() {
+// synchronize brings the types, which have a source, up to what their sources report, and fails the test when a source
+// did not answer or the worker did not finish in time.
+func (l *Loaded) synchronize(names []string) {
 	l.t.Helper()
 	var ids []uuid.UUID
-	for name := range l.kinds {
+	for _, name := range names {
 		ids = append(ids, l.types[name])
 	}
 	if len(ids) == 0 {
@@ -280,6 +399,9 @@ func (l *Loaded) ReplaceRules(f *policyfix.Fixture) {
 	l.t.Helper()
 	if !slices.Equal(f.Services, l.f.Services) || !reflect.DeepEqual(f.Types, l.f.Types) {
 		l.t.Fatalf("ReplaceRules: fixture %s has other services or types than %s", f.Name, l.f.Name)
+	}
+	if f.Before != nil || l.f.Before != nil {
+		l.t.Fatalf("ReplaceRules: fixture %s or %s has a Before state, which only Load turns into the fixture's", f.Name, l.f.Name)
 	}
 	var ops []model.BatchOperation
 	var what []string
@@ -311,20 +433,21 @@ func (l *Loaded) ReplaceRules(f *policyfix.Fixture) {
 	l.f = f
 	if resourcesChanged {
 		for name, kind := range l.kinds {
-			l.Cluster.Source.Set(kind, l.sourceRows(f, name)...)
+			l.Cluster.Source.Set(kind, sourceRows(f.Resources, name)...)
 		}
 	}
-	l.writePolicy(f)
+	l.writePolicy(f, f.AccessGroups)
 	if resourcesChanged {
-		l.synchronize()
+		l.synchronize(slices.Collect(maps.Keys(l.kinds)))
 	}
 }
 
 // writePolicy writes the policy of f through POST /batch, with the ids of the new entities chosen here so that the
-// operations can name them and the explanations can be read back.
-func (l *Loaded) writePolicy(f *policyfix.Fixture) {
+// operations can name them and the explanations can be read back. The access groups are those of f, with the levels given
+// (in their order).
+func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.AccessGroup) {
 	l.t.Helper()
-	p := writtenPolicy{ruleNames: map[uuid.UUID]string{}}
+	p := writtenPolicy{ruleNames: map[uuid.UUID]string{}, roleRules: map[uuid.UUID]bool{}}
 	var ops []model.BatchOperation
 	var what []string
 	create := func(entity, name string, parent *uuid.UUID, body any) uuid.UUID {
@@ -334,7 +457,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture) {
 		return id
 	}
 
-	for _, g := range f.AccessGroups {
+	for _, g := range accessGroups {
 		typeID := l.types[g.Type]
 		id := create(model.BatchAccessGroup, g.Type+"/@"+g.Name, &typeID, model.AccessGroupInput{Name: g.Name, Levels: g.Levels})
 		p.accessGroups = append(p.accessGroups, childID{id: id, parent: typeID})
@@ -416,6 +539,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture) {
 		id := create(model.BatchAssignmentRule, r.Name, nil, in)
 		p.rules = append(p.rules, id)
 		p.ruleNames[id] = r.Name
+		p.roleRules[id] = r.Role != ""
 	}
 	l.runBatch(ops, what)
 	l.policy = p
@@ -536,6 +660,7 @@ func (l *Loaded) answerOf(r model.CheckResult) Answer {
 		a.GrantedBy = append(a.GrantedBy, l.ruleName(g.RuleID))
 	}
 	a.GrantedBy = sortedUnique(a.GrantedBy)
+	a.Repeated = l.repeated(e.Denials)
 	for _, d := range e.Denials {
 		denial := Denial{Rule: l.ruleName(d.Rule.RuleID), Level: d.Level, UnresolvedParent: d.UnresolvedParent, MissingAttribute: d.MissingAttribute}
 		for _, x := range d.LiftedBy {
@@ -546,6 +671,47 @@ func (l *Loaded) answerOf(r model.CheckResult) Answer {
 	}
 	a.Denials = byRule(a.Denials)
 	return a
+}
+
+// repeated describes the entries of an explanation's denials that a rule written inline lists more than once (see
+// Answer.Repeated).
+func (l *Loaded) repeated(denials []model.DenialRef) []string {
+	type denialKey struct {
+		rule, anchor, level string
+		unresolved          bool
+	}
+	var out []string
+	seen := map[denialKey]bool{}
+	for _, d := range denials {
+		name := l.ruleName(d.Rule.RuleID)
+		if !l.policy.roleRules[d.Rule.RuleID] {
+			k := denialKey{name, anchorOf(d.Rule.Anchor), d.Level, d.UnresolvedParent}
+			if seen[k] {
+				out = append(out, fmt.Sprintf("the denial %s at %s of %s", name, k.anchor, k.level))
+			}
+			seen[k] = true
+		}
+		lifts := map[[2]string]bool{}
+		for _, x := range d.LiftedBy {
+			if l.policy.roleRules[x.RuleID] {
+				continue
+			}
+			k := [2]string{l.ruleName(x.RuleID), anchorOf(x.Anchor)}
+			if lifts[k] {
+				out = append(out, fmt.Sprintf("the exception %s at %s among those that lift %s", k[0], k[1], name))
+			}
+			lifts[k] = true
+		}
+	}
+	return out
+}
+
+// anchorOf names an anchor: type/resource, or the type as a whole.
+func anchorOf(a model.Anchor) string {
+	if a.ResourceID == nil {
+		return a.Type + " as a whole"
+	}
+	return a.Type + "/" + *a.ResourceID
 }
 
 // byRule merges the denials of an explanation by rule, as the fixtures and the reference evaluator state them. The engine

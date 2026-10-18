@@ -63,7 +63,7 @@ cases:
     subject: user-1
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
-      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B2-network}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B2-network, missing_attribute: true}]}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
   # from admin-api/tests/integration/api/escalation_test.go:TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute
@@ -80,8 +80,8 @@ cases:
     context: {ip: 10.99.3.4}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [allow-branch, allow-B1-network], denials: []}
-      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B2-network}]}
-      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: skip-deny-B3-network}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B2-network, missing_attribute: false}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: skip-deny-B3-network, missing_attribute: false}]}
   - name: the first address of the network lies in it
     subject: user-1
     context: {ip: 10.99.0.0}
@@ -114,7 +114,7 @@ cases:
     subject: user-1
     context: {ip: null}
     questions:
-      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: deny-B2-network}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: deny-B2-network, missing_attribute: true}]}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
   - name: the denial applied on a missing attribute reaches what lies below B2 only
     subject: user-1

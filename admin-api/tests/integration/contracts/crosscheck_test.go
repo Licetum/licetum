@@ -13,7 +13,8 @@ import (
 )
 
 // crossCheck reports each question on which the permission list and the check disagree, in either direction, and leaves
-// out the questions the list cannot answer: a sync type as a whole, an unknown type or resource.
+// out the questions the list cannot answer: a sync type as a whole, an unknown type. A resource the check does not find
+// must not be in the list.
 func TestCrossCheckComparesTheListWithTheCheck(t *testing.T) {
 	f, err := policyfix.Parse("cross", []byte(`
 contracts: []
@@ -54,7 +55,7 @@ cases:
 		{Allowed: false, Decision: policyfix.DecisionNoAccess},         // not_sync with export: disagrees
 		{Allowed: true, Decision: policyfix.DecisionAllowed},           // the type is listed as sync: disagrees
 		{Allowed: false, Decision: policyfix.DecisionNoAccess},         // a sync type as a whole: not compared
-		{Allowed: false, Decision: policyfix.DecisionResourceNotFound}, // not compared
+		{Allowed: false, Decision: policyfix.DecisionResourceNotFound}, // listed: disagrees
 		{Allowed: false, Decision: policyfix.DecisionTypeNotFound},     // not compared
 	}
 	list := engine.PermissionResult{
@@ -72,6 +73,7 @@ cases:
 		`question 4, read on store/s3: the check says allowed=false (denied), the permission list gives store/s3 the levels ["audit" "read"]`,
 		`question 6, export on reports as a whole: the check says allowed=false (no_access), the permission list gives reports as a whole the levels ["export" "list"]`,
 		"question 7, on on flags as a whole: the permission list has flags as sync, not not_sync",
+		"question 9, read on store/gone: the check does not find it, the permission list names it",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("crossCheck:\n got %s\nwant %s", strings.Join(got, "\n     "), strings.Join(want, "\n     "))
@@ -80,6 +82,7 @@ cases:
 	// A list that agrees reports nothing; a resource listed twice is a defect of the list.
 	answers[2].Allowed, answers[3].Allowed, answers[5].Allowed, answers[6].Allowed = false, true, true, false
 	list["flags"] = model.TypePermission{Type: model.TypeModeNotSync}
+	list["store"] = model.TypePermission{Type: model.TypeModeSync, Resources: list["store"].Resources[:2]}
 	if got := crossCheck(f, c, answers, list); len(got) != 0 {
 		t.Fatalf("a list that agrees: %v", got)
 	}

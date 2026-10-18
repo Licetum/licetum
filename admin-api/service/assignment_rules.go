@@ -176,7 +176,7 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 		SELECT `+engine.AssignmentRuleColumns+`, t.service_id, s.name, t.name, ro.name,
 		       ar.role_id IS NOT NULL
 		       OR (ar.resource_id IS NULL AND ar.resource_from_claim IS NULL AND ar.resource_where IS NULL)
-		       OR `+liveSynchronizerExists("t.id")+`
+		       OR `+engine.LiveSynchronizerExists("t.id")+`
 		FROM assignment_rule ar
 		LEFT JOIN type_resource t ON t.id = ar.type_resource_id
 		LEFT JOIN service s ON s.id = t.service_id
@@ -189,6 +189,7 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 	defer rows.Close()
 
 	out := []model.AssignmentRuleWithContext{}
+	var graph lookupGraph
 	for rows.Next() {
 		var c model.AssignmentRuleWithContext
 		r, err := engine.ScanAssignmentRule(rows, &c.ServiceID, &c.ServiceName, &c.TypeResourceName, &c.RoleName, &c.TargetValid)
@@ -196,9 +197,31 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 			return nil, err
 		}
 		c.AssignmentRule = *r
+		if c.TargetValid && r.ResourceFromClaim != nil && r.TypeResourceID != nil {
+			cut, err := graph.cut(ctx, a, r.ResourceFromClaim.LookupTypeResourceID, *r.TypeResourceID)
+			if err != nil {
+				return nil, err
+			}
+			c.TargetValid = !cut
+		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// lookupGraph loads the type graph the first time a list needs it: the target of a resource_from_claim is valid only while the
+// types it looks in and climbs through have synchronizers (engine.TypeGraph.LookupCut), which the SQL of the list does not see.
+type lookupGraph struct{ g *engine.TypeGraph }
+
+func (l *lookupGraph) cut(ctx context.Context, a *App, lookup, target uuid.UUID) (bool, error) {
+	if l.g == nil {
+		g, err := a.LoadTypeGraph(ctx)
+		if err != nil {
+			return false, err
+		}
+		l.g = g
+	}
+	return l.g.LookupCut(lookup, target), nil
 }
 
 // AssignmentRuleOf reads a rule as it is stored. The API checks the target it has before a change or a removal of it.

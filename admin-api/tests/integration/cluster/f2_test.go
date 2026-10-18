@@ -378,8 +378,8 @@ func TestF2_9_APreviousReleaseCanStillFollowTheWrites(t *testing.T) {
 	// And the keys of the answers carry the new format, so the two releases do not read each other's.
 	r := c.Replicas[0]
 	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", c.UserToken("alice"))
-	waitForKeys(t, c, "authz:permission:t8:r*")
-	if old, _ := c.Redis.Keys(ctx, "authz:permission:t7:*").Result(); len(old) != 0 {
+	waitForKeys(t, c, "authz:permission:t9:r*")
+	if old, _ := c.Redis.Keys(ctx, "authz:permission:t8:*").Result(); len(old) != 0 {
 		t.Fatalf("this release wrote keys of the format of the previous one: %v", old)
 	}
 }

@@ -17,10 +17,11 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// snapshot is the policy of the whole installation as one revision of it: the services, the type graph, the group
-// memberships, the rules, the role items, the access groups and the names of the request attributes the rules read. A
-// request that decides from the snapshot sends no query for any of them. It is immutable once built, replaced as a
-// whole when the revision moves (see localView), and shared by every request of the process.
+// snapshot is the policy of the whole installation as one revision of it: the services, the type graph (with the types
+// that have a live synchronizer, TypeNode.Sync), the group memberships, the rules, the role items, the access groups and
+// the names of the request attributes the rules read. A request that decides from the snapshot sends no query for any of
+// them. It is immutable once built, replaced as a whole when the revision moves (see localView), and shared by every
+// request of the process.
 //
 // The validity windows of the rules and of the memberships are not applied when the snapshot is built: they are
 // compared with the clock at every request (ruleActive, memberActive), so the snapshot does not go stale as time
@@ -46,8 +47,6 @@ type snapshot struct {
 	roleItems map[uuid.UUID][]model.RolePermission
 	// attrs are the request attributes the rules look at (RequestAttributes).
 	attrs []string
-	// synced are the types that have a live synchronizer.
-	synced map[uuid.UUID]bool
 	// accessGroups are the levels of each access group, by type and name.
 	accessGroups map[uuid.UUID]map[string][]string
 	// bounds are the moments a rule or a membership starts or stops being in force (see cacheTTL).
@@ -159,7 +158,6 @@ func (a *App) loadSnapshot(ctx context.Context, revision, max int64) (*snapshot,
 		bySlug:       map[string]uuid.UUID{},
 		direct:       map[string][]model.AssignmentRule{},
 		roleItems:    map[uuid.UUID][]model.RolePermission{},
-		synced:       map[uuid.UUID]bool{},
 		accessGroups: map[uuid.UUID]map[string][]string{},
 	}
 	grow := func(n int64) error {
@@ -275,24 +273,8 @@ func (a *App) loadSnapshot(ctx context.Context, revision, max int64) (*snapshot,
 		return nil, err
 	}
 
-	// The types that have a live synchronizer, the access groups, the request attributes and the validity boundaries.
-	rowsOf, err = tx.Query(ctx, `SELECT DISTINCT type_resource_id FROM synchronizer WHERE deleted_at IS NULL`)
-	if err != nil {
-		return nil, err
-	}
-	for rowsOf.Next() {
-		var id uuid.UUID
-		if err := rowsOf.Scan(&id); err != nil {
-			rowsOf.Close()
-			return nil, err
-		}
-		snap.synced[id] = true
-	}
-	rowsOf.Close()
-	if err := rowsOf.Err(); err != nil {
-		return nil, err
-	}
-
+	// The access groups, the request attributes and the validity boundaries. The types that have a live synchronizer are
+	// in the type graph.
 	rowsOf, err = tx.Query(ctx, `SELECT type_resource_id, name, levels FROM access_group`)
 	if err != nil {
 		return nil, err

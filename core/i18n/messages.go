@@ -19,6 +19,8 @@ const (
 	Overloaded        Key = "overloaded"
 	RequestTimeout    Key = "request_timeout"
 
+	SynchronizerChangeBusy Key = "synchronizer_change_busy"
+
 	// input validation
 	FieldRequired                 Key = "field_required"
 	FieldURLInvalid               Key = "field_url_invalid"
@@ -53,6 +55,7 @@ const (
 	LintRuleDisabled              Key = "lint_rule_disabled"
 	LintRuleNotInForce            Key = "lint_rule_not_in_force"
 	LintRuleTargetDead            Key = "lint_rule_target_dead"
+	LintRuleLookupDead            Key = "lint_rule_lookup_dead"
 	LintRuleEveryone              Key = "lint_rule_everyone"
 	LintDenyMissingClaim          Key = "lint_deny_missing_claim"
 	LintGroupEmpty                Key = "lint_group_empty"
@@ -210,6 +213,11 @@ var catalog = map[Key]Text{
 		RU: "Запрос выполнялся слишком долго и был отменён, повторите его",
 		ZH: "请求耗时过长已被取消，请重试",
 	},
+	SynchronizerChangeBusy: {
+		EN: "The part of the resource hierarchy this type belongs to is being synchronized, retry the change shortly",
+		RU: "Часть иерархии ресурсов, к которой относится этот тип, сейчас синхронизируется, повторите изменение чуть позже",
+		ZH: "此类型所属的资源层级部分正在同步，请稍后重试该更改",
+	},
 
 	FieldRequired: {
 		EN: "Field %s is required",
@@ -350,6 +358,11 @@ var catalog = map[Key]Text{
 		EN: "Rule %s names a resource, but its type has no synchronizer: it decides nothing",
 		RU: "Правило %s указывает ресурс, но у его типа нет синхронизатора: оно ничего не решает",
 		ZH: "规则 %s 指定了资源，但其类型没有同步器：它不做任何决定",
+	},
+	LintRuleLookupDead: {
+		EN: "Rule %s looks its resource up in a type that has no synchronizer, or climbs through one: it finds no resource there (a denial still applies below the links to the resources that type left)",
+		RU: "Правило %s ищет ресурс в типе без синхронизатора или проходит через такой тип: оно не находит там ресурса (запрет по-прежнему действует ниже ссылок на ресурсы, которые тип оставил)",
+		ZH: "规则 %s 在没有同步器的类型中查找资源，或经过这样的类型：它在那里找不到资源（拒绝规则在指向该类型所遗留资源的链接之下仍然适用）",
 	},
 	LintRuleEveryone: {
 		EN: "Rule %s grants its access to everyone who signs in",

@@ -68,7 +68,8 @@ explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides 
 at the case's time through `App.SetClock`, `CrossCheck` asks the case's `GET /permission` and fails every DEC and DECP test
 where the list (`coverNodes`) disagrees with the check answers (`CoversOf`); level `pg`), and `core/testsupport/refeval`, a
 reference evaluator written from the semantics that shares no code with the engine (depguard keeps it away from engine, server
-and db). `core/testsupport/policygen` generates random valid fixtures; DECP compares the two sides on them (seeds 1–20 per pull
+and db). `core/testsupport/policygen` generates random valid fixtures (also types that had a synchronizer and lost it, with a `before`
+block: rows left behind, links to them, rules and claim lookups that name them); DECP compares the two sides on them (seeds 1–20 per pull
 request, `LICETUM_DECP_SEEDS`, `task go:test:decp`, `decp.yml` nightly over 21–520). A disagreement is a defect of one side or
 an open point of the semantics: settle it in both, then pin it in a table.
 
@@ -103,7 +104,7 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
   `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision`), invalidates the view and, for the replicas of the
   previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`);
-  this release reads neither. Answer keys are `authz:permission:t8:r<rules>:…` / `authz:check:t4:r<rules>:…`.
+  this release reads neither. Answer keys are `authz:permission:t9:r<rules>:…` / `authz:check:t5:r<rules>:…`.
 - The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
   (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
   (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
@@ -117,8 +118,8 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
 - The snapshot holds what a decision reads: services (without `client_secret`: `ServiceCheckColumns`), the type graph, the enabled
   memberships and rules *with* their validity windows (compared with the clock per request, `ruleActive`/`memberActive`), the role items, the
-  access groups, the types with a live synchronizer, the request attributes and the validity boundaries (for the TTL of an answer). It is built
-  in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` and `GetServiceForCheck` answer from it (an
+  access groups, the request attributes and the validity boundaries (for the TTL of an answer); the types with a live synchronizer are in the type
+  graph (`TypeNode.Sync`). It is built in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` and `GetServiceForCheck` answer from it (an
   unknown or deleted slug is a 404 without a query). Every write that changes any of this must bump the revision (all admin writes go through
   `mutate` or the batch, which do); a change made by other means (`restore-admin` does bump) shows up at `SNAPSHOT__MAX_AGE` at the latest.
   `consistency=higher` does not use the snapshot (`cacheState.forConsistency`): it reads everything with queries, as before the snapshot.
@@ -296,7 +297,31 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   rule on a specific resource (`resource_id` / `resource_from_claim`) is only allowed on a type with
   a synchronizer (`checkRuleTarget`, 400 `assignment_rule_needs_synchronizer`; re-checked on PATCH
   only when the target changes, so a rule that died with its synchronizer can still be disabled);
-  the rule list marks such dead rules with `target_valid = false`.
+  the rule list marks such dead rules with `target_valid = false`. The SQL definition is `engine.LiveSynchronizerExists`; the engine reads it
+  once per type graph (`TypeNode.Sync`, `TypeGraph.IsSync`, so the snapshot has it).
+  **A type without a live synchronizer has no resources**, also one whose synchronizer was deleted: the rows it reported stay in
+  `resource_cache` (a synchronizer created again finds them) but no decision reads them. `IsSync` is what every path that reads a resource
+  asks: a point rule on one anchors nothing (a denial stays as an absent anchor, see "Decision semantics"), a question about one is
+  `resource_not_found` (`decideChecks`, `CacheLookup`, the reverse lookup, AuthZEN, the simulations), no cascade reaches the type (the result
+  types are the types that have resources) and `resource_where` matches none; a `resource_from_claim` rule whose lookup type has none matches
+  nothing and its climb does not pass through such a type (`climbTypes`). An allow rule that finds nothing for that reason covers nothing;
+  a **denial** must not lapse with the resources it read, so it keeps an absent anchor at the rule's type (`buildInstances`: a
+  `resource_from_claim` denial with a claim in the request whose lookup type, rule type or a type on a route between them has no resources
+  (`TypeGraph.LookupCut`), and a `resource_where` denial on a type that has none; whether or not the claim matches anything, since the
+  anchor is not known): like the denial on a missing resource it covers nothing for real, and the resources below a link to a parent that
+  is not there fall under it. Such a rule is `target_valid = false` and `GET /service/{id}/policy/lint` reports it
+  (`lint_rule_lookup_dead`). A link of a resource of a type below to one of those rows is
+  unresolved (`UnresolvedParents`, `resourceParents`): the closure does not lead through them (`rebuildClosureSQL`). The closure is stored,
+  so it follows the mode in the write that changes it: creating or deleting a synchronizer runs `engine.App.ChangeMode` in the same
+  transaction (the lock of the type's component, the timeouts of a synchronization, `rebuildClosure` of the type's rows and of the rows
+  that hang below them by the declared links, the data revision of the services of the types below), and `AfterClosureMove` follows the
+  commit; the routes are cut or back when the request returns, whatever the sources and the workers of the types below do. `rebuildClosure`
+  reads the types that have resources in its own transaction (`typesWithoutResources`), not from the graph a synchronization loaded
+  before it fetched, so a synchronization that was running while the synchronizer was deleted does not write the route back. The structure
+  signature of the types below also marks a type that lost its synchronizer (`TypeNode.SourceDeleted`), so their next synchronization
+  rebuilds again (harmless, and it stores the new signature). A mode that changes by other means (`restore-admin` switching the
+  synchronizers of the platform types back on) and a change of the type links are followed by the synchronization of the types below
+  only. The query path and the snapshot path read the same graph, so they agree.
 - **Synchronizer**: per-TypeResource adapter (SQL query or HTTP endpoint, see
   `internal/synchronizer/adapter.go`) that fetches the live list of concrete resources for a type
   from the owning service. Wrapped in a Redis circuit breaker (`internal/redisx`) and
@@ -506,7 +531,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    `{name: {"type": "sync", "resources": [...]} | {"type": "not_sync", "access": [...]}}`; a `not_sync` type
    without rules is absent, on a name collision `sync` wins.
 7. Cached in memory and in Redis per `(service, subject, claims fingerprint, revision of the rules)`: key
-   `authz:permission:t8:r<revision>:<service>:<subject>:<fingerprint>` (bump `t8` when the format or the decisions change; the
+   `authz:permission:t9:r<revision>:<service>:<subject>:<fingerprint>` (bump `t9` when the format or the decisions change; the
    fingerprint covers only the claims and the request-context attributes the rules and the role items look at, which the snapshot
    knows — a process without it remembers them per revision, `attrsMemo`). TTL = min(60 s, the next moment a rule, a role item's
    assignment or a membership starts/stops being in force). Admin writes bump the revision of the rules in `revision_state`. A cached
@@ -514,7 +539,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one service leaves the answers that
    do not read it in place. The whole computation runs through `cachedAnswer` (`engine/cache.go`): the revisions come from the view
    (`readCacheState`), concurrent misses for the same key share one computation (singleflight) and queue for a computation slot, and the
-   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t4:…`, keyed by a hash of the
+   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t5:…`, keyed by a hash of the
    questions and of `explain`).
 
 ### Decision semantics (deny wins, explicit exceptions)
@@ -540,8 +565,11 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   like any point denial, so an orphan does not escape a denial on its own missing parent. A denial whose anchor is already a
   known ancestor is assumed too, for the levels the known routes do not carry (`CoversOf`, pass C of `coverNodes`; the
   explanation flags the assumed levels only). Only an exception provably below a denial lifts it, so a point exception on the
-  orphan itself does not lift an assumed one. Known gap: a `resource_from_claim` denial whose climb from the matched resource
-  reaches an unresolved link before the rule's type finds no anchor (both the engine and the reference evaluator).
+  orphan itself does not lift an assumed one. The same holds for a denial that cannot find its anchors because a type it needs
+  has no synchronizer (see "Domain model", Type mode). Known gap: a `resource_from_claim` denial whose climb from the matched resource
+  reaches an unresolved link (a parent that is not in the cache, not a type without resources) before the rule's type finds no anchor
+  (both the engine and the reference evaluator). A denial by claim whose lookup type has no resources denies the rule's own type nowhere
+  (its anchor is not known), only what lies below a missing parent.
 - Worked example (division → rrs → branch → item; `D1 ⊃ R1, R2`, `R1 ⊃ B1, B2`, `R2 ⊃ B3`, `B1 ⊃ I1`):
 
   | rules | branches visible |

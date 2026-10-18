@@ -151,26 +151,40 @@ func (s *caseState) addTarget(r *policyfix.Rule, t *policyfix.Target, access []s
 		for _, id := range s.claimAnchors(t) {
 			add(false, id)
 		}
+		// A denial whose lookup cannot reach all its anchors keeps one that is no resource of the fixture: it covers nothing for
+		// real, but can still be the missing parent of an unresolved link, as the denial on a resource that is not there.
+		if r.Deny && s.claimGiven(t) && s.g.lookupIsCut(t.FromClaim.LookupType, t.Type) {
+			add(false, "")
+		}
 	case len(t.Where) > 0:
 		for _, res := range s.g.byType[t.Type] {
 			if whereMatches(s.g.metaOf(resKey{res.Type, res.ID}), t.Where) {
 				add(false, res.ID)
 			}
 		}
+		// The same for a denial by the attributes of the resources of a type that has none to match.
+		if r.Deny && !s.g.types[t.Type].Sync {
+			add(false, "")
+		}
 	default:
 		add(true, "")
 	}
+}
+
+// claimGiven reports whether the request carries a claim a resource_from_claim looks up: one that is present and not falsy
+// (null, false, 0, an empty string or list), as Python's `if not value` reads it.
+func (s *caseState) claimGiven(t *policyfix.Target) bool {
+	return truthy(s.at.claims[t.FromClaim.Claim])
 }
 
 // claimAnchors returns the anchors of a resource_from_claim target: the resources of the lookup type that match the
 // claim value (by name, id or attribute), each replaced by its ancestors-or-self of the target's type. A missing claim, or
 // a match with no ancestor of that type, gives no anchor.
 func (s *caseState) claimAnchors(t *policyfix.Target) []string {
-	raw, ok := s.at.claims[t.FromClaim.Claim]
-	if !ok || raw == nil {
+	if !s.claimGiven(t) {
 		return nil
 	}
-	value := pyStr(raw)
+	value := pyStr(s.at.claims[t.FromClaim.Claim])
 	seen := map[string]bool{}
 	var out []string
 	add := func(id string) {

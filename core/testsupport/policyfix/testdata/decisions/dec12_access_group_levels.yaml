@@ -1,6 +1,8 @@
 # DEC12 (the access groups part): @name in an access list stands for the levels the access group of the rule's type names
-# at the time of the decision. The integration test changes the levels of one group under its rule; a fixture is one
-# state, so the group after the change is a second group with the new levels, used by a second subject.
+# at the time of the decision. The integration test changes the levels of one group under its rule: editor-changed is that
+# group, written with [read, write] under the rules that name it, and changed to [read] afterwards (before.access_groups).
+# A rule that kept the levels the group had when it was written would grant write on B1 to user-2, and deny write on B2
+# to user-3.
 contracts: [DEC12]
 description: A rule follows the levels of the access group it names, mixed with plain levels and in a denial.
 services: [org]
@@ -15,7 +17,7 @@ resources:
   - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
 access_groups:
   - {type: branch, name: editor, levels: [read, write]}
-  # The editor group after its levels were changed to read only.
+  # The editor group after its levels were changed to read only (it had read and write when the rules were written).
   - {type: branch, name: editor-changed, levels: [read]}
 rules:
   - {name: editor-on-B1, subject: user-1, type: branch, resource: B1, access: ["@editor"]}
@@ -42,3 +44,8 @@ cases:
       - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [editor-and-audit-on-B2], denials: [{rule: deny-editor-on-B2}]}
       - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [editor-and-audit-on-B2], denials: []}
       - {type: branch, resource: B2, action: audit, allowed: true, decision: allowed, granted_by: [editor-and-audit-on-B2]}
+before:
+  # conditions_test.go:TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences: the group as it was created, before
+  # the PATCH of its levels.
+  access_groups:
+    - {type: branch, name: editor-changed, levels: [read, write]}

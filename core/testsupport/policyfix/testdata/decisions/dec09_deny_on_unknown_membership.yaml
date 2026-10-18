@@ -59,7 +59,7 @@ cases:
   - name: without the department claim the membership is unknown and the denial applies
     subject: user-1
     questions:
-      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales, missing_attribute: true}]}
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
@@ -68,7 +68,7 @@ cases:
     subject: user-1
     claims: {department: sales}
     questions:
-      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales, missing_attribute: false}]}
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
@@ -91,7 +91,7 @@ cases:
     subject: user-1
     claims: {department: null}
     questions:
-      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales, missing_attribute: true}]}
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
   - name: a denial set to skip does not apply on an unknown membership
     subject: skipper
@@ -110,7 +110,7 @@ cases:
   - name: an unknown membership makes the nesting group unknown, so its denial applies and its allow grants nothing
     subject: nester
     questions:
-      - {type: branch, resource: B3, action: write, allowed: false, decision: denied, granted_by: [nester-write-B3], denials: [{rule: deny-write-B3-sales-all}]}
+      - {type: branch, resource: B3, action: write, allowed: false, decision: denied, granted_by: [nester-write-B3], denials: [{rule: deny-write-B3-sales-all, missing_attribute: true}]}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [nester-allow-branch], denials: []}
       - {type: branch, resource: B4, action: write, allowed: false, decision: no_access, granted_by: []}
   - name: known not to be in the nested group, neither the denial nor the allow of the nesting group applies

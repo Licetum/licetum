@@ -21,7 +21,10 @@
 //     anchor: the whole type; the resource it names (also when that resource is not in the fixture: it then covers
 //     nothing for real but can still be the missing parent of an unresolved link); every resource whose attributes match
 //     its resource_where; the ancestors-or-self, of the rule's type, of every resource of the lookup type that matches the
-//     claim value (by name, id, or meta.<attribute>: equal, or a list holding it).
+//     claim value (by name, id, or meta.<attribute>: equal, or a list holding it). A denial that cannot find all its
+//     anchors because a type it needs has no synchronizer (and so no resources) keeps one that is no resource, like the
+//     denial on a resource that is not there: a resource_from_claim denial with a claim in the request whose lookup type,
+//     rule type or a type on a route between them has none, and a resource_where denial on a type that has none.
 //   - Levels: '*' is every level, '@name' the levels of the access group of the target's type. The levels of an
 //     instance flow down as written: a point anchor reaches its descendants through the resource links, a whole-type
 //     anchor every resource of its type and of the types below it through the type links. What reaches a resource from

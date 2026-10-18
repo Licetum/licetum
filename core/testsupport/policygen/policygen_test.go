@@ -214,7 +214,7 @@ func shapeProblems(f *policyfix.Fixture) []string {
 
 // apiProblems checks what the runner of the engine sends through the admin API with the validation of its inputs, and
 // what the generator promises beyond them: a group nests only groups before it (never itself, which the API refuses, and
-// never in a cycle), a resource names parents of types with a synchronizer only, the request attributes are what the
+// never in a cycle), a resource names parents of types with a synchronizer (or that had one) only, the request attributes are what the
 // check API takes, and no claim is one the token sets itself.
 func apiProblems(f *policyfix.Fixture) []string {
 	var out []string
@@ -247,16 +247,25 @@ func apiProblems(f *policyfix.Fixture) []string {
 			bad("type %s: %v", typ.Name, err)
 		}
 	}
-	for _, r := range f.Resources {
+	// hadOne says the type had a synchronizer when the resources were first synchronized: its rows were reported then.
+	hadOne := func(name string) bool {
+		return f.Before != nil && slices.ContainsFunc(f.Before.Types, func(b policyfix.Type) bool { return b.Name == name && b.Sync })
+	}
+	for _, r := range slices.Concat(f.Resources, beforeResources(f)) {
 		for _, p := range r.Parents {
-			if !types[p.Type].Sync {
-				bad("resource %s/%s names a parent of %s, which has no synchronizer", r.Type, r.ID, p.Type)
+			if !types[p.Type].Sync && !hadOne(p.Type) {
+				bad("resource %s/%s names a parent of %s, which has no synchronizer and had none", r.Type, r.ID, p.Type)
 			}
 		}
 		for k := range r.Meta {
 			if !model.ValidMetaKey(k) {
 				bad("resource %s/%s: attribute %q", r.Type, r.ID, k)
 			}
+		}
+	}
+	for _, r := range beforeResources(f) {
+		if !hadOne(r.Type) {
+			bad("a row of %s, which had no synchronizer", r.Type)
 		}
 	}
 	for _, g := range f.AccessGroups {
@@ -357,6 +366,14 @@ func apiProblems(f *policyfix.Fixture) []string {
 	return out
 }
 
+// beforeResources are the rows the types that lost their synchronizer reported (none without a Before state).
+func beforeResources(f *policyfix.Fixture) []policyfix.Resource {
+	if f.Before == nil {
+		return nil
+	}
+	return f.Before.Resources
+}
+
 // ---------- features ----------
 
 // wantedFeatures are the features every run of the tests must see (see features).
@@ -383,6 +400,10 @@ func wantedFeatures() []string {
 		"case/at-now", "case/at-boundary", "case/beside-boundary", "case/hours-away",
 		"question/resource", "question/missing-resource", "question/unresolved-parent-id", "question/whole-type",
 		"question/not-sync", "question/other-service", "question/no-such-type", "question/rare-level",
+		// The types that lost their synchronizer after the resources were first synchronized and the policy written.
+		"type/synchronizer-deleted", "resource/parent-in-a-deleted-type", "item/on-deleted-type", "rule/on-deleted-type",
+		"rule/from-claim-in-deleted-type", "rule/from-claim-through-deleted-type", "rule/deny-by-claim-in-deleted-type",
+		"rule/deny-where-on-deleted-type", "rule/deny-by-claim-through-deleted-type", "question/deleted-row",
 	}
 	for _, op := range []string{
 		model.OpEq, model.OpNe, model.OpIn, model.OpNotIn, model.OpRegex, model.OpGt, model.OpGe, model.OpLt, model.OpLe, model.OpInCIDR,
@@ -416,6 +437,46 @@ func features(f *policyfix.Fixture) map[string]bool {
 	has["type/not-sync"] = notSync > 0
 	has["type/two-not-sync"] = notSync > 1
 
+	// The types that had a synchronizer at the first synchronization and have none now, and the types a climb from a type up
+	// to another passes.
+	gone := map[string]bool{}
+	deletedRows := map[string]bool{}
+	if f.Before != nil {
+		for _, b := range f.Before.Types {
+			if t := types[b.Name]; t != nil && b.Sync && !t.Sync {
+				gone[b.Name] = true
+				has["type/synchronizer-deleted"] = true
+			}
+		}
+		for _, r := range f.Before.Resources {
+			deletedRows[r.Type+"/"+r.ID] = true
+		}
+	}
+	var above func(name string) map[string]bool
+	above = func(name string) map[string]bool {
+		out := map[string]bool{}
+		for _, p := range types[name].Parents {
+			out[p.Type] = true
+			for a := range above(p.Type) {
+				out[a] = true
+			}
+		}
+		return out
+	}
+	// passesGone says some type strictly between lookup and target (the types a climb from a matched resource passes) lost its
+	// synchronizer.
+	passesGone := func(lookup, target string) bool {
+		if lookup == target || !above(lookup)[target] {
+			return false
+		}
+		for mid := range above(lookup) {
+			if gone[mid] && mid != target && above(mid)[target] {
+				return true
+			}
+		}
+		return false
+	}
+
 	exists := map[string]bool{}
 	missing := map[string]bool{}
 	names := map[string]int{}
@@ -433,6 +494,7 @@ func features(f *policyfix.Fixture) map[string]bool {
 		for _, p := range r.Parents {
 			perType[p.Type]++
 			isParent[p.Type+"/"+p.ID] = true
+			has["resource/parent-in-a-deleted-type"] = has["resource/parent-in-a-deleted-type"] || gone[p.Type]
 			if !exists[p.Type+"/"+p.ID] {
 				missing[p.Type+"/"+p.ID] = true
 				has["resource/unresolved"] = true
@@ -517,6 +579,8 @@ func features(f *policyfix.Fixture) map[string]bool {
 			}
 		case t.FromClaim != nil:
 			has[prefix+"from-claim"] = true
+			has[prefix+"from-claim-in-deleted-type"] = has[prefix+"from-claim-in-deleted-type"] || gone[t.FromClaim.LookupType]
+			has[prefix+"from-claim-through-deleted-type"] = has[prefix+"from-claim-through-deleted-type"] || passesGone(t.FromClaim.LookupType, t.Type)
 			switch fc := t.FromClaim; {
 			case fc.MatchBy == "":
 				has[prefix+"from-claim-default"] = true
@@ -539,6 +603,8 @@ func features(f *policyfix.Fixture) map[string]bool {
 				has[prefix+"access-group"] = true
 			}
 		}
+		has[prefix+"on-deleted-type"] = has[prefix+"on-deleted-type"] ||
+			gone[t.Type] && (t.Resource != "" || t.FromClaim != nil || len(t.Where) > 0)
 	}
 	for _, r := range f.Roles {
 		for i := range r.Items {
@@ -571,6 +637,13 @@ func features(f *policyfix.Fixture) map[string]bool {
 				has["rule/deny-access-group"] = true
 			}
 			has["rule/deny-wildcard"] = has["rule/deny-wildcard"] || slices.Contains(r.Access, model.AllLevels)
+			if t := r.Target; r.Deny && t != nil {
+				if fc := t.FromClaim; fc != nil {
+					has["rule/deny-by-claim-in-deleted-type"] = has["rule/deny-by-claim-in-deleted-type"] || gone[fc.LookupType] || gone[t.Type]
+					has["rule/deny-by-claim-through-deleted-type"] = has["rule/deny-by-claim-through-deleted-type"] || passesGone(fc.LookupType, t.Type)
+				}
+				has["rule/deny-where-on-deleted-type"] = has["rule/deny-where-on-deleted-type"] || len(t.Where) > 0 && gone[t.Type]
+			}
 		}
 		has["rule/deny"] = has["rule/deny"] || r.Deny
 		has["rule/exception"] = has["rule/exception"] || r.Exception
@@ -660,6 +733,8 @@ func features(f *policyfix.Fixture) map[string]bool {
 			case q.Resource == "":
 				has["question/whole-type"] = true
 				has["question/not-sync"] = has["question/not-sync"] || !typ.Sync
+			case deletedRows[q.Type+"/"+q.Resource]:
+				has["question/deleted-row"] = true
 			case missing[q.Type+"/"+q.Resource]:
 				has["question/unresolved-parent-id"] = true
 			case !exists[q.Type+"/"+q.Resource]:

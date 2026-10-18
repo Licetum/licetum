@@ -45,13 +45,22 @@ func (l *Loaded) CrossCheck(c *policyfix.Case, answers []Answer) []string {
 // crossCheck compares the permission list of a case with the check answers of its questions. For a question about a
 // resource of a sync type, the check allows the action exactly when the list names the resource under its type with the
 // action among its levels; for a question about a not_sync type as a whole, exactly when the action is among the levels
-// the list gives the type. A question about a sync type as a whole is not compared (the list names resources only), nor
-// one the check answered type_not_found or resource_not_found (the list has nothing to say about it).
+// the list gives the type. A resource the check answered resource_not_found must not be named by the list (a resource
+// switched off, or left behind by a deleted synchronizer, is in neither). A question about a sync type as a whole is not
+// compared (the list names resources only), nor one the check answered type_not_found (the list has nothing to say
+// about it).
 func crossCheck(f *policyfix.Fixture, c *policyfix.Case, answers []Answer, list engine.PermissionResult) []string {
 	var out []string
 	for i := range c.Questions {
 		q, a := &c.Questions[i], answers[i]
-		if a.Decision == policyfix.DecisionTypeNotFound || a.Decision == policyfix.DecisionResourceNotFound {
+		if a.Decision == policyfix.DecisionTypeNotFound {
+			continue
+		}
+		if a.Decision == policyfix.DecisionResourceNotFound {
+			if q.Resource != "" && slices.ContainsFunc(list[q.Type].Resources, func(r model.ResourceAccess) bool { return r.ID == q.Resource }) {
+				out = append(out, fmt.Sprintf("question %d, %s on %s/%s: the check does not find it, the permission list names it",
+					i+1, q.Action, q.Type, q.Resource))
+			}
 			continue
 		}
 		// A resource of a sync type, or a not_sync type as a whole; a resource of a not_sync type is resource_not_found.

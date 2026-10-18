@@ -1,0 +1,114 @@
+# DEC06, DEC10, DEC11: a denial that cannot find its anchors because a type it needs lost its synchronizer. item and slot
+# (service app) reported I1 and S1 at the first synchronization and lost their synchronizers afterwards (see
+# dec06_synchronizer_deleted.yaml): they have no resources now, and P1, P2 (of part, under item) and C1 (of chip, under
+# slot) name rows that are not there. A grant that needs those rows stops (an allow rule that finds no anchor covers
+# nothing), but a denial must not stop with them, or deleting a synchronizer would lift it:
+#
+#   - a resource_from_claim denial with a claim in the request keeps an anchor that is no resource, like the denial on a
+#     resource the local copy does not have, when its lookup type, its own type or a type on the route between them has no
+#     resources. It covers nothing for real, and everything with a link to a parent that is not there, below the rule's type
+#     or the type itself, falls under it (fail closed, DEC11), whether or not the claim matches anything;
+#   - a resource_where denial on a type without resources keeps one the same way;
+#   - the anchor is not any resource of the rule's type: the resources that have all their parents are not denied by it (P3,
+#     C2, and the zone, which is the type the denial is on but not a resource under a link to a missing parent);
+#   - an exception provably below the anchor lifts it, as it lifts any assumed denial (the whole of part is below item).
+#
+# region <- item <- part and zone <- slot <- chip (service app); R1 (before: I1 under R1, tier gold), P1 -> I1 (missing),
+# P2 -> I1 (missing), P3; Z1 (before: S1 under Z1, tier gold), C1 -> S1 (missing), C2.
+contracts: [DEC06, DEC10, DEC11]
+description: A denial that reads the resources of a type without a synchronizer stays in force below the links to its missing rows.
+services: [app]
+types:
+  - {name: region, service: app, sync: true}
+  - {name: item, service: app, sync: false, parents: [{type: region}]}
+  - {name: part, service: app, sync: true, parents: [{type: item}]}
+  - {name: zone, service: app, sync: true}
+  - {name: slot, service: app, sync: false, parents: [{type: zone}]}
+  - {name: chip, service: app, sync: true, parents: [{type: slot}]}
+resources:
+  - {type: region, id: R1, name: Region 1}
+  - {type: part, id: P1, name: Part 1, parents: [{type: item, id: I1}]}
+  - {type: part, id: P2, name: Part 2, parents: [{type: item, id: I1}]}
+  - {type: part, id: P3, name: Part 3}
+  - {type: zone, id: Z1, name: Zone 1}
+  - {type: chip, id: C1, name: Chip 1, parents: [{type: slot, id: S1}]}
+  - {type: chip, id: C2, name: Chip 2}
+rules:
+  # The rule's type has no resources, the lookup type has: the claim is looked up among the parts, and the anchor is an item.
+  - {name: w1-parts, subject: w1, type: part, access: [read]}
+  - {name: w1-deny-item, subject: w1, type: item, access: ["*"], deny: true, from_claim: {claim: part_name, lookup_type: part, match_by: name}}
+  # The same, with an exception below the anchor: the whole of part.
+  - {name: w5-parts, subject: w5, type: part, access: [read]}
+  - {name: w5-deny-item, subject: w5, type: item, access: ["*"], deny: true, from_claim: {claim: part_name, lookup_type: part, match_by: name}}
+  - {name: w5-except-parts, subject: w5, type: part, access: [read], exception: true}
+  # The lookup type and the rule's type have resources; the climb from a part to a region passes item, which has none.
+  - {name: w2-parts, subject: w2, type: part, access: [read]}
+  - {name: w2-deny-region, subject: w2, type: region, access: ["*"], deny: true, from_claim: {claim: part_name, lookup_type: part, match_by: name}}
+  # The lookup type has no resources, the rule's type has.
+  - {name: w3-chips, subject: w3, type: chip, access: [read]}
+  # (the grant on the whole of zone reaches the chips through the type links, and is the one the denial below is aimed at)
+  - {name: w3-zones, subject: w3, type: zone, access: [read]}
+  - {name: w3-deny-zone, subject: w3, type: zone, access: ["*"], deny: true, from_claim: {claim: slot_name, lookup_type: slot, match_by: name}}
+  # A denial by attributes on a type without resources.
+  - {name: w4-chips, subject: w4, type: chip, access: [read]}
+  - {name: w4-deny-slot, subject: w4, type: slot, access: ["*"], deny: true, where: [{attr: tier, op: eq, value: gold}]}
+  # An allow rule that finds no anchor covers nothing: only the denial above stays.
+  - {name: w6-allow-item, subject: w6, type: item, access: [read], from_claim: {claim: part_name, lookup_type: part, match_by: name}}
+  - {name: w6-chips, subject: w6, type: chip, access: [read]}
+  - {name: w6-allow-slot, subject: w6, type: slot, access: [read], where: [{attr: tier, op: eq, value: gold}]}
+cases:
+  - name: the denial on an item found through a part stays in force below the missing item
+    subject: w1
+    claims: {part_name: Part 1}
+    questions:
+      - {type: part, resource: P1, action: read, allowed: false, decision: denied, granted_by: [w1-parts], denials: [{rule: w1-deny-item, unresolved_parent: true}]}
+      - {type: part, resource: P2, action: read, allowed: false, decision: denied, granted_by: [w1-parts], denials: [{rule: w1-deny-item, unresolved_parent: true}]}
+      - {type: part, resource: P3, action: read, allowed: true, decision: allowed, granted_by: [w1-parts], denials: []}
+  - name: the claim need not match anything, since the anchor is not known
+    subject: w1
+    claims: {part_name: Nowhere}
+    questions:
+      - {type: part, resource: P1, action: read, allowed: false, decision: denied, granted_by: [w1-parts], denials: [{rule: w1-deny-item, unresolved_parent: true}]}
+      - {type: part, resource: P3, action: read, allowed: true, decision: allowed, granted_by: [w1-parts], denials: []}
+  - name: a request without the claim is not under the denial
+    subject: w1
+    questions:
+      - {type: part, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [w1-parts], denials: []}
+  - name: an exception below the anchor lifts it
+    subject: w5
+    claims: {part_name: Part 1}
+    questions:
+      - {type: part, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [w5-parts, w5-except-parts], denials: [{rule: w5-deny-item, lifted_by: [w5-except-parts], unresolved_parent: true}]}
+  - name: the denial on a region found through a part that climbs through a type without resources stays in force
+    subject: w2
+    claims: {part_name: Part 3}
+    questions:
+      - {type: part, resource: P1, action: read, allowed: false, decision: denied, granted_by: [w2-parts], denials: [{rule: w2-deny-region, unresolved_parent: true}]}
+      - {type: part, resource: P2, action: read, allowed: false, decision: denied, granted_by: [w2-parts], denials: [{rule: w2-deny-region, unresolved_parent: true}]}
+      - {type: part, resource: P3, action: read, allowed: true, decision: allowed, granted_by: [w2-parts], denials: []}
+  - name: a lookup among the resources of a type without any leaves the denial below the missing rows only
+    subject: w3
+    claims: {slot_name: Slot 1}
+    questions:
+      - {type: chip, resource: C1, action: read, allowed: false, decision: denied, granted_by: [w3-chips, w3-zones], denials: [{rule: w3-deny-zone, unresolved_parent: true}]}
+      - {type: chip, resource: C2, action: read, allowed: true, decision: allowed, granted_by: [w3-chips, w3-zones], denials: []}
+      - {type: zone, resource: Z1, action: read, allowed: true, decision: allowed, granted_by: [w3-zones], denials: []}
+  - name: a denial by attributes on a type without resources stays in force below the missing rows
+    subject: w4
+    questions:
+      - {type: chip, resource: C1, action: read, allowed: false, decision: denied, granted_by: [w4-chips], denials: [{rule: w4-deny-slot, unresolved_parent: true}]}
+      - {type: chip, resource: C2, action: read, allowed: true, decision: allowed, granted_by: [w4-chips], denials: []}
+  - name: an allow rule that finds no anchor grants nothing
+    subject: w6
+    claims: {part_name: Part 1}
+    questions:
+      - {type: chip, resource: C1, action: read, allowed: true, decision: allowed, granted_by: [w6-chips], denials: []}
+      - {type: part, resource: P1, action: read, allowed: false, decision: no_access, granted_by: []}
+before:
+  # item and slot had their synchronizers when the resources were first synchronized and the rules written.
+  types:
+    - {name: item, service: app, sync: true, parents: [{type: region}]}
+    - {name: slot, service: app, sync: true, parents: [{type: zone}]}
+  resources:
+    - {type: item, id: I1, name: Item 1, parents: [{type: region, id: R1}], meta: {tier: gold}}
+    - {type: slot, id: S1, name: Slot 1, parents: [{type: zone, id: Z1}], meta: {tier: gold}}

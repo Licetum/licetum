@@ -111,7 +111,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 		if err != nil {
 			return nil, err
 		}
-		unresolved, err := a.UnresolvedParents(ctx, []uuid.UUID{typeResourceID})
+		unresolved, err := a.UnresolvedParents(ctx, g, []uuid.UUID{typeResourceID})
 		if err != nil {
 			return nil, err
 		}
