@@ -26,6 +26,7 @@ import (
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/logx"
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/pepauth"
 	"github.com/licetum/licetum/core/redisx"
 	"github.com/licetum/licetum/core/synchronizer"
 )
@@ -88,7 +89,7 @@ type App struct {
 	answersL1     *lruCache[any]
 	invalidTokens *lruCache[error]
 	// jwks holds the key sets of the identity providers, configured on first use (see keySets).
-	jwks     KeySets
+	jwks     pepauth.KeySets
 	jwksOnce sync.Once
 	// local keeps the revision of the policy and its snapshot in memory (see localView).
 	local viewState

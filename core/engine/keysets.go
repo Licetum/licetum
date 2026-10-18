@@ -1,8 +1,12 @@
 package engine
 
+import (
+	"github.com/licetum/licetum/core/pepauth"
+)
+
 // keySets returns the key sets of the identity providers of this process. The settings come from the configuration
 // of the App the first time they are needed, so an App built by hand (without New) has the defaults.
-func (a *App) keySets() *KeySets {
+func (a *App) keySets() *pepauth.KeySets {
 	a.jwksOnce.Do(func() {
 		t := a.tuningOrDefault()
 		a.jwks.HTTP = a.HTTP

@@ -27,6 +27,7 @@ import (
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/pepauth"
 	"github.com/licetum/licetum/core/redisx"
 )
 
@@ -477,12 +478,6 @@ func claimInt(v any) (int64, bool) {
 	return 0, false
 }
 
-// Unavailable is a failure that counts toward the circuit breaker (unlike an invalid token).
-type Unavailable struct{ err *apperr.Error }
-
-func (e Unavailable) Error() string { return e.err.Error() }
-func (e Unavailable) Unwrap() error { return e.err }
-
 func (a *App) verifyTokenLive(ctx context.Context, svc *model.Service, token, tokenHash string) (Claims, error) {
 	if svc.JwksURL == nil || *svc.JwksURL == "" {
 		return nil, apperr.FailedDependency(i18n.JWKSNotConfigured, svc.ID)
@@ -496,10 +491,10 @@ func (a *App) verifyTokenLive(ctx context.Context, svc *model.Service, token, to
 		return a.fetchAndVerify(context.WithoutCancel(ctx), svc, token)
 	})
 	if err != nil {
-		var unavailable Unavailable
+		var unavailable pepauth.Unavailable
 		if errors.As(err, &unavailable) {
 			redisx.RecordFailure(ctx, a.Redis, breakerKey)
-			return nil, unavailable.err
+			return nil, unavailable.Unwrap()
 		}
 		return nil, err
 	}

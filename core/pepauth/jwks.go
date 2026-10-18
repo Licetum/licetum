@@ -1,4 +1,4 @@
-package engine
+package pepauth
 
 import (
 	"context"
@@ -81,6 +81,21 @@ type KeySets struct {
 	mu     sync.Mutex
 	sets   map[string]*keySet
 	flight singleflight.Group
+}
+
+// Unavailable is a failure to read a key set, or a key of it: it counts toward the circuit breaker of the caller, unlike
+// an invalid token.
+type Unavailable struct{ err *apperr.Error }
+
+func (e Unavailable) Error() string { return e.err.Error() }
+func (e Unavailable) Unwrap() error { return e.err }
+
+// resultOf is the result of a fetch as Observe is told it: "ok" or "error".
+func resultOf(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "ok"
 }
 
 // jwksTimeout bounds one fetch of a key set.
