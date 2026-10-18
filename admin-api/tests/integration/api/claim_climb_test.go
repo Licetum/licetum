@@ -6,10 +6,7 @@ package api_test
 // Testcontainers environment as hierarchy_test.go; the resources come from the fake HTTP source of core/testsupport.
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -17,8 +14,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/db"
-	"github.com/licetum/licetum/core/model"
 	support "github.com/licetum/licetum/core/testsupport"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // A resource_from_claim rule finds its anchors by climbing the resource links from the matched resource up to the rule's
@@ -89,38 +86,27 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 	// ask asks the check API at base, with the default consistency, about read on T1 and T2 as alice, whose claim names S1.
 	ask := func(base string) [2]teamAnswer {
 		t.Helper()
-		raw, err := json.Marshal(map[string]any{"explain": true, "checks": []map[string]any{
-			{"type": "team", "resource_id": "T1", "action": "read"},
-			{"type": "team", "resource_id": "T2", "action": "read"},
-		}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		req, err := http.NewRequest(http.MethodPost, base+"/service/"+org+"/check", bytes.NewReader(raw))
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("check: %d %s", resp.StatusCode, body)
+		req := authzenreq.Evaluations("org", authzenreq.SubjectOf(token), []authzenreq.Question{
+			{Resource: authzenreq.On("team", "T1"), Action: "read"},
+			{Resource: authzenreq.On("team", "T2"), Action: "read"},
+		}, authzenreq.Explain())
+		status, header, body := e.call(req.Method, base+req.Path, req.Body, "Authorization", "Bearer "+token)
+		if status != http.StatusOK {
+			t.Fatalf("evaluations: %d %s", status, body)
 		}
 		// An answer made before the synchronizations finished lacks data for another reason than the one tested here.
-		if resp.Header.Get("X-Authz-Sync") == "pending" {
+		if header.Get("X-Authz-Sync") == "pending" {
 			t.Fatalf("the answer was made before the synchronization finished: %s", body)
 		}
-		var out model.CheckResponse
-		if err := json.Unmarshal(body, &out); err != nil || len(out.Results) != 2 {
-			t.Fatalf("check answer: %v (%s)", err, body)
+		decisions, err := authzenreq.Decisions(status, body)
+		if err != nil || len(decisions) != 2 {
+			t.Fatalf("evaluations answer: %v (%s)", err, body)
 		}
 		var got [2]teamAnswer
-		for i, r := range out.Results {
+		for i, r := range decisions {
+			if r.Explanation == nil {
+				t.Fatalf("question %d: no explanation: %s", i, body)
+			}
 			got[i].decision = r.Explanation.Decision
 			for _, d := range r.Explanation.Denials {
 				if d.Rule.RuleID.String() != deny || d.Rule.Anchor.ResourceID == nil || d.UnresolvedParent || len(d.LiftedBy) != 0 {

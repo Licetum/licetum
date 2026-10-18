@@ -592,8 +592,8 @@ func TestIntegrationSchemaValidation(t *testing.T) {
 		}
 	}
 	_, raw := e.do("GET", e.check.URL+"/openapi.json", nil)
-	if !strings.Contains(string(raw), `"get_permission"`) || !strings.Contains(string(raw), `"bearer"`) {
-		t.Fatal("the check API spec lacks get_permission or the bearer security scheme")
+	if !strings.Contains(string(raw), `"authzen_evaluation"`) || !strings.Contains(string(raw), `"bearer"`) {
+		t.Fatal("the check API spec lacks authzen_evaluation or the bearer security scheme")
 	}
 }
 

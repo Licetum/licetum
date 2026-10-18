@@ -135,20 +135,10 @@ func TestIntegrationRequestAttributesDecideAndAreCachedByValue(t *testing.T) {
 	if granted := res[0]["explanation"].(map[string]any)["granted_by"].([]any); len(granted) != 1 {
 		t.Fatalf("granted_by: %v", granted)
 	}
-	status, raw := w.do("POST", w.check.URL+"/service/"+w.org+"/access/v1/evaluation", map[string]any{
-		"subject":  map[string]any{"type": "user", "id": hierarchySubject},
-		"resource": map[string]any{"type": "branch", "id": "B2"},
-		"action":   map[string]any{"name": "read"},
-		"context":  map[string]any{"ip": "10.9.9.9"},
-	}, "Authorization", "Bearer "+w.token(claims))
-	if status != http.StatusOK {
-		t.Fatalf("authzen: %d %s", status, raw)
-	}
-	var decision struct {
-		Decision bool `json:"decision"`
-	}
-	if err := json.Unmarshal(raw, &decision); err != nil || !decision.Decision {
-		t.Fatalf("authzen with an address inside the network: %s", raw)
+	status, raw := w.ask(authzenreq.Evaluation(w.ref(w.org), hierarchySubject, authzenreq.On("branch", "B2"), "read",
+		authzenreq.WithContext(map[string]any{"ip": "10.9.9.9"})), w.token(claims))
+	if allowed, err := authzenreq.Allowed(status, raw); err != nil || !allowed {
+		t.Fatalf("authzen with an address inside the network: %d %s", status, raw)
 	}
 
 	// The admin simulation takes the same attributes without a token.
@@ -161,11 +151,10 @@ func TestIntegrationRequestAttributesDecideAndAreCachedByValue(t *testing.T) {
 	}
 
 	// A context name with a space, and an address that is not a network, are refused.
-	status, _ = w.do("POST", w.check.URL+"/service/"+w.org+"/check", map[string]any{
-		"checks": []map[string]any{check}, "context": map[string]any{"bad name": 1},
-	}, "Authorization", "Bearer "+w.token(claims))
-	if status != http.StatusUnprocessableEntity {
-		t.Fatalf("context name with a space: %d", status)
+	status, _ = w.ask(authzenreq.Evaluation(w.ref(w.org), hierarchySubject, authzenreq.On("branch", "B1"), "read",
+		authzenreq.WithContext(map[string]any{"bad name": 1})), w.token(claims))
+	if status != http.StatusBadRequest {
+		t.Fatalf("context name with a space: want 400 (the specification has no 422), got %d", status)
 	}
 	status, raw = w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "subject": "u",

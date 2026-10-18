@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/logx"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // call is e.do for a test that reads the response headers too.
@@ -204,22 +206,28 @@ func TestWritesReturnARevisionThatReadsCanRequire(t *testing.T) {
 		t.Fatal("a write returns the revision it produced")
 	}
 
-	// a read that asks for the revision sees the write
+	// a read that asks for the revision sees the write: alice may read the flag, a type without resources, as a whole
+	rev, err := strconv.ParseInt(revision, 10, 64)
+	if err != nil {
+		t.Fatalf("the revision of a write is a number: %q", revision)
+	}
 	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "u1"})
-	status, _, raw = e.call(http.MethodGet, e.check.URL+"/service/"+svc+"/permission?at_least_as_fresh="+revision, nil,
-		"Authorization", "Bearer "+alice)
-	if status != http.StatusOK {
-		t.Fatalf("permission at the revision: %d %s", status, raw)
+	status, raw = e.ask(authzenreq.Evaluation("pilot", "alice", authzenreq.Whole("flag"), "read", authzenreq.AtLeast(rev)), alice)
+	if allowed, err := authzenreq.Allowed(status, raw); err != nil || !allowed {
+		t.Fatalf("evaluation at the revision: %d %s", status, raw)
 	}
-	var perm map[string]any
-	if err := json.Unmarshal(raw, &perm); err != nil {
-		t.Fatal(err)
+	status, raw = e.ask(authzenreq.SearchAction("pilot", "alice", authzenreq.Whole("flag"), authzenreq.AtLeast(rev)), alice)
+	levels, _, err := authzenreq.Actions(status, raw)
+	if err != nil {
+		t.Fatalf("actions at the revision: %v", err)
 	}
-	expectJSON(t, "alice sees the write", perm, `{"flag":{"type":"not_sync","access":["read"]}}`)
+	expectJSON(t, "alice sees the write", levels, `["read"]`)
+	if status, ids := e.search("pilot", alice, "flag", "read", authzenreq.AtLeast(rev)); status != http.StatusOK || len(ids) != 0 {
+		t.Fatalf("a type without resources lists none: %d %v", status, ids)
+	}
 
 	// a revision the cache has not reached is answered from the data, not refused
-	status, _, raw = e.call(http.MethodGet, e.check.URL+"/service/"+svc+"/permission?at_least_as_fresh=999999999", nil,
-		"Authorization", "Bearer "+alice)
+	status, raw = e.ask(authzenreq.Evaluation("pilot", "alice", authzenreq.Whole("flag"), "read", authzenreq.AtLeast(999999999)), alice)
 	if status != http.StatusOK {
 		t.Fatalf("a future revision: %d %s", status, raw)
 	}
@@ -420,11 +428,11 @@ func TestDecisionEventsCarryTheRequestIDAndSampleAllowedAnswers(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
 	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "u1"})
-	status, _, raw := e.call(http.MethodPost, e.check.URL+"/service/"+svc+"/check", map[string]any{
-		"checks": []map[string]any{{"type": "flag", "action": "read"}, {"type": "flag", "action": "write"}},
-	}, "Authorization", "Bearer "+alice, "X-Request-ID", "rid-7")
-	if status != http.StatusOK {
-		t.Fatalf("check: %d %s", status, raw)
+	req := authzenreq.Evaluations("pilot2", "alice", []authzenreq.Question{
+		{Resource: authzenreq.Whole("flag"), Action: "read"}, {Resource: authzenreq.Whole("flag"), Action: "write"}})
+	status, raw := e.ask(req, alice, "X-Request-ID", "rid-7")
+	if _, err := authzenreq.Decisions(status, raw); err != nil {
+		t.Fatalf("evaluations: %v", err)
 	}
 
 	var decisions []map[string]any
