@@ -11,6 +11,8 @@ on:
       - 'deploy/helm/**'
       - 'core/Dockerfile'
       - 'admin-api/Dockerfile'
+      # A change of settings renders the chart (docs/adr/0001-regional-pdp.md, 10.7).
+      - 'core/config/**'
       - '.github/workflows/helm.yml'
 
 permissions:
