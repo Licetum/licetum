@@ -21,15 +21,14 @@ const (
 	keyFetchCount   = "licetum_source_fetch_seconds_count"
 )
 
-// serverOperation is the operation id each request kind carries in the server's metrics.
+// serverOperation is the operation id each request kind carries in the server's metrics. Requests that reach the same
+// operation (the evaluations of a person and of another person, the batches of ten and of a hundred) share its figure.
 var serverOperation = [numOps]string{
-	opPermission:   "get_permission",
-	opCheck1:       "check_access",
-	opCheck10:      "check_access",
-	opCheck100:     "check_access",
-	opAuthzen:      "authzen_evaluation",
-	opAuthzenBatch: "authzen_evaluations",
-	opOnBehalf:     "delegated_check",
+	opSearchResource:       "authzen_search_resource",
+	opEvaluation:           "authzen_evaluation",
+	opEvaluations10:        "authzen_evaluations",
+	opEvaluations100:       "authzen_evaluations",
+	opEvaluationProperties: "authzen_evaluation",
 }
 
 // Server is what the check server and its database did during a window, read from their own counters. A figure with
@@ -59,6 +58,7 @@ type Settings struct {
 	Seed           int64   `json:"seed"`
 	Mix            string  `json:"mix"`
 	Consistency    string  `json:"consistency"`
+	Workload       string  `json:"workload,omitempty"`
 	Concurrency    int     `json:"concurrency"`
 	DBPool         int     `json:"db_pool"`
 	AccessLog      bool    `json:"access_log"`

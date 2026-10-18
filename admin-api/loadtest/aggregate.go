@@ -67,14 +67,19 @@ func AggregateReport(dirs []string) (string, error) {
 }
 
 // configKey is what makes two runs comparable: the same policy size (overrides included), the same server setup, the same
-// traffic, the same rate and window, and the same experiments applied to the run.
+// traffic, the same rate and window, and the same experiments applied to the run. A run that names its workload is
+// compared only with runs that name the same one: the cold runs before P2-07 are not the cold runs after it.
 func configKey(r Report) string {
 	s, p := r.Settings, r.Profile
-	return fmt.Sprintf("%s (%d subjects, %d groups, %d rules, %d resources) | mode %s | mix %s | consistency %s | rate %.0f | "+
+	key := fmt.Sprintf("%s (%d subjects, %d groups, %d rules, %d resources) | mode %s | mix %s | consistency %s | rate %.0f | "+
 		"measure %.0f s | warm %.0f s | oracle %.0f/s | db pool %d | access log %s | replicas %d | writes every %.0f s | "+
 		"redis paused %.0f s | extra SQL %s",
 		p.Name, p.Users, p.Groups, p.Rules, p.Resources, s.Mode, s.Mix, s.Consistency, s.Rate, s.MeasureSecs, s.WarmSeconds,
 		s.OracleRate, s.DBPool, onOff(s.AccessLog), s.Replicas, s.WritesEverySec, s.PauseRedisSecs, nameOrNone(s.ExtraSQL))
+	if s.Workload != "" {
+		key += " | workload " + s.Workload
+	}
+	return key
 }
 
 // nameOrNone is the name of a file, or "none" when there is none.
@@ -83,6 +88,30 @@ func nameOrNone(name string) string {
 		return "none"
 	}
 	return name
+}
+
+// operationNames are the requests the runs sent, in the order they list them: the names a run was written with, not the
+// ones this version of the harness sends, so that a run of an earlier mix is read back under its own names.
+func operationNames(runs []loadedRun) []string {
+	var names []string
+	for _, r := range runs {
+		for _, op := range r.window.Operations {
+			if !slices.Contains(names, op.Name) {
+				names = append(names, op.Name)
+			}
+		}
+	}
+	return names
+}
+
+// operation is the request of the window with the name; a window that did not send it has the empty one.
+func (m Measurement) operation(name string) Operation {
+	for _, op := range m.Operations {
+		if op.Name == name {
+			return op
+		}
+	}
+	return Operation{Name: name}
 }
 
 // writeGroup writes the table of one configuration: its runs, the validity of each, and the median and range of every
@@ -123,12 +152,12 @@ func writeGroup(b *strings.Builder, runs []loadedRun, environments map[string]En
 	b.WriteString("### Latency by request (valid runs)\n\n")
 	b.WriteString("| request | samples (min-max) | p50 ms | p90 ms | p95 ms | p99 ms | p99.9 ms | spread |\n")
 	b.WriteString("|---|---|---|---|---|---|---|---|\n")
-	for i, name := range opNames {
+	for _, name := range operationNames(valid) {
 		var samples []float64
 		series := map[string][]float64{"p50": nil, "p90": nil, "p95": nil, "p99": nil, "p999": nil}
 		published := map[string]bool{"p50": true, "p90": true, "p95": true, "p99": true, "p999": true}
 		for _, r := range valid {
-			op := r.window.Operations[i]
+			op := r.window.operation(name)
 			samples = append(samples, float64(op.Latency.Samples))
 			for _, pc := range []struct {
 				key string
