@@ -1,0 +1,28 @@
+name: Nightly (epic)
+
+# A schedule fires only from the default branch, and the nightly suites of the refactor (#49) exist only on the epic branch
+# epic/production-load-readiness until it reaches main. This dispatcher runs them there every night: it calls the reusable
+# workflow nightly-suite.yml of the epic (the integration suites through PgBouncer, fault injection, the multi-region
+# environment and the load test), which takes everything else from the epic's own commit. Started by hand, it can run them on
+# another ref of the epic's line of work. It goes away when the epic is merged and the suites live here.
+on:
+  schedule:
+    - cron: "11 3 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit whose code the suites test (default, the epic branch)
+        type: string
+        default: epic/production-load-readiness
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: Nightly suite of the epic
+    uses: Licetum/licetum/.github/workflows/nightly-suite.yml@epic/production-load-readiness
+    permissions:
+      contents: write # the load test job asks for it (only its optional publish step uses it)
+    with:
+      ref: ${{ inputs.ref || 'epic/production-load-readiness' }}
