@@ -627,12 +627,62 @@ func (a *App) anchorRowIDs(ctx context.Context, refs []anchorRef) (map[anchorRef
 // ancestorLookup asks for the resources of type Lookup that match Value (by name, by id, or by an attribute,
 // see model.MatchBy*), and for their ancestors of type Target through the resource links, whatever the inherit
 // masks along the way — the resource itself when the types are the same. Index is the rule the lookup is for.
+// Between is TypeGraph.TypesBetween(Lookup, Target): a climb that leaves these types cannot come back to the target.
 type ancestorLookup struct {
 	Index   int
 	Lookup  uuid.UUID
 	Target  uuid.UUID
 	Value   string
 	MatchBy string
+	Between []uuid.UUID
+}
+
+// ancestorWalkSQL finds the anchors of the lookups of one kind of match (match is the condition on the matched resource
+// n and the lookup q). The ancestors are found by walking the resolved edges up, not through resource_ancestor: the
+// closure keeps only the pairs some level flows between (rebuildClosureSQL drops a route whose masks intersect to
+// nothing), while the masks say what flows down a link, not which resource lies above which. Dropping such an ancestor
+// would drop the anchor of a denial (fail open). The walk takes the edges the closure takes: resolved, to a live
+// resource of a live type, along a live type link; UNION makes a cycle in the data terminate.
+//
+// The walk climbs no further than an anchor can be:
+//   - It stops at a resource of the target type. The type graph has no cycle (checkParents refuses a type as its own
+//     parent, as ck_type_resource_parent_no_self does, and a link that closes a cycle), so no resource above one of the
+//     target type is of the target type. With the lookup type as the target (the owner pattern) nothing is climbed: the
+//     matched resources are the anchors.
+//   - It follows a link only to a parent whose type lies on a route of type links up to the target (q.allowed, the live
+//     types of Between): above any other type the target cannot be. A resolved edge points at a resource of its parent
+//     type (syncEdges and the resolution of the edges waiting for a parent match on it), so the type of the link is the
+//     type of the parent, and only q.allowed has to be live.
+//
+// q is made once per lookup: the live types of Between, and the objects the attribute match looks for in meta (the value,
+// or a list holding it), which cost more than the match itself when they are built for every resource. A row of the walk
+// carries the type, the external id and the name of its resource, so the answer needs no join.
+func ancestorWalkSQL(match string) string {
+	return `
+		WITH RECURSIVE q AS MATERIALIZED (
+			SELECT u.idx, u.lookup_type, u.target_type, u.value,
+			       jsonb_build_object(u.attr, u.value) AS meta_value,
+			       jsonb_build_object(u.attr, jsonb_build_array(u.value)) AS meta_list,
+			       ARRAY(SELECT t.id FROM type_resource t WHERE t.id = ANY (u.allowed::uuid[]) AND t.deleted_at IS NULL) AS allowed
+			FROM unnest($1::bigint[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[])
+			    AS u(idx, lookup_type, target_type, value, attr, allowed)
+		),
+		up(idx, target_type, allowed, id, type_id, ext, name) AS (
+			SELECT q.idx, q.target_type, q.allowed, n.id, n.type_resource_id, n.external_id, n.name
+			FROM q
+			JOIN resource_cache n ON n.type_resource_id = q.lookup_type AND n.active AND ` + match + `
+			JOIN type_resource nt ON nt.id = n.type_resource_id AND nt.deleted_at IS NULL
+			UNION
+			SELECT up.idx, up.target_type, up.allowed, par.id, par.type_resource_id, par.external_id, par.name
+			FROM up
+			JOIN type_resource_parent trp ON trp.type_resource_id = up.type_id AND trp.parent_id = ANY (up.allowed)
+			JOIN resource_edge e ON e.child_id = up.id AND e.parent_type_id = trp.parent_id AND e.parent_id IS NOT NULL
+			JOIN resource_cache par ON par.id = e.parent_id AND par.active
+			WHERE up.type_id <> up.target_type
+		)
+		SELECT idx, id, type_id, ext, name FROM up
+		WHERE type_id = target_type
+		ORDER BY idx, ext`
 }
 
 // findAncestorsBatch answers all lookups of one request: one query per kind of match (by name, by external id,
@@ -664,37 +714,15 @@ func (a *App) findAncestorsBatch(ctx context.Context, lookups []ancestorLookup) 
 		lookup := make([]uuid.UUID, len(batch))
 		target := make([]uuid.UUID, len(batch))
 		value := make([]string, len(batch))
+		allowed := make([]string, len(batch))
 		for i, l := range batch {
 			idx[i], lookup[i], target[i], value[i] = int64(l.Index), l.Lookup, l.Target, l.Value
+			allowed[i] = uuidArrayLiteral(l.Between)
 		}
 		if attr == nil {
 			attr = make([]string, len(batch))
 		}
-		// The ancestors are found by walking the resolved edges up, not through resource_ancestor: the closure keeps
-		// only the pairs some level flows between (rebuildClosureSQL drops a route whose masks intersect to nothing),
-		// while the masks say what flows down a link, not which resource lies above which. Dropping such an ancestor
-		// would drop the anchor of a denial (fail open). The walk takes the edges the closure takes: resolved, to a live
-		// resource of a live type, along a live type link; UNION makes a cycle in the data terminate.
-		rows, err := a.reader(ctx).Query(ctx, `
-			WITH RECURSIVE up(idx, target_type, id) AS (
-				SELECT q.idx, q.target_type, n.id
-				FROM unnest($1::bigint[], $2::uuid[], $3::uuid[], $4::text[], $5::text[]) AS q(idx, lookup_type, target_type, value, attr)
-				JOIN resource_cache n ON n.type_resource_id = q.lookup_type AND n.active AND `+match+`
-				JOIN type_resource nt ON nt.id = n.type_resource_id AND nt.deleted_at IS NULL
-				UNION
-				SELECT up.idx, up.target_type, e.parent_id
-				FROM up
-				JOIN resource_cache cur ON cur.id = up.id
-				JOIN resource_edge e ON e.child_id = cur.id AND e.parent_id IS NOT NULL
-				JOIN resource_cache par ON par.id = e.parent_id AND par.active
-				JOIN type_resource pt ON pt.id = par.type_resource_id AND pt.deleted_at IS NULL
-				JOIN type_resource_parent trp
-				    ON trp.type_resource_id = cur.type_resource_id AND trp.parent_id = e.parent_type_id
-			)
-			SELECT DISTINCT up.idx, anc.id, anc.type_resource_id, anc.external_id, anc.name
-			FROM up
-			JOIN resource_cache anc ON anc.id = up.id AND anc.type_resource_id = up.target_type
-			ORDER BY up.idx, anc.external_id`, idx, lookup, target, value, attr)
+		rows, err := a.reader(ctx).Query(ctx, ancestorWalkSQL(match), idx, lookup, target, value, attr, allowed)
 		if err != nil {
 			return err
 		}
@@ -716,11 +744,25 @@ func (a *App) findAncestorsBatch(ctx context.Context, lookups []ancestorLookup) 
 		return nil, err
 	}
 	// An attribute equal to the value or a list containing it (both forms use the GIN index).
-	if err := run(`(n.meta @> jsonb_build_object(q.attr, q.value)
-		OR n.meta @> jsonb_build_object(q.attr, jsonb_build_array(q.value)))`, byAttr, attrs); err != nil {
+	if err := run(`(n.meta @> q.meta_value OR n.meta @> q.meta_list)`, byAttr, attrs); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// uuidArrayLiteral writes ids as a PostgreSQL array literal ({a,b}): an element of a text[] parameter that the query
+// casts to uuid[], which gives each row of an unnest an array of its own.
+func uuidArrayLiteral(ids []uuid.UUID) string {
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(id.String())
+	}
+	b.WriteByte('}')
+	return b.String()
 }
 
 // graphNode is a resource with the data the response needs.

@@ -730,7 +730,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		}
 	}
 
-	if p.Insts, err = a.buildInstances(ctx, snap, rules, env, missing); err != nil {
+	if p.Insts, err = a.buildInstances(ctx, g, snap, rules, env, missing); err != nil {
 		return nil, err
 	}
 	pairs, err := a.instancePairs(ctx, p.Insts)
@@ -745,16 +745,18 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 // A rule on a resource that is not in the cache has no anchor and no effect; a rule with resource_from_claim
 // yields one instance per ancestor found, and a rule with resource_where one per resource whose attributes match.
 // The lookups of all the rules run together, in parallel with the anchors of the rules that name a resource.
-func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
-	return a.buildInstances(ctx, nil, rules, env, missing)
+// g is the type graph the lookups climb (see findAncestorsBatch).
+func (a *App) BuildInstances(ctx context.Context, g *TypeGraph, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
+	return a.buildInstances(ctx, g, nil, rules, env, missing)
 }
 
 // buildInstances is BuildInstances reading the access groups from the snapshot when there is one.
-func (a *App) buildInstances(ctx context.Context, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
+func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
 	var refs []anchorRef
 	var lookups []ancestorLookup
 	claimValues := map[int]string{}
 	var groupTypes []uuid.UUID
+	between := map[[2]uuid.UUID][]uuid.UUID{}
 	for i, r := range rules {
 		if hasGroupReference(r.Access) {
 			groupTypes = append(groupTypes, *r.TypeResourceID)
@@ -767,9 +769,19 @@ func (a *App) buildInstances(ctx context.Context, snap *snapshot, rules []model.
 				continue
 			}
 			claimValues[i] = PyStr(value)
+			pair := [2]uuid.UUID{spec.LookupTypeResourceID, *r.TypeResourceID}
+			types, ok := between[pair]
+			if !ok {
+				types = g.TypesBetween(pair[0], pair[1])
+				between[pair] = types
+			}
+			if types == nil {
+				// The rule's type is neither the lookup type nor above it: no climb reaches it.
+				continue
+			}
 			lookups = append(lookups, ancestorLookup{
 				Index: i, Lookup: spec.LookupTypeResourceID, Target: *r.TypeResourceID,
-				Value: PyStr(value), MatchBy: spec.MatchBy,
+				Value: PyStr(value), MatchBy: spec.MatchBy, Between: types,
 			})
 		case r.ResourceID != nil:
 			refs = append(refs, anchorRef{Type: *r.TypeResourceID, Ext: *r.ResourceID})

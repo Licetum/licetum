@@ -368,7 +368,10 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   value is matched against the attribute the source reported (equal, or a list containing it — both
   forms use the GIN index on `meta`). The anchors are the matched resource's ancestors of the rule's type through the
   resolved resource links, whatever the inherit masks (`findAncestorsBatch` walks the edges, not the closure, which keeps
-  only pairs some level flows between); the types the climb passes are synchronized with the rest (`TypeGraph.TypesBetween`). With the lookup type equal to the rule's type this is the
+  only pairs some level flows between); the types the climb passes are synchronized with the rest (`TypeGraph.TypesBetween`).
+  The climb stops at a resource of the rule's type (the type graph has no cycle) and follows only the links to those types
+  (`ancestorWalkSQL`); `core/tests/integration/engine/walk_test.go` checks it against a climb to the roots and has its
+  benchmark. With the lookup type equal to the rule's type this is the
   "owner" pattern: one rule `{claim: preferred_username, lookup type: project, match_by: meta.owner}`
   gives each user access to the projects (and their descendants) whose `owner` attribute is theirs.
   `effect` is `allow` (default) or `deny`; a denial may use the level `*` (every level). An allow

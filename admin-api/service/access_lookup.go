@@ -93,7 +93,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 			static = append(static, r)
 		}
 	}
-	insts, err := a.BuildInstances(ctx, static, engine.NewEnv(nil, nil), nil)
+	insts, err := a.BuildInstances(ctx, g, static, engine.NewEnv(nil, nil), nil)
 	if err != nil {
 		return nil, err
 	}

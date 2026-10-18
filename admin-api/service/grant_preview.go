@@ -106,7 +106,7 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 			out.Dynamic = true
 		}
 	}
-	insts, err := a.BuildInstances(ctx, rules, engine.NewEnv(nil, nil), nil)
+	insts, err := a.BuildInstances(ctx, g, rules, engine.NewEnv(nil, nil), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +252,7 @@ func (a *App) grantMeets(ctx context.Context, g *engine.TypeGraph, rule *model.A
 			static = append(static, r)
 		}
 	}
-	insts, err := a.BuildInstances(ctx, static, engine.NewEnv(nil, nil), nil)
+	insts, err := a.BuildInstances(ctx, g, static, engine.NewEnv(nil, nil), nil)
 	if err != nil {
 		return err
 	}
