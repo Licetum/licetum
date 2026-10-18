@@ -26,17 +26,18 @@ type AccessPeople struct {
 
 // AccessEntry is a rule that covers the resource.
 type AccessEntry struct {
-	Rule        RuleRef       `json:"rule" doc:"The rule, as an explanation names it"`
-	Name        *string       `json:"name" doc:"The name of the rule; null when it has none"`
-	Via         string        `json:"via" enum:"resource,ancestor,type,attribute,claim" doc:"How the rule reaches the resource: anchored on it (resource), on an ancestor (ancestor), on its type or a higher one (type), on the resources whose attributes match (attribute), or found by a claim (claim)"`
-	Levels      []string      `json:"levels" nullable:"false" doc:"The levels that reach the resource: what the rule gives, cut by what the links let flow down"`
-	Who         AccessWho     `json:"who" doc:"Whom the rule applies to"`
-	Role        *NamedID      `json:"role" doc:"The role the rule grants; null for an inline rule"`
-	ExpiresAt   *time.Time    `json:"expires_at" doc:"When the rule stops; null — never"`
-	ValidFrom   *time.Time    `json:"valid_from" doc:"When the rule starts; null — it has started"`
-	Assumed     bool          `json:"assumed" doc:"A denial that applies because the resource has a parent that is not in the cache yet"`
-	People      []KnownPerson `json:"people" nullable:"false" doc:"Known subjects the rule applies to (up to 20)"`
-	PeopleTotal int           `json:"people_total" doc:"How many known subjects the rule applies to"`
+	Rule          RuleRef       `json:"rule" doc:"The rule, as an explanation names it"`
+	Name          *string       `json:"name" doc:"The name of the rule; null when it has none"`
+	Via           string        `json:"via" enum:"resource,ancestor,type,attribute,claim" doc:"How the rule reaches the resource: anchored on it (resource), on an ancestor (ancestor), on its type or a higher one (type), on the resources whose attributes match (attribute), or found by a claim (claim)"`
+	Levels        []string      `json:"levels" nullable:"false" doc:"The levels that reach the resource: what the rule gives, cut by what the links let flow down"`
+	Who           AccessWho     `json:"who" doc:"Whom the rule applies to"`
+	Role          *NamedID      `json:"role" doc:"The role the rule grants; null for an inline rule"`
+	ExpiresAt     *time.Time    `json:"expires_at" doc:"When the rule stops; null — never"`
+	ValidFrom     *time.Time    `json:"valid_from" doc:"When the rule starts; null — it has started"`
+	Assumed       bool          `json:"assumed" doc:"A denial that applies only because the resource has a parent that is not in the cache yet: none of its levels reaches the resource for real"`
+	AssumedLevels []string      `json:"assumed_levels" nullable:"false" doc:"The levels of a denial that reach the resource only because it has a parent that is not in the cache yet (fail closed); the other levels reach it for real"`
+	People        []KnownPerson `json:"people" nullable:"false" doc:"Known subjects the rule applies to (up to 20)"`
+	PeopleTotal   int           `json:"people_total" doc:"How many known subjects the rule applies to"`
 }
 
 // NamedID is an entity with its name.

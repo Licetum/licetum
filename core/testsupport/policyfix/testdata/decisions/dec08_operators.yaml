@@ -1,0 +1,190 @@
+# DEC08: the condition operators over claims and request attributes. Every rule of the type `feature` grants a level
+# named after the condition it reads, so each question asks about one condition. An attribute the request does not carry
+# (absent, or null) never satisfies a condition: an allow rule grants nothing then, ne and not_in included. A condition
+# reads only its own source: a claim is not a request attribute of the same name.
+contracts: [DEC08]
+description: eq ne in not_in regex gt ge lt le in_cidr over present, absent and null attributes, with numeric and network boundaries.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: feature, service: org, sync: false}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+rules:
+  - {name: sales-except-ivanovich-and-interns, type: division, resource: D1, access: [read], predicate: [{attr: department, op: eq, value: sales}, {attr: username, op: ne, value: ivanovich}, {attr: grade, op: not_in, value: [intern]}]}
+  - {name: eq-sales, type: feature, access: [eq], predicate: [{attr: department, op: eq, value: sales}]}
+  - {name: ne-ivanovich, type: feature, access: [ne], predicate: [{attr: username, op: ne, value: ivanovich}]}
+  - {name: in-senior-or-lead, type: feature, access: [in], predicate: [{attr: grade, op: in, value: [senior, lead]}]}
+  # in with a single string is equality.
+  - {name: in-one-value, type: feature, access: [in_one], predicate: [{attr: department, op: in, value: sales}]}
+  - {name: not-in-intern, type: feature, access: [not_in], predicate: [{attr: grade, op: not_in, value: [intern]}]}
+  # regex is a search (RE2, case-sensitive): it matches anywhere unless anchored.
+  - {name: regex-example-com, type: feature, access: [regex], predicate: [{attr: email, op: regex, value: '@example\.com$'}]}
+  - {name: regex-manager, type: feature, access: [regex_search], predicate: [{attr: title, op: regex, value: manager}]}
+  # The numeric operators compare numbers, not strings.
+  - {name: gt-18, type: feature, access: [gt], predicate: [{attr: age, op: gt, value: "18"}]}
+  - {name: ge-18, type: feature, access: [ge], predicate: [{attr: age, op: ge, value: "18"}]}
+  - {name: lt-18, type: feature, access: [lt], predicate: [{attr: age, op: lt, value: "18"}]}
+  - {name: le-18, type: feature, access: [le], predicate: [{attr: age, op: le, value: "18"}]}
+  - {name: cidr-from-context, type: feature, access: [in_cidr], predicate: [{attr: ip, source: context, op: in_cidr, value: ["10.0.0.0/8", "192.168.1.0/24", "2001:db8::/32"]}]}
+  - {name: cidr-from-claim, type: feature, access: [in_cidr_claim], predicate: [{attr: ip, op: in_cidr, value: "10.0.0.0/8"}]}
+cases:
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationNeAndNotInPredicates
+  - name: petrov of sales, a senior, matches eq, ne and not_in together
+    subject: petrov
+    claims: {department: sales, username: petrov, grade: senior}
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [sales-except-ivanovich-and-interns]}
+      - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationNeAndNotInPredicates
+  - name: ivanovich fails ne
+    subject: ivanovich
+    claims: {department: sales, username: ivanovich, grade: senior}
+    questions:
+      - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationNeAndNotInPredicates
+  - name: an intern fails not_in
+    subject: petrov
+    claims: {department: sales, username: petrov, grade: intern}
+    questions:
+      - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationNeAndNotInPredicates
+  - name: a missing claim does not satisfy ne
+    subject: petrov
+    claims: {department: sales, grade: senior}
+    questions:
+      - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
+  - name: every condition holds
+    subject: petrov
+    claims: {department: sales, username: petrov, grade: senior, email: petrov@example.com, title: senior manager, age: 30, ip: 10.1.1.1}
+    context: {ip: 10.1.2.3}
+    questions:
+      - {type: feature, action: eq, allowed: true, decision: allowed, granted_by: [eq-sales]}
+      - {type: feature, action: ne, allowed: true, decision: allowed, granted_by: [ne-ivanovich]}
+      - {type: feature, action: in, allowed: true, decision: allowed, granted_by: [in-senior-or-lead]}
+      - {type: feature, action: in_one, allowed: true, decision: allowed, granted_by: [in-one-value]}
+      - {type: feature, action: not_in, allowed: true, decision: allowed, granted_by: [not-in-intern]}
+      - {type: feature, action: regex, allowed: true, decision: allowed, granted_by: [regex-example-com]}
+      - {type: feature, action: regex_search, allowed: true, decision: allowed, granted_by: [regex-manager]}
+      - {type: feature, action: gt, allowed: true, decision: allowed, granted_by: [gt-18]}
+      - {type: feature, action: ge, allowed: true, decision: allowed, granted_by: [ge-18]}
+      - {type: feature, action: lt, allowed: false, decision: no_access}
+      - {type: feature, action: le, allowed: false, decision: no_access}
+      - {type: feature, action: in_cidr, allowed: true, decision: allowed, granted_by: [cidr-from-context]}
+      - {type: feature, action: in_cidr_claim, allowed: true, decision: allowed, granted_by: [cidr-from-claim]}
+  - name: values that do not match
+    subject: ivanovich
+    claims: {department: Sales, username: ivanovich, grade: intern, email: ivanovich@example.org, title: Manager, age: 30}
+    context: {ip: 192.168.2.1}
+    questions:
+      - {type: feature, action: eq, allowed: false, decision: no_access}
+      - {type: feature, action: ne, allowed: false, decision: no_access}
+      - {type: feature, action: in, allowed: false, decision: no_access}
+      - {type: feature, action: in_one, allowed: false, decision: no_access}
+      - {type: feature, action: not_in, allowed: false, decision: no_access}
+      - {type: feature, action: regex, allowed: false, decision: no_access}
+      - {type: feature, action: regex_search, allowed: false, decision: no_access}
+      - {type: feature, action: in_cidr, allowed: false, decision: no_access}
+  - name: no attribute at all satisfies nothing, ne and not_in included
+    subject: nobody
+    questions:
+      - {type: feature, action: eq, allowed: false, decision: no_access}
+      - {type: feature, action: ne, allowed: false, decision: no_access}
+      - {type: feature, action: in, allowed: false, decision: no_access}
+      - {type: feature, action: in_one, allowed: false, decision: no_access}
+      - {type: feature, action: not_in, allowed: false, decision: no_access}
+      - {type: feature, action: regex, allowed: false, decision: no_access}
+      - {type: feature, action: regex_search, allowed: false, decision: no_access}
+      - {type: feature, action: gt, allowed: false, decision: no_access}
+      - {type: feature, action: ge, allowed: false, decision: no_access}
+      - {type: feature, action: lt, allowed: false, decision: no_access}
+      - {type: feature, action: le, allowed: false, decision: no_access}
+      - {type: feature, action: in_cidr, allowed: false, decision: no_access}
+      - {type: feature, action: in_cidr_claim, allowed: false, decision: no_access}
+      - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
+  - name: a null claim is missing, not the string None
+    subject: nobody
+    claims: {username: null, grade: null, age: null}
+    questions:
+      - {type: feature, action: ne, allowed: false, decision: no_access}
+      - {type: feature, action: not_in, allowed: false, decision: no_access}
+      - {type: feature, action: lt, allowed: false, decision: no_access}
+  - name: the boundary itself satisfies ge and le only
+    subject: petrov
+    claims: {age: 18}
+    questions:
+      - {type: feature, action: gt, allowed: false, decision: no_access}
+      - {type: feature, action: ge, allowed: true, decision: allowed}
+      - {type: feature, action: lt, allowed: false, decision: no_access}
+      - {type: feature, action: le, allowed: true, decision: allowed}
+  - name: a number given as a string compares as the number
+    subject: petrov
+    claims: {age: "18"}
+    questions:
+      - {type: feature, action: gt, allowed: false, decision: no_access}
+      - {type: feature, action: ge, allowed: true, decision: allowed}
+      - {type: feature, action: le, allowed: true, decision: allowed}
+  - name: one below the boundary
+    subject: petrov
+    claims: {age: 17}
+    questions:
+      - {type: feature, action: gt, allowed: false, decision: no_access}
+      - {type: feature, action: ge, allowed: false, decision: no_access}
+      - {type: feature, action: lt, allowed: true, decision: allowed}
+      - {type: feature, action: le, allowed: true, decision: allowed}
+  - name: 9 is less than 18 as a number although "9" sorts after "18"
+    subject: petrov
+    claims: {age: 9}
+    questions:
+      - {type: feature, action: gt, allowed: false, decision: no_access}
+      - {type: feature, action: lt, allowed: true, decision: allowed}
+  - name: a fraction above the boundary
+    subject: petrov
+    claims: {age: 18.5}
+    questions:
+      - {type: feature, action: gt, allowed: true, decision: allowed}
+      - {type: feature, action: ge, allowed: true, decision: allowed}
+      - {type: feature, action: lt, allowed: false, decision: no_access}
+      - {type: feature, action: le, allowed: false, decision: no_access}
+  - name: a value that is not a number satisfies no numeric operator
+    subject: petrov
+    claims: {age: abc}
+    questions:
+      - {type: feature, action: gt, allowed: false, decision: no_access}
+      - {type: feature, action: ge, allowed: false, decision: no_access}
+      - {type: feature, action: lt, allowed: false, decision: no_access}
+      - {type: feature, action: le, allowed: false, decision: no_access}
+  - name: an anchored pattern does not match a longer value, an unanchored one matches inside it
+    subject: petrov
+    claims: {email: petrov@example.com.evil.org, title: the manager of sales}
+    questions:
+      - {type: feature, action: regex, allowed: false, decision: no_access}
+      - {type: feature, action: regex_search, allowed: true, decision: allowed}
+  - name: an address in the second network of the list
+    subject: petrov
+    context: {ip: 192.168.1.77}
+    questions:
+      - {type: feature, action: in_cidr, allowed: true, decision: allowed}
+  - name: an IPv6 address in an IPv6 network
+    subject: petrov
+    context: {ip: "2001:db8::5"}
+    questions:
+      - {type: feature, action: in_cidr, allowed: true, decision: allowed}
+  - name: a value that is not an address is in no network
+    subject: petrov
+    context: {ip: not-an-address}
+    questions:
+      - {type: feature, action: in_cidr, allowed: false, decision: no_access}
+  - name: a claim does not stand in for a request attribute of the same name, nor the other way round
+    subject: petrov
+    claims: {ip: 10.1.1.1}
+    questions:
+      - {type: feature, action: in_cidr, allowed: false, decision: no_access}
+      - {type: feature, action: in_cidr_claim, allowed: true, decision: allowed}
+  - name: a request attribute does not stand in for a claim
+    subject: petrov
+    context: {ip: 10.1.1.1}
+    questions:
+      - {type: feature, action: in_cidr, allowed: true, decision: allowed}
+      - {type: feature, action: in_cidr_claim, allowed: false, decision: no_access}

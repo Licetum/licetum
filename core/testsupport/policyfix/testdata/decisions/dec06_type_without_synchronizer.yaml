@@ -1,0 +1,57 @@
+# DEC06: the end of hierarchy_test.go:TestIntegrationTypeModes — item (service app) under branch has no synchronizer
+# any more, so it is a not_sync type: the whole-type rule on it decides it, and the grant on D1 above it no longer
+# cascades into it. division → rrs → branch (service org); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3; R3 ⊃ B4.
+# (The point rule on I4 of the test, dead once the synchronizer is gone, cannot be written in a fixture: a rule on a
+# resource of a type without a synchronizer is refused.)
+contracts: [DEC06]
+description: A type without a synchronizer below sync types is decided by its own whole-type rules only.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: false, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, name: Branch 4, parents: [{type: rrs, id: R3}]}
+rules:
+  # hierarchy_test.go:TestIntegrationTypeModes
+  - {name: modes-D1, subject: user-1, type: division, resource: D1, access: [read]}
+  - {name: modes-item, subject: user-1, type: item, access: [read]}
+  # grants above item only
+  - {name: od-D1, subject: only-above, type: division, resource: D1, access: [read, write]}
+  - {name: od-branch, subject: only-above, type: branch, access: [read, write]}
+  # a denial above item does not reach it either
+  - {name: da-item, subject: denied-above, type: item, access: [read]}
+  - {name: da-deny-branch, subject: denied-above, type: branch, access: ["*"], deny: true}
+  - {name: da-deny-D1, subject: denied-above, type: division, resource: D1, access: ["*"], deny: true}
+cases:
+  # from hierarchy_test.go:TestIntegrationTypeModes
+  - name: item without a synchronizer is not_sync, with the levels of the whole-type rule on it
+    subject: user-1
+    service: app
+    questions:
+      - {type: item, action: read, allowed: true, decision: allowed, granted_by: [modes-item]}
+      - {type: item, action: write, allowed: false, decision: no_access}
+  - name: the grant on D1 still reaches the sync types below it
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [modes-D1]}
+  - name: grants on the ancestors of a not_sync type do not cascade into it
+    subject: only-above
+    service: app
+    questions:
+      - {type: item, action: read, allowed: false, decision: no_access}
+      - {type: item, action: write, allowed: false, decision: no_access}
+  - name: denials on the ancestors of a not_sync type do not cascade into it
+    subject: denied-above
+    service: app
+    questions:
+      - {type: item, action: read, allowed: true, decision: allowed, granted_by: [da-item]}

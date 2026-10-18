@@ -175,7 +175,7 @@ Errors: 401 — the token is missing, invalid or expired; 424 — the service JW
 			if err != nil {
 				return nil, err
 			}
-			env, err := requestEnv(claims, in.Context)
+			env, err := requestEnv(app, claims, in.Context)
 			if err != nil {
 				return nil, err
 			}
@@ -224,7 +224,7 @@ Errors: 401 — the token is missing, invalid or expired; 424 — the service JW
 			if err := in.Body.Context.Validate(); err != nil {
 				return nil, err
 			}
-			env := engine.NewEnv(claims, in.Body.Context)
+			env := app.NewEnv(claims, in.Body.Context)
 			results, err := app.CheckAccess(ctx, serviceID, subject, env, in.Body.Checks, in.Body.Explain, in.value())
 			if err != nil {
 				return nil, err
@@ -278,7 +278,7 @@ or the claims are not acceptable; 424 — the service JWKS is unavailable.`
 				return nil, err
 			}
 			SetOnBehalfOf(ctx, in.Body.Subject)
-			env := engine.NewEnv(claims, in.Body.Context)
+			env := app.NewEnv(claims, in.Body.Context)
 			results, err := app.CheckAccess(ctx, serviceID, in.Body.Subject, env, in.Body.Checks, in.Body.Explain, in.value())
 			if err != nil {
 				return nil, err
@@ -331,7 +331,7 @@ or the claims are not acceptable; 424 — the service JWKS is unavailable.`
 				return nil, err
 			}
 			SetOnBehalfOf(ctx, in.Body.Subject)
-			env := engine.NewEnv(claims, in.Body.Context)
+			env := app.NewEnv(claims, in.Body.Context)
 			filter := engine.PermissionFilter{Type: in.Body.Type, Access: in.Body.Access, Limit: in.Body.Limit, After: in.Body.After}
 			out, err := app.PermissionPage(ctx, serviceID, in.Body.Subject, env, in.value(), filter)
 			if err != nil {
@@ -349,8 +349,9 @@ or the claims are not acceptable; 424 — the service JWKS is unavailable.`
 	})
 }
 
-// requestEnv is the environment of a request: the claims of its token and the attributes given as a JSON object.
-func requestEnv(claims engine.Claims, raw string) (engine.Env, error) {
+// requestEnv is the environment of a request decided by app: the claims of its token and the attributes given as a JSON
+// object.
+func requestEnv(app *engine.App, claims engine.Claims, raw string) (engine.Env, error) {
 	attrs := model.RequestContext{}
 	if raw != "" {
 		if err := json.Unmarshal([]byte(raw), &attrs); err != nil || attrs == nil {
@@ -360,5 +361,5 @@ func requestEnv(claims engine.Claims, raw string) (engine.Env, error) {
 	if err := attrs.Validate(); err != nil {
 		return engine.Env{}, err
 	}
-	return engine.NewEnv(claims, attrs), nil
+	return app.NewEnv(claims, attrs), nil
 }

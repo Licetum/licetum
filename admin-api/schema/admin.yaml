@@ -4,8 +4,13 @@ components:
       additionalProperties: false
       properties:
         assumed:
-          description: A denial that applies because the resource has a parent that is not in the cache yet
+          description: "A denial that applies only because the resource has a parent that is not in the cache yet: none of its levels reaches the resource for real"
           type: boolean
+        assumed_levels:
+          description: The levels of a denial that reach the resource only because it has a parent that is not in the cache yet (fail closed); the other levels reach it for real
+          items:
+            type: string
+          type: array
         expires_at:
           description: When the rule stops; null — never
           format: date-time
@@ -65,6 +70,7 @@ components:
         - expires_at
         - valid_from
         - assumed
+        - assumed_levels
         - people
         - people_total
       type: object

@@ -24,8 +24,9 @@ const (
 	DecisionTypeNotFound     = "type_not_found"
 )
 
-// checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format.
-const checkResultFormat = "t3"
+// checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format and
+// with the decisions.
+const checkResultFormat = "t4"
 
 // CheckAccess answers the questions "may the caller do X with Y" without building the whole permission map: the
 // rules are loaded once, and the questions are answered together, each from the ancestors of its resource. The
@@ -88,7 +89,7 @@ func (a *App) checkAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 type checkInputs struct {
 	rows       map[anchorRef]uuid.UUID              // the resources the questions name
 	ancestors  map[uuid.UUID]map[uuid.UUID]LevelSet // per resource row: its ancestors, with the levels flowing from them
-	unresolved map[uuid.UUID][]uuid.UUID            // per resource row: the parent types of its unresolved links
+	unresolved map[uuid.UUID][]UnresolvedLink       // per resource row: the unresolved links at or above it
 }
 
 // decideChecks answers the questions of one request. The resources they name, their ancestors and their unresolved
@@ -111,7 +112,7 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 	}
 
 	in := &checkInputs{}
-	var unresolved map[uuid.UUID][]uuid.UUID
+	var unresolved map[uuid.UUID][]UnresolvedLink
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.Go(func() (err error) {
 		in.rows, err = a.anchorRowIDs(ectx, refs)
@@ -143,51 +144,43 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 
 // answerCheck answers one question. A question about a type that does not exist is type_not_found.
 func (p *Prepared) answerCheck(in *checkInputs, typeID uuid.UUID, found bool, r model.CheckRequest, explain bool) model.CheckResult {
-	answer := func(decision string, allowed bool, lv *levelVerdict, covers []Cover) model.CheckResult {
+	answer := func(decision string, allowed bool, lv *levelVerdict) model.CheckResult {
 		res := model.CheckResult{Allowed: allowed}
 		if explain {
-			res.Explanation = p.explanation(decision, lv, covers)
+			res.Explanation = p.explanation(decision, lv)
 		}
 		return res
 	}
 	if !found {
-		return answer(DecisionTypeNotFound, false, nil, nil)
+		return answer(DecisionTypeNotFound, false, nil)
 	}
 
 	var verdict nodeVerdict
-	var covers []Cover
 	if r.ResourceID == nil {
 		// The type as a whole: only the rules anchored on the type itself count.
 		verdict = p.engine.decideWhole(typeID)
-		for i := range p.Insts {
-			if p.Insts[i].Whole() && p.Insts[i].AnchorType == typeID {
-				covers = append(covers, Cover{Inst: i, Mask: AllLevels})
-			}
-		}
 	} else {
 		node, ok := in.rows[anchorRef{Type: typeID, Ext: *r.ResourceID}]
 		if !ok {
-			return answer(DecisionResourceNotFound, false, nil, nil)
+			return answer(DecisionResourceNotFound, false, nil)
 		}
-		covers = p.CoversOf(typeID, in.ancestors[node], in.unresolved[node])
-		verdict = p.engine.decide(typeID, covers)
+		verdict = p.engine.decide(typeID, p.CoversOf(typeID, in.ancestors[node], in.unresolved[node]))
 	}
 
 	i := slices.IndexFunc(verdict.Levels, func(lv levelVerdict) bool { return lv.Level == r.Action })
 	switch {
 	case i < 0:
-		return answer(DecisionNoAccess, false, nil, covers)
+		return answer(DecisionNoAccess, false, nil)
 	case verdict.Levels[i].Allowed:
-		return answer(DecisionAllowed, true, &verdict.Levels[i], covers)
+		return answer(DecisionAllowed, true, &verdict.Levels[i])
 	default:
-		return answer(DecisionDenied, false, &verdict.Levels[i], covers)
+		return answer(DecisionDenied, false, &verdict.Levels[i])
 	}
 }
 
 // CoversOf finds the instances that cover one resource of type typeID, given its ancestors with the levels that
-// flow from them, and the parent types of its unresolved links.
-func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, unresolvedParents []uuid.UUID) []Cover {
-	nodeType, _ := p.Graph.Node(typeID)
+// flow from them, and the unresolved links at or above it (see UnresolvedParents).
+func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, unresolved []UnresolvedLink) []Cover {
 	covers := []Cover{}
 	for i := range p.Insts {
 		in := &p.Insts[i]
@@ -199,31 +192,17 @@ func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, 
 			}
 			continue
 		}
-		if m, ok := ancestors[*in.AnchorRow]; ok {
-			covers = append(covers, Cover{Inst: i, Mask: m})
-			continue
+		known, ok := ancestors[*in.AnchorRow]
+		if ok {
+			covers = append(covers, Cover{Inst: i, Mask: known})
 		}
 		if !in.Deny {
 			continue
 		}
-		// A denial may reach a resource whose parent is not known.
-		for _, parentType := range unresolvedParents {
-			edgeMask := LevelSet{}
-			for _, e := range nodeType.Parents {
-				if e.Parent == parentType {
-					edgeMask = e.Inherit
-				}
-			}
-			flow := AllLevels
-			if in.AnchorType != parentType {
-				var ok bool
-				if flow, ok = p.Graph.DescendantsOf(in.AnchorType)[parentType]; !ok {
-					continue
-				}
-			}
-			if m := edgeMask.Intersect(flow); !m.empty() {
-				covers = append(covers, Cover{Inst: i, Mask: m, Assumed: true})
-			}
+		// A denial may reach a resource whose hierarchy is not fully known, also when its anchor is a known ancestor:
+		// the missing parent could lie below the anchor too and let through levels the known routes do not.
+		if m := p.Graph.assumedMask(in.AnchorType, unresolved); !m.empty() && (!ok || !m.SubsetOf(known)) {
+			covers = append(covers, Cover{Inst: i, Mask: m, Assumed: true})
 		}
 	}
 	return covers
@@ -254,7 +233,7 @@ func (p *Prepared) RuleRef(inst int) model.RuleRef {
 }
 
 // explanation builds the explanation of a verdict on one level.
-func (p *Prepared) explanation(decision string, lv *levelVerdict, covers []Cover) *model.Explanation {
+func (p *Prepared) explanation(decision string, lv *levelVerdict) *model.Explanation {
 	e := &model.Explanation{Decision: decision, GrantedBy: []model.RuleRef{}, Denials: []model.DenialRef{}}
 	if lv == nil {
 		return e
@@ -268,7 +247,7 @@ func (p *Prepared) explanation(decision string, lv *levelVerdict, covers []Cover
 		for _, x := range d.LiftedBy {
 			ref.LiftedBy = append(ref.LiftedBy, p.RuleRef(x))
 		}
-		ref.UnresolvedParent = slices.ContainsFunc(covers, func(c Cover) bool { return c.Inst == d.Inst && c.Assumed })
+		ref.UnresolvedParent = d.Assumed
 		e.Denials = append(e.Denials, ref)
 	}
 	return e

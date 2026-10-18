@@ -93,7 +93,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 			static = append(static, r)
 		}
 	}
-	insts, err := a.BuildInstances(ctx, static, engine.NewEnv(nil, nil), nil)
+	insts, err := a.BuildInstances(ctx, g, static, engine.NewEnv(nil, nil), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -123,9 +123,9 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 		return nil, err
 	}
 	var entryRules, dynamicRules []*model.AssignmentRule
-	for _, c := range covers {
-		in := &insts[c.Inst]
-		entry := entryOf(in, p.RuleRef(c.Inst), c.Mask, c.Assumed, names)
+	for _, reach := range reachesOf(insts, covers) {
+		in := &insts[reach.inst]
+		entry := entryOf(in, p.RuleRef(reach.inst), reach, names)
 		entry.Via = viaOf(in, row, resourceID != nil)
 		out.Entries = append(out.Entries, entry)
 		entryRules = append(entryRules, in.Rule)
@@ -134,7 +134,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 		r := &dynamic[i]
 		in := &engine.Instance{Rule: r, Deny: r.Effect == model.EffectDeny, Exception: r.Exception, Levels: r.Access,
 			AnchorType: *r.TypeResourceID, Note: engine.RuleOrigin(*r)}
-		entry := entryOf(in, p.RefOf(in), engine.AllLevels, false, names)
+		entry := entryOf(in, p.RefOf(in), instanceReach{known: levelsThrough(in, engine.AllLevels)}, names)
 		entry.Via = "claim"
 		out.Dynamic = append(out.Dynamic, entry)
 		dynamicRules = append(dynamicRules, r)
@@ -205,18 +205,61 @@ func (a *App) lookupNames(ctx context.Context, rules []model.AssignmentRule) (lo
 	return n, read(`SELECT id, name FROM role WHERE id = ANY($1)`, roleIDs, n.roles)
 }
 
-// entryOf describes a rule that covers (or may cover) a resource, with the levels that reach it.
-func entryOf(in *engine.Instance, ref model.RuleRef, mask engine.LevelSet, assumed bool, names lookedUpNames) model.AccessEntry {
+// instanceReach is how an instance reaches the resource: the levels its covers carry for real (known), and those a
+// denial carries only through a parent that is not in the cache yet (assumed).
+type instanceReach struct {
+	inst           int
+	known, assumed []string
+	assumedCover   bool
+}
+
+// reachesOf merges the covers of each instance, in the order of their first cover. CoversOf gives a denial twice when it
+// reaches the resource through a known ancestor and may also reach it, with more levels, through a missing parent: it is
+// one rule on one resource, so it makes one entry.
+func reachesOf(insts []engine.Instance, covers []engine.Cover) []instanceReach {
+	var out []instanceReach
+	at := map[int]int{}
+	for _, c := range covers {
+		i, ok := at[c.Inst]
+		if !ok {
+			i = len(out)
+			at[c.Inst] = i
+			out = append(out, instanceReach{inst: c.Inst})
+		}
+		levels := levelsThrough(&insts[c.Inst], c.Mask)
+		if r := &out[i]; c.Assumed {
+			r.assumed, r.assumedCover = append(r.assumed, levels...), true
+		} else {
+			r.known = append(r.known, levels...)
+		}
+	}
+	return out
+}
+
+// levelsThrough lists the levels of an instance that flow along a mask: the levels of the rule the mask lets through. A
+// denial of every level (*) denies what flows (denyMatches): along a mask of some levels, it lists those levels.
+func levelsThrough(in *engine.Instance, mask engine.LevelSet) []string {
+	if !mask.All && slices.Contains(in.Levels, model.AllLevels) {
+		return mask.Sorted()
+	}
+	return engine.LevelsOf(in.Levels...).Intersect(mask).Sorted()
+}
+
+// entryOf describes a rule that covers (or may cover) a resource, with the levels that reach it: those that reach for
+// real and those only assumed, which are also listed apart. The entry is assumed when no level it lists reaches for real.
+func entryOf(in *engine.Instance, ref model.RuleRef, reach instanceReach, names lookedUpNames) model.AccessEntry {
 	rule := in.Rule
+	levels := engine.LevelsOf(slices.Concat(reach.known, reach.assumed)...).Sorted()
 	entry := model.AccessEntry{
-		Rule: ref, Name: rule.Name, ExpiresAt: rule.ExpiresAt, ValidFrom: rule.ValidFrom, Assumed: assumed,
-		Levels: []string{}, People: []model.KnownPerson{}, Who: whoOf(rule, names),
+		Rule: ref, Name: rule.Name, ExpiresAt: rule.ExpiresAt, ValidFrom: rule.ValidFrom, Levels: levels,
+		AssumedLevels: []string{}, People: []model.KnownPerson{}, Who: whoOf(rule, names),
 	}
-	if levels := engine.LevelsOf(in.Levels...).Intersect(mask); levels.All {
-		entry.Levels = slices.Clone(in.Levels)
-	} else {
-		entry.Levels = levels.Sorted()
+	for _, l := range engine.LevelsOf(reach.assumed...).Sorted() {
+		if !slices.Contains(reach.known, l) {
+			entry.AssumedLevels = append(entry.AssumedLevels, l)
+		}
 	}
+	entry.Assumed = reach.assumedCover && len(entry.AssumedLevels) == len(entry.Levels)
 	if rule.RoleID != nil {
 		entry.Role = &model.NamedID{ID: *rule.RoleID, Name: names.roles[*rule.RoleID]}
 	}

@@ -1,0 +1,43 @@
+# DEC10: the anchors of a resource_from_claim are the ancestors, of the rule's type, of the matched resource through the
+# resource links, whatever the inherit masks along the way: a mask says which levels flow down a link, not whether the
+# parent lies above the child. Here no level flows from a zone down to a space (team -> zone passes read, space -> team
+# passes write: the intersection is empty), yet the zone above the space is its ancestor and anchors the rule; the rule's
+# levels then flow down from that zone as the masks say (read reaches the team, not the space). A denial found that way
+# stands on its anchor too: dropping it, because nothing flows back down to the matched space, would fail open.
+# Z1 > T1 > S1 ("Space 1"); Z2 > T2 > S2 ("Space 2").
+# Found by DECP seed 191 (case-05: read on team T1 by bob, granted by an exception anchored at zone Z2 through
+# workflow W3 -> branch B2 -> space S3 -> team T1 -> zone Z2, a route whose masks intersect to nothing).
+contracts: [DEC10]
+description: A claim lookup finds the ancestor of the rule's type even when no level flows from it down to the matched resource.
+services: [org]
+types:
+  - {name: zone, service: org, sync: true}
+  - {name: team, service: org, sync: true, parents: [{type: zone, inherit: [read]}]}
+  - {name: space, service: org, sync: true, parents: [{type: team, inherit: [write]}]}
+resources:
+  - {type: zone, id: Z1, name: Zone 1}
+  - {type: zone, id: Z2, name: Zone 2}
+  - {type: team, id: T1, name: Team 1, parents: [{type: zone, id: Z1}]}
+  - {type: team, id: T2, name: Team 2, parents: [{type: zone, id: Z2}]}
+  - {type: space, id: S1, name: Space 1, parents: [{type: team, id: T1}]}
+  - {type: space, id: S2, name: Space 2, parents: [{type: team, id: T2}]}
+rules:
+  - {name: zone-of-home, subject: home-user, type: zone, access: [read], from_claim: {claim: home, lookup_type: space}}
+  - {name: read-all-teams, subject: deny-user, type: team, access: [read]}
+  - {name: deny-zone-of-blocked, subject: deny-user, type: zone, access: [read], deny: true, from_claim: {claim: blocked, lookup_type: space}}
+cases:
+  - name: the zone above the space the claim names anchors the rule, though no level flows from it down to the space
+    subject: home-user
+    claims: {home: Space 1}
+    questions:
+      - {type: zone, resource: Z1, action: read, allowed: true, decision: allowed, granted_by: [zone-of-home]}
+      - {type: team, resource: T1, action: read, allowed: true, decision: allowed, granted_by: [zone-of-home]}
+      - {type: space, resource: S1, action: read, allowed: false, decision: no_access}
+      - {type: zone, resource: Z2, action: read, allowed: false, decision: no_access}
+      - {type: team, resource: T2, action: read, allowed: false, decision: no_access}
+  - name: a denial anchored the same way denies what flows from its zone
+    subject: deny-user
+    claims: {blocked: Space 1}
+    questions:
+      - {type: team, resource: T1, action: read, allowed: false, decision: denied, granted_by: [read-all-teams], denials: [{rule: deny-zone-of-blocked}]}
+      - {type: team, resource: T2, action: read, allowed: true, decision: allowed, granted_by: [read-all-teams], denials: []}

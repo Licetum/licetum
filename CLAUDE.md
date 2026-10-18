@@ -55,8 +55,19 @@ The epic is being refactored to the design of issue #49 (regional AuthZEN PDP, s
 **contracts**: `contracts.yaml` (root) lists them (id, statement, oracle, level, phase, status); a test checking one is named
 `TestContract_<ID>_<What>`; `task contracts:check` (part of `task check`, `core/internal/tools/contractscheck`) fails on an
 active contract without a test, a test naming an unknown contract, or a planned contract that already has a test. What used to
-run on every pull request through PgBouncer runs nightly: `.github/workflows/nightly-suite.yml` (PgBouncer, chaos,
+run on every pull request through PgBouncer runs nightly: `.github/workflows/nightly-suite.yml` (PgBouncer, DECP, chaos,
 multi-region, load test) is called by the dispatcher `nightly.yml` on `main` with the ref of the epic.
+
+The decision contracts (DEC01–DEC14, DECP) are tables, not code: `core/testsupport/policyfix` is the fixture format (services,
+types, resources, groups, roles, rules, cases with claims, context and a time, questions with the expected decision and
+explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides answer them: the engine through the check API
+(`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its resources, `Ask` asks
+at the case's time through `App.SetClock`, `CrossCheck` asks the case's `GET /permission` and fails every DEC and DECP test
+where the list (`coverNodes`) disagrees with the check answers (`CoversOf`); level `pg`), and `core/testsupport/refeval`, a
+reference evaluator written from the semantics that shares no code with the engine (depguard keeps it away from engine, server
+and db). `core/testsupport/policygen` generates random valid fixtures; DECP compares the two sides on them (seeds 1–20 per pull
+request, `LICETUM_DECP_SEEDS`, `task go:test:decp`, `decp.yml` nightly over 21–520). A disagreement is a defect of one side or
+an open point of the semantics: settle it in both, then pin it in a table.
 
 Backend (run from `backend/`, Go 1.26):
 ```
@@ -89,7 +100,7 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
   `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision`), invalidates the view and, for the replicas of the
   previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`, `authz:sync_epoch`);
-  this release does not read the first two. Answer keys are `authz:permission:t7:r<rules>:…` / `authz:check:t3:r<rules>:…`.
+  this release does not read the first two. Answer keys are `authz:permission:t8:r<rules>:…` / `authz:check:t4:r<rules>:…`.
 - The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
   (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
   (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
@@ -333,7 +344,8 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   `model.GroupSubject(groupID)` = `group:<uuid>`. Table `user_group` (`group` is a reserved word in SQL).
 - **GroupMember**: makes a subject a member of a Group, either directly or via a `predicate` matched against
   JWT claims (e.g. "everyone with `department=sales`"). Members can also be other groups (`member_group_id`),
-  forming nested group membership resolved transitively in `internal/service/permission.go::resolveIdentitySet`.
+  forming nested group membership resolved transitively in `core/engine/permission.go::IdentityOf`: round by round, each
+  reading the previous one, through at most `MaxGroupDepth` (16) nestings whatever the order of the memberships.
 - **Role** (`00008_role_permission.sql`): a *named set of permissions*. Its items (`role_permission`) each carry
   a target and access levels, the same shape as an inline rule — the whole type, a `resource_id` or a
   `resource_from_claim` (checked by `checkResourceTarget`, like a rule). A role is neither a subject nor a member
@@ -354,14 +366,20 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   claims at check time (e.g. "job title → the branch-hierarchy node they're scoped to").
   `resource_from_claim.match_by` is `name`, `id` or `meta.<attribute>`: with an attribute the claim
   value is matched against the attribute the source reported (equal, or a list containing it — both
-  forms use the GIN index on `meta`). With the lookup type equal to the rule's type this is the
+  forms use the GIN index on `meta`). The anchors are the matched resource's ancestors of the rule's type through the
+  resolved resource links, whatever the inherit masks (`findAncestorsBatch` walks the edges, not the closure, which keeps
+  only pairs some level flows between); the types the climb passes are synchronized with the rest (`TypeGraph.TypesBetween`).
+  The climb stops at a resource of the rule's type (the type graph has no cycle) and follows only the links to those types
+  (`ancestorWalkSQL`); `core/tests/integration/engine/walk_test.go` checks it against a climb to the roots and has its
+  benchmark. With the lookup type equal to the rule's type this is the
   "owner" pattern: one rule `{claim: preferred_username, lookup type: project, match_by: meta.owner}`
   gives each user access to the projects (and their descendants) whose `owner` attribute is theirs.
   `effect` is `allow` (default) or `deny`; a denial may use the level `*` (every level). An allow
   rule with `exception = true` lifts the denials above it. `valid_from`/`expires_at` bound the time
   the rule is in force (also on GroupMember). Predicate operators: `eq`, `ne`, `in`, `not_in`,
   `regex`; a claim missing from the token never satisfies a condition, `ne`/`not_in` included
-  ("everyone except ivanovich" is `username ne ivanovich`). A role assignment takes the effect and the
+  ("everyone except ivanovich" is `username ne ivanovich`). `eq`, `ne` and `regex` take one value: with a list value they
+  never hold (validation lets it through, as the Python version did; use `in`/`not_in`). A role assignment takes the effect and the
   exception of the rule for all of the role's items; `expandRoles` turns it into one rule per item (same id,
   subject and validity, the item's target and access), so the engine treats role permissions like inline ones.
 - **Conditions and request context** (`predicate.go`, `conditions.go`): a condition reads a claim (`source` claim, the
@@ -485,7 +503,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    `{name: {"type": "sync", "resources": [...]} | {"type": "not_sync", "access": [...]}}`; a `not_sync` type
    without rules is absent, on a name collision `sync` wins.
 7. Cached in memory and in Redis per `(service, subject, claims fingerprint, revision of the rules)`: key
-   `authz:permission:t7:r<revision>:<service>:<subject>:<fingerprint>` (bump `t7` when the format changes; the
+   `authz:permission:t8:r<revision>:<service>:<subject>:<fingerprint>` (bump `t8` when the format or the decisions change; the
    fingerprint covers only the claims and the request-context attributes the rules and the role items look at, which the snapshot
    knows — a process without it remembers them per revision, `attrsMemo`). TTL = min(60 s, the next moment a rule, a role item's
    assignment or a membership starts/stops being in force). Admin writes bump the revision of the rules in `revision_state`. A cached
@@ -493,7 +511,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one service leaves the answers that
    do not read it in place. The whole computation runs through `cachedAnswer` (`engine/cache.go`): the revisions come from the view
    (`readCacheState`), concurrent misses for the same key share one computation (singleflight) and queue for a computation slot, and the
-   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t3:…`, keyed by a hash of the
+   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t4:…`, keyed by a hash of the
    questions and of `explain`).
 
 ### Decision semantics (deny wins, explicit exceptions)
@@ -510,10 +528,17 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   (`pairs` from the closure); a whole-type anchor is below another if its type is a lower type; a point
   anchor is below a whole-type anchor of its own type.
 - Level hierarchy (`access_implies`): granting `write` grants `read`; denying `read` denies `write`.
-  Denial level `*` denies every level.
+  Denial level `*` denies every level that flows to the resource, and with it every level that includes one: `*` arriving
+  through a read-only link denies read, and write where write includes read (`denyMatches`).
 - **Fail closed**: a resource with an unresolved parent edge (the parent is not in the cache) is
   treated as possibly lying under any denial that could cover it (`assumed` covers, reported as
-  `unresolved_parent` in explanations); it recovers when the parent appears.
+  `unresolved_parent` in explanations); it recovers when the parent appears. A denial on a resource the cache does not
+  have stays as an absent anchor (`Instance.Absent`): it covers nothing for real but is assumed below an unresolved link
+  like any point denial, so an orphan does not escape a denial on its own missing parent. A denial whose anchor is already a
+  known ancestor is assumed too, for the levels the known routes do not carry (`CoversOf`, pass C of `coverNodes`; the
+  explanation flags the assumed levels only). Only an exception provably below a denial lifts it, so a point exception on the
+  orphan itself does not lift an assumed one. Known gap: a `resource_from_claim` denial whose climb from the matched resource
+  reaches an unresolved link before the rule's type finds no anchor (both the engine and the reference evaluator).
 - Worked example (division → rrs → branch → item; `D1 ⊃ R1, R2`, `R1 ⊃ B1, B2`, `R2 ⊃ B3`, `B1 ⊃ I1`):
 
   | rules | branches visible |
@@ -524,14 +549,18 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   | + exception on B1 and deny on I1 | B1, B2, B3; I1 is still gone (denial below the exception) |
   | allow read on the whole type `branch` + deny `*` on B2 | all but B2 |
 
-  These scenarios live in `internal/service/decision_test.go` (pure engine) and
-  `internal/api/graph_test.go` (through the API).
+  These scenarios, and the rest of the semantics, are the decision contracts: the tables in
+  `core/testsupport/policyfix/testdata/decisions` (`worked_example.yaml` is this one), checked against the engine and the
+  reference evaluator (see "Commands").
 
 ### Batch, history and policy tools
 
 - **Reverse lookup and preview** (`access_lookup.go`, `grant_preview.go`): `GET …/type_resource/{id}/access?resource_id=` lists the rules
   in force that cover a resource (`coversOf` over the instances of every subject's rules; denials first; rules found by a claim apart),
-  each with `via`, the levels that reach it, `who` and the known people; `POST /assignment_rule/preview` says what a rule body would do:
+  one entry per instance with `via`, the levels that reach it, `who` and the known people (a denial covered both for real and through a
+  missing parent is one entry: `assumed_levels` are the levels only assumed, `assumed` says none reaches for real; `reachesOf`; one rule
+  can still make several entries reached the same way — role items, `resource_where` anchors — so the interface keys rows by position);
+  `POST /assignment_rule/preview` says what a rule body would do:
   the resources it covers through the closure (`expandAnchors`), the known people it reaches, the denials and exceptions above or
   inside it that may reach the same people (`mayReachSame`), and the rules that already give the same. Both need read/write on the
   whole `assignment_rule` policy because they show other rules, and neither writes.

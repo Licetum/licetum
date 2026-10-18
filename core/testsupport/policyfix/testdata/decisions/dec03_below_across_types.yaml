@@ -1,0 +1,186 @@
+# DEC03: what "strictly below" means between anchors of different kinds. A point anchor is below another point by the
+# lineage (its ancestor); a whole-type anchor is below another anchor (whole or point) when its type is a lower type; a
+# point anchor is below the whole of its own type and of every higher type, while the whole of a type is never below a
+# point of that type. An exception lifts a denial only when it is below it in this sense — and it still has to cover the
+# resource. The per-level side of the relation (inherit masks on the links) is in dec03_below_per_level.yaml.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4. Each subject holds the rules of one scenario.
+contracts: [DEC03]
+description: Point/point by lineage, whole/whole by type, a point below the whole of its own and of higher types.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+rules:
+  # A point exception below the whole-type denial of its own type.
+  - {name: pown-allow-branch, subject: point-own-type, type: branch, access: [read]}
+  - {name: pown-deny-branch, subject: point-own-type, type: branch, access: [read], deny: true}
+  - {name: pown-except-B1, subject: point-own-type, type: branch, resource: B1, access: [read], exception: true}
+  # A whole-type exception is not below a point denial on its own type: the point is the deeper one.
+  - {name: wown-deny-B1, subject: whole-own-type, type: branch, resource: B1, access: [read], deny: true}
+  - {name: wown-except-branch, subject: whole-own-type, type: branch, access: [read], exception: true}
+  # A whole-type exception on a lower type is below a whole-type denial on a higher type.
+  - {name: wlow-allow-rrs, subject: whole-lower, type: rrs, access: [read]}
+  - {name: wlow-deny-rrs, subject: whole-lower, type: rrs, access: [read], deny: true}
+  - {name: wlow-except-branch, subject: whole-lower, type: branch, access: [read], exception: true}
+  # A whole-type exception on a higher type is not below a whole-type denial on a lower type.
+  - {name: whigh-deny-branch, subject: whole-higher, type: branch, access: [read], deny: true}
+  - {name: whigh-except-rrs, subject: whole-higher, type: rrs, access: [read], exception: true}
+  # A point exception on a lower type is below a whole-type denial on a higher type.
+  - {name: plow-allow-division, subject: point-lower, type: division, access: [read]}
+  - {name: plow-deny-division, subject: point-lower, type: division, access: [read], deny: true}
+  - {name: plow-except-R1, subject: point-lower, type: rrs, resource: R1, access: [read], exception: true}
+  # A point exception on a higher type is not below a whole-type denial on a lower type.
+  - {name: phigh-deny-branch, subject: point-higher, type: branch, access: [read], deny: true}
+  - {name: phigh-except-R1, subject: point-higher, type: rrs, resource: R1, access: [read], exception: true}
+  # A whole-type exception on a lower type is below a point denial on a higher type.
+  - {name: wpl-allow-D1, subject: whole-below-point, type: division, resource: D1, access: [read]}
+  - {name: wpl-deny-R1, subject: whole-below-point, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: wpl-except-branch, subject: whole-below-point, type: branch, access: [read], exception: true}
+  # A whole-type exception on a higher type is not below a point denial on a lower type.
+  - {name: wph-allow-D1, subject: whole-above-point, type: division, resource: D1, access: [read]}
+  - {name: wph-deny-B1, subject: whole-above-point, type: branch, resource: B1, access: [read], deny: true}
+  - {name: wph-except-rrs, subject: whole-above-point, type: rrs, access: [read], exception: true}
+  # A point exception two links below a point denial, in another service, is below it by the lineage.
+  - {name: lin-allow-D1, subject: lineage, type: division, resource: D1, access: [read]}
+  - {name: lin-deny-R1, subject: lineage, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: lin-except-I1, subject: lineage, type: item, resource: I1, access: [read], exception: true}
+  # A whole-type exception on a type of another service is below a whole-type denial on its parent type.
+  - {name: xs-allow-branch, subject: cross-whole, type: branch, access: [read]}
+  - {name: xs-deny-branch, subject: cross-whole, type: branch, access: [read], deny: true}
+  - {name: xs-except-item, subject: cross-whole, type: item, access: [read], exception: true}
+  # A point exception on a type of another service is below a whole-type denial two types up.
+  - {name: xp-allow-division, subject: cross-point, type: division, access: [read]}
+  - {name: xp-deny-division, subject: cross-point, type: division, access: [read], deny: true}
+  - {name: xp-except-I4, subject: cross-point, type: item, resource: I4, access: [read], exception: true}
+cases:
+  - name: a point exception lies below the whole-type denial of its own type
+    subject: point-own-type
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [pown-allow-branch, pown-except-B1], denials: [{rule: pown-deny-branch, lifted_by: [pown-except-B1]}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [pown-allow-branch], denials: [{rule: pown-deny-branch}]}
+  - name: a point exception below the whole-type denial of its own type lifts it below the point too
+    subject: point-own-type
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [pown-allow-branch, pown-except-B1], denials: [{rule: pown-deny-branch, lifted_by: [pown-except-B1]}]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: denied, denials: [{rule: pown-deny-branch}]}
+  - name: a whole-type exception is not below a point denial on its own type
+    subject: whole-own-type
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [wown-except-branch], denials: [{rule: wown-deny-B1}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [wown-except-branch]}
+  - name: a whole-type exception is not below a point denial on its own type, seen from below
+    subject: whole-own-type
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [wown-except-branch], denials: [{rule: wown-deny-B1}]}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed}
+  - name: a whole-type exception on a lower type lies below a whole-type denial on a higher type
+    subject: whole-lower
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [wlow-allow-rrs], denials: [{rule: wlow-deny-rrs}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [wlow-allow-rrs, wlow-except-branch], denials: [{rule: wlow-deny-rrs, lifted_by: [wlow-except-branch]}]}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+  - name: a whole-type exception on a lower type lifts a higher whole-type denial below it as well
+    subject: whole-lower
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [wlow-allow-rrs, wlow-except-branch], denials: [{rule: wlow-deny-rrs, lifted_by: [wlow-except-branch]}]}
+  - name: a whole-type exception on a higher type is not below a whole-type denial on a lower type
+    subject: whole-higher
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [whigh-except-rrs]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [whigh-except-rrs], denials: [{rule: whigh-deny-branch}]}
+  - name: a whole-type exception on a higher type does not lift a lower whole-type denial for the types below
+    subject: whole-higher
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [whigh-except-rrs], denials: [{rule: whigh-deny-branch}]}
+  - name: a point exception on a lower type lies below a whole-type denial on a higher type
+    subject: point-lower
+    questions:
+      - {type: division, resource: D1, action: read, allowed: false, decision: denied, granted_by: [plow-allow-division], denials: [{rule: plow-deny-division}]}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [plow-allow-division, plow-except-R1], denials: [{rule: plow-deny-division, lifted_by: [plow-except-R1]}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, denials: [{rule: plow-deny-division, lifted_by: [plow-except-R1]}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+      - {type: rrs, resource: R2, action: read, allowed: false, decision: denied, denials: [{rule: plow-deny-division}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: denied}
+  - name: a point exception on a lower type lifts a higher whole-type denial for the resources of another service below it
+    subject: point-lower
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, denials: [{rule: plow-deny-division, lifted_by: [plow-except-R1]}]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: denied, denials: [{rule: plow-deny-division}]}
+  - name: a point exception on a higher type is not below a whole-type denial on a lower type
+    subject: point-higher
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [phigh-except-R1]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [phigh-except-R1], denials: [{rule: phigh-deny-branch}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied}
+  - name: a whole-type exception on a lower type lies below a point denial on a higher type
+    subject: whole-below-point
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [wpl-allow-D1], denials: [{rule: wpl-deny-R1}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [wpl-allow-D1, wpl-except-branch], denials: [{rule: wpl-deny-R1, lifted_by: [wpl-except-branch]}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [wpl-allow-D1, wpl-except-branch]}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [wpl-except-branch]}
+  - name: a whole-type exception on a lower type lifts a higher point denial for the types below it
+    subject: whole-below-point
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [wpl-allow-D1, wpl-except-branch], denials: [{rule: wpl-deny-R1, lifted_by: [wpl-except-branch]}]}
+  - name: a whole-type exception on a higher type is not below a point denial on a lower type
+    subject: whole-above-point
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [wph-allow-D1, wph-except-rrs], denials: [{rule: wph-deny-B1}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed}
+  - name: a whole-type exception on a higher type does not lift a lower point denial below it
+    subject: whole-above-point
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, denials: [{rule: wph-deny-B1}]}
+  - name: a point exception lies below a point denial two links up by the lineage, across services
+    subject: lineage
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [lin-allow-D1, lin-except-I1], denials: [{rule: lin-deny-R1, lifted_by: [lin-except-I1]}]}
+  - name: the exception below by the lineage lifts nothing above it
+    subject: lineage
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [lin-allow-D1], denials: [{rule: lin-deny-R1}]}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied}
+  - name: a whole-type exception on a type of another service lies below the whole-type denial of its parent type
+    subject: cross-whole
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [xs-allow-branch, xs-except-item], denials: [{rule: xs-deny-branch, lifted_by: [xs-except-item]}]}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed}
+  - name: the whole-type exception on the lower type lifts nothing on the higher type
+    subject: cross-whole
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [xs-allow-branch], denials: [{rule: xs-deny-branch}]}
+  - name: a point exception on a type of another service lies below a whole-type denial two types up
+    subject: cross-point
+    service: app
+    questions:
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [xp-allow-division, xp-except-I4], denials: [{rule: xp-deny-division, lifted_by: [xp-except-I4]}]}
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [xp-allow-division], denials: [{rule: xp-deny-division}]}
