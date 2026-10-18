@@ -38,6 +38,26 @@ on:
         description: Push result.json, environment.json and summary.md of each run to the branch loadtest-results (one commit per run)
         type: boolean
         default: false
+  # The nightly suite (nightly-suite.yml, started by the dispatcher on main) calls it with the ref of the epic branch. A
+  # scheduled dispatcher runs both profiles, like the schedule here (github.event_name is the caller's event).
+  workflow_call:
+    inputs:
+      profile:
+        description: Size of the policy to measure (medium or large)
+        type: string
+        default: medium
+      ref:
+        description: Branch, tag or commit to measure
+        type: string
+        default: ""
+      baseline:
+        description: Do not compare with budgets.yaml; print the budgets these runs would make
+        type: boolean
+        default: false
+      publish:
+        description: Push the summaries of the runs to the branch loadtest-results
+        type: boolean
+        default: false
 
 permissions:
   contents: read

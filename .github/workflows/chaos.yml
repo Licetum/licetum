@@ -16,6 +16,13 @@ on:
         description: Branch, tag or commit to test (default, the one the workflow is started on)
         type: string
         default: ""
+  # The nightly suite (nightly-suite.yml, started by the dispatcher on main) calls it with the ref of the epic branch.
+  workflow_call:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test
+        type: string
+        default: ""
 
 permissions:
   contents: read

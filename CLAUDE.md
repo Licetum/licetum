@@ -51,6 +51,13 @@ CI (`.github/workflows/ci.yml`, on pull requests and pushes to main) runs `task 
 and `task backend:coverage` with disposable PostgreSQL/Redis Testcontainers, so integration tests
 run there too.
 
+The epic is being refactored to the design of issue #49 (regional AuthZEN PDP, service-scoped administration). Tests become
+**contracts**: `contracts.yaml` (root) lists them (id, statement, oracle, level, phase, status); a test checking one is named
+`TestContract_<ID>_<What>`; `task contracts:check` (part of `task check`, `core/internal/tools/contractscheck`) fails on an
+active contract without a test, a test naming an unknown contract, or a planned contract that already has a test. What used to
+run on every pull request through PgBouncer runs nightly: `.github/workflows/nightly-suite.yml` (PgBouncer, chaos,
+multi-region, load test) is called by the dispatcher `nightly.yml` on `main` with the ref of the epic.
+
 Backend (run from `backend/`, Go 1.26):
 ```
 go run ./cmd/licetum migrate           # apply migrations + seed self-service (idempotent)

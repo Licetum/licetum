@@ -16,6 +16,17 @@ on:
         description: 'Seconds of the 600 requests a second scenario (F6-8)'
         required: false
         default: '600'
+  # The nightly suite (nightly-suite.yml, started by the dispatcher on main) calls it with the ref of the epic branch.
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Branch or commit to test'
+        type: string
+        default: epic/production-load-readiness
+      load_seconds:
+        description: 'Seconds of the 600 requests a second scenario'
+        type: string
+        default: '600'
 
 permissions:
   contents: read
