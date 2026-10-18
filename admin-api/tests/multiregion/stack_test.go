@@ -185,7 +185,43 @@ func seed() (seeded, error) {
 		"type_resource_id": branch, "access": []string{"read"},
 		"predicate": []any{map[string]any{"attr": "preferred_username", "op": "regex", "value": "^u[0-9]+$"}},
 	})
-	return seeded{slug: "org", serviceID: id, branchType: branch}, t.err
+	if t.err != nil {
+		return seeded{}, t.err
+	}
+	// The replicas of B and C learn the policy from the stream, so the service is there when the replica has replayed the
+	// seed: the scenarios measure what they mean from the first request, not what the replication does on the way.
+	for _, r := range []region{regionB, regionC} {
+		for _, base := range r.checks {
+			if err := waitForService(base, "org", 2*time.Minute); err != nil {
+				return seeded{}, err
+			}
+		}
+	}
+	return seeded{slug: "org", serviceID: id, branchType: branch}, nil
+}
+
+// waitForService asks a check replica until it answers the service with 200, for at most limit.
+func waitForService(base, slug string, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	for {
+		req, _ := http.NewRequest(http.MethodGet, base+"/service/"+slug+"/permission", nil)
+		req.Header.Set("Authorization", "Bearer "+token("u1"))
+		resp, err := httpClient.Do(req)
+		status := 0
+		var body []byte
+		if err == nil {
+			status = resp.StatusCode
+			body, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+		}
+		if status == http.StatusOK {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s does not know the service %q after %v: %d %s %v", base, slug, limit, status, body, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 type fatalTB struct {
