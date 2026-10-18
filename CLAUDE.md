@@ -49,7 +49,10 @@ without changing files (as CI would), `task lint` does the same but fixes and fo
 `task generate` (OpenAPI schemas → orval client), `task dev` (docker compose). `task --list` for the rest.
 CI (`.github/workflows/ci.yml`, on pull requests and pushes to main) runs `task check` + `pnpm build`
 and `task backend:coverage` with disposable PostgreSQL/Redis Testcontainers, so integration tests
-run there too.
+run there too. `task go:vet:tags` (part of `task go:lint`, so of `task check` and of the CI job `go-lint`) compiles and vets the
+code behind the build tags `integration`, `chaos` and `multiregion` in both modules, with and without `-race`, and builds the
+load test, so the suites that run only nightly cannot stop compiling unseen; a new build tag goes into `GO_BUILD_TAGS` of
+`Taskfile.yaml` (the task fails until it does).
 
 The epic is being refactored to the design of issue #49 (regional AuthZEN PDP, service-scoped administration). Tests become
 **contracts**: `contracts.yaml` (root) lists them (id, statement, oracle, level, phase, status); a test checking one is named
@@ -100,8 +103,8 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   (`mutate`, once per batch in `RunBatch`, `RestoreAdminAccess`, the seed), a synchronization that changed data bumps `data:<service>` in the
   transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
   `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision`), invalidates the view and, for the replicas of the
-  previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`, `authz:sync_epoch`);
-  this release does not read the first two. Answer keys are `authz:permission:t9:r<rules>:…` / `authz:check:t5:r<rules>:…`.
+  previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`);
+  this release reads neither. Answer keys are `authz:permission:t9:r<rules>:…` / `authz:check:t5:r<rules>:…`.
 - The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
   (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
   (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`

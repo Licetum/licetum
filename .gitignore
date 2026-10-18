@@ -24,7 +24,9 @@ dump.rdb
 .vscode/
 .DS_Store
 
-# docs: only the translated READMEs are published; the analysis and the screens stay local
+# docs: the translated READMEs, the ADRs and the deployment guide are published; the analysis and the screens stay local
 docs/*
 !docs/README.ru.md
 !docs/README.zh-CN.md
+!docs/adr/
+!docs/deployment.md

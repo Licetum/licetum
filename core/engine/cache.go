@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -220,12 +221,12 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		}
 		// A wave of misses (a revision moved under many hot keys) queues here instead of exhausting the database pool.
 		if a.computeSlots != nil {
-			select {
-			case a.computeSlots <- struct{}{}:
-				defer func() { <-a.computeSlots }()
-			case <-cctx.Done():
-				return nil, cctx.Err()
+			slot := &computeSlot{slots: a.computeSlots}
+			if err := slot.acquire(cctx); err != nil {
+				return nil, err
 			}
+			defer slot.release()
+			cctx = context.WithValue(cctx, computeSlotKey{}, slot)
 		}
 		started := a.now()
 		c, err := compute(cctx)
@@ -259,6 +260,56 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 	case <-ctx.Done():
 		return zero, ctx.Err()
 	}
+}
+
+// computeSlot is the slot of COMPUTE__CONCURRENCY one computation of an answer holds (see cachedAnswer). The slots bound
+// the computations that read the database. A computation that waits for something else — a synchronization job, which
+// the worker runs (see ensure) — gives its slot back for the wait (pauseComputeSlot): otherwise the requests that wait for
+// the worker, consistency=higher ones above all (each waits for a fresh job, up to SYNC__FRESH_MIN_INTERVAL apart), hold
+// every slot while the database is idle, and the requests behind them queue until they time out.
+type computeSlot struct {
+	slots chan struct{}
+	mu    sync.Mutex
+	held  bool
+}
+
+type computeSlotKey struct{}
+
+// acquire takes a slot, waiting while all are held; it does nothing when the computation holds one.
+func (s *computeSlot) acquire(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.held {
+		return nil
+	}
+	select {
+	case s.slots <- struct{}{}:
+		s.held = true
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// release gives the slot back, if the computation holds it, and says whether it did.
+func (s *computeSlot) release() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.held {
+		return false
+	}
+	<-s.slots
+	s.held = false
+	return true
+}
+
+// pauseComputeSlot gives back the slot of the computation of ctx, if it holds one, for a wait that reads nothing from the
+// database pool. The function it returns takes a slot again (queueing like any computation) before the computation goes on.
+func pauseComputeSlot(ctx context.Context) (resume func(context.Context) error) {
+	if s, ok := ctx.Value(computeSlotKey{}).(*computeSlot); ok && s.release() {
+		return s.acquire
+	}
+	return func(context.Context) error { return nil }
 }
 
 // keepAnswerInMemory keeps an answer in the first level of the answer cache. It is served from there until it stops being

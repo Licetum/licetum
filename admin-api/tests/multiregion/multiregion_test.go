@@ -75,7 +75,7 @@ func TestF6_2_ADenyRuleOfRegionAIsEnforcedInRegionBWithinTheSLO(t *testing.T) {
 func TestF6_3_AStrongReadInRegionBIsCurrentWhileItsReplicaLags(t *testing.T) {
 	defer resetLinks(t)
 	setLink(t, regionB, false, farLink)
-	setLink(t, regionB, true, 2*time.Second) // the stream to the replica of B takes 2 s
+	setLink(t, regionB, true, 2*time.Second) // a round trip of 2 s: the stream to the replica of B takes 1 s
 	n := envInt("LICETUM_F6_STRONG_READS", 200)
 	for i := range n {
 		user := fmt.Sprintf("strong%d", i)
@@ -88,7 +88,9 @@ func TestF6_3_AStrongReadInRegionBIsCurrentWhileItsReplicaLags(t *testing.T) {
 
 func TestF6_4_LagMakesRegionBNotReadyAndItRecovers(t *testing.T) {
 	defer resetLinks(t)
-	setLink(t, regionB, true, 8*time.Second) // the stack runs with DB__MAX_REPLICA_LAG of 5 s
+	// The stack runs with DB__MAX_REPLICA_LAG of 5 s. setLink takes a round trip and delays each direction by half of it: the
+	// WAL reaches the replica of B 6 s after the commit, so its revision stays behind the primary's for longer than the limit.
+	setLink(t, regionB, true, 12*time.Second)
 	mustAdmin(t, regionA.admin, "POST", "/assignment_rule", rule("lagging", nil))
 	eventually(t, 15*time.Second, "region B to report itself not ready", func() bool {
 		return ready(regionB.checks[0]) == http.StatusServiceUnavailable
@@ -101,15 +103,18 @@ func TestF6_5_ACutLinkFailsRegionBClosedAfterTheLimitAndItCatchesUp(t *testing.T
 	defer resetLinks(t)
 	cut := time.Duration(envInt("LICETUM_F6_CUT_SECONDS", 60)) * time.Second // the stack runs with POLICY__MAX_STALENESS of 20 s
 	base := regionB.checks[0]
-	if !permission(base, "u7", 0).hasAccess() {
+	// Someone the seeded rule lets read, outside u0..u49: the load of F6_8 and F6_9 expects the answer of u1 for those, and the
+	// denial made here stays.
+	const person = "u907"
+	if !permission(base, person, 0).hasAccess() {
 		t.Fatal("region B does not answer before the cut")
 	}
 	cutLink(t, regionB, true)
 	cutAt := time.Now()
-	mustAdmin(t, regionA.admin, "POST", "/assignment_rule", rule("u7", map[string]any{"effect": "deny"}))
+	mustAdmin(t, regionA.admin, "POST", "/assignment_rule", rule(person, map[string]any{"effect": "deny"}))
 	var answered, refused int
 	for time.Since(cutAt) < cut {
-		a := permission(base, "u7", 0)
+		a := permission(base, person, 0)
 		switch {
 		case a.status == http.StatusOK && refused == 0:
 			answered++
@@ -126,7 +131,7 @@ func TestF6_5_ACutLinkFailsRegionBClosedAfterTheLimitAndItCatchesUp(t *testing.T
 	cutLink(t, regionB, false)
 	start := time.Now()
 	eventually(t, 5*time.Second+30*time.Second, "the denial made during the cut to be enforced", func() bool {
-		a := permission(base, "u7", 0)
+		a := permission(base, person, 0)
 		return a.status == http.StatusOK && !a.hasAccess()
 	})
 	if took := time.Since(start); took > 5*time.Second {

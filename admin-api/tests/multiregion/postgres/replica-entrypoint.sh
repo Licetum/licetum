@@ -13,4 +13,11 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     sleep 2
   done
 fi
-exec docker-entrypoint.sh postgres -c hot_standby=on -c max_connections=400 -c fsync=off
+# A hot standby needs max_connections, max_wal_senders, max_worker_processes, max_prepared_transactions and
+# max_locks_per_transaction at least as high as the primary has them (compose.yml, pg-primary): with a lower one the
+# recovery aborts at start ("insufficient parameter settings") and the replica never comes up.
+# After the link to the primary was cut, the standby asks for the stream again every wal_retrieve_retry_interval (5 s by
+# default): with that default a revocation made during the cut reaches the region up to 5 s after the link returned, before the
+# replay, which leaves nothing of the SLO of 5 s that F6-5 checks.
+exec docker-entrypoint.sh postgres -c hot_standby=on -c max_connections=600 -c max_wal_senders=20 -c fsync=off \
+  -c wal_retrieve_retry_interval=1s

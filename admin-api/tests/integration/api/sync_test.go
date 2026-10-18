@@ -266,6 +266,105 @@ func TestSyncFreshRequestsShareTheSourceCall(t *testing.T) {
 	}
 }
 
+// A computation that waits for a synchronization job gives its slot of COMPUTE__CONCURRENCY back for the wait: concurrent
+// consistency=higher requests of different people share the fresh job instead of queueing one behind the other, each for
+// a job of its own SYNC__FRESH_MIN_INTERVAL after the last one (the cold load test collapsed at COMPUTE__CONCURRENCY / 1 s).
+func TestSyncWaitingForTheWorkerHoldsNoComputeSlot(t *testing.T) {
+	e := setup(t)
+	src := newSource(t, branches("b1", "b2")...)
+	f := e.syncFixture("slots", src)
+	e.stopWorker()
+	_, _ = e.worker(func(c *config.Config) { c.Sync.FreshMinInterval = time.Second }, engine.SyncHooks{})
+	r := e.checkReplica(func(c *config.Config) { c.Compute.Concurrency = 1 })
+	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
+		t.Fatalf("first synchronization: %d %s", status, body)
+	}
+
+	const people = 8
+	tokens := make([]string, people)
+	for i := range tokens {
+		name := fmt.Sprintf("person-%d", i)
+		e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": f.typ, "access": []string{"read"}, "subject": name})
+		tokens[i] = e.token(jwt.MapClaims{"preferred_username": name, "sub": name + "-sub"})
+	}
+	started := time.Now()
+	var wg sync.WaitGroup
+	for _, token := range tokens {
+		wg.Go(func() {
+			status, body, _ := r.permission(t, &syncFixture{service: f.service, alice: token}, "?consistency=higher")
+			if status != http.StatusOK || !strings.Contains(body, `"b2"`) {
+				t.Errorf("fresh permission: %d %s", status, body)
+			}
+		})
+	}
+	wg.Wait()
+	// One slot held through each wait would put the requests one fresh job (a second) apart: 7 s and more.
+	if elapsed := time.Since(started); elapsed > 4*time.Second {
+		t.Fatalf("%d concurrent fresh requests with one compute slot took %v: they waited for the worker one at a time", people, elapsed)
+	}
+}
+
+// Concurrent requests that ask for jobs which are already queued do not wedge the DBOS client of the process. A DBOS enqueue
+// holds a connection of the client's pool in its transaction and, when the job is a duplicate, takes a second one to find the
+// job that holds the deduplication id, with no deadline, while the listener of the client keeps one connection for good: as
+// many concurrent duplicate enqueues as the pool had connections left each held one and waited for another forever (TestF2_2
+// hung so for 39 minutes, 20 concurrent admin writes enqueueing the six platform types each). The concurrent requests for one
+// job share one enqueue, and the process runs at most (pool - 1) / 2 enqueues of different jobs at once (engine.enqueueSlot).
+func TestSyncConcurrentDuplicateEnqueuesDoNotExhaustTheDBOSPool(t *testing.T) {
+	if syncEngine() != "dbos" {
+		t.Skip("the DBOS client only")
+	}
+	e := setup(t)
+	const types = 4
+	fixtures := make([]*syncFixture, types)
+	typeIDs := make([]uuid.UUID, types)
+	for i := range fixtures {
+		// The admin requests of the first one made the worker create the DBOS tables.
+		fixtures[i] = e.syncFixture(fmt.Sprintf("enqueues-%d", i), newSource(t, branches("b1")...))
+		typeIDs[i] = uuid.MustParse(fixtures[i].typ)
+	}
+	e.stopWorker()                                                          // the jobs stay queued: every later enqueue is a duplicate
+	r := e.checkReplica(func(c *config.Config) { c.Sync.DBOSPoolSize = 3 }) // the listener's connection and two more
+	// The first requests create the DBOS client of the process (the requests meanwhile answer without it) and queue the jobs.
+	deadline := time.Now().Add(10 * time.Second)
+	for _, f := range fixtures {
+		for e.jobCount(f.typ, "queued") == 0 {
+			if time.Now().After(deadline) {
+				t.Fatalf("the job of the type %s was not queued", f.typ)
+			}
+			if _, err := r.app.Coordinator().Ensure(context.Background(), typeIDs, engine.SyncOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for i := range 16 {
+			wg.Go(func() {
+				// No wait: the request only asks for the job (and answers from the data that exists).
+				if _, err := r.app.Coordinator().Ensure(context.Background(), typeIDs[i%types:i%types+1], engine.SyncOptions{}); err != nil {
+					t.Errorf("ensure: %v", err)
+				}
+			})
+		}
+		wg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("16 concurrent requests for %d queued jobs did not get through the enqueue in 20 s: the DBOS pool of 3 is wedged", types)
+	}
+	for _, f := range fixtures {
+		if got := e.jobCount(f.typ, "queued"); got != 1 {
+			t.Fatalf("%d queued jobs for the type %s, want the one they share", got, f.typ)
+		}
+	}
+}
+
 // F3-3: a source that fails is asked once per backoff window by the whole cluster, and the answers come from the data
 // that exists.
 func TestSyncFailingSourceIsAskedOncePerBackoff(t *testing.T) {
