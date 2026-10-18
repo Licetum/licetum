@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -281,5 +282,45 @@ func TestMeasurementJSON(t *testing.T) {
 	}
 	if back.Operations[0].Latency.Samples != 5 || math.Abs(back.Operations[0].Latency.P50-2) > 1e-9 {
 		t.Fatalf("round trip lost the samples: %+v", back)
+	}
+}
+
+// TestAggregateReadsTheRequestsByName checks that a run is read back under the names of the requests it was written
+// with: a run of an earlier mix lists other requests, and fewer or more of them, than this version sends.
+func TestAggregateReadsTheRequestsByName(t *testing.T) {
+	dir := t.TempDir()
+	var runs []string
+	for _, seed := range []int64{1, 2} {
+		rep := Report{
+			Profile:  profiles["smoke"],
+			Settings: Settings{Mode: "warm", Seed: seed, Mix: "earlier=1", Rate: 10},
+			Measurements: []Measurement{{
+				Valid: true,
+				Operations: []Operation{
+					{Name: "earlier", Requests: 20000, Latency: Latency{Samples: 20000, P50: 2, P90: 3, P95: 4, P99: 5, P999: 6}},
+					{Name: "unused"},
+				},
+			}},
+		}
+		run := filepath.Join(dir, "run-"+string(rune('0'+seed)))
+		if err := os.MkdirAll(run, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSON(filepath.Join(run, "result.json"), rep); err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, run)
+	}
+	out, err := AggregateReport(runs)
+	if err != nil {
+		t.Fatalf("AggregateReport: %v", err)
+	}
+	if !strings.Contains(out, "| earlier | 20000–20000 |") {
+		t.Errorf("the request of the earlier mix is not in the table:\n%s", out)
+	}
+	for _, name := range opNames {
+		if strings.Contains(out, "| "+name+" |") {
+			t.Errorf("%s is in the table, but the runs did not send it", name)
+		}
 	}
 }
