@@ -218,7 +218,11 @@ func waitForService(base, slug string, limit time.Duration) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%s does not know the service %q after %v: %d %s %v", base, slug, limit, status, body, err)
+			last := err
+			if last == nil {
+				last = fmt.Errorf("status %d: %s", status, body)
+			}
+			return fmt.Errorf("%s does not know the service %q after %v: %w", base, slug, limit, last)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
