@@ -42,13 +42,11 @@ type allowance struct {
 }
 
 // allowed lists the files that still hold old routes or raw AuthZEN paths, and the phase that removes each of them. legacy:2c
-// lines go with the routes in P2-23. legacy:2a-5 lines go with the move of the load test to AuthZEN (P2-07): remove those
-// entries in the pull request that lands P2-07. The other paths are to be built by authzenreq.
+// lines go with the routes in P2-23. The other entries are permanent exceptions, and their reasons say why: the k6 generator is
+// JavaScript and builds its AuthZEN paths itself, and a test that refuses the retired operation names names them.
 var allowed = map[string]allowance{
-	"loadtest/k6/check.js":                               {6, 2, "legacy:2a-5: the k6 traffic moves to AuthZEN (P2-07)"},
-	"loadtest/mix.go":                                    {2, 0, "legacy:2a-5: the operation names of the mix (P2-07)"},
-	"loadtest/oracle.go":                                 {1, 0, "legacy:2a-5: the oracle's check of the warm-up (P2-07)"},
-	"loadtest/warmup.go":                                 {3, 2, "legacy:2a-5: the warm-up requests (P2-07)"},
+	"loadtest/k6/check.js":                               {0, 4, "k6 is JavaScript: it builds its AuthZEN paths itself, not with authzenreq (a permanent exception)"},
+	"loadtest/loadtest_test.go":                          {1, 0, "the names of the retired requests that ParseMix refuses (a test that they are refused)"},
 	"tests/integration/api/conditions_test.go":           {1, 0, "legacy:2c: the admin simulation of a check goes with P2-23"},
 	"tests/integration/api/consistency_lever_test.go":    {5, 1, "legacy:2c: the lever of the old routes (P2-23); one raw AuthZEN path of the batch of one"},
 	"tests/integration/api/delegation_test.go":           {2, 0, "legacy:2c: on_behalf goes with the delegated calls (P2-23)"},
