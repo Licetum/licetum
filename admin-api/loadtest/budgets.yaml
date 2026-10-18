@@ -48,40 +48,40 @@ budgets:
     - profile: medium
       mode: mix
       added_latency_ms: 0
-      rps: 20
-      reference_rps: 20
-      p50_ms: 52.87
+      rps: 80
+      reference_rps: 80
+      p50_ms: 7.48
       p99_ms: 0
-      db_queries_per_request: 13.42
-      redis_round_trips_per_request: 5.78
-      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
+      db_queries_per_request: 6.28
+      redis_round_trips_per_request: 2.42
+      note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
     - profile: medium
       mode: mix
       added_latency_ms: 100
-      rps: 10
-      reference_rps: 10
-      p50_ms: 1575.25
+      rps: 20
+      reference_rps: 20
+      p50_ms: 512.73
       p99_ms: 0
-      db_queries_per_request: 9.96
-      redis_round_trips_per_request: 5.24
-      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
+      db_queries_per_request: 5.88
+      redis_round_trips_per_request: 0.02
+      note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
     - profile: medium
       mode: warm
       added_latency_ms: 0
-      rps: 80
-      reference_rps: 80
-      p50_ms: 4.45
-      p99_ms: 0
-      db_queries_per_request: 6.05
-      redis_round_trips_per_request: 3.86
-      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
+      rps: 320
+      reference_rps: 320
+      p50_ms: 0.6
+      p99_ms: 30.89
+      db_queries_per_request: 1.66
+      redis_round_trips_per_request: 0.51
+      note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
     - profile: medium
       mode: warm
       added_latency_ms: 100
-      rps: 20
-      reference_rps: 20
-      p50_ms: 511.18
+      rps: 80
+      reference_rps: 80
+      p50_ms: 0.42
       p99_ms: 0
-      db_queries_per_request: 6.99
-      redis_round_trips_per_request: 4.08
-      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
+      db_queries_per_request: 1.95
+      redis_round_trips_per_request: 0
+      note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
