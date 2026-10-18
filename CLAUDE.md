@@ -49,7 +49,10 @@ without changing files (as CI would), `task lint` does the same but fixes and fo
 `task generate` (OpenAPI schemas → orval client), `task dev` (docker compose). `task --list` for the rest.
 CI (`.github/workflows/ci.yml`, on pull requests and pushes to main) runs `task check` + `pnpm build`
 and `task backend:coverage` with disposable PostgreSQL/Redis Testcontainers, so integration tests
-run there too.
+run there too. `task go:vet:tags` (part of `task go:lint`, so of `task check` and of the CI job `go-lint`) compiles and vets the
+code behind the build tags `integration`, `chaos` and `multiregion` in both modules, with and without `-race`, and builds the
+load test, so the suites that run only nightly cannot stop compiling unseen; a new build tag goes into `GO_BUILD_TAGS` of
+`Taskfile.yaml` (the task fails until it does).
 
 The epic is being refactored to the design of issue #49 (regional AuthZEN PDP, service-scoped administration). Tests become
 **contracts**: `contracts.yaml` (root) lists them (id, statement, oracle, level, phase, status); a test checking one is named

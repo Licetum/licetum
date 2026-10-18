@@ -301,6 +301,8 @@ and `LICETUM_TEST_REDIS_URI`. No containers are started then.
 - golangci-lint v2 (`.golangci.yml`): gofmt and goimports, the standard set (govet, staticcheck, errcheck, unused),
   gosec, and depguard enforcing the layers: `server` → `engine` → `db`, `redisx`, `synchronizer` → `model`, `config`,
   `i18n`, `apperr`; the core must not import the admin module;
+- `task go:vet:tags`: the code behind the build tags (`integration`, `chaos`, `multiregion`) compiles and passes `go vet`, with and
+  without `-race`, and the load test builds; no other job compiles the nightly-only suites;
 - `go mod tidy -diff`;
 - the exported OpenAPI schema matches the code.
 
