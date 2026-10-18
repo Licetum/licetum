@@ -63,10 +63,12 @@ multi-region, load test) is called by the dispatcher `nightly.yml` on `main` wit
 
 The decision contracts (DEC01–DEC14, DECP) are tables, not code: `core/testsupport/policyfix` is the fixture format (services,
 types, resources, groups, roles, rules, cases with claims, context and a time, questions with the expected decision and
-explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides answer them: the engine through the check API
-(`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its resources, `Ask` asks
-at the case's time through `App.SetClock`, `CrossCheck` asks the case's `GET /permission` and fails every DEC and DECP test
-where the list (`coverNodes`) disagrees with the check answers (`CoversOf`); level `pg`), and `core/testsupport/refeval`, a
+explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides answer them: the engine through the AuthZEN API
+of the check API (`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its
+resources, `Ask` asks the case's evaluations (`POST …/access/v1/evaluations`, with explain) at the case's time through
+`App.SetClock`, `CrossCheck` asks the case's resource and action searches (`…/access/v1/search/resource`, `…/search/action`) and
+fails every DEC and DECP test where the list (`coverNodes`) disagrees with the evaluations (`CoversOf`); level `pg`; until P2-23
+`SecondOpinion` asks the legacy `/check` and `/permission` routes as well), and `core/testsupport/refeval`, a
 reference evaluator written from the semantics that shares no code with the engine (depguard keeps it away from engine, server
 and db). `core/testsupport/policygen` generates random valid fixtures (also types that had a synchronizer and lost it, with a `before`
 block: rows left behind, links to them, rules and claim lookups that name them); DECP compares the two sides on them (seeds 1–20 per pull
@@ -187,8 +189,12 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
 
 Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` and every
 Redis client given to `engine.New` is counted (`licetum_db_*`, `licetum_redis_*` metrics, `engine.Trace.DBQueries()/RedisRoundTrips()` for
-tests); `harness.StartReplicas` builds several check replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`; `Replica.Permission` asks for at least the
-revision of the last admin write, `Replica.Fresh` asks with `consistency=higher`); `core/testsupport` has the fake source, the
+tests); `harness.StartReplicas` builds several check replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`). The tests build
+their AuthZEN requests with `core/testsupport/authzenreq`: `Replica.Permission` sends the resource search for branches
+(`harness.Branches`) for at least the revision of the last admin write (`Cluster.LastRevision`), and `Replica.Fresh` sends it with the
+test lever `harness.Higher()` (the `X-Test-Consistency` header, not a query parameter). `admin-api/tests/oldendpoints_test.go` counts
+the lines that still send an old route or spell an AuthZEN path, per file; the allowance of each file can only go down, and P2-23
+deletes the file with the routes. `core/testsupport` has the fake source, the
 fake IdP and the Toxiproxy `FaultProxy`; tests under the `chaos` build tag (`task go:test:chaos`, nightly `chaos.yml`) inject faults;
 `admin-api/loadtest/budgets.yaml` holds the budgets the nightly `loadtest.yml` compares runs with (`licetum-loadtest budget`).
 
