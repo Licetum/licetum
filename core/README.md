@@ -212,6 +212,12 @@ the traffic to another region, and the process recovers by itself; `primary` mov
 caught up. `POLICY__MAX_STALENESS` applies to the replica too: a replica more behind than that, with the reads on the replica, fails
 closed (503 `policy_unavailable`). The pool of the replica is the `read` pool in `licetum_db_pool_*`; size it like the request pool.
 
+The replica needs `wal_retrieve_retry_interval` of 1 s or less (the PostgreSQL default is 5 s). A standby whose link to the primary
+was cut asks for its stream again only that often once the link is back, and replays nothing until it does: a revocation written
+during the cut reaches the region up to that interval after the link returns, before its replay even starts. With the default that
+alone is the 5 s a revocation is meant to take in the region (F6-5, `admin-api/tests/multiregion`). A replica left at the default
+stays safe (the lag is measured, and `POLICY__MAX_STALENESS` fails it closed) but enforces a revocation later after an outage of the link.
+
 ### Migrations
 
 `licetum migrate` takes an advisory lock, so several runs started together (one per pod) apply each migration once; the seed of the
