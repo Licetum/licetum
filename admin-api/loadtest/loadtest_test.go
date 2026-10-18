@@ -158,15 +158,20 @@ func TestCPUCores(t *testing.T) {
 }
 
 func TestPreallocated(t *testing.T) {
-	cases := []struct{ rate, maxVUs, want int }{
-		{5, 250, 50},    // the floor
-		{120, 250, 120}, // the rate itself
-		{400, 250, 250}, // never more than the most users
-		{400, 50, 50},   // and never more than that either
+	cases := []struct {
+		rate, maxVUs int
+		mode         string
+		want         int
+	}{
+		{5, 250, "warm", 50},    // the floor
+		{120, 250, "warm", 120}, // the rate itself
+		{400, 250, "mix", 250},  // never more than the most users
+		{400, 50, "warm", 50},   // and never more than that either
+		{16, 250, "cold", 250},  // a cold request waits for a job of the worker: all the users are started
 	}
 	for _, c := range cases {
-		if got := preallocated(c.rate, c.maxVUs); got != c.want {
-			t.Errorf("preallocated(%d, %d) = %d, want %d", c.rate, c.maxVUs, got, c.want)
+		if got := preallocated(c.rate, c.maxVUs, c.mode); got != c.want {
+			t.Errorf("preallocated(%d, %d, %q) = %d, want %d", c.rate, c.maxVUs, c.mode, got, c.want)
 		}
 	}
 }
