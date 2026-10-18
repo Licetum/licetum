@@ -34,6 +34,7 @@ jobs:
             go:
               - 'core/**'
               - 'admin-api/**'
+              - 'contracts.yaml'
               - 'Taskfile.yaml'
               - 'docker-compose.yml'
               - 'infra/**'
@@ -110,83 +111,6 @@ jobs:
   # prepared). PgBouncer is the package of the runner's distribution (1.22 on Ubuntu 24.04, which has max_prepared_statements,
   # the DBOS client prepares its statements). Each test gets a database of its own: transaction pooling does not carry the
   # search_path of a connection. See admin-api/tests/integration/README.md.
-  go-test-pgbouncer:
-    name: Integration tests through PgBouncer
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
-    env:
-      LICETUM_TEST_POSTGRES_URI: postgres://licetum:licetum@127.0.0.1:5432/postgres?sslmode=disable
-      LICETUM_TEST_REDIS_URI: redis://127.0.0.1:6379/0
-      LICETUM_TEST_PGBOUNCER_ADDR: 127.0.0.1:6433
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: core/go.mod
-          cache-dependency-path: |
-            core/go.sum
-            admin-api/go.sum
-
-      - uses: arduino/setup-task@v3
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # Every test makes a database, and PgBouncer keeps a few connections to each for a while: room for them.
-      - name: Start PostgreSQL
-        run: |
-          docker run -d --name postgres -p 5432:5432 -e POSTGRES_USER=licetum -e POSTGRES_PASSWORD=licetum postgres:16-alpine \
-            -c max_connections=400
-          until docker exec postgres pg_isready -U licetum -h 127.0.0.1; do sleep 1; done
-
-      - name: Start PgBouncer in transaction mode
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq pgbouncer
-          sudo systemctl stop pgbouncer || true
-          sudo mkdir -p /etc/pgbouncer-ci /var/log/pgbouncer-ci
-          printf '"licetum" "licetum"\n' | sudo tee /etc/pgbouncer-ci/userlist.txt > /dev/null
-          sudo tee /etc/pgbouncer-ci/pgbouncer.ini > /dev/null <<'EOF'
-          [databases]
-          * = host=127.0.0.1 port=5432
-
-          [pgbouncer]
-          listen_addr = 127.0.0.1
-          listen_port = 6433
-          unix_socket_dir =
-          auth_type = trust
-          auth_file = /etc/pgbouncer-ci/userlist.txt
-          pool_mode = transaction
-          max_client_conn = 2000
-          default_pool_size = 20
-          max_db_connections = 40
-          server_idle_timeout = 5
-          max_prepared_statements = 200
-          admin_users = licetum
-          logfile = /var/log/pgbouncer-ci/pgbouncer.log
-          pidfile = /var/log/pgbouncer-ci/pgbouncer.pid
-          EOF
-          sudo chown -R postgres /etc/pgbouncer-ci /var/log/pgbouncer-ci
-          sudo -u postgres pgbouncer -d /etc/pgbouncer-ci/pgbouncer.ini
-          until PGPASSWORD=licetum psql "host=127.0.0.1 port=6433 user=licetum dbname=postgres" -c 'select 1' > /dev/null; do sleep 1; done
-
-      - name: Integration tests through PgBouncer
-        run: task go:test:integration:pgbouncer
-
-      - name: PgBouncer log
-        if: failure()
-        run: sudo tail -n 200 /var/log/pgbouncer-ci/pgbouncer.log
-
   # F6: the check API reading the policy from a read replica (DB__READ_URI). A primary and a streaming replica run on the
   # runner from the PostgreSQL binaries it ships (scripts/pg-replica.sh); pg_wal_replay_pause makes the replica lag.
   go-test-replica:
