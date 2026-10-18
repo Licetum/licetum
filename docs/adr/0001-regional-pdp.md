@@ -203,10 +203,10 @@ The facts below were checked against `229c4ed`, the tip of `epic/production-load
       - PR #40 stays a draft until P7.
       - Issue #31 is closed as superseded.
     - **P1** fixes the transitive fail-open before anything moves. It also measures the cost on the loadtest medium profile before merging.
-    - **P2** runs in this order: 2a, 2b, 2d, then 2c.
+    - **P2** runs in this order: 2a, 2b, 2d, the directory step, 2c, then 2e.
       - Step 2d brings in the admin OIDC and moves the seed and `restore-admin` off `PLATFORM__*`. It must come before 2c, which removes per-service OAuth.
-      - `subject_directory` arrives in P2, together with the removal of `known_subject`.
-      - Step 2e (Redis, replica routing, the table engine) is its own PR.
+      - The directory step brings `subject_directory` and removes `known_subject` in the same step, after 2d and before 2c (8.8, 11.2).
+      - Step 2e (Redis, replica routing, the table engine) is its own PR, after 2c.
     - **P3** introduces schema v2 with its own goose version table.
       - `migrate` refuses a `v0.1.x` database with a clear message. There is no upgrade path.
       - The `previous-release` CI job is removed in P3.
@@ -1023,7 +1023,7 @@ The CQL engine is ScyllaDB or Apache Cassandra 5, chosen in phase P0.5 after a s
   - It uses nothing that needs tablets.
   - Correctness relies on no table option that only one engine has, for example ScyllaDB's `tombstone_gc`.
   - Batches are unlogged and touch one partition. Keyspaces use `NetworkTopologyStrategy`.
-  - Some table options differ only in name between the engines (compaction); the CQL migration chooses them per engine. Otherwise there is one schema, and `API01` keeps a snapshot of it per engine.
+  - Some table options differ only in name between the engines (compaction); the CQL migration chooses them per engine. Otherwise there is one schema, and from P6 `API01` keeps a snapshot of it per engine (P2 states `API01` for the two OpenAPI schemas only, 10.9).
 - **Names.**
   - The adapter is `cql` (`READMODEL__STORE=postgres|cql`) and its package is `core/readmodel/cqlstore`.
   - Settings use the prefix `CQL__`: `CQL__LOCAL_DC`, `CQL__DCS`, `CQL__LISTING_CONSISTENCY`.
@@ -1756,6 +1756,7 @@ The PDP identifier is `PDP__PUBLIC_URL + "/service/" + slug`. PEPs keep it in th
   - It sends `Cache-Control: public, max-age=300`, as today.
 - **`policy_decision_point`** is `PDP__PUBLIC_URL + "/service/" + slug`.
   - `PDP__PUBLIC_URL` is required. It must use `https` and have no path, query or fragment.
+    - **Loopback exception.** A host that is `localhost`, `127.0.0.1` or `[::1]` may use `http`, so that the Compose stack and the load test start. AZ05 states the rule for every other host.
   - It must be byte-identical to the URL the PEPs use, usually the global GeoDNS name.
   - Today `HTTP__PUBLIC_URL` is optional (without it the metadata is a 404 `authzen_metadata_disabled`) and accepts `http`.
 - **Endpoints.** The document lists the five endpoints of §7.1 (AZ05).
@@ -1864,6 +1865,7 @@ A missing required field is a 400. The 422 that Huma produces is still mapped to
     - actions by level name.
   - The bucket is the one the read model uses, and both adapters compute it the same way, so the order does not depend on the store.
   - P2 keeps today's order by id; the bucket order arrives with the read-model port in P5.
+  - **Today's order is bytewise** (`strings.Compare` in `searchResources`), which is not the order of a database with an `en_US` collation. The keyset scan of `resource_cache` therefore orders and compares with `COLLATE "C"`, backed by an additive index (migration `00007`, 11.6.2), and a paging test on PostgreSQL uses ids that differ in case and punctuation. AZ04 keeps its wording.
 - **What this guarantees (AZ04):**
   - Keys strictly increase from page to page, so no result is repeated.
   - A result that stays allowed while the pages are read appears exactly once.
@@ -1912,14 +1914,15 @@ The request extension is `context.licetum = {min_revision?, explain?}`, read onl
 
 **`min_revision`: read your writes**
 - **Source.** It takes the `<epoch>.<r>` from the `Licetum-Revision` header of an admin write, or of a resource refresh. A bare number means the current epoch.
+  - **Before P3 there is no epoch.** Until P3 brings epochs (6.8), the header is the literal `1.<r>` (epoch 1), on every 200 of the PDP and on admin writes, and the PDP compares `r` only.
 - **Waiting.** The PDP waits until its position reaches the revision, for at most `min(PDP__FRESHNESS_WAIT (1 s), request deadline)`, with one waiter per process.
 - **If the revision is not reached:**
   - `/evaluation` and the searches answer 503 `revision_not_reached` with `Retry-After: 1`.
   - `/evaluations` answers every evaluation with `decision: false` and `context.error {status: 503, message}`. A PEP that reads only `decision` still denies.
 - **No stale answers.** An answer below the requested revision is never computed or cached.
 - **Replacements.**
-  - `min_revision` replaces the query parameter `at_least_as_fresh`. In P2 it is mapped onto that parameter until the position model exists.
-  - `consistency=higher` is removed.
+  - `min_revision` replaces the query parameter `at_least_as_fresh`. In P2 it is mapped onto the lever that parameter fed (`engine.WithMinRevision`, a context carrier) until the position model exists.
+  - `consistency=higher` is no longer a request option: its query parameter goes in 2c with `at_least_as_fresh`. What remains until P5 is an internal lever, `engine.WithConsistency`, also a context carrier, which no request from the network reaches (tests set it through a test-only wrapper). P5 removes it with `forConsistency`, when `min_revision` becomes native.
 
 **`explain: true`**
 - **Content.** It adds `context.reason_admin`, a `model.Explanation`: `decision`, `granted_by`, and `denials` with `lifted_by`, `unresolved_parent` and `missing_attribute`.
@@ -1943,7 +1946,7 @@ A `decision: true` carries a `context` only when explain was asked, because the 
 **Response headers**
 - **`Licetum-Revision: <epoch>.<r>`** is sent on every 200. It gives the position P that the answer, or the page, was computed at.
 - **`Licetum-Error-Code`** is sent on every error. It carries the catalog key.
-- `X-Authz-Revision` is replaced, and `X-Authz-Sync` is removed.
+- `X-Authz-Revision` is replaced, and `X-Authz-Sync` is removed. In 2b the PDP sends `Licetum-Revision` beside `X-Authz-Revision`; 2c removes both old headers.
 
 ### 7.8 Errors
 
@@ -1988,8 +1991,8 @@ A PEP sends `Authorization: Bearer <credential>`. Two kinds of credential are ac
 1. **JWT, client credentials.**
    - **Issuers** are listed in `pep_issuer(issuer, jwks_url, audiences, algs, require_typ)`. Issuers have platform scope and are managed by `platform_admin`.
    - **Checks:**
-     - `iss` is in the list;
-     - `aud` contains `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`), always required;
+     - `iss` is in the list, compared exactly (RFC 7519, OIDC). Today `fetchAndVerify` ignores trailing slashes on both sides; a deployment that relied on that lists its issuer as the IdP writes it in `iss`;
+     - `aud` is always required, and it contains one of the issuer's `audiences` or, when that list is empty, `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`);
      - `exp` and `nbf` hold, with a leeway of 60 s;
      - `alg` is in the issuer's allowlist (RS256, ES256, EdDSA). `none` and HMAC are never allowed;
      - `typ` is `at+jwt` (RFC 9068) when `require_typ` is set.
@@ -2016,6 +2019,7 @@ A PEP sends `Authorization: Bearer <credential>`. Two kinds of credential are ac
 - **Ownership.**
   - A PEP client belongs to one service and is managed by that service's `service_owner`.
   - The same IdP client used by two services is two rows.
+- **Management before P4.** The roles of S exist only from P4, but a PEP cannot be created without a route. P2 therefore has minimal routes at the final paths (`pep-clients` and its `keys` under `/service/{ref}/`, and `/platform/pep-issuers`), governed by the platform policies like the other admin routes and re-gated by the roles in P4. The secret of an API key is shown once, in the answer that creates it.
 - **Uniform refusal.** An unknown service, an unregistered or disabled client and a missing operation all get the same 403 `authzen_forbidden`, with the same body (AZ09).
 - **What it replaces.** It replaces the service's `trusted_clients` and its per-service OAuth configuration.
 
@@ -2091,7 +2095,7 @@ No server-side store is involved, so the BFF can run as several replicas and in 
 **PDP (`core/server/check.go` and related code)**
 - **Endpoints:** `GET /service/{id}/permission`, `POST /service/{id}/check`, `POST /service/{id}/on_behalf/check` and `/on_behalf/permission`.
 - **Code and models:** `engine.PermissionPage` as an API, the models `CheckInput`, `CheckResponse`, `DelegatedCheckInput` and `DelegatedPermissionInput`, and the OpenAPI tags `Permission`, `Check` and `Delegated`.
-- **Request options:** the query parameters `consistency` and `at_least_as_fresh` (`ConsistencyParam`), and the headers `X-Authz-Sync` and `X-Authz-Revision`.
+- **Request options:** the query parameters `consistency` and `at_least_as_fresh` (`ConsistencyParam`), and the headers `X-Authz-Sync` and `X-Authz-Revision`. These are the public forms, and they go in 2c. The internal lever `engine.WithConsistency`, a context carrier that no network request reaches, stays until P5 (7.7, 11.9).
 - **Old behaviors:**
   - `context.subjects_registry`;
   - `explain` as a reserved context name;
@@ -2102,7 +2106,7 @@ No server-side store is involved, so the BFF can run as several replicas and in 
   - `trusted_clients` and `AuthorizeDelegate`;
   - the `speaker` logic of `authzenCaller`;
   - `delegated_call` and its retention;
-  - `NoteSubject` and `known_subject`.
+  - `NoteSubject` and `known_subject`: these go in the directory step, not in 2c, together with `/subject` (8.8).
 
 **Admin API**
 - **Removed:** `oauth_login`, `oauth_callback`, `oauth_refresh` and `list_delegated_calls`.
@@ -2113,7 +2117,7 @@ No server-side store is involved, so the BFF can run as several replicas and in 
 
 **Settings**
 - `HTTP__PUBLIC_URL` is replaced by `PDP__PUBLIC_URL`.
-- `SUBJECTS__*` and `DELEGATION__*` are removed.
+- `SUBJECTS__*` is removed in the directory step and `DELEGATION__*` in 2c. A removed setting that is still set is logged as a warning at start-up through the one `DeprecatedSettings` list (`core/config`), which each pull request extends; P3 deletes the mechanism (9.7).
 
 ### 7.15 Contracts and phases
 
@@ -2121,9 +2125,10 @@ No server-side store is involved, so the BFF can run as several replicas and in 
   - AZ01–AZ14 (AZ04 has no expired-token case);
   - PEP01–PEP03;
   - API01–API03;
+  - DIR01–DIR04 (new, the subject directory, 10.4);
   - WEB01.
   - **2b:** PEP clients and credentials, the conformance fixes of §7.4–§7.8, `context.licetum`, the ops port, and the rename of `check` to `pdp`.
-  - **2c:** the removals of §7.14.
+  - **2c:** the removals of §7.14, except the subject registry, which goes in the directory step.
   - **2d:** the administrator sign-in of §7.13.
 - **P3.** Schema v2:
   - `service.identity_domain`;
@@ -2137,6 +2142,7 @@ No server-side store is involved, so the BFF can run as several replicas and in 
   - AZ16: upstream rules in an explanation show only the slug and the level (P4).
   - ADM11: a slug cannot be changed or reused.
   - OPS09: the salt is never in the replicated state, and it gives the same hash in every region.
+- **P2 planning.** DIR01 to DIR04 are added as `planned` in P2 (10.9), and API01 is limited to the two OpenAPI schemas until P6 (10.9).
 
 ## 8. Service-scoped administration
 
@@ -2289,9 +2295,12 @@ The tables arrive with schema v2 in P3. Authorization starts reading them in P4.
 - **What it feeds.** AuthZEN subject search, the list of people a rule reaches in who-has-access and preview, and the person page.
 - **Who reads it.** Only the roles of S, including `group_manager` of a group of S, who picks members from it.
 - **Retention** is a setting of the service.
+  - **Default.** None: an entry is kept until it is deleted. The 90 days of `SUBJECTS__RETENTION_DAYS` belonged to a registry that every token refreshed passively; the entries of the directory are sent on purpose.
+  - **In P2** the setting is a table of its own, `subject_directory_settings(service_id, retention_days NULL)`, with `retention_days >= 1` when set. The `service` shape of 4.2 has no column for it; P3 decides where the setting lives, and the P2 pull request records the gap.
+- **Properties** are stored as the application sent them, within the bounds of `subject.properties` (100 properties, 16 KiB). They are not cut down to the claims the policy reads.
 - **Write path.**
   - A directory write does not take `admin_write`. No invariant depends on the directory, and a bulk `PUT` from an application would otherwise make every admin write wait behind it.
-  - It takes only the revision row, as the last statement of its transaction. From P3 it also writes an outbox header for the stream `dir:<svc>`.
+  - It takes only the revision row, as the last statement of its transaction. From P3 it also writes an outbox header for the stream `dir:<svc>`. Before P3 a write takes no revision (see Timing).
   - The upsert changes only rows whose content differs. An unchanged batch writes no projected row and takes no revision.
   - The time an entry was last sent is kept separately, in `subject_directory_seen`, which is not projected. Retention reads it and deletes entries that were not sent within the service's retention period. It deletes in chunks; each chunk is a transaction with its own outbox header. Retention runs in the `worker` until P5, then in the writer.
 - **`directory_writer`.**
@@ -2299,7 +2308,10 @@ The tables arrive with schema v2 in P3. Authorization starts reading them in P4.
   - It holds `directory_writer` on S through a binding on its subject. The role allows writing the directory and nothing else. Giving the application `service_editor` instead would let it change the policy.
   - Its writes are rate-limited per client and per process, with a token bucket like `PEP__RATE_LIMIT`.
 - **Timing.**
-  - The directory arrives in P2, in the same step that removes `known_subject`, so subject search, the people screens and `peopleReached` are never empty in between.
+  - The directory arrives in P2, in the same step that removes `known_subject`, so subject search, the people screens and `peopleReached` are never empty in between. The step comes after 2d and before 2c, in two pull requests:
+    - **First:** the tables, the six routes under `/service/{ref}/subjects` (bulk `PUT`, list, one subject, `DELETE`, and the settings) and retention. The old `/subject` routes and `known_subject` are untouched. DIR02 and DIR04 become active.
+    - **Second:** subject search, the people of a rule (who-has-access and preview) and the person page read the directory, with the web in the same pull request. It deletes the whole `known_subject` machinery (`subjects_runtime.go`, `NoteSubject` and its callers, `/subject`, `SUBJECTS__*`, the model types) and leaves the table until P3, with a fixed 90-day prune and no writer. DIR01 and DIR03 become active. There is no separate step in 2c for the registry.
+  - A directory write takes no revision and no change-log record in P2, because decisions do not read the directory and a bump of `rules` would invalidate every cached answer. P3 adds the revision row and the outbox header.
   - Until P4, the platform policies govern its routes, as they govern `/subject` today: read and write on the whole `group_member` policy.
   - P4 moves the routes to the roles of S and adds `directory_writer`.
 
@@ -2356,6 +2368,7 @@ The tables arrive with schema v2 in P3. Authorization starts reading them in P4.
 - **Break-glass.** `licetum-admin restore-admin [-user name]… [-claim k=v]…` moves from `core/db/restore.go` (MIT) to `admin-api/bootstrap` (AGPL).
   - It runs through `PolicyTx` with the actor `restore-admin@<host>`.
   - It upserts the `platform_admin` binding `uuid5('licetum:restore')` over the `-claim` conditions, when they are given, and one binding per `-user` with the id `uuid5('licetum:restore:<user>')`. Re-running it is therefore safe.
+  - A `-user` name is matched against the claim named by `ADMIN_AUTH__SUBJECT_CLAIM` (8.12); today it is always `preferred_username`. This holds from 2d, where the command still adds members to the admin group.
   - It restores nothing else: there is no longer a platform service, policy type, synchronizer, rule or denial to restore.
   - The run is recorded in the change log (ADM07). It needs only database credentials.
 
@@ -2391,7 +2404,8 @@ The tables arrive with schema v2 in P3. Authorization starts reading them in P4.
 - **P2, step 2d before step 2c.** 2d brings `ADMIN_AUTH__*` and the BFF as an OIDC client; authorization still runs on the platform policies.
   - In the same step, `SeedPlatform` and `restore-admin` check `ADMIN_AUTH__*` instead of `Platform.IsConfigured()`. That function (`core/config/config.go:145`, called at `core/db/migrate.go:218` and `core/db/restore.go:36`) requires all six OAuth `PLATFORM__*` variables.
   - If 2c came first, it would remove those variables. The seed would then be skipped silently, the admin API would answer 503 `platform_not_seeded`, and break-glass would not work until P4.
-- **P2.** `subject_directory` replaces `known_subject` (section 8.8).
+- **P2, the directory step between 2d and 2c.** `subject_directory` replaces `known_subject` (section 8.8), and the registry is removed in that step, not in 2c.
+- **P2, PEP management.** Minimal routes for PEP clients, keys and issuers at their final paths, governed by the platform policies and re-gated by the roles of S in P4 (7.10).
 - **P3.** Schema v2 brings:
   - `admin_binding`, `platform_state` and `identity_domain`;
   - the composite foreign keys and `subject_group_id`;
@@ -2406,7 +2420,7 @@ The tables arrive with schema v2 in P3. Authorization starts reading them in P4.
   - batch, import, export, revert and rollback per service, with the new batch kinds;
   - exported links and identity domains;
   - the directory under the roles of S, with `directory_writer`;
-  - PEP client management;
+  - PEP client management under the roles of S (P2 has minimal routes at the same paths);
   - the web: `access.tsx` on capabilities, the service switcher, routes under `/services/[slug]/…`, and binding screens.
 
   Removes:
@@ -2422,6 +2436,7 @@ The tables arrive with schema v2 in P3. Authorization starts reading them in P4.
 - Two statements of this section have no contract yet. They are added as `planned`:
   - ADM11: a slug cannot be changed and is never reused, including after the service is deleted (P3).
   - ADM12: a directory write takes no `admin_write`; an unchanged batch takes no revision; `directory_writer` allows nothing beyond the directory (P4).
+- The directory itself is covered from P2 by DIR01 to DIR04, added as `planned` in P2 (10.4): subject search, a write that changes only differing rows, the people of a rule, and retention. ADM12 keeps what belongs to the roles of S.
 
 ## 9. What is kept, moved, rewritten and deleted
 
@@ -2435,7 +2450,7 @@ This section lists what happens to each part of the current code, grouped by are
 - **delete**: the code is removed.
 - **add**: new code.
 
-**Phase** is the phase whose PR makes the change. Inside P2 the order is 2a, 2b, 2d, 2c, and 2e is a PR of its own. A deletion lands only after the contracts that replace the tests it removes are active.
+**Phase** is the phase whose PR makes the change. Inside P2 the order is 2a, 2b, 2d, the directory step (written `P2 dir` in the tables), 2c, and 2e is a PR of its own. A deletion lands only after the contracts that replace the tests it removes are active.
 
 Every PR keeps these green: `task check`, the web check, `docker compose up` and the Helm golden files. So a change to the chart, to Compose or to the interface goes into the same PR as the change that needs it, and P7 only finishes the topology.
 
@@ -2499,17 +2514,18 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `core/engine/oauth.go` | split | **To `core/pepauth`:** `fetchAndVerify`, now with `aud` required, an `alg` allowlist, `exp`/`nbf` with 60 s leeway and an optional `typ=at+jwt`.<br>**Deleted:** `StartLogin`, `FinishLogin`, `RefreshTokens`, `CreateState`/`VerifyState`, PKCE in Redis, the per-service `VerifyToken`, `invalidTokens`, `authz:token:*`, the `jwks:<svc>` breaker and `GetServiceForCheck`. | P2b, P2c |
 | `core/engine/token_cache_test.go` | rewrite | Becomes the test of the verified-token L1 of `core/pepauth` (PEP03). | P2b |
 | `core/engine/delegation_runtime.go` | delete | The checks of `PrepareDelegated` are applied to every AuthZEN `subject` in `core/pdp/authzen`: at most 100 properties and 16 KiB, no `group:` prefix, and `preferred_username` defaults to `subject.id`. `AuthorizeDelegate`, `ClientOfClaims` and `RecordDelegatedCall` are deleted. | P2b, P2c |
-| `core/engine/audit.go`, `subjects_runtime.go`, `flusher.go` | delete | `flusher` serves only the other two. `LoadKnownSubjectsAfter` is replaced by reads of `subject_directory`. | P2c |
+| `core/engine/subjects_runtime.go` | delete | The whole `known_subject` machinery goes in the directory step, with `NoteSubject` and its callers. `LoadKnownSubjectsAfter` is replaced by reads of `subject_directory`. `flusher.go` stays, because `audit.go` still uses it. | P2 dir |
+| `core/engine/audit.go`, `flusher.go` | delete | `flusher` serves only `audit.go` once `subjects_runtime.go` is gone. | P2c |
 | `core/engine/decisions.go` | move | `LogDecisions` goes to `core/pdp/decisionlog`. It logs client, subject, resource, action, decision, P and `request_id`, as `log_settings` says. | P5 |
 | `core/engine/log_runtime.go` | rewrite | `LogOptions` stays. The PDP takes the settings from the `settings` stream of its view, not from PostgreSQL. The subject-hash salt (`log_settings.salt`) is a secret and stays out of the stream: the processes read it from a deployment secret, with one value per installation so hashes agree across regions. | P5 |
-| `core/engine/retention.go` | rewrite | The Redis lock goes. Retention becomes a task of the writer's leader:<br>- the outbox after publication (by age in PG mode);<br>- `change_log`, as the settings say;<br>- `subject_directory`, per service, through the outbox.<br>DBOS workflows are pruned by the `sync` role (`dbosPrune`, 4.9.1).<br>The pruning of `delegated_call` and `known_subject` goes with those tables. | P2c, P2e, P5 |
+| `core/engine/retention.go` | rewrite | The Redis lock goes. Retention becomes a task of the writer's leader:<br>- the outbox after publication (by age in PG mode);<br>- `change_log`, as the settings say;<br>- `subject_directory`, per service, through the outbox.<br>DBOS workflows are pruned by the `sync` role (`dbosPrune`, 4.9.1).<br>The pruning of `delegated_call` goes with that table. The pruning of `known_subject` becomes a fixed 90-day prune in the directory step, without a setting and without a writer, until P3 drops the table. | P2 dir, P2c, P2e, P5 |
 
 ### 9.5 HTTP surface (`core/server`)
 
 | Path | Decision | Where and how | Phase |
 |---|---|---|---|
-| `core/server/check.go` | delete | Deletes:<br>- the routes `GET /permission`, `POST /check` and `POST /on_behalf/{check,permission}`;<br>- the request types `ConsistencyParam` (`consistency`, `at_least_as_fresh`) and `PermissionQuery`;<br>- `verifiedCaller`, whose `Bearer ` prefix is case-sensitive (`check.go:67`);<br>- `authenticateDelegate` and `requestEnv`;<br>- the OpenAPI tags `Permission`, `Check` and `Delegated`. | P2c |
-| `core/server/authzen.go` | split | **Kept:**<br>- `prepare`, which merges defaults as whole objects;<br>- `evaluate`, now lazy: nothing is computed after the stopping evaluation; today everything is computed and `applySemantic` cuts it afterwards (`authzen.go:294`);<br>- `applySemantic`, `responseOf`, `parseSearch` and `searchSum`;<br>- `encodeCursor`/`decodeCursor` and `pageOf`;<br>- `authzenMetadata`, with https and `PDP__PUBLIC_URL`.<br>The cursor is (bucket, last key, digest of the request). Each page is computed at the PDP's current position; `authzen_page_expired` does not exist.<br>**Rewritten:**<br>- `authzenCaller` (`trusted`, `speaker`, `note`, `flush`) becomes the check of the PEP client and its operations;<br>- `searchSubjects` and `decideKnown` read `subject_directory`.<br>Only the slug is accepted in the path. `min_revision` is read only from the top-level `context.licetum`; in P2b it maps to `at_least_as_fresh`. | P2b, P2c, P5 (`core/pdp/authzen`) |
+| `core/server/check.go` | delete | Deletes:<br>- the routes `GET /permission`, `POST /check` and `POST /on_behalf/{check,permission}`;<br>- the request types `ConsistencyParam` (`consistency`, `at_least_as_fresh`) and `PermissionQuery`, and the headers `X-Authz-Sync` and `X-Authz-Revision`. The internal lever `engine.WithConsistency` stays until P5 (7.7);<br>- `verifiedCaller`, whose `Bearer ` prefix is case-sensitive (`check.go:67`);<br>- `authenticateDelegate` and `requestEnv`;<br>- the OpenAPI tags `Permission`, `Check` and `Delegated`. | P2c |
+| `core/server/authzen.go` | split | **Kept:**<br>- `prepare`, which merges defaults as whole objects;<br>- `evaluate`, now lazy: nothing is computed after the stopping evaluation; today everything is computed and `applySemantic` cuts it afterwards (`authzen.go:294`);<br>- `applySemantic`, `responseOf`, `parseSearch` and `searchSum`;<br>- `encodeCursor`/`decodeCursor` and `pageOf`;<br>- `authzenMetadata`, with https and `PDP__PUBLIC_URL`.<br>The cursor is (bucket, last key, digest of the request). Each page is computed at the PDP's current position; `authzen_page_expired` does not exist.<br>**Rewritten:**<br>- `authzenCaller` (`trusted`, `speaker`, `note`, `flush`) becomes the check of the PEP client and its operations;<br>- `searchSubjects` and `decideKnown` read `subject_directory` (in the directory step).<br>Only the slug is accepted in the path. `min_revision` is read only from the top-level `context.licetum`; in P2b it maps to the lever of `at_least_as_fresh`, `engine.WithMinRevision`. | P2b, P2 dir, P2c, P5 (`core/pdp/authzen`) |
 | `core/server/server.go` | move | Goes to `core/httpx`, with `LocalizeError`, `logAndRecover`, `withAdmission` and `NewServer`. `LocalizeError` also maps the errors of the read-model store. `X-Request-ID` is returned exactly as received when it is safe in a header; the log gets a sanitized copy. The PDP serves its probes on the ops port. `withCORS` is deleted, because the browser reaches the admin API only through the BFF. | P2b, P2c, P5 |
 | `core/server/bearer.go`, `gzip.go` | move | Go to `core/httpx`. The Bearer scheme is matched case-insensitively everywhere, and any other scheme gets a 401. | P2b |
 | `core/server/docs.go`, `core/server/locales/` | keep | Kept for the admin API only. The PDP does not serve `/docs`; `licetum-pdp openapi` prints the committed spec. | P2b |
@@ -2528,13 +2544,14 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 
 | Path | Decision | Where and how | Phase |
 |---|---|---|---|
-| `core/model/oauth.go`, `delegation.go`, `subject.go` | delete | `PolicyClaim` lives on as the answer of `GET /service/{ref}/policy/properties`. `subject.go` is replaced by the model of the directory. | P2c |
+| `core/model/oauth.go`, `delegation.go` | delete | `PolicyClaim` lives on as the answer of `GET /service/{ref}/policy/properties`. | P2c |
+| `core/model/subject.go` | delete | Replaced by the model of the directory, except `SubjectGroup`, which the directory's person page reuses. | P2 dir |
 | `core/model/platform.go` | delete | The uuid5 ids, `PlatformType`, `Action` and `PlatformAccess` go with the platform self-service. | P4 |
 | `core/model/check.go` | split | **Kept:** `Explanation`, `RuleRef`, `DenialRef`, `Anchor`, `CheckRequest` and `CheckResult` (internal types).<br>**Deleted:** `CheckInput` and `CheckResponse`.<br>**Changed:** `RequestContext.Validate` ignores objects and nested lists (conditions see them as missing) instead of answering 400. `ValidContextName` refuses `licetum`. | P2b, P2c |
 | `core/model/authzen.go` | rewrite | Required fields are set per endpoint: search ignores the ids the spec says to omit. Adds `resource.id = "*"` and `context.licetum`. | P2b |
 | `core/model/service.go` | rewrite | The OAuth fields, `client_secret`, `trusted_clients` and `NormalizeTrustedClients` are deleted. The slug is set at creation and never changes: `ServiceUpdate.Slug` (`service.go:90`) goes, and a slug is never reused after its service is deleted. A service belongs to an identity domain. | P2c, P3 |
 | `core/model/{assignment_rule,role,group,type_resource,synchronizer,policy}.go` | rewrite | Adds `subject_type`, `subject_group_id` (instead of the literal `group:<uuid>`), `source: subject`, `resource_from_property`, `exported`, desired and effective parents and `refresh_interval`; drops `cache_ttl`. `PolicyDocumentFormat` becomes `licetum.policy/v2`, and a v1 document is refused. | P2e, P3, P4 |
-| `core/config/config.go` | rewrite | **New sections, per role:** `PDP__`, `READMODEL__` (the store, and for PG mode a DSN that may point at a streaming replica), `CQL__`, `PEP__`, `ADMIN_AUTH__`, `WRITER__`, `PUBLISH__`, `OUTBOX__`, `APPLY__`, `MVCC__`, `GENERATION__`, `CHECKPOINT__`, `LOG__` (`LOG__SUBJECT_SALT`).<br>**Changed:** `POLICY__MAX_STALENESS` defaults to 60 s, and 0 is refused.<br>**Renamed:**<br>- `HTTP__PUBLIC_URL` → `PDP__PUBLIC_URL`;<br>- `REVISION__POLL_INTERVAL` and `REVISION__WAIT_MAX` → the poll interval of `PDP__` and `PDP__FRESHNESS_WAIT`.<br>**Deleted:**<br>- Redis and the old sign-in: `REDIS__*`, `AUTH__STATE_*`, `AUTH__INVALID_TOKEN_TTL`;<br>- `PLATFORM__*`: the OAuth half in P2d, the rest in P4; bootstrap uses `ADMIN_AUTH__BOOTSTRAP_*`;<br>- removed features: `DELEGATION__*`, `SUBJECTS__*`, `CORS__*`;<br>- replicas and the snapshot: `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_*`, `SNAPSHOT__*`;<br>- the request-driven sync and the table engine: `SYNC__ENGINE`, `SYNC__REQUEST_WAIT`, `SYNC__DEMAND_WINDOW`, `SYNC__KEEP_WARM`, `SYNC__FETCH_TTL`, `SYNC__LOCK_*`, `WORKER__REGION`.<br>**Kept:** `SYNC__LEASE`, which times the executor heartbeat and the janitor's takeover of DBOS workflows (`dbosHeartbeat`, `dbosJanitor`, 4.9.1). | P2–P6 |
+| `core/config/config.go` | rewrite | **New sections, per role:** `PDP__`, `READMODEL__` (the store, and for PG mode a DSN that may point at a streaming replica), `CQL__`, `PEP__`, `ADMIN_AUTH__`, `WRITER__`, `PUBLISH__`, `OUTBOX__`, `APPLY__`, `MVCC__`, `GENERATION__`, `CHECKPOINT__`, `LOG__` (`LOG__SUBJECT_SALT`).<br>**Changed:** `POLICY__MAX_STALENESS` defaults to 60 s, and 0 is refused.<br>**Renamed:**<br>- `HTTP__PUBLIC_URL` → `PDP__PUBLIC_URL`;<br>- `REVISION__POLL_INTERVAL` and `REVISION__WAIT_MAX` → the poll interval of `PDP__` and `PDP__FRESHNESS_WAIT`.<br>**Deleted:**<br>- Redis and the old sign-in: `REDIS__*`, `AUTH__STATE_*`, `AUTH__INVALID_TOKEN_TTL`;<br>- `PLATFORM__*`: the OAuth half in P2d, the rest in P4; bootstrap uses `ADMIN_AUTH__BOOTSTRAP_*`;<br>- removed features: `DELEGATION__*`, `SUBJECTS__*` (in the directory step), `CORS__*`;<br>- replicas and the snapshot: `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_*`, `SNAPSHOT__*`;<br>- the request-driven sync and the table engine: `SYNC__ENGINE`, `SYNC__REQUEST_WAIT`, `SYNC__DEMAND_WINDOW`, `SYNC__KEEP_WARM`, `SYNC__FETCH_TTL`, `SYNC__LOCK_*`, `WORKER__REGION`.<br>**Kept:** `SYNC__LEASE`, which times the executor heartbeat and the janitor's takeover of DBOS workflows (`dbosHeartbeat`, `dbosJanitor`, 4.9.1).<br>**Warning for one phase:** a removed setting that is still set is logged at start-up by `config.DeprecatedSettings`. There is one list, and each pull request that removes a setting adds its names to it. P3 deletes the mechanism. | P2–P6 |
 | `core/cli/cli.go` | rewrite | `Serve`, `StopServing` and `connectionBudget` stay, per process. `Worker` is deleted. `Failover` becomes the epoch procedure. `roleOf` knows the roles `pdp`, `writer` and `apply`. | P2b, P5, P6 |
 | `core/cmd/licetum` | split | `licetum check` becomes `licetum pdp` in P2b. Later there are two binaries in the same image:<br>- `core/cmd/licetum-pdp`: `serve`, `openapi`;<br>- `core/cmd/licetum-writer`: `run`, `fetch`, `apply`, `migrate`, `rebuild`, `reconcile`, `checkpoint`, `failover`, `freeze`, `unfreeze`.<br>`licetum worker` is deleted. | P2b, P5, P6 |
 | `core/redisx/*` | delete | Goes with every use of Redis: answer and token L2, breakers, `authz:fetch_all`, PKCE, the counters kept for the previous release, and the retention lock. The exit check: `go list -deps` of both modules shows no go-redis. | P2e |
@@ -2575,7 +2592,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `admin-api/api/admin.go` | rewrite | All routes move under `/service/{ref}/`, including those that have no service in the path today:<br>- `GET /type_resource` (`admin.go:267`);<br>- `/type_resource/{id}/resource` (`:296`) and `…/resource/refresh` (`:314`);<br>- `/group…`, `/role…`, `/assignment_rule…`.<br>A child entity of another service is a 404. `registerOAuth` is deleted after P2d. `registerPlatform` is replaced by `GET /me` and `/platform/*`. | P2c, P4 |
 | `admin-api/api/admin_batch.go`, `admin_policy.go`, `admin_access_groups.go` | keep | Each is limited to one service. The batch also covers types, synchronizers (without secrets) and type links, so revert and rollback no longer fail with `change_not_revertible` because of the kind of a record (8.7). | P4 |
 | `admin-api/api/admin_ops.go` | rewrite | Simulation becomes `/service/{ref}/simulate/access/v1/{evaluation,evaluations,search/*}`. Explain is always on, and the admin right `simulate` is required. `claimsOf` becomes `properties`. | P2c |
-| `admin-api/api/admin_subjects.go` | replace | `/service/{ref}/subjects` on `subject_directory`. | P2c |
+| `admin-api/api/admin_subjects.go` | replace | `/service/{ref}/subjects` on `subject_directory`. The old `/subject` routes go in the second pull request of the directory step. | P2 dir |
 | `admin-api/service/platform.go` | delete | `Authenticate` becomes admin OIDC verification (P2d) and the bindings (P4). `Access`, `FilterAllowed` and `GetPlatform` go in P4. | P2d, P4 |
 | `admin-api/service/admin_access.go` | rewrite | Moves into `admin-api/authz`. Under `admin_write`, a write is refused with 409 `last_platform_admin` or 409 `last_service_owner` when it would leave none. | P4 |
 | `admin-api/service/app.go` | rewrite | No longer embeds `engine.App`. It holds the PostgreSQL pool, the admin token verifier, `pgstore`, and the DBOS client for `SyncOne` and fresh syncs. | P5 |
@@ -2583,7 +2600,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `admin-api/service/batch.go`, `history.go`, `changelog.go` | keep | The ideas stay. `change_log` is ordered by `(revision, seq)` and replaces `authz_change` with its order by `id`. `PlanRollback` covers only the records of the service in the path; today `changesAfter` reads every service (`changelog.go:131`). | P3, P4 |
 | `admin-api/service/policy_document.go` | rewrite | The document becomes the whole unit of one service: types, access groups, groups, roles, rules, sources without secrets, and exported links by slug. Format `licetum.policy/v2`. | P4 |
 | `admin-api/service/delegation.go` | delete | Only `PolicyClaims` survives, as `GET /service/{ref}/policy/properties`. | P2c |
-| `admin-api/service/subjects.go` | replace | `subject_directory` per service, written in bulk PUTs of up to 1000. It is written by editors or by the application's machine client with the `directory_writer` role (P4), rate-limited, with retention per service. | P2c, P4 |
+| `admin-api/service/subjects.go` | replace | `subject_directory` per service, written in bulk PUTs of up to 1000. It is written by editors or by the application's machine client with the `directory_writer` role (P4), rate-limited, with retention per service. | P2 dir, P4 |
 | `admin-api/service/{access_lookup,grant_preview,policy_tests,lint}.go` | rewrite | Run on `core/decide` + `pgstore`. Upstream rules are shown read-only. These tools read the primary; that load is measured, and a read URI for these tools only is added if the measurement calls for it. | P5 |
 | `admin-api/service/{services,type_resources,groups,roles,assignment_rules,access_groups,synchronizers}.go` | rewrite | **Ownership and images:** entities are owned by a service through composite foreign keys, and the outbox gets their full canonical images.<br>**Type links:** a type may link only to an exported type of the same identity domain. While it is linked, the exported type cannot lose the flag or be deleted (409 `blocked_by`).<br>**Services:** the slug is immutable and never reused; only `platform_admin` deletes a service.<br>**Access groups:** they check the service in the path; today they use `GetExistingTypeResourceAnyService`. | P2e, P3, P4 |
 | `admin-api/service/{source_check,log_settings,policy_scenarios}.go`, `batch_check_test.go` | keep | Log settings are at platform scope and are published as the `settings` stream. | P5 |
@@ -2596,7 +2613,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `admin-api/tests/integration/api/{graph,hierarchy,conditions,roles,gaps,escalation}_test.go` | split | Their scenarios are extracted first: they become DEC tables (`policyfix` YAML), ADM04 and a thin AuthZEN smoke test. Then the files are deleted. | P1, P4, P5 |
 | `…/api/snapshot_differential_test.go` | rewrite | Its generator goes to `core/testsupport/policygen`. The comparison becomes DECP (the engine, `core/decide` from P5, ≡ `refeval`) and REF01. | P1 |
 | `…/api/{sync_test,sync_crash_test,regions_test}.go` | rewrite | SYN01–SYN09 | P5 |
-| `…/api/{delegation_test,audit_test,f4_test,f4_kill_test}.go` | delete | They go with their features. | P2c |
+| `…/api/{delegation_test,audit_test,f4_test,f4_kill_test}.go` | delete | They go with their features. The known-subject tests of `f4_test.go` go in the directory step, where DIR02 and DIR04 replace them. | P2 dir, P2c |
 | `…/api/authzen_test.go` | rewrite | AZ01–AZ14 | P2b |
 | The rest of `…/api/` | rewrite | ADM, WR, HIS, API, CONS | P3–P6 |
 | `admin-api/tests/integration/{cluster,chaos,harness}` | replace | First, `Replica.Permission`/`Fresh` move to evaluation and resource search (P2a). Then the suites are replaced by `admin-api/tests/e2e`, with one topology builder (PostgreSQL, CQL, writer, admin, N PDPs, fake IdP and source), and by `admin-api/tests/chaos`. | P2a, P5–P7 |
@@ -2621,7 +2638,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `web/src/features/shell/*` | rewrite | A service switcher, with routes `/services/[slug]/{rules,people,groups,roles,check,history,integration,sources,types,policy,access}`. | P4 |
 | `web/src/features/settings/settings-admins.tsx` | split | Split into platform bindings and service bindings. | P4 |
 | `web/src/features/data/queries.ts` | rewrite | Uses paged, service-scoped endpoints, with no global lists and no N+1 queries. | P4 |
-| `web/src/features/people/*` | rewrite | Reads the service's `subject_directory`. | P2c, P4 |
+| `web/src/features/people/*` | rewrite | Reads the service's `subject_directory`. | P2 dir, P4 |
 | `web/src/features/{grant,roles,access,history}/*` | rewrite | `claim` becomes `subject`/`property`, with `subject_type` and `subject_group_id`. History is by revision and per service. | P3, P4 |
 | `web/src/features/services/sources-tab.tsx` | rewrite | `cache_ttl` goes in P2e; `refresh_interval` comes in P5. | P2e, P5 |
 | `web/src/lib/{session.ts,safe-return.ts,env.ts,schemas.ts}`, `web/src/proxy.ts`, `web/src/app/api/admin/[...path]` | keep | `env` and `schemas` add the OIDC settings and the IdP token answers. | P2d |
@@ -2647,7 +2664,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `ci.yml` job `go-test-replica` | delete | The routing tests go in P2e, and the job with them (11.6). From P5 the PG-mode contracts run against a streaming replica in the nightly suite (`scripts/pg-replica.sh`, `task go:test:integration:replica`, 10.6). | P2e, P5 |
 | `ci.yml` job `go-test` | rewrite | One integration run on PostgreSQL plus one CQL node. | P6 |
 | `pgbouncer.yml`, `nightly-suite.yml`, `chaos.yml`, `loadtest.yml`, `helm.yml`, `codeql.yml`, `release.yml` | keep | PgBouncer covers the write path only. Releases ship two core binaries in one image. | |
-| `multiregion.yml`, `Taskfile.yaml` `go:test:multiregion` | rewrite | Become `multidc` and `go:test:multidc`. | P7 |
+| `multiregion.yml`, `Taskfile.yaml` `go:test:multiregion` | rewrite | Become `multidc` and `go:test:multidc`. The multi-region job of `nightly-suite.yml` is switched off in 2b, in the pull request that renames `check` to `pdp`, with a comment naming P7 (10.7). | 2b, P7 |
 | `docs/deployment.md`, `core/README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `admin-api/README.md`, `web/README.md`, `admin-api/tests/integration/README.md`, `docs/README.ru.md`, `docs/README.zh-CN.md` | rewrite | `docs/deployment.md` was ignored by `docs/*` and never committed; P0 adds the existing guide unchanged, and P7 rewrites it.<br>**Content:**<br>- the topologies: one region on PostgreSQL, regions on streaming replicas, regions on the CQL store;<br>- the SLOs, the failure matrix, sizing and the upgrade order.<br>**Runbooks:**<br>- repair after a node replacement (a correctness requirement);<br>- rebuilding a DC, generation rotation;<br>- failover and epochs, `freeze`, PITR.<br>Each phase updates the parts it changes. | P7 |
 | `docs/adr/0001-regional-pdp.md`, `.gitignore` | add | This document. `.gitignore` ignores `docs/*` today, so P0 adds `!docs/adr/` and `!docs/deployment.md`. | P0 |
 
@@ -2678,6 +2695,8 @@ A Go test that checks a contract is named `TestContract_<ID>_<What>`, for exampl
 - an `active` contract has no test.
 
 It runs as `task contracts:check`. That task is part of `task go:lint`, so it also runs in `task lint`, in `task check` and in the job "Go lint and schema checks" of `ci.yml`.
+
+The scan reads every line of a test file, comments and strings included. A line that spells the test name of a `planned` contract therefore fails the check, as a test would. Until its contract is active, a test of that behaviour has a plain name, and the pull request that makes the contract active renames it.
 
 The check reads names only. It does not look at build tags or results, so it cannot prove that a test runs at the contract's level or that it asserts anything. Review enforces three rules that cover this gap:
 
@@ -2895,6 +2914,15 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 | ADM12 | Only callers whose roles in S include `directory_writer` (a machine client of the admin IdP, or an editor of S through the role closure, 8.2) write the directory of S, at a limited rate and without the `admin_write` lock. An unchanged batch takes no revision, `directory_writer` allows nothing else, and a role of one service cannot read the directory of another. | status codes and lock waits | pg | P4 |
 | ADM13 | The seed and `restore-admin` need only the `ADMIN_AUTH__*` settings. With no `PLATFORM__*` OAuth variable set, the admin API is seeded and break-glass works. Today both require all six variables (`Platform.IsConfigured`). | status codes | pg | P2 |
 
+**DIR: the subject directory** (8.8). All four are `planned` in P2. DIR02 and DIR04 become active with the first pull request of the directory step, DIR01 and DIR03 with the second. ADM12 (P4) adds the roles, the rate limit and the lock.
+
+| ID | Statement | Oracle | Level | Phase |
+|---|---|---|---|---|
+| DIR01 | Subject search lists the entries of the directory of the service, of the requested subject type, that are allowed. An empty directory gives an empty result, an unknown subject is never found, entries of another service or type never appear, and pages neither skip nor repeat an entry. | the evaluation endpoint asked for each directory entry in turn; the entries written | pg | P2 |
+| DIR02 | A directory write changes only the rows whose content differs. An unchanged batch writes no row and takes no revision, and the time an entry was last sent is kept apart from the entry. The same id in two services is two independent entries. | the rows (`xmin`, `updated_at`) and `revision_state` before and after each write | pg | P2 |
+| DIR03 | The people a rule reaches (who-has-access, preview, the person page) are the entries of the directories of the services of the rule's types, decided with their stored properties. A service with an empty directory has no people, and the directory of another service is not counted. | hand-written sets of people from the fixture of DEC13 (who has access) | pg | P2 |
+| DIR04 | Retention removes, in chunks, the directory entries not sent within the retention period of their service. An entry sent again survives, a service with no retention period keeps everything, and other services are untouched. | the rows written and the times they were sent | pg | P2 |
+
 **OPS, API, LOAD, WEB.**
 
 | ID | Statement | Oracle | Level | Phase |
@@ -2908,7 +2936,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 | OPS07 | The Helm chart renders the golden files and passes kubeconform. It does not render without its secrets. | the golden files | helm | P7 |
 | OPS08 | `migrate` on a database of v0.1.x refuses with a message that names the release and says there is no upgrade path. Schema v2 keeps its versions in a goose table of its own. | the error and the untouched database | pg | P3 |
 | OPS09 | The subject-hash salt is in no outbox entry, checkpoint or regional row, and every process hashes a subject to the same value from the same `LOG__SUBJECT_SALT`. Phase P5 covers the outbox and the decision log, P6 the checkpoints and the regional rows. | the replicated state and the decision log | system | P5 |
-| API01 | The committed OpenAPI schemas (admin and PDP) and the CQL schema snapshot match the code. | the generated schemas | unit | P2 |
+| API01 | The committed OpenAPI schemas (admin and PDP) match the code. P6 adds the CQL schema snapshot to the statement. | the generated schemas | unit | P2 |
 | API02 | Every message and every API text has its English, Russian and Chinese translations. | the catalogs | unit | P2 |
 | API03 | Input bounds are enforced: sizes, counts, names. | status codes | unit | P2 |
 | LOAD01 | The load test gives no wrong answer. | `expectedAllowed` | load | P2 |
@@ -2995,6 +3023,7 @@ Between P2 and P7 the admin schema, the settings and the processes change under 
 - **When the chart job runs.** `helm.yml` runs on pull requests that touch `deploy/helm/**`, `core/Dockerfile`, `admin-api/Dockerfile` or the workflow itself; `web/Dockerfile` does not start it. Its path filter also gets `core/config/**`, so a change of settings renders the chart.
 - **Compose.** The author starts the Compose stack for a pull request that changes settings, processes or images.
 - **When a check cannot stay green.** Sometimes a phase cannot keep a check green, for example a page that is rewritten only in P4. The pull request then disables that check explicitly in the workflow, with a comment that names the phase that restores it. The contracts that cover the check stay `planned` with that phase.
+  - **The multi-region nightly in P2.** Its Compose environment names `check`, Redis and `PLATFORM__*` and the other settings that 2a to 2e change, so it would need an edit in several of those pull requests, only to be rewritten as `multidc` in P7. It is therefore switched off in 2b, in the pull request that renames `check` to `pdp`, with a comment that names P7, which restores it as `multidc`. From P5 the nightly suite also runs the postgres adapter on a streaming replica (`scripts/pg-replica.sh`, 10.6).
 
 ### 10.8 What replaces the F-tests
 
@@ -3007,7 +3036,7 @@ Between P2 and P7 the admin schema, the settings and the processes change under 
 | F2-5 and F6-2 (the revocation SLO) | REV01 and REV02 |
 | F2-8, F2-9, the Redis chaos of F5, F3-13, F3-14 | Removed with Redis (2e). |
 | F3 (`TestSync*` in `api/sync_test.go`, `sync_crash_test.go`) | SYN01 to SYN10 |
-| F4 (the delegation audit, known subjects) | Removed with the features (2c). The subject directory is covered by ADM12 and by subject search under AZ. |
+| F4 (the delegation audit, known subjects) | Removed with the features: the known-subject tests in the directory step, the audit tests in 2c. The subject directory is covered by DIR01 to DIR04 (P2), by ADM12 (P4) and by subject search under AZ. |
 | F5 (probes, admission, degraded mode, migrations) | OPS01, OPS03, OPS04, FC01 to FC05 |
 | F5-11 (the job `previous-release`) | OPS08. The job is removed in P3. |
 | F6 (replicas, regions, cells, Helm) | REV02, FC01 to FC03, FO01, OPS05, OPS07 |
@@ -3017,6 +3046,8 @@ Between P2 and P7 the admin schema, the settings and the processes change under 
 ### 10.9 Changes to `contracts.yaml`
 
 This section adds twelve contracts to the index, all `planned`: APP03, ASOF04, REC01, REC02, SYN10, AZ15, AZ16, ADM11, ADM12, ADM13, OPS08, OPS09. ST09 is already in the index with the same meaning: it came with ADR 0002 (#61), together with ST10 (the GC horizon) and PUB05 (log chunks of at most 1 MiB), which 10.4 lists as ADR 0002 states them.
+
+The planning of P2 adds four more, all `planned` in P2: DIR01, DIR02, DIR03 and DIR04, the contracts of the subject directory (10.4). Without them the known-subject tests that the directory step deletes would have no contract that replaces them (9). With the twelve above that makes sixteen new contracts.
 
 It also changes these entries:
 
@@ -3044,6 +3075,7 @@ It also changes these entries:
 | AZ14 | The limit is per pod. |
 | PUB03 | Phase P5, when the `postgres` adapter on a standby starts taking T(P) from the heartbeat. |
 | SYN09 | Asked only by the fetchers of region X, not by executors there; no executor runs outside the home region (4.9.1). |
+| API01 | The statement covers the two OpenAPI schemas (admin and PDP). The CQL schema snapshot clause cannot hold before there is a CQL schema, so it is added back to the statement in P6 (11.10). |
 
 POL05 and OPS02 stay `planned` until P7.
 
@@ -3089,7 +3121,7 @@ The refactor lands on `epic/production-load-readiness` in nine phases: P0 to P7,
   - Sometimes a phase cannot. For example, the web client is generated from the admin schema, which P2 and P3 change before P4 rewrites the pages.
   - In that case the pull request switches the check off explicitly and says so in its description. The contract that covers the check stays `planned`.
 - **Migrations and the released `v0.1.0`.** The tag `v0.1.0` (`0fc5b0b`, 2026-10-12) shipped `core/db/migrations/00001_init.sql` exactly as it is now; `00002` to `00005` came after it.
-  - **Until P3, a migration only adds.** It is a new numbered file with a table, a nullable column or an index. What P2 stops using stays in the schema: `delegated_call`, `known_subject`, the OAuth columns of `service` and `trusted_clients`.
+  - **Until P3, a migration only adds.** It is a new numbered file with a table, a nullable column or an index. What P2 stops using stays in the schema: `delegated_call`, `known_subject`, the OAuth columns of `service` and `trusted_clients`. The numbers P2 uses are fixed in advance in the ledger of 11.6.2.
     - The `previous-release` job of `.github/workflows/ci.yml` runs the integration tests of `v0.1.0` on the migrations of the change. It keeps passing until P3.
   - **P3 replaces the schema with schema v2.** Schema v2 has a goose version table of its own.
     - `migrate` recognizes a v0.1.x database by its version table (`goose_db_version`). It stops with a message that the database cannot be upgraded and the installation must be made anew. There is no upgrade path.
@@ -3104,9 +3136,11 @@ P0 ─> P1 ─> P2 [2a ─> 2b ─> 2d ─> subject_directory ─> 2c ─> 2e] �
 ```
 
 - **P1 before P2.** P2 removes the endpoints that most of today's semantic tests go through. The decision contracts must hold before those endpoints go.
+- **Inside P2 the order is 2a, 2b, 2d, the directory step, 2c, 2e.** It is the order of the diagram, of 1.2 and of 9, and 11.6 lists the steps in it.
 - **Inside P2, 2d comes before 2c.** `SeedPlatform` and `restore-admin` depend on `Platform.IsConfigured()`, which requires all six `PLATFORM__*` OAuth settings (`core/config/config.go:145`, called at `core/db/migrate.go:218` and `core/db/restore.go:36`).
   - If 2c removed those settings first, the seed would be skipped without an error. The admin API would answer 503 `platform_not_seeded`, and the break-glass would not work until P4.
 - **`subject_directory` arrives together with the removal of `known_subject`.** Without it, subject search, the people pages and "whom a rule reaches" would be empty until P4.
+  - The directory step is the one that retires `known_subject`: its second pull request switches the readers and deletes the machinery. 2c does not touch the registry, and there is no separate pull request for it.
 - **2e is a pull request of its own.** It does not depend on AuthZEN. It lands after 2c, because the per-service OAuth sign-in keeps its PKCE state in Redis (`authz:pkce:*`, `core/engine/oauth.go`) until 2c removes that sign-in.
 - **P3 after P2.** Schema v2 drops what P2 stopped using.
 - **P4 after P3.** The admin roles are checked against what P3 introduces: service ownership enforced by composite foreign keys, and `PolicyTx`.
@@ -3185,40 +3219,46 @@ The steps are separate pull requests, in this order.
 
 - **2a: oracles to AuthZEN.** Test oracles move to AuthZEN while the old endpoints still exist:
   - `Replica.Permission` and `Replica.Fresh` of the harness go to evaluation and resource search;
-  - the k6 mix goes to `evaluation`, `evaluations` and search.
+  - the k6 mix goes to `evaluation`, `evaluations` and search;
+  - `consistency=higher` becomes an internal context lever (`engine.WithConsistency`) that a test-only wrapper sets from a test header, so the tests that move to AuthZEN in 2a need not be edited again when 2c removes the query parameter (7.7);
+  - LOAD01 becomes active in the pull request of 2a that moves the load-test mix and oracle to AuthZEN: its evidence is the unit tests of the oracle and of the verdict, and the smoke job of every pull request (10.6).
 - **2b: PEP clients and conformance.**
-  - New tables `pep_client`, `pep_credential` and `pep_issuer`, added by a new numbered migration.
-  - JWT client-credentials: allowlisted `iss`, mandatory `aud`, `exp` and `nbf`, an `alg` allowlist. Until the writer collects issuer keys (P5), the PDP fetches JWKS through the existing `jwks.go`.
+  - New tables `pep_client`, `pep_credential` and `pep_issuer`, added by a new numbered migration (11.6.2).
+  - JWT client-credentials: allowlisted `iss` compared exactly, mandatory `aud`, `exp` and `nbf`, an `alg` allowlist (7.9). Until the writer collects issuer keys (P5), the PDP fetches JWKS through the existing `jwks.go`.
   - API keys: stored as sha256, two active per client.
   - Authorization per operation. An unknown service, an unregistered client and a missing operation all get the same 403.
-  - An optional token bucket per pod answers 429.
+  - An optional token bucket per pod answers 429. `PEP__MAX_INFLIGHT` and `PDP__SEARCH_CONCURRENCY` (7.11) are not in P2: they belong to AZ15 in P5.
+  - Minimal management routes for PEP clients, keys and issuers, at their final paths and under the platform policies until P4 (7.10).
   - Conformance fixes:
     - required fields, per endpoint; in search, `subject.id` and `resource.id` are omitted or ignored as the specification says;
     - `resource.id = "*"`;
     - `context.licetum`, read only from the top-level `context` of `/evaluations`; its `min_revision` maps to today's `at_least_as_fresh` until P5;
+    - `Licetum-Revision: 1.<r>` on every 200 and on admin writes, beside the old header (7.7);
     - `X-Request-ID` is echoed;
     - the 401 rules: `Bearer` is case-insensitive and another scheme is a 401;
     - a nested context is ignored, not refused;
     - a lazy short-circuit in `/evaluations`;
-    - https metadata;
+    - https metadata, with the loopback exception of 7.3;
     - the ops port.
   - Only the slug addresses the service in the path.
-  - Search pages are computed at the current position of each page. The cursor holds the last key and the request digest, in today's order by id; the bucket joins it with the read-model port in P5 (7.6). There is no `authzen_page_expired`.
-  - The `check` role becomes `pdp`.
+  - Search pages are computed at the current position of each page. The cursor holds the last key and the request digest, in today's order by id (bytewise, 7.6); the bucket joins it with the read-model port in P5. There is no `authzen_page_expired`.
+  - The `check` role becomes `pdp`. The pull request that does it also switches off the multi-region nightly, with a comment that names P7 (10.7).
 - **2d: admin OIDC.**
   - `ADMIN_AUTH__*` settings: issuer, a mandatory audience, the JWKS URL and the subject claim.
   - Authorization still uses the platform policies until P4.
   - The web BFF becomes the OIDC client: code flow with PKCE, with the verifier, state and nonce in a short-lived encrypted cookie. The Dex redirect goes to the web interface.
   - `SeedPlatform` and `restore-admin` check `ADMIN_AUTH__*` in place of `Platform.IsConfigured()`.
   - The `PLATFORM__*` OAuth settings are removed. `AUTH__STATE_*` and `CORS__*` go in 2c with `oauth_login` and `oauth_callback`, which use them (`core/engine/oauth.go:57,70,114`).
-- **`subject_directory` per service.**
-  - Bulk writes through `PUT /service/{ref}/subjects`.
-  - The directory feeds AuthZEN subject search, the people pages and `peopleReached`.
+- **The directory step: `subject_directory` per service and the end of `known_subject`.** Two pull requests, after 2d and before 2c (8.8).
+  - **First, additive:** the tables (11.6.2), bulk writes through `PUT /service/{ref}/subjects` with the other routes of 8.8, and retention in the worker. The old `/subject` routes and `known_subject` are untouched.
+  - **Second, the switch:** the directory feeds AuthZEN subject search, the people pages, `peopleReached`, who-has-access, preview and the person page, with the web in the same pull request. The whole `known_subject` machinery is deleted: `core/engine/subjects_runtime.go`, `NoteSubject` and its callers, `/subject`, `SUBJECTS__*` and the model types. The table stays until P3, with a fixed 90-day prune and no writer. `flusher.go` stays, because `audit.go` uses it until 2c.
   - Until P4 it is governed by the platform policy that governs `/subject` today (`group_member`). The role `directory_writer` comes with the roles in P4.
+  - Retention has no default period (an entry is kept until deleted), properties are stored as sent, and the home of the retention setting is left to P3 (8.8).
 - **2c: removal of the per-service surface.**
   - `core/server/check.go`: `/permission`, `/check`, `on_behalf/*`.
   - The OAuth half of `core/engine/oauth.go`.
-  - `core/engine/{delegation_runtime,audit,subjects_runtime,flusher}.go`.
+  - `core/engine/{delegation_runtime,audit,flusher}.go`. The registry (`subjects_runtime.go`) is already gone with the directory step.
+  - The query parameters and headers of the freshness levers (7.14); the internal lever stays until P5.
   - `trusted_clients` and the `oauth_login`, `oauth_callback`, `oauth_refresh` and `list_delegated_calls` routes.
   - In the web interface: the OIDC step of `connect-wizard.tsx`, `delegation-section.tsx`, `app/api/discover` and `app/api/check`. `integration-tab.tsx` is rewritten.
   - The tables and columns stay until P3 (see 11.1).
@@ -3231,13 +3271,43 @@ The steps are separate pull requests, in this order.
   - The table sync engine goes: `claimJob`, its LISTEN/NOTIFY and its regions filter, together with `SYNC__ENGINE`, `importLegacyState`, `recordDataChange` and `SYNC__LOCK_*`.
     - Until P5 brings back regional sources (SYN09), a source with `regions` may be asked by any executor.
 - **Kept until later:** the snapshot path and `ensure`, because the platform self-service still lives.
-- **Contracts:** AZ01 to AZ14, PEP01 to PEP03, ADM01, ADM13, API01 to API03, LOAD01, WEB01, WEB03.
+- **Contracts:** AZ01 to AZ14, PEP01 to PEP03, ADM01, ADM13, DIR01 to DIR04, API01 to API03, LOAD01, WEB01, WEB03.
+  - Each contract becomes active in one pull request, together with the tests that name it. AZ10 and WEB03 are the last: AZ10 can pass only once the legacy routes are gone, and WEB03 needs the simulation and integration pages rewritten, both in 2c. API01 is limited to the two OpenAPI schemas (10.9).
 - **Exit:**
   - `go list -deps` of both modules contains no go-redis;
   - these contracts are green, AZ10 (the route table of the public port) included;
   - sign-in through Dex works in Compose;
   - the load-test smoke gives no wrong answer;
   - the `previous-release` job is green.
+
+#### 11.6.1 P2 decisions
+
+The plan for P2 left twelve points open. They were settled with the defaults the plan proposed, and each is also written into the section it changes.
+
+1. **Freshness levers (7.7, 7.14, 11.9).** The public query parameters `consistency` and `at_least_as_fresh` and the headers `X-Authz-Sync` and `X-Authz-Revision` go in 2c. An internal lever, `engine.WithConsistency`, a context carrier that no network request reaches, stays until P5, which removes it. 2a adds it, so the tests move to AuthZEN once.
+2. **`Licetum-Revision` (7.7).** Before P3 brings epochs, the PDP and the admin writes send the literal `1.<r>`, and the PDP compares `r` only.
+3. **PEP management (7.10, 8.14).** P2 has minimal routes at the final paths of 8.5 under the platform policies; P4 re-gates them by the roles of S. Without them no PEP could be created before P4.
+4. **API01 (10.4, 10.9).** The statement is amended now to the two OpenAPI schemas. The CQL schema snapshot clause returns in P6.
+5. **Directory contracts (10.4).** DIR01 to DIR04 are added as `planned` in P2. DIR02 and DIR04 become active with the first pull request of the directory step, DIR01 and DIR03 with the second. A test of a planned contract is named plainly, because the check reads comments too (10.1).
+6. **LOAD01 (11.6, 2a).** It becomes active in the 2a pull request that moves the load-test mix and oracle, on unit-level evidence and the smoke job.
+7. **Multi-region nightly (10.7).** It is switched off in the 2b pull request that renames `check` to `pdp`, with a comment that names P7.
+8. **Rules of authentication (7.9, 8.11).** `iss` is compared exactly. The `aud` of a token must contain one of the `audiences` of its `pep_issuer`, or `PDP__AUDIENCE` when that list is empty. `restore-admin -user` follows `ADMIN_AUTH__SUBJECT_CLAIM`.
+9. **`PDP__PUBLIC_URL` (7.3).** It must be https, with a loopback exception (`localhost`, `127.0.0.1`, `[::1]`) so that Compose and the load test start.
+10. **Removed settings and search order (9.7, 7.6).** A removed setting is logged through one `DeprecatedSettings` list, extended by each pull request; P3 deletes the mechanism. Resource search keeps the bytewise order by id that AZ04 promises, using `COLLATE "C"` and an additive index.
+11. **Directory details (8.8).** Retention has no default period. Properties are stored as sent. The home of `subject_directory_settings` is decided by P3, and the P2 pull request documents the gap.
+12. **The end of `known_subject` (8.8, 9.4, 11.2).** The second pull request of the directory step deletes it. There is no separate step in 2c for it; 9 and 11.6 say so.
+
+#### 11.6.2 Migration ledger
+
+The numbers of the migrations of P2 are fixed here, so that branches developed in parallel do not take the same file name. A branch that is rebased renames its file to its number in this table. No other step of P2 adds a migration: what 2c and 2e stop using stays in the schema until P3 (11.1).
+
+| Number | Step | Content |
+|---|---|---|
+| `00006` | 2b, PEP credentials | `pep_client`, `pep_credential` and `pep_issuer`. |
+| `00007` | 2b, search paging | Optional. An index for the bytewise (`COLLATE "C"`) keyset scan of `resource_cache` (7.6). If the scan does not need it, the number stays unused and `00008` keeps its number. |
+| `00008` | the directory step, first pull request | `subject_directory`, `subject_directory_seen` and `subject_directory_settings` (8.8). |
+
+Every file adds only (a table, a nullable column or an index) and has a `Down` section, so that the `previous-release` job keeps passing until P3.
 
 ### 11.7 P3: schema v2 and the mandatory outbox on policy tables (#54)
 
@@ -3337,7 +3407,7 @@ The steps are separate pull requests, in this order.
     - on a standby, the newest heartbeat that the writer commits to PostgreSQL every second, so an idle primary does not make a replica look stale.
   - `POLICY__MAX_STALENESS` defaults to 60 s, and `0` is refused.
   - A long snapshot load on a standby must survive recovery conflicts (`hot_standby_feedback` or `max_standby_streaming_delay`, documented).
-  - `min_revision` is native, and `consistency=higher` is removed.
+  - `min_revision` is native. The internal lever `engine.WithConsistency`, which is what remains of `consistency=higher` after 2c removed the query parameter, is removed with `forConsistency`.
 - **`licetum-writer`.**
   - DBOS only. Steps run on `RunAsTransaction`.
   - A region-local fetcher (`licetum-writer fetch --region <r>`) without PostgreSQL credentials passes the source's answer to the executor in the home region; no DBOS executor runs outside the home region (4.9.1).
@@ -3396,7 +3466,7 @@ The CQL store is the one ADR 0002 chose. The model stays compatible with Apache 
   - The code and ST08 land in this phase, with the collection off by default.
   - A separate pull request turns it on by default, and only after APP01 to APP03 and ASOF01 to ASOF03 have passed under the kill tests of the nightly suite.
 - **Removed:** the PostgreSQL poll of `revision_state` from the CQL mode of the PDP, and the PostgreSQL half of `localstate.go`.
-- **Contracts:** ST05, ST07 to ST10, PUB01, PUB04, APP01 to APP03, ASOF01 to ASOF04, REC02, REF02, CONS01 (the CQL adapter), CONS05, FC01, FC04, PEP04, OPS04 (the CQL half), OPS05, OPS06, OPS09 (the checkpoints and the regional rows).
+- **Contracts:** ST05, ST07 to ST10, PUB01, PUB04, APP01 to APP03, ASOF01 to ASOF04, REC02, REF02, CONS01 (the CQL adapter), CONS05, FC01, FC04, PEP04, OPS04 (the CQL half), OPS05, OPS06, OPS09 (the checkpoints and the regional rows), API01 (its clause for the CQL schema snapshot is added to the statement; the contract stays active).
 - **Exit:**
   - these contracts are green on fixed seeds;
   - REF01 passes in CQL mode;
@@ -3485,7 +3555,7 @@ These decisions are part of the owner's "implement the plan". They are not reope
 | 2 | Which CQL store | ScyllaDB or Apache Cassandra 5, decided in P0.5 after the spike and the license question. The model stays Cassandra-compatible: no LWT, no MV, no secondary indexes, no tablets-only features. |
 | 3 | Upgrade from `v0.1.0` | None. Schema v2 has its own goose version table, `migrate` refuses a v0.1.x database with a clear message, and the `previous-release` job is removed in P3. |
 | 4 | Publication of the outbox | A single leader woken by `pg_notify` in the writing transaction, reading `outbox WHERE revision > last`, plus a periodic tick. There is no DBOS workflow per revision. DBOS stays for source synchronization. |
-| 5 | Order inside P2 | 2d before 2c. `subject_directory` comes with the removal of `known_subject`. 2e is a pull request of its own. |
+| 5 | Order inside P2 | 2a, 2b, 2d, the directory step, 2c, 2e. 2d before 2c. `subject_directory` comes with the removal of `known_subject`, in the directory step. 2e is a pull request of its own. |
 | 6 | Outbox check in P3 | On policy tables only. It counts the tuples actually changed and adds `AFTER TRUNCATE`. Reconciliation catches bypasses; they are not claimed impossible. Resource tables follow in P5. |
 | 7 | Terms of P1 | Contracts and `refeval` use external terms (type names, external ids) from the start. |
 | 8 | MVCC in P6 | Append-only with manual generation rotation. The garbage collection is turned on only after APP and ASOF pass under the kill tests. |
@@ -3530,6 +3600,7 @@ These follow the plan with the critique applied. A later ADR, or a pull request 
 | 27 | `synchronizer.cache_ttl` and `SYNC__FETCH_TTL` | Removed with Redis in 2e. |
 | 28 | Outbox in `postgres` mode | Kept by age, since nothing consumes it there. Moving an installation to the CQL store is a documented `rebuild --all`, covered by a contract added in P6. |
 | 29 | Subject-hash salt | A deployment secret, `LOG__SUBJECT_SALT`, the same in every region and never in the replicated state; schema v2 drops `log_settings.salt` (7.12, OPS09). |
+| 30 | The twelve open points of the P2 plan | Settled with the defaults the plan proposed: the freshness levers, `Licetum-Revision`, PEP management, API01, the directory contracts, LOAD01, the multi-region nightly, the rules of authentication, `PDP__PUBLIC_URL`, removed settings and search order, the directory details, and the end of `known_subject`. They are listed in 11.6.1. |
 
 ### 13.3 Open, with the phase that settles them
 

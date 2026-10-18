@@ -99,8 +99,8 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   (`mutate`, once per batch in `RunBatch`, `RestoreAdminAccess`, the seed), a synchronization that changed data bumps `data:<service>` in the
   transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
   `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision`), invalidates the view and, for the replicas of the
-  previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`, `authz:sync_epoch`);
-  this release does not read the first two. Answer keys are `authz:permission:t8:r<rules>:…` / `authz:check:t4:r<rules>:…`.
+  previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`);
+  this release reads neither. Answer keys are `authz:permission:t8:r<rules>:…` / `authz:check:t4:r<rules>:…`.
 - The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
   (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
   (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`

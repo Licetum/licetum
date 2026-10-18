@@ -728,6 +728,35 @@ contracts:
     phase: P2
     status: planned
 
+  # ---------- DIR: the subject directory (ADR 0001, 8.8) ----------
+  # The directory replaces known_subject in P2. DIR02 and DIR04 become active with the first pull request of the directory step
+  # (tables, routes, retention), DIR01 and DIR03 with the second (the readers move to the directory and known_subject is retired).
+  # Until then their tests are named plainly: the check reads comments too. ADM12 (P4) adds the roles, the rate limit and the lock.
+  - id: DIR01
+    statement: Subject search lists the entries of the directory of the service, of the requested subject type, that are allowed; an empty directory gives an empty result, an unknown subject is never found, entries of another service or type never appear, and pages neither skip nor repeat an entry.
+    oracle: the evaluation endpoint asked for each directory entry in turn; the entries written
+    level: pg
+    phase: P2
+    status: planned
+  - id: DIR02
+    statement: A directory write changes only the rows whose content differs; an unchanged batch writes no row and takes no revision, and the time an entry was last sent is kept apart from the entry. The same id in two services is two independent entries.
+    oracle: the rows (xmin, updated_at) and revision_state before and after each write
+    level: pg
+    phase: P2
+    status: planned
+  - id: DIR03
+    statement: The people a rule reaches (who-has-access, preview, the person page) are the entries of the directories of the services of the rule's types, decided with their stored properties; a service with an empty directory has no people, and the directory of another service is not counted.
+    oracle: hand-written sets of people from the fixture of DEC13 (who has access)
+    level: pg
+    phase: P2
+    status: planned
+  - id: DIR04
+    statement: Retention removes, in chunks, the directory entries not sent within the retention period of their service; an entry sent again survives, a service with no retention period keeps everything, and other services are untouched.
+    oracle: the rows written and the times they were sent
+    level: pg
+    phase: P2
+    status: planned
+
   # ---------- OPS / API / LOAD / WEB ----------
   - id: OPS01
     statement: /healthz has no dependency; /readyz follows staleness, the schema (newer is fine), the store and draining.
@@ -783,8 +812,10 @@ contracts:
     level: system
     phase: P5
     status: planned
+  # API01 covers the two OpenAPI schemas in P2. Its clause for the CQL schema snapshot (one snapshot per engine, ADR 0001, 5.1) is
+  # added to the statement in P6, with the CQL store: it cannot hold before there is a CQL schema.
   - id: API01
-    statement: The committed OpenAPI schemas (admin and PDP) and the CQL schema snapshot match the code.
+    statement: The committed OpenAPI schemas (admin and PDP) match the code.
     oracle: the generated schemas
     level: unit
     phase: P2
