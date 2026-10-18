@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
+	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/engine"
 )
 
@@ -42,7 +43,13 @@ func waitForKeys(t *testing.T, c *harness.Cluster, patterns ...string) {
 // PostgreSQL and makes no round trip to Redis (before it, a cache hit read PostgreSQL twice, for the slug and for the
 // service, and made three round trips to Redis).
 func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
-	c := startReplicas(t, 2)
+	// /metrics counts every statement of the replica, the request's and the background ones; the Trace counts the request's.
+	// The background statement of an idle replica is the poll of the revision (WatchRevision, every REVISION__POLL_INTERVAL
+	// of 250 ms, see F2-10): one that falls between the two scrapes below is in the delta of /metrics and in no Trace, and the
+	// test fails with "/metrics counted db=1, the Trace db=0". Through PgBouncer, where the scrape reads its gauges through the
+	// pooler, that happened in two runs out of four on a loaded machine. The replicas poll once a minute here; the requests
+	// that ask for a newer revision still read it at once (Replica.Permission asks for the revision of the last write).
+	c := startReplicas(t, 2, harness.WithConfig(func(cfg *config.Config) { cfg.Revision.PollInterval = time.Minute }))
 	p := c.SeedPolicy("org", 0)
 	alice := c.UserToken("alice")
 	first, second := c.Replicas[0], c.Replicas[1]
