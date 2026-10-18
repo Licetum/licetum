@@ -419,8 +419,9 @@ This record amends section 5 of ADR 0001 on:
 - ST08: a late re-insert of a collected version stays invisible while the range tombstone exists, and reads at P ≥ v1
   are unchanged after the tombstone is purged.
 - ST02: its oracle, the PostgreSQL closure, excludes the anchor itself, since `descendant_v` has no self rows.
-- ST09 (new, cql, P6): the applier refuses to write a version older than the GC horizon of its key, and the PDP
+- ST09 (new, cql, P6; the contract ADR 0001 names in 10.9): the CQL schema uses nothing that is not portable (no
+  lightweight transaction, materialized view, secondary index or tablets-only option), and the schema and the store
+  tests pass on Apache Cassandra 5 and on ScyllaDB, the second store nightly.
+- ST10 (new, cql, P6): the applier refuses to write a version older than the GC horizon of its key, and the PDP
   refuses a read position older than the GC horizon.
-- ST10 (new, cql, P6): the CQL schema and the store tests pass on Apache Cassandra 5 and on ScyllaDB, the second store
-  nightly.
 - PUB05 (new, unit, P3): every `log_chunk.body` is at most 1 MiB of zstd and holds whole records.
