@@ -13,9 +13,14 @@ import (
 // always compared; the decision, the granting rules and the denials only when the question sets them (an empty list set in
 // the fixture expects none). The rules are compared as sets: the order of an explanation is not part of the contract, and
 // a rule that takes part through several instances (a role, several anchors, a denial matching several levels) is named
-// once. A denial is its rule, the exceptions that lift it and whether it is assumed for an unresolved parent.
+// once. A denial is its rule, the exceptions that lift it and whether it is assumed for an unresolved parent, and whether
+// it applies on a missing attribute when the expectation of that rule says. An entry that the explanation repeats where a
+// rule written inline has one (Answer.Repeated) is a mismatch whatever the question expects.
 func Compare(q *policyfix.Question, a Answer) []string {
 	var out []string
+	for _, r := range a.Repeated {
+		out = append(out, "the explanation lists more than once "+r)
+	}
 	if a.Allowed != q.Allowed {
 		out = append(out, fmt.Sprintf("allowed: got %t, want %t", a.Allowed, q.Allowed))
 	}
@@ -28,13 +33,23 @@ func Compare(q *policyfix.Question, a Answer) []string {
 		}
 	}
 	if q.Denials != nil {
+		statesMissing := map[string]bool{} // the rules whose expectation says whether they apply on a missing attribute
+		want := make([]string, len(q.Denials))
+		for i, d := range q.Denials {
+			expected := Denial{Rule: d.Rule, LiftedBy: sortedUnique(d.LiftedBy), UnresolvedParent: d.UnresolvedParent}
+			want[i] = expected.String()
+			if d.MissingAttribute != nil {
+				statesMissing[d.Rule] = true
+				expected.MissingAttribute = *d.MissingAttribute
+				want[i] = expected.withMissing()
+			}
+		}
 		got := make([]string, len(a.Denials))
 		for i, d := range a.Denials {
 			got[i] = d.String()
-		}
-		want := make([]string, len(q.Denials))
-		for i, d := range q.Denials {
-			want[i] = Denial{Rule: d.Rule, LiftedBy: sortedUnique(d.LiftedBy), UnresolvedParent: d.UnresolvedParent}.String()
+			if statesMissing[d.Rule] {
+				got[i] = d.withMissing()
+			}
 		}
 		if diff := setDiff(got, want); diff != "" {
 			out = append(out, "denials: "+diff)

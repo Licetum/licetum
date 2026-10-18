@@ -3,6 +3,9 @@
 # deny rule). A group membership whose predicate is unknown makes the membership unknown, through nested groups too, so a
 # denial on the group applies and a grant on it does not. Unknown is weaker than a failed condition (one condition that
 # fails decides the rule) and than a membership that holds (one membership that holds makes the subject a member).
+#
+# A denial that applies only because a condition (of the rule, of a guard, or of a membership the rule targets) reads a
+# missing attribute says so in the explanation (missing_attribute); one whose conditions hold does not.
 contracts: [DEC09]
 description: Denials with apply and skip on a missing request attribute, and unknown group memberships under denials, grants and exceptions.
 services: [org]
@@ -61,7 +64,7 @@ cases:
     subject: user-1
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [read-branches], denials: []}
-      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [read-branches], denials: [{rule: deny-B2-from-network}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [read-branches], denials: [{rule: deny-B2-from-network, missing_attribute: true}]}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt
@@ -79,17 +82,17 @@ cases:
     context: {ip: 10.99.4.4}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed}
-      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: deny-B2-from-network}]}
-      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: deny-B3-from-network-skip}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: deny-B2-from-network, missing_attribute: false}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: deny-B3-from-network-skip, missing_attribute: false}]}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
   - name: a member of the group is denied by every denial on it and granted by the grant on it
     subject: u2
     claims: {clearance: low}
     questions:
-      - {type: folder, resource: F1, action: read, allowed: false, decision: denied, granted_by: [read-folders], denials: [{rule: deny-F1-to-low}]}
-      - {type: folder, resource: F2, action: read, allowed: false, decision: denied, denials: [{rule: deny-F2-to-low-skip}]}
-      - {type: folder, resource: F3, action: read, allowed: false, decision: denied, denials: [{rule: deny-F3-to-low-parent}]}
-      - {type: folder, resource: F4, action: read, allowed: false, decision: denied, denials: [{rule: deny-F4-to-low-group}]}
+      - {type: folder, resource: F1, action: read, allowed: false, decision: denied, granted_by: [read-folders], denials: [{rule: deny-F1-to-low, missing_attribute: false}]}
+      - {type: folder, resource: F2, action: read, allowed: false, decision: denied, denials: [{rule: deny-F2-to-low-skip, missing_attribute: false}]}
+      - {type: folder, resource: F3, action: read, allowed: false, decision: denied, denials: [{rule: deny-F3-to-low-parent, missing_attribute: false}]}
+      - {type: folder, resource: F4, action: read, allowed: false, decision: denied, denials: [{rule: deny-F4-to-low-group, missing_attribute: false}]}
       - {type: folder, resource: F1, action: write, allowed: true, decision: allowed, granted_by: [write-folders-for-low]}
   - name: somebody who is not a member is neither denied nor granted through the group
     subject: u2
@@ -103,17 +106,17 @@ cases:
   - name: an unknown membership applies the denials on the group, nested or as a subject, unless they skip, and grants nothing
     subject: u2
     questions:
-      - {type: folder, resource: F1, action: read, allowed: false, decision: denied, granted_by: [read-folders], denials: [{rule: deny-F1-to-low}]}
+      - {type: folder, resource: F1, action: read, allowed: false, decision: denied, granted_by: [read-folders], denials: [{rule: deny-F1-to-low, missing_attribute: true}]}
       - {type: folder, resource: F2, action: read, allowed: true, decision: allowed, denials: []}
-      - {type: folder, resource: F3, action: read, allowed: false, decision: denied, denials: [{rule: deny-F3-to-low-parent}]}
-      - {type: folder, resource: F4, action: read, allowed: false, decision: denied, denials: [{rule: deny-F4-to-low-group}]}
+      - {type: folder, resource: F3, action: read, allowed: false, decision: denied, denials: [{rule: deny-F3-to-low-parent, missing_attribute: true}]}
+      - {type: folder, resource: F4, action: read, allowed: false, decision: denied, denials: [{rule: deny-F4-to-low-group, missing_attribute: true}]}
       - {type: folder, resource: F1, action: write, allowed: false, decision: no_access}
   - name: one membership that holds makes a member, an unknown condition of a denial with one that holds applies it
     subject: u3
     claims: {department: ops}
     questions:
       - {type: folder, resource: F2, action: audit, allowed: true, decision: allowed, granted_by: [audit-folders-for-staff], denials: []}
-      - {type: folder, resource: F1, action: audit, allowed: false, decision: denied, granted_by: [audit-folders-for-staff], denials: [{rule: deny-F1-audit-to-low-ops}]}
+      - {type: folder, resource: F1, action: audit, allowed: false, decision: denied, granted_by: [audit-folders-for-staff], denials: [{rule: deny-F1-audit-to-low-ops, missing_attribute: true}]}
   - name: a condition that fails decides the denial although another one is unknown
     subject: u3
     claims: {badge: staff, department: sales}
@@ -137,7 +140,7 @@ cases:
   - name: an exception whose condition reads a missing attribute lifts nothing
     subject: u4
     questions:
-      - {type: folder, resource: F3, action: delete, allowed: false, decision: denied, granted_by: [delete-folders], denials: [{rule: deny-delete-folders}]}
+      - {type: folder, resource: F3, action: delete, allowed: false, decision: denied, granted_by: [delete-folders], denials: [{rule: deny-delete-folders, missing_attribute: false}]}
   - name: an exception whose condition fails lifts nothing
     subject: u4
     context: {network: office}

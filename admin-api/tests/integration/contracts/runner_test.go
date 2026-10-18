@@ -19,7 +19,9 @@ import (
 // mask, access_implies, a type without a synchronizer, a type whose source has no resources, attributes, an unresolved parent,
 // an access group, memberships by subject, by predicate, of everybody, of a nested group, disabled and out of their window,
 // a role, and rules with every kind of subject, target and guard, denials with both on_missing values, a wildcard denial,
-// validity windows and a condition on the hour of the decision.
+// validity windows and a condition on the hour of the decision. The state before the fixture's (before) is used by the
+// tables that change the state after the first synchronization: dec05_source_changes, dec05_deleted_parent_type,
+// dec06_synchronizer_deleted and the dec12_access_group* ones.
 const everyField = `
 contracts: []
 services: [shop, crm]
@@ -441,6 +443,27 @@ func TestRunner_CompareReportsEveryMismatch(t *testing.T) {
 	none := policyfix.Question{Allowed: false, GrantedBy: []string{}, Denials: []policyfix.ExpectedDenial{}}
 	if got := contracts.Compare(&none, answer); len(got) != 2 {
 		t.Errorf("empty lists must expect no rules: %v", got)
+	}
+
+	// missing_attribute is compared for the denials whose expectation states it; an entry the explanation repeats is
+	// reported whatever the question expects.
+	yes, no := true, false
+	flagged := contracts.Answer{
+		Denials:  []contracts.Denial{{Rule: "m", Level: "read", MissingAttribute: true}},
+		Repeated: []string{"the denial m at branch/B1 of read"},
+	}
+	stated := func(missing *bool) *policyfix.Question {
+		return &policyfix.Question{Denials: []policyfix.ExpectedDenial{{Rule: "m", MissingAttribute: missing}}}
+	}
+	if got := contracts.Compare(stated(&yes), flagged); len(got) != 1 || !strings.Contains(got[0], "more than once the denial m") {
+		t.Errorf("a repeated entry, the flag as expected: %v", got)
+	}
+	if got := contracts.Compare(stated(nil), flagged); len(got) != 1 {
+		t.Errorf("a repeated entry, the flag not stated: %v", got)
+	}
+	got = contracts.Compare(stated(&no), flagged)
+	if len(got) != 2 || !slices.ContainsFunc(got, func(m string) bool { return strings.Contains(m, `missing ["m (no missing attribute)"]`) }) {
+		t.Errorf("a flag that differs: %v", got)
 	}
 }
 

@@ -42,6 +42,97 @@ type Fixture struct {
 	Roles        []Role        `json:"roles,omitempty"`
 	Rules        []Rule        `json:"rules,omitempty"`
 	Cases        []Case        `json:"cases"`
+	// Before, when set, is how the state differed when the resources were first synchronized and the policy was written:
+	// the fixture's state is reached by changes made afterwards (see Before). The questions are about the fixture's state.
+	Before *Before `json:"before,omitempty"`
+}
+
+// Before is the state at the first synchronization, where it differs from the fixture's, for a state that only a change
+// made after the resources were synchronized and the policy written can reach: a resource its source no longer reports
+// (it is switched off, not deleted), a type whose synchronizer was deleted (its resources stay in the local copy), a
+// parent type deleted under a live type, an access group whose levels changed under the rules that name it.
+//
+// The engine runner loads this state, synchronizes the types and writes the policy, then makes the changes — through the
+// admin API and the sources, and a deleted type through the database, as the integration test it comes from does (the
+// admin API refuses to delete a type that a live type names as its parent) — and synchronizes again. The reference
+// evaluator never reads it: it decides the fixture's state, in which what was removed does not exist.
+type Before struct {
+	// Types are the types as they were, by name. A type the fixture does not have was deleted afterwards. A type of the
+	// fixture may differ in two ways only: sync true where the fixture's is false (its synchronizer was deleted), and parent
+	// links to deleted types besides the fixture's links (the link stays, the type it names is gone).
+	Types []Type `json:"types,omitempty"`
+	// Resources are reported by their sources at the first synchronization besides the fixture's resources, or in place of
+	// the fixture's resource of the same type and id. One the fixture does not have left its source afterwards when its
+	// type still has a synchronizer, else it stays in the local copy as it was. A parent of a deleted type is still
+	// reported afterwards: the type was deleted, not the source's data.
+	Resources []Resource `json:"resources,omitempty"`
+	// AccessGroups are access groups of the fixture (by type and name) with the levels they had when the policy was
+	// written; they are changed to the fixture's levels afterwards.
+	AccessGroups []AccessGroup `json:"access_groups,omitempty"`
+}
+
+// TypesAtFirstSync returns the types as they were at the first synchronization: the fixture's, each replaced by its
+// version in Before, then the types deleted since.
+func (f *Fixture) TypesAtFirstSync() []Type {
+	if f.Before == nil {
+		return slices.Clone(f.Types)
+	}
+	out := make([]Type, 0, len(f.Types)+len(f.Before.Types))
+	for _, t := range f.Types {
+		if i := slices.IndexFunc(f.Before.Types, func(b Type) bool { return b.Name == t.Name }); i >= 0 {
+			t = f.Before.Types[i]
+		}
+		out = append(out, t)
+	}
+	for _, b := range f.Before.Types {
+		if _, ok := f.TypeByName(b.Name); !ok {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// ResourcesAtFirstSync returns what the sources reported at the first synchronization: the fixture's resources, each
+// replaced by its version in Before, then the resources of Before the fixture does not have.
+func (f *Fixture) ResourcesAtFirstSync() []Resource {
+	if f.Before == nil {
+		return slices.Clone(f.Resources)
+	}
+	out := make([]Resource, 0, len(f.Resources)+len(f.Before.Resources))
+	for _, r := range f.Resources {
+		if b, ok := f.Before.resourceOf(r.Type, r.ID); ok {
+			r = *b
+		}
+		out = append(out, r)
+	}
+	for _, b := range f.Before.Resources {
+		if _, ok := f.ResourceOf(b.Type, b.ID); !ok {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// DeletedTypes returns the names of the types deleted after the first synchronization.
+func (f *Fixture) DeletedTypes() []string {
+	var out []string
+	if f.Before != nil {
+		for _, b := range f.Before.Types {
+			if _, ok := f.TypeByName(b.Name); !ok {
+				out = append(out, b.Name)
+			}
+		}
+	}
+	return out
+}
+
+func (b *Before) resourceOf(typeName, id string) (*Resource, bool) {
+	for i := range b.Resources {
+		if b.Resources[i].Type == typeName && b.Resources[i].ID == id {
+			return &b.Resources[i], true
+		}
+	}
+	return nil, false
 }
 
 // Type is a resource type of a service. Its name is unique in the fixture.
@@ -186,6 +277,10 @@ type ExpectedDenial struct {
 	Rule             string   `json:"rule"`
 	LiftedBy         []string `json:"lifted_by,omitempty"`
 	UnresolvedParent bool     `json:"unresolved_parent,omitempty"`
+	// MissingAttribute, when set, is whether the denial applies only because a condition reads an attribute the request
+	// does not carry (on_missing_attribute apply; the missing_attribute of the explanation). The engine runner compares it;
+	// the reference evaluator does not state it.
+	MissingAttribute *bool `json:"missing_attribute,omitempty"`
 }
 
 // Decisions of an explanation (model.Explanation.Decision).
@@ -333,6 +428,15 @@ func (f *Fixture) Validate() error {
 			}
 		}
 	}
+	syncedBefore := map[string]bool{} // the types without a synchronizer that had one at the first synchronization
+	if f.Before != nil {
+		errs = append(errs, f.validateBefore(types)...)
+		for _, b := range f.Before.Types {
+			if t := types[b.Name]; t != nil && !t.Sync && b.Sync {
+				syncedBefore[b.Name] = true
+			}
+		}
+	}
 	resources := map[string]bool{}
 	for _, r := range f.Resources {
 		t := types[r.Type]
@@ -392,7 +496,9 @@ func (f *Fixture) Validate() error {
 		if n > 1 {
 			bad("%s: at most one of resource, from_claim, where", where)
 		}
-		if n == 1 && !tt.Sync {
+		// A type whose synchronizer was deleted after the policy was written may keep a rule on its resources: a dead
+		// rule, which the admin API keeps and which covers nothing.
+		if n == 1 && !tt.Sync && !syncedBefore[t.Type] {
 			bad("%s: type %q has no synchronizer, only the whole type can be covered", where, t.Type)
 		}
 		if t.FromClaim != nil && types[t.FromClaim.LookupType] == nil {
@@ -480,4 +586,92 @@ func (f *Fixture) Validate() error {
 		bad("no cases")
 	}
 	return errors.Join(errs...)
+}
+
+// validateBefore checks the state of Before against the fixture's types: what may differ, and that its resources and
+// access groups name what that state has.
+func (f *Fixture) validateBefore(types map[string]*Type) []error {
+	var errs []error
+	bad := func(format string, args ...any) { errs = append(errs, fmt.Errorf("before: "+format, args...)) }
+	b := f.Before
+	then := map[string]*Type{} // the types at the first synchronization
+	atFirstSync := f.TypesAtFirstSync()
+	for i := range atFirstSync {
+		then[atFirstSync[i].Name] = &atFirstSync[i]
+	}
+	seen := map[string]bool{}
+	for _, bt := range b.Types {
+		if seen[bt.Name] {
+			bad("type %q twice", bt.Name)
+		}
+		seen[bt.Name] = true
+		if !slices.Contains(f.Services, bt.Service) {
+			bad("type %q: unknown service %q", bt.Name, bt.Service)
+		}
+		for _, p := range bt.Parents {
+			if then[p.Type] == nil {
+				bad("type %q: unknown parent type %q", bt.Name, p.Type)
+			}
+		}
+		now := types[bt.Name]
+		if now == nil {
+			continue // deleted afterwards
+		}
+		var kept []TypeParent // the links the type has now: the others must name deleted types
+		for _, p := range bt.Parents {
+			if types[p.Type] == nil {
+				continue
+			}
+			kept = append(kept, p)
+		}
+		switch {
+		case bt.Service != now.Service || !equalImplies(bt.Implies, now.Implies):
+			bad("type %q: only the synchronizer and the links to deleted types can differ", bt.Name)
+		case !slices.EqualFunc(kept, now.Parents, func(a, b TypeParent) bool { return a.Type == b.Type && slices.Equal(a.Inherit, b.Inherit) }):
+			bad("type %q: its links to the types that are not deleted must be those of the fixture", bt.Name)
+		case bt.Sync != now.Sync && !bt.Sync:
+			bad("type %q: a synchronizer added afterwards is not a change Before describes", bt.Name)
+		case bt.Sync == now.Sync && len(kept) == len(bt.Parents):
+			bad("type %q: it does not differ from the fixture's", bt.Name)
+		}
+	}
+	key := map[string]bool{}
+	for _, r := range b.Resources {
+		t := then[r.Type]
+		switch {
+		case t == nil:
+			bad("resource %s/%s: unknown type", r.Type, r.ID)
+			continue
+		case !t.Sync:
+			bad("resource %s/%s: type %q had no synchronizer", r.Type, r.ID, r.Type)
+		}
+		k := r.Type + "/" + r.ID
+		if key[k] {
+			bad("resource %s twice", k)
+		}
+		key[k] = true
+		for _, p := range r.Parents {
+			if !slices.ContainsFunc(t.Parents, func(tp TypeParent) bool { return tp.Type == p.Type }) {
+				bad("resource %s: %q was not a parent type of %q", k, p.Type, r.Type)
+			}
+		}
+	}
+	for _, g := range b.AccessGroups {
+		if !slices.ContainsFunc(f.AccessGroups, func(a AccessGroup) bool { return a.Type == g.Type && a.Name == g.Name }) {
+			bad("access group %s/%s: the fixture has no such access group", g.Type, g.Name)
+		}
+	}
+	return errs
+}
+
+func equalImplies(a, b map[string][]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if w, ok := b[k]; !ok || !slices.Equal(v, w) {
+			return false
+		}
+	}
+	return true
 }

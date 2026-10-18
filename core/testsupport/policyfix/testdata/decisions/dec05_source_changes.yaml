@@ -1,0 +1,82 @@
+# DEC05 and DEC11 after the sources changed (admin-api/tests/integration/api/hierarchy_test.go,
+# TestIntegrationHierarchySourceChanges). The resources were synchronized and the policy written in the state of `before`;
+# then the sources changed and the types were synchronized again:
+#   - B2 left the source of branch: it is switched off (resource_cache.active = false), not deleted, and is not there to
+#     be decided: resource_not_found, and the permission list does not name it;
+#   - B3 moved from R2 (under D1) to R3 (under D2): the grant on D1 no longer reaches it;
+#   - the source of kiosk answers with no rows: that is its truth, every kiosk is switched off;
+#   - I2, whose source still names B2 as its parent, is left with a parent that is not in the local copy: nothing flows
+#     to it through B2 any more, and a denial that could cover its missing parent is assumed (fail closed, DEC11).
+# B5 is under R1 from the start (its appearance in the source is synchronization, not a decision).
+#
+# division <- rrs <- branch, kiosk <- rrs (service org) and item <- branch (service app). Now: D1 ⊃ R1, R2; D2 ⊃ R3;
+# R1 ⊃ B1, B5; R3 ⊃ B3, B4; B1 ⊃ I1; B4 ⊃ I4; I2 -> B2 (gone). Before: R1 ⊃ B2, K1; R2 ⊃ B3; R3 ⊃ K2.
+contracts: [DEC05, DEC11]
+description: A resource gone from its source, or moved by it, is no longer reached by the grants above where it was.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: kiosk, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R3}]}
+  - {type: branch, id: B4, name: Branch 4, parents: [{type: rrs, id: R3}]}
+  - {type: branch, id: B5, name: Branch 5, parents: [{type: rrs, id: R1}]}
+  - {type: item, id: I1, name: Item 1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I2, name: Item 2, parents: [{type: branch, id: B2}]}
+  - {type: item, id: I4, name: Item 4, parents: [{type: branch, id: B4}]}
+rules:
+  # hierarchy_test.go:TestIntegrationHierarchySourceChanges: read on D1.
+  - {name: src-D1, subject: user-1, type: division, resource: D1, access: [read]}
+  # Read on every item, and a denial on R1, which B2 lay under before it left.
+  - {name: orphan-allow-item, subject: orphan, type: item, access: [read]}
+  - {name: orphan-deny-R1, subject: orphan, type: rrs, resource: R1, access: [read], deny: true}
+cases:
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationHierarchySourceChanges
+  - name: the grant on D1 reaches what is still under it, not what left or moved away
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [src-D1], denials: []}
+      - {type: branch, resource: B5, action: read, allowed: true, decision: allowed, granted_by: [src-D1], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: resource_not_found, granted_by: [], denials: []}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [src-D1]}
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, granted_by: [src-D1]}
+      - {type: rrs, resource: R3, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationHierarchySourceChanges (the source that answers
+  # with no rows)
+  - name: a source that answers with no rows leaves nothing of its type to grant
+    subject: user-1
+    questions:
+      - {type: kiosk, resource: K1, action: read, allowed: false, decision: resource_not_found, granted_by: [], denials: []}
+      - {type: kiosk, resource: K2, action: read, allowed: false, decision: resource_not_found, granted_by: [], denials: []}
+  - name: nothing flows through a parent that left its source
+    subject: user-1
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [src-D1]}
+      - {type: item, resource: I2, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+  - name: a denial that could cover the parent that left is assumed for its child
+    subject: orphan
+    service: app
+    questions:
+      - {type: item, resource: I2, action: read, allowed: false, decision: denied, granted_by: [orphan-allow-item], denials: [{rule: orphan-deny-R1, unresolved_parent: true}]}
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [orphan-allow-item], denials: [{rule: orphan-deny-R1}]}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [orphan-allow-item], denials: []}
+before:
+  # What the sources reported when the types were first synchronized and the rules written.
+  resources:
+    - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+    - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+    - {type: kiosk, id: K1, name: Kiosk 1, parents: [{type: rrs, id: R1}]}
+    - {type: kiosk, id: K2, name: Kiosk 2, parents: [{type: rrs, id: R3}]}

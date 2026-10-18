@@ -5,7 +5,13 @@
 # every denial that reaches the resource with the level or a level it includes, with the exceptions that lift it
 # (lifted_by; none when it stands) and unresolved_parent when it reaches the resource only because a parent link at or
 # above it is unresolved. A question about a type as a whole is explained by the rules on that very type. What nothing
-# asks about is empty: a decision of no_access, resource_not_found or type_not_found has no granting rule.
+# asks about is empty: a decision of no_access, resource_not_found or type_not_found has no granting rule. A denial that
+# applies only because a condition reads an attribute the request does not carry is marked missing_attribute.
+#
+# A rule written inline has one instance per anchor, so its denial is listed once per anchor and denied level, and an
+# exception once per anchor among those that lift it: the engine runner checks it on every explanation (Answer.Repeated),
+# which pins the counts graph_test.go:TestIntegrationCheckExplainAuthzenMetrics asserts on B1 (one denial) and on B2 (one
+# exception lifting it). The reference evaluator names a rule once and says nothing of the counts.
 #
 # Two shapes are left out, where the engine and the reference evaluator explain differently. The denials of a no_access
 # answer are not expected here: the engine lists none (it explains the levels it granted), the reference evaluator lists
@@ -138,8 +144,8 @@ cases:
     subject: explain
     questions:
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [ex-allow-D1], denials: []}
-      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [ex-allow-D1], denials: [{rule: ex-deny-R1}]}
-      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [ex-allow-D1, ex-except-B2], denials: [{rule: ex-deny-R1, lifted_by: [ex-except-B2]}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [ex-allow-D1], denials: [{rule: ex-deny-R1, missing_attribute: false}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [ex-allow-D1, ex-except-B2], denials: [{rule: ex-deny-R1, lifted_by: [ex-except-B2], missing_attribute: false}]}
       - {type: branch, resource: B4, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
       - {type: branch, resource: NOPE, action: read, allowed: false, decision: resource_not_found, granted_by: [], denials: []}
       - {type: nothing, action: read, allowed: false, decision: type_not_found, granted_by: [], denials: []}
@@ -192,7 +198,7 @@ cases:
   - name: a denial applied on a missing attribute is named (the denial that skips it is not)
     subject: missing
     questions:
-      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-deny-B2}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-deny-B2, missing_attribute: true}]}
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [miss-allow-branch], denials: []}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [miss-allow-branch], denials: []}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, denials: []}
@@ -208,8 +214,8 @@ cases:
     subject: missing
     context: {ip: "10.99.4.4"}
     questions:
-      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-deny-B2}]}
-      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-skip-B3}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-deny-B2, missing_attribute: false}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-skip-B3, missing_attribute: false}]}
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, denials: []}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, denials: []}
   - name: every rule that grants the level is named, and only those

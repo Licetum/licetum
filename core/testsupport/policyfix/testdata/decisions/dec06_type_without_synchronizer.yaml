@@ -1,8 +1,8 @@
 # DEC06: the end of hierarchy_test.go:TestIntegrationTypeModes — item (service app) under branch has no synchronizer
 # any more, so it is a not_sync type: the whole-type rule on it decides it, and the grant on D1 above it no longer
 # cascades into it. division → rrs → branch (service org); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3; R3 ⊃ B4.
-# (The point rule on I4 of the test, dead once the synchronizer is gone, cannot be written in a fixture: a rule on a
-# resource of a type without a synchronizer is refused.)
+# Here item never had a synchronizer; dec06_synchronizer_deleted.yaml has the state of the test, where item lost its
+# synchronizer after its resources were synchronized, with the point rule on I4 that died with it.
 contracts: [DEC06]
 description: A type without a synchronizer below sync types is decided by its own whole-type rules only.
 services: [org, app]
