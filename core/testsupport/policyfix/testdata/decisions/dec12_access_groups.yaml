@@ -1,0 +1,138 @@
+# DEC12, access groups: '@name' in the access list of a rule or of a role item stands for the levels of the access group
+# of that name of the target's type, as they are at the time of the decision. The expanded levels are what the
+# permission carries: they flow below its anchor like levels written out (into the types below, in another service too),
+# a denial and an exception take them too, a group mixed with plain levels adds to them, the level hierarchy of the type
+# applies to them, and two types may each have a group of the same name with other levels.
+#
+# division <- rrs <- branch (service org), item <- branch (service app); report (org, approve includes read) and the
+# capability feature (org, no synchronizer). D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3; R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4;
+# reports P1, P2. Each subject holds the rules of one scenario.
+contracts: [DEC12]
+description: An access group reference stands for the levels of the group of the target's type.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+  - {name: report, service: org, sync: true, implies: {approve: [read]}}
+  - {name: feature, service: org, sync: false}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+  - {type: report, id: P1}
+  - {type: report, id: P2}
+access_groups:
+  # conditions_test.go:TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences: the group as it is created, and
+  # the same group once its levels were changed to read alone (a fixture has one state, so the later state is a group
+  # of its own here).
+  - {type: branch, name: editor, levels: [read, write]}
+  - {type: branch, name: editor-after, levels: [read]}
+  # One name, two types, other levels.
+  - {type: branch, name: ops, levels: [write]}
+  - {type: division, name: ops, levels: [read]}
+  - {type: rrs, name: lock, levels: [write]}
+  - {type: report, name: approver, levels: [approve]}
+  - {type: feature, name: power, levels: [use, admin]}
+roles:
+  - {name: branch-editor, items: [{type: branch, resource: B3, access: ["@editor"]}]}
+  - {name: rrs-lock, items: [{type: rrs, resource: R2, access: ["@lock"]}]}
+rules:
+  - {name: t-editor-B1, subject: editor, type: branch, resource: B1, access: ["@editor"]}
+  - {name: t-after-B1, subject: editor-after, type: branch, resource: B1, access: ["@editor-after"]}
+  # @ops of a division is read; @ops of a branch is write.
+  - {name: ops-D1, subject: ops, type: division, resource: D1, access: ["@ops"]}
+  - {name: ops-B4, subject: ops, type: branch, resource: B4, access: ["@ops"]}
+  # A group and a plain level in one list.
+  - {name: mixed-B2, subject: mixed, type: branch, resource: B2, access: ["@ops", read]}
+  # A denial and an exception that name groups.
+  - {name: lock-allow-D1, subject: locker, type: division, resource: D1, access: [read, write]}
+  - {name: lock-deny-R1, subject: locker, type: rrs, resource: R1, access: ["@lock"], deny: true}
+  - {name: lock-except-B2, subject: locker, type: branch, resource: B2, access: ["@ops"], exception: true}
+  # The level hierarchy of the type applies to the levels of a group.
+  - {name: approver-P1, subject: approver, type: report, resource: P1, access: ["@approver"]}
+  # A capability granted through a group.
+  - {name: power-feature, subject: power, type: feature, access: ["@power"]}
+  # Role items that name groups, granted and denied.
+  - {name: role-editor-B3, subject: role-editor, role: branch-editor}
+  - {name: rl-allow-D1, subject: role-lock, type: division, resource: D1, access: [read, write]}
+  - {name: rl-deny-R2, subject: role-lock, role: rrs-lock, deny: true}
+cases:
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences
+  - name: a rule that names a group has the levels of the group
+    subject: editor
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [t-editor-B1], denials: []}
+      - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, granted_by: [t-editor-B1], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: []}
+  - name: the levels of a group flow below the anchor into the other service
+    subject: editor
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [t-editor-B1]}
+      - {type: item, resource: I1, action: write, allowed: true, decision: allowed, granted_by: [t-editor-B1]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences
+  - name: the rule follows the levels the group has now
+    subject: editor-after
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [t-after-B1]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: no_access, granted_by: []}
+  - name: a group name stands for the group of the target's type
+    subject: ops
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [ops-D1]}
+      - {type: division, resource: D1, action: write, allowed: false, decision: no_access}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [ops-D1]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: write, allowed: true, decision: allowed, granted_by: [ops-B4]}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: a group and a plain level in one list add up
+    subject: mixed
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [mixed-B2]}
+      - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [mixed-B2]}
+      - {type: branch, resource: B2, action: admin, allowed: false, decision: no_access}
+  - name: a denial and an exception that name groups deny and lift the levels of their groups
+    subject: locker
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [lock-allow-D1], denials: []}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, granted_by: [lock-allow-D1], denials: [{rule: lock-deny-R1}]}
+      - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [lock-allow-D1, lock-except-B2], denials: [{rule: lock-deny-R1, lifted_by: [lock-except-B2]}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [lock-allow-D1], denials: []}
+      - {type: branch, resource: B3, action: write, allowed: true, decision: allowed, granted_by: [lock-allow-D1], denials: []}
+  - name: the level hierarchy of the type applies to the levels of a group
+    subject: approver
+    questions:
+      - {type: report, resource: P1, action: approve, allowed: true, decision: allowed, granted_by: [approver-P1]}
+      - {type: report, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [approver-P1]}
+      - {type: report, resource: P1, action: write, allowed: false, decision: no_access}
+      - {type: report, resource: P2, action: read, allowed: false, decision: no_access}
+  - name: a capability granted through a group has every level of the group
+    subject: power
+    questions:
+      - {type: feature, action: use, allowed: true, decision: allowed, granted_by: [power-feature]}
+      - {type: feature, action: admin, allowed: true, decision: allowed, granted_by: [power-feature]}
+      - {type: feature, action: read, allowed: false, decision: no_access, granted_by: []}
+  - name: a role item that names a group has the levels of the group
+    subject: role-editor
+    questions:
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [role-editor-B3]}
+      - {type: branch, resource: B3, action: write, allowed: true, decision: allowed, granted_by: [role-editor-B3]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: a denial that grants a role whose item names a group denies the levels of the group
+    subject: role-lock
+    questions:
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [rl-allow-D1], denials: []}
+      - {type: branch, resource: B3, action: write, allowed: false, decision: denied, granted_by: [rl-allow-D1], denials: [{rule: rl-deny-R2}]}
+      - {type: rrs, resource: R2, action: write, allowed: false, decision: denied, denials: [{rule: rl-deny-R2}]}
+      - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, denials: []}

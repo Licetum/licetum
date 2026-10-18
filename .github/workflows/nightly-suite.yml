@@ -1,7 +1,7 @@
 name: Nightly suite
 
-# What runs every night on the epic branch until it reaches main: the integration suites through PgBouncer, fault injection,
-# the multi-region environment and the load test. A schedule fires only from the default branch, so the dispatcher on main
+# What runs every night on the epic branch until it reaches main: the integration suites through PgBouncer, the decision
+# property test over many seeds, fault injection, the multi-region environment and the load test. A schedule fires only from the default branch, so the dispatcher on main
 # (.github/workflows/nightly.yml there) calls this workflow with the ref of the epic; the workflows below are taken from the
 # same commit as this one (docs/adr/0001-regional-pdp.md, phase P0).
 on:
@@ -25,6 +25,12 @@ jobs:
   pgbouncer:
     name: PgBouncer
     uses: ./.github/workflows/pgbouncer.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  decp:
+    name: Decision property test
+    uses: ./.github/workflows/decp.yml
     with:
       ref: ${{ inputs.ref }}
 

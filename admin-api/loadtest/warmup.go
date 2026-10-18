@@ -59,7 +59,7 @@ func (w warmer) warmUp(ctx context.Context) ([]phase, error) {
 			return nil, err
 		}
 		start := time.Now()
-		status, body, err := w.do(req)
+		status, _, body, err := w.do(req)
 		if err != nil {
 			return nil, fmt.Errorf("warm-up %s: %w", opNames[p.kind], err)
 		}
@@ -78,22 +78,24 @@ func (w warmer) warmUp(ctx context.Context) ([]phase, error) {
 // granted is the answer the probes expect: at least one decision, and it is a grant.
 func granted(decisions, allowed int) bool { return decisions > 0 && allowed == decisions }
 
-// synchronize asks for the first permission of the document type until it answers 200. Any other status ends the
-// warm-up at once: it is a setup error, not a synchronization still in progress.
+// synchronize asks for the first permission of the document type until it answers 200 with every type synchronized. A
+// request waits SYNC__REQUEST_WAIT for a synchronization and then answers 200 without the type (X-Authz-Sync: pending):
+// that is a synchronization still in progress too. Any other status ends the warm-up at once: it is a setup error.
 func (w warmer) synchronize(ctx context.Context) error {
 	for attempt := 1; ; attempt++ {
 		req, err := w.request(ctx, http.MethodGet, "/permission", url.Values{"type": {"document"}, "limit": {"20"}}, w.tokens[warmSubject], "")
 		if err != nil {
 			return err
 		}
-		status, body, err := w.do(req)
+		status, header, body, err := w.do(req)
+		pending := header.Get(syncHeader) == "pending"
 		switch {
-		case err == nil && status == http.StatusOK:
+		case err == nil && status == http.StatusOK && !pending:
 			return nil
-		case err == nil && status < 500:
+		case err == nil && status != http.StatusOK && status < 500:
 			return fmt.Errorf("warm-up permission: status %d: %s", status, head(body))
 		}
-		slog.Info("the first permission is not ready yet, trying again", "attempt", attempt, "status", status, "error", err)
+		slog.Info("the first permission is not ready yet, trying again", "attempt", attempt, "status", status, "pending", pending, "error", err)
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("warm-up permission: no answer in %v: %w", warmUpTimeout, ctx.Err())
@@ -142,15 +144,18 @@ func (w warmer) request(ctx context.Context, method, path string, query url.Valu
 	return req, nil
 }
 
+// syncHeader is the header of the check API that says an answer lacks a type still synchronizing.
+const syncHeader = "X-Authz-Sync"
+
 // do performs the request and reads the whole body.
-func (w warmer) do(req *http.Request) (int, []byte, error) {
+func (w warmer) do(req *http.Request) (int, http.Header, []byte, error) {
 	resp, err := w.client.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, http.Header{}, nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	return resp.StatusCode, body, err
+	return resp.StatusCode, resp.Header, body, err
 }
 
 // head is the start of a body, for an error message.

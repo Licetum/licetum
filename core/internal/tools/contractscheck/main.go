@@ -31,12 +31,14 @@ type contract struct {
 }
 
 var (
-	validID     = regexp.MustCompile(`^[A-Z][A-Z0-9]{2,7}$`)
-	testName    = regexp.MustCompile(`TestContract_([A-Z][A-Z0-9]{2,7})_[A-Za-z0-9_]+`)
-	levels      = []string{"unit", "pg", "cql", "system", "fault", "multidc", "load", "helm", "web"}
-	statuses    = []string{"planned", "active", "retired"}
-	skippedDirs = []string{".git", "node_modules", ".next", "vendor", "reports", "dist"}
+	validID  = regexp.MustCompile(`^[A-Z][A-Z0-9]{2,7}$`)
+	testName = regexp.MustCompile(`TestContract_([A-Z][A-Z0-9]{2,7})_[A-Za-z0-9_]+`)
+	levels   = []string{"unit", "pg", "cql", "system", "fault", "multidc", "load", "helm", "web"}
+	statuses = []string{"planned", "active", "retired"}
 )
+
+// skippedDirs are not searched for tests; .claude holds the local worktrees of coding agents, copies of the repository.
+var skippedDirs = []string{".git", ".claude", "node_modules", ".next", "vendor", "reports", "dist"}
 
 func main() {
 	root := flag.String("root", "..", "root of the repository (contracts.yaml lives there)")

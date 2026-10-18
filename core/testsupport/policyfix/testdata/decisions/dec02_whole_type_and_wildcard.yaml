@@ -1,0 +1,104 @@
+# The integration test TestIntegrationDenyWholeTypeAndWildcard (admin-api/tests/integration/api/graph_test.go), state by
+# state: a whole-type grant, a wildcard denial on one resource, a whole-type denial that beats every point grant, and a
+# point exception on the type that lifts the whole-type denial (a point anchor lies below the whole of its own type). The
+# test adds rules to one subject and finally deletes the whole-type denial; a fixture is one state, so each step is a
+# subject holding the rules in force at that step.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4.
+contracts: [DEC01, DEC02, DEC03]
+description: The steps of TestIntegrationDenyWholeTypeAndWildcard, one subject per step.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+rules:
+  # Step 1: read on the whole type branch.
+  - {name: w1-allow-branch, subject: step1, type: branch, access: [read]}
+  # Step 2: + every level denied on B2.
+  - {name: w2-allow-branch, subject: step2, type: branch, access: [read]}
+  - {name: w2-deny-B2, subject: step2, type: branch, resource: B2, access: ["*"], deny: true}
+  # Step 3: + read denied on the whole type branch.
+  - {name: w3-allow-branch, subject: step3, type: branch, access: [read]}
+  - {name: w3-deny-B2, subject: step3, type: branch, resource: B2, access: ["*"], deny: true}
+  - {name: w3-deny-branch, subject: step3, type: branch, access: [read], deny: true}
+  # Step 4: + an exception and a grant on B4.
+  - {name: w4-allow-branch, subject: step4, type: branch, access: [read]}
+  - {name: w4-deny-B2, subject: step4, type: branch, resource: B2, access: ["*"], deny: true}
+  - {name: w4-deny-branch, subject: step4, type: branch, access: [read], deny: true}
+  - {name: w4-except-B4, subject: step4, type: branch, resource: B4, access: [read], exception: true}
+  - {name: w4-allow-B4, subject: step4, type: branch, resource: B4, access: [read]}
+  # Step 5: the whole-type denial deleted.
+  - {name: w5-allow-branch, subject: step5, type: branch, access: [read]}
+  - {name: w5-deny-B2, subject: step5, type: branch, resource: B2, access: ["*"], deny: true}
+  - {name: w5-except-B4, subject: step5, type: branch, resource: B4, access: [read], exception: true}
+  - {name: w5-allow-B4, subject: step5, type: branch, resource: B4, access: [read]}
+cases:
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyWholeTypeAndWildcard
+  - name: step 1 — read on the whole type reaches every branch
+    subject: step1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [w1-allow-branch]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyWholeTypeAndWildcard
+  - name: step 2 — the wildcard denial on B2 takes read away from it
+    subject: step2
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [w2-allow-branch], denials: [{rule: w2-deny-B2}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyWholeTypeAndWildcard
+  - name: step 3 — a denial on the whole type takes everything
+    subject: step3
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [w3-allow-branch], denials: [{rule: w3-deny-branch}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: w3-deny-B2}, {rule: w3-deny-branch}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: denied}
+  - name: step 3 — the type as a whole is denied as well
+    subject: step3
+    questions:
+      - {type: branch, action: read, allowed: false, decision: denied, granted_by: [w3-allow-branch], denials: [{rule: w3-deny-branch}]}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyWholeTypeAndWildcard
+  - name: step 4 — an exception on B4 lifts the whole-type denial for B4 only
+    subject: step4
+    questions:
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [w4-allow-branch, w4-except-B4, w4-allow-B4], denials: [{rule: w4-deny-branch, lifted_by: [w4-except-B4]}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: w4-deny-branch}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: w4-deny-B2}, {rule: w4-deny-branch}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied}
+  - name: step 4 — a point exception does not lift the whole-type denial for the type as a whole
+    subject: step4
+    questions:
+      - {type: branch, action: read, allowed: false, decision: denied, granted_by: [w4-allow-branch], denials: [{rule: w4-deny-branch}]}
+  - name: step 4 — the exception on B4 reaches the resources below B4 in another service
+    subject: step4
+    service: app
+    questions:
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [w4-allow-branch, w4-except-B4, w4-allow-B4], denials: [{rule: w4-deny-branch, lifted_by: [w4-except-B4]}]}
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [w4-allow-branch], denials: [{rule: w4-deny-branch}]}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyWholeTypeAndWildcard
+  - name: step 5 — without the whole-type denial only the wildcard denial on B2 is left
+    subject: step5
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [w5-allow-branch]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [w5-allow-branch], denials: [{rule: w5-deny-B2}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [w5-allow-branch, w5-except-B4, w5-allow-B4]}

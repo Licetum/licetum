@@ -146,6 +146,15 @@ tasks:
       - docker build -f admin-api/Dockerfile --target runtime -t licetum-admin:mr .
       - cd admin-api/tests/multiregion && go test -count=1 -timeout 60m -tags multiregion -v .
 
+  go:test:decp:
+    desc: The decision property test (DECP) over the seeds of LICETUM_DECP_SEEDS (one, or first-last; 1-20 when unset), needs Docker or LICETUM_TEST_POSTGRES_URI / LICETUM_TEST_REDIS_URI
+    cmds:
+      - |
+        if [ -z "${DOCKER_HOST:-}" ] && [ -z "${LICETUM_TEST_POSTGRES_URI:-}" ]; then
+          export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
+        fi
+        cd admin-api && go test -count=1 -timeout 80m -tags integration -run 'TestContract_DECP' ./tests/integration/contracts/
+
   go:test:chaos:
     desc: Fault injection tests with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole, read-only Redis), needs Docker
     cmds:

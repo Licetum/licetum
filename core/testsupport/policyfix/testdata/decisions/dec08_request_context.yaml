@@ -1,0 +1,132 @@
+# DEC08: conditions over the attributes the request carries (source context): they decide per request, with the same
+# operators and the same rule for an attribute the request lacks. The answers of alternating requests are their own (the
+# integration test checks that they are cached per value of the attribute).
+contracts: [DEC08]
+description: in_cidr, le and not_in over request attributes, present, outside their values and missing.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: payment, service: org, sync: false}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+rules:
+  - {name: branches-from-the-network, type: branch, access: [read], predicate: [{attr: preferred_username, op: eq, value: user-1}, {attr: ip, source: context, op: in_cidr, value: 10.0.0.0/8}]}
+  - {name: approve-up-to-1000, type: payment, access: [approve], predicate: [{attr: amount, source: context, op: le, value: "1000"}]}
+  - {name: any-channel-but-fax, type: payment, access: [submit], predicate: [{attr: channel, source: context, op: not_in, value: [fax]}]}
+cases:
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: an address inside the network
+    subject: user-1
+    claims: {preferred_username: user-1}
+    context: {ip: 10.1.2.3}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [branches-from-the-network]}
+      - {type: branch, resource: B2, action: read, allowed: true}
+      - {type: branch, resource: B3, action: read, allowed: true}
+      - {type: branch, resource: B4, action: read, allowed: true}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: an address outside the network
+    subject: user-1
+    claims: {preferred_username: user-1}
+    context: {ip: 192.168.0.1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: no address at all
+    subject: user-1
+    claims: {preferred_username: user-1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: alternating requests, inside (1)
+    subject: user-1
+    claims: {preferred_username: user-1}
+    context: {ip: 10.1.2.3}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: alternating requests, outside (2)
+    subject: user-1
+    claims: {preferred_username: user-1}
+    context: {ip: 192.168.0.1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: alternating requests, inside (3)
+    subject: user-1
+    claims: {preferred_username: user-1}
+    context: {ip: 10.1.2.3}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: alternating requests, outside (4)
+    subject: user-1
+    claims: {preferred_username: user-1}
+    context: {ip: 192.168.0.1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: another address inside the network (the AuthZEN evaluation of the test)
+    subject: user-1
+    claims: {preferred_username: user-1}
+    context: {ip: 10.9.9.9}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [branches-from-the-network]}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: an address outside the network (the admin simulation of the test)
+    subject: user-1
+    claims: {preferred_username: user-1}
+    context: {ip: 192.168.0.1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: the network alone is not enough, the predicate also names the user
+    subject: user-2
+    claims: {preferred_username: user-2}
+    context: {ip: 10.1.2.3}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: an amount at the limit and a channel that is not excluded
+    subject: user-1
+    context: {amount: 1000, channel: web}
+    questions:
+      - {type: payment, action: approve, allowed: true, decision: allowed, granted_by: [approve-up-to-1000]}
+      - {type: payment, action: submit, allowed: true, decision: allowed, granted_by: [any-channel-but-fax]}
+  - name: an amount just above the limit and the excluded channel
+    subject: user-1
+    context: {amount: 1000.5, channel: fax}
+    questions:
+      - {type: payment, action: approve, allowed: false, decision: no_access}
+      - {type: payment, action: submit, allowed: false, decision: no_access}
+  - name: an amount given as a string compares as the number
+    subject: user-1
+    context: {amount: "999"}
+    questions:
+      - {type: payment, action: approve, allowed: true, decision: allowed}
+  - name: a missing amount and a missing channel satisfy neither le nor not_in
+    subject: user-1
+    context: {other: x}
+    questions:
+      - {type: payment, action: approve, allowed: false, decision: no_access}
+      - {type: payment, action: submit, allowed: false, decision: no_access}
+  - name: a claim of the same name is not a request attribute
+    subject: user-1
+    claims: {amount: 10, channel: web}
+    questions:
+      - {type: payment, action: approve, allowed: false, decision: no_access}
+      - {type: payment, action: submit, allowed: false, decision: no_access}

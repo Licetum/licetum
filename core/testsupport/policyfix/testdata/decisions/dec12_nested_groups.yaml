@@ -1,0 +1,143 @@
+# DEC12, nested groups: a group nested as a whole into another one makes its members members of that one, transitively,
+# through at most 16 nestings: the group the subject is in directly is level 1, the group that nests it level 2, and so
+# on up to level 17. A rule reaches the members of the deepest group of such a chain, whether it names the members of the
+# group (member_of) or the group as a subject (group:<id>), and no further. Nesting follows only the memberships in force:
+# a disabled one, or one outside its validity window, links nothing. A cycle of nesting gives nobody a membership they do
+# not have, two routes to one group make one membership, a membership by a predicate passes through the nesting, and a
+# denial reaches the members of the nested groups as a grant does.
+#
+# The chain g18 ⊃ g17 ⊃ ... ⊃ g1 ∋ deep is listed from the top, the order in which an engine that updates the groups in
+# place within a round would get further than the limit: each round must read the groups of the previous one, so the
+# answer does not depend on the order of the memberships (found by the reference evaluator).
+#
+# cap is a capability (no synchronizer); division <- branch; D1 ⊃ B1, B2; D2 ⊃ B3.
+contracts: [DEC12]
+description: Nested groups resolve transitively through 16 nestings (17 levels), through the memberships in force only.
+services: [org]
+types:
+  - {name: cap, service: org, sync: false}
+  - {name: division, service: org, sync: true}
+  - {name: branch, service: org, sync: true, parents: [{type: division}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: branch, id: B1, parents: [{type: division, id: D1}]}
+  - {type: branch, id: B2, parents: [{type: division, id: D1}]}
+  - {type: branch, id: B3, parents: [{type: division, id: D2}]}
+groups:
+  # A chain of 18 levels, from the top.
+  - {name: g18, members: [{group: g17}]}
+  - {name: g17, members: [{group: g16}]}
+  - {name: g16, members: [{group: g15}]}
+  - {name: g15, members: [{group: g14}]}
+  - {name: g14, members: [{group: g13}]}
+  - {name: g13, members: [{group: g12}]}
+  - {name: g12, members: [{group: g11}]}
+  - {name: g11, members: [{group: g10}]}
+  - {name: g10, members: [{group: g9}]}
+  - {name: g9, members: [{group: g8}]}
+  - {name: g8, members: [{group: g7}]}
+  - {name: g7, members: [{group: g6}]}
+  - {name: g6, members: [{group: g5}]}
+  - {name: g5, members: [{group: g4}]}
+  - {name: g4, members: [{group: g3}]}
+  - {name: g3, members: [{group: g2}]}
+  - {name: g2, members: [{group: g1}]}
+  - {name: g1, members: [{subject: deep}]}
+  # A cycle: ring-a and ring-b nest each other.
+  - {name: ring-a, members: [{subject: ringer}, {group: ring-b}]}
+  - {name: ring-b, members: [{group: ring-a}]}
+  # Nestings that are not in force at the time of the cases (2030-01-01T12:00:00Z), and one that is.
+  - {name: outer-off, members: [{group: inner, disabled: true}]}
+  - {name: outer-expired, members: [{group: inner, expires_at: "2029-06-01T00:00:00Z"}]}
+  - {name: outer-future, members: [{group: inner, valid_from: "2031-01-01T00:00:00Z"}]}
+  - {name: outer-on, members: [{group: inner}]}
+  - {name: inner, members: [{subject: insider}]}
+  # A diamond: two routes from base to top.
+  - {name: top, members: [{group: left}, {group: right}]}
+  - {name: left, members: [{group: base}]}
+  - {name: right, members: [{group: base}]}
+  - {name: base, members: [{subject: diamond}]}
+  # A membership by a predicate at the bottom of a nesting.
+  - {name: reviewers, members: [{group: auditors}]}
+  - name: auditors
+    members: [{predicate: [{attr: team, op: eq, value: audit}]}]
+  # A grant and a denial through nested groups on resources.
+  - {name: org-all, members: [{group: dept}]}
+  - {name: dept, members: [{group: unit}]}
+  - {name: unit, members: [{subject: worker}, {subject: colleague}]}
+  - {name: suspended-all, members: [{group: suspended}]}
+  - {name: suspended, members: [{subject: worker}]}
+rules:
+  - {name: chain-18, member_of: g18, type: cap, access: [level18]}
+  - {name: chain-17, member_of: g17, type: cap, access: [level17]}
+  - {name: chain-16, member_of: g16, type: cap, access: [level16]}
+  - {name: chain-16-as-subject, subject_group: g16, type: cap, access: [subject16]}
+  - {name: chain-9, member_of: g9, type: cap, access: [level9]}
+  - {name: chain-2, member_of: g2, type: cap, access: [level2]}
+  - {name: chain-1, member_of: g1, type: cap, access: [level1]}
+  - {name: ring, member_of: ring-b, type: cap, access: [ring]}
+  - {name: nested-off, member_of: outer-off, type: cap, access: [via-off]}
+  - {name: nested-expired, member_of: outer-expired, type: cap, access: [via-expired]}
+  - {name: nested-future, member_of: outer-future, type: cap, access: [via-future]}
+  - {name: nested-on, member_of: outer-on, type: cap, access: [via-on]}
+  - {name: diamond, member_of: top, type: cap, access: [diamond]}
+  - {name: review, member_of: reviewers, type: cap, access: [review]}
+  - {name: org-read-D1, member_of: org-all, type: division, resource: D1, access: [read]}
+  - {name: suspended-deny-B2, member_of: suspended-all, type: branch, resource: B2, access: [read], deny: true}
+cases:
+  - name: the member of the bottom of a chain is a member of every group up to 16 nestings above, and of no group beyond
+    subject: deep
+    questions:
+      - {type: cap, action: level17, allowed: true, decision: allowed, granted_by: [chain-17], denials: []}
+      - {type: cap, action: level18, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: cap, action: level16, allowed: true, decision: allowed, granted_by: [chain-16], denials: []}
+      - {type: cap, action: subject16, allowed: true, decision: allowed, granted_by: [chain-16-as-subject], denials: []}
+      - {type: cap, action: level9, allowed: true, decision: allowed, granted_by: [chain-9]}
+      - {type: cap, action: level2, allowed: true, decision: allowed, granted_by: [chain-2]}
+      - {type: cap, action: level1, allowed: true, decision: allowed, granted_by: [chain-1]}
+  - name: somebody outside the chain is in none of its groups
+    subject: stranger
+    questions:
+      - {type: cap, action: level16, allowed: false, decision: no_access, granted_by: []}
+      - {type: cap, action: subject16, allowed: false, decision: no_access, granted_by: []}
+      - {type: cap, action: level1, allowed: false, decision: no_access, granted_by: []}
+      - {type: cap, action: ring, allowed: false, decision: no_access, granted_by: []}
+      - {type: cap, action: diamond, allowed: false, decision: no_access, granted_by: []}
+  - name: a cycle of nesting gives its members every group of the cycle
+    subject: ringer
+    questions:
+      - {type: cap, action: ring, allowed: true, decision: allowed, granted_by: [ring]}
+  - name: only the nestings in force link groups
+    subject: insider
+    questions:
+      - {type: cap, action: via-on, allowed: true, decision: allowed, granted_by: [nested-on]}
+      - {type: cap, action: via-off, allowed: false, decision: no_access, granted_by: []}
+      - {type: cap, action: via-expired, allowed: false, decision: no_access, granted_by: []}
+      - {type: cap, action: via-future, allowed: false, decision: no_access, granted_by: []}
+  - name: two routes to one group make one membership
+    subject: diamond
+    questions:
+      - {type: cap, action: diamond, allowed: true, decision: allowed, granted_by: [diamond]}
+  - name: a membership by a predicate passes through the nesting
+    subject: auditor
+    claims: {team: audit}
+    questions:
+      - {type: cap, action: review, allowed: true, decision: allowed, granted_by: [review]}
+  - name: a claim that does not match the predicate gives no nested membership
+    subject: developer
+    claims: {team: dev}
+    questions:
+      - {type: cap, action: review, allowed: false, decision: no_access, granted_by: []}
+  - name: a grant and a denial reach the members of nested groups
+    subject: worker
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [org-read-D1], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [org-read-D1], denials: [{rule: suspended-deny-B2}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [org-read-D1]}
+  - name: the denial reaches only the members of its nested group
+    subject: colleague
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [org-read-D1], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [org-read-D1], denials: []}

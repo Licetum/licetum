@@ -139,13 +139,18 @@ func TestF0_4_CuttingPostgresFailsTheRequestAndItRecovers(t *testing.T) {
 func TestF0_4_CuttingRedisIsSeenByTheReplica(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.RedisFault.Cut()
-	// Redis is a cache for the reads: the answer is computed from the data, and every Redis call fails.
+	// Redis is a cache for the reads: the answer is computed from the data, and every Redis call fails. With a token verified
+	// in memory and consistency=higher, the only Redis call is the write of the answer, in the background after the response.
 	r.Fresh(c, p.Slug, alice)
-	if !redisErrors(r.Metrics(c)) {
-		t.Fatal("no Redis error was counted with Redis cut")
+	deadline := time.Now().Add(10 * time.Second)
+	for !redisErrors(r.Metrics(c)) {
+		if time.Now().After(deadline) {
+			t.Fatal("no Redis error was counted with Redis cut")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	c.RedisFault.Reset()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline = time.Now().Add(15 * time.Second)
 	for {
 		res := r.Permission(c, p.Slug, alice)
 		if res.Status == http.StatusOK {

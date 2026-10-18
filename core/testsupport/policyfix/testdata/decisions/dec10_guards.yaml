@@ -1,0 +1,204 @@
+# DEC10: requires_predicate and requires_group guard any rule: they must hold as well as the rule's own target (subject,
+# group or predicate), they never widen it. A guard is a condition like any other: an attribute it reads that the request
+# lacks, or a membership of its group that is unknown, makes it unknown, so an allow rule does not apply and a denial
+# applies unless it skips (DEC09).
+contracts: [DEC10, DEC09]
+description: Guards by predicate and by group, nested groups among them, on grants and on denials, with present, failing and missing attributes.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+groups:
+  # The auditors are the audit team, and the leads through a nested group.
+  - name: auditors
+    members:
+      - {predicate: [{attr: team, op: eq, value: audit}]}
+      - {group: leads}
+  - name: leads
+    members:
+      - {predicate: [{attr: team, op: eq, value: leads}]}
+  - name: operators
+    members:
+      - {predicate: [{attr: shift, op: eq, value: day}]}
+rules:
+  # The rule of TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse.
+  - {name: audited-branches, type: branch, access: [read], predicate: [{attr: preferred_username, op: eq, value: user-1}], requires_group: auditors, requires_predicate: [{attr: env, op: eq, value: prod}]}
+  # A rule on a group guarded by another group: both memberships are needed.
+  - {name: operators-who-audit, member_of: operators, requires_group: auditors, type: rrs, access: [write]}
+  # Guards on denials, with apply (the default) and skip.
+  - {name: guard-user-reads-D1, subject: guard-user, type: division, resource: D1, access: [read]}
+  - {name: deny-R1-in-prod, subject: guard-user, type: rrs, resource: R1, access: [read], deny: true, requires_predicate: [{attr: env, op: eq, value: prod}]}
+  - {name: deny-R2-in-prod-skip, subject: guard-user, type: rrs, resource: R2, access: [read], deny: true, on_missing: skip, requires_predicate: [{attr: env, op: eq, value: prod}]}
+  - {name: deny-B3-to-auditors, subject: guard-user, type: branch, resource: B3, access: [read], deny: true, requires_group: auditors}
+  # A guard over a request attribute.
+  - {name: B4-from-the-office, subject: office-user, type: branch, resource: B4, access: [read], requires_predicate: [{attr: network, source: context, op: eq, value: office}]}
+  # A guarded role assignment, and a guarded exception under the guarded denial on R1.
+  - {name: role-in-prod, subject: role-user, role: b1-reader, requires_predicate: [{attr: env, op: eq, value: prod}]}
+  - {name: except-B2-for-auditors, subject: guard-user, type: branch, resource: B2, access: [read], exception: true, requires_group: auditors}
+roles:
+  - name: b1-reader
+    items:
+      - {type: branch, resource: B1, access: [read]}
+cases:
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse
+  - name: with the team and the environment the guarded rule applies
+    subject: user-1
+    claims: {preferred_username: user-1, team: audit, env: prod}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [audited-branches]}
+      - {type: branch, resource: B2, action: read, allowed: true}
+      - {type: branch, resource: B3, action: read, allowed: true}
+      - {type: branch, resource: B4, action: read, allowed: true}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse
+  - name: without the team the guard group does not hold
+    subject: user-1
+    claims: {preferred_username: user-1, env: prod}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse
+  - name: without the environment the guard predicate does not hold
+    subject: user-1
+    claims: {preferred_username: user-1, team: audit}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: another team fails the guard group
+    subject: user-1
+    claims: {preferred_username: user-1, team: dev, env: prod}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: another environment fails the guard predicate
+    subject: user-1
+    claims: {preferred_username: user-1, team: audit, env: staging}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: a member of a group nested into the guard group passes the guard
+    subject: user-1
+    claims: {preferred_username: user-1, team: leads, env: prod}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [audited-branches]}
+  - name: the guards do not widen the rule to another subject who passes them
+    subject: user-2
+    claims: {preferred_username: user-2, team: audit, env: prod}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: a member of the group of the rule who is also in the guard group
+    subject: op-1
+    claims: {shift: day, team: audit}
+    questions:
+      - {type: rrs, resource: R1, action: write, allowed: true, decision: allowed, granted_by: [operators-who-audit]}
+      - {type: branch, resource: B4, action: write, allowed: true, decision: allowed, granted_by: [operators-who-audit]}
+  - name: the guard group may be reached through a nested group
+    subject: op-1
+    claims: {shift: day, team: leads}
+    questions:
+      - {type: rrs, resource: R1, action: write, allowed: true, decision: allowed}
+  - name: a member of the group of the rule whose guard membership is unknown
+    subject: op-1
+    claims: {shift: day}
+    questions:
+      - {type: rrs, resource: R1, action: write, allowed: false, decision: no_access}
+  - name: a member of the guard group only
+    subject: op-1
+    claims: {team: audit}
+    questions:
+      - {type: rrs, resource: R1, action: write, allowed: false, decision: no_access}
+  - name: a member of the guard group whose other membership fails
+    subject: op-1
+    claims: {shift: night, team: audit}
+    questions:
+      - {type: rrs, resource: R1, action: write, allowed: false, decision: no_access}
+  - name: guarded denials apply when their guards hold
+    subject: guard-user
+    claims: {env: prod, team: audit}
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [guard-user-reads-D1], denials: []}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [guard-user-reads-D1], denials: [{rule: deny-R1-in-prod}]}
+      - {type: rrs, resource: R2, action: read, allowed: false, decision: denied, denials: [{rule: deny-R2-in-prod-skip}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: deny-R1-in-prod}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: deny-R2-in-prod-skip}, {rule: deny-B3-to-auditors}]}
+  - name: guarded denials do not apply when their guards fail
+    subject: guard-user
+    claims: {env: dev, team: dev}
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
+  - name: unknown guards apply the denials that apply on a missing attribute, not the one that skips
+    subject: guard-user
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, denials: [{rule: deny-R1-in-prod}]}
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: deny-R1-in-prod}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: deny-B3-to-auditors}]}
+  - name: an unknown guard group with a failing guard predicate elsewhere
+    subject: guard-user
+    claims: {env: dev}
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: deny-B3-to-auditors}]}
+  - name: a failing guard group with an unknown guard predicate elsewhere
+    subject: guard-user
+    claims: {team: dev}
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, denials: [{rule: deny-R1-in-prod}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
+  - name: a guard over a request attribute that holds
+    subject: office-user
+    context: {network: office}
+    questions:
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [B4-from-the-office]}
+  - name: a guard over a request attribute that fails
+    subject: office-user
+    context: {network: vpn}
+    questions:
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: a guard over a request attribute the request does not carry
+    subject: office-user
+    questions:
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: a guarded role assignment grants the items of the role when its guard holds
+    subject: role-user
+    claims: {env: prod}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [role-in-prod]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+  - name: a guarded role assignment grants nothing when its guard fails
+    subject: role-user
+    claims: {env: dev}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: a guarded role assignment grants nothing when its guard is unknown
+    subject: role-user
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: a guarded exception lifts the guarded denial above it when its guard holds
+    subject: guard-user
+    claims: {env: prod, team: audit}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [guard-user-reads-D1, except-B2-for-auditors], denials: [{rule: deny-R1-in-prod, lifted_by: [except-B2-for-auditors]}]}
+  - name: a guarded exception lifts nothing when its guard fails
+    subject: guard-user
+    claims: {env: prod, team: dev}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [guard-user-reads-D1], denials: [{rule: deny-R1-in-prod}]}
+  - name: a guarded exception lifts nothing when its guard is unknown, while the denial applies on its unknown guard
+    subject: guard-user
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [guard-user-reads-D1], denials: [{rule: deny-R1-in-prod}]}

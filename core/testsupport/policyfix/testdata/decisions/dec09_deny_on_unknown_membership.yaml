@@ -1,0 +1,127 @@
+# DEC09, a denial on a group whose membership reads an attribute the request does not carry (admin-api/tests/integration/
+# api/escalation_test.go, TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies): user-1 reads every
+# branch, and the members of sales-team (department = sales) are denied B1. Without the department claim the membership is
+# unknown, and a new denial applies on an unknown condition (on_missing_attribute apply, the default of a deny rule), so B1
+# stays denied; known not to be a member (department = hr), the subject gets B1 back.
+#
+# Around the test: a claim that is present but null is a missing one; a denial set to skip does not apply on an unknown
+# membership; an unknown membership makes unknown the groups that nest it (sales-all nests sales-team), so a denial on the
+# outer group applies and an allow on it grants nothing (DEC08). Those rules deny or grant write, which user-1 is not asked
+# about, or read a claim (team) whose unknown value a denial set to skip ignores, so the answers of the test stay as they
+# are.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4.
+contracts: [DEC08, DEC09]
+description: A denial on a group applies when the membership reads a missing attribute, unless it is set to skip.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+groups:
+  # The test: everyone from sales.
+  - name: sales-team
+    members: [{predicate: [{attr: department, op: eq, value: sales}]}]
+  # The group that nests sales-team.
+  - name: sales-all
+    members: [{group: sales-team}]
+  # Everyone whose team is audit.
+  - name: auditors
+    members: [{predicate: [{attr: team, op: eq, value: audit}]}]
+rules:
+  # The test: read on every branch, and a new denial (on_missing_attribute left to its default) on B1 for sales-team.
+  - {name: allow-branch, subject: user-1, type: branch, access: [read]}
+  - {name: deny-B1-sales, member_of: sales-team, type: branch, resource: B1, access: [read], deny: true}
+  # A denial set to skip an unknown membership.
+  - {name: skipper-allow-branch, subject: skipper, type: branch, access: [read]}
+  - {name: skip-deny-B2-auditors, member_of: auditors, type: branch, resource: B2, access: [read], deny: true, on_missing: skip}
+  # A denial and an allow on the group that nests sales-team, both of write.
+  - {name: nester-allow-branch, subject: nester, type: branch, access: [read]}
+  - {name: nester-write-B3, subject: nester, type: branch, resource: B3, access: [write]}
+  - {name: deny-write-B3-sales-all, member_of: sales-all, type: branch, resource: B3, access: [write], deny: true}
+  - {name: allow-write-B4-sales-all, member_of: sales-all, type: branch, resource: B4, access: [write]}
+cases:
+  # from admin-api/tests/integration/api/escalation_test.go:TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies
+  - name: without the department claim the membership is unknown and the denial applies
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+  # from admin-api/tests/integration/api/escalation_test.go:TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies
+  - name: a member of sales is denied B1
+    subject: user-1
+    claims: {department: sales}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+  # from admin-api/tests/integration/api/escalation_test.go:TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies
+  - name: known not to be a member, the subject gets B1 back
+    subject: user-1
+    claims: {department: hr}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+  - name: the applied denial reaches what lies below B1 in another service
+    subject: user-1
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales}]}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+  - name: a claim that is present but null is missing, so the denial applies
+    subject: user-1
+    claims: {department: null}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+  - name: a denial set to skip does not apply on an unknown membership
+    subject: skipper
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [skipper-allow-branch], denials: []}
+  - name: a denial set to skip applies once the membership is known to hold
+    subject: skipper
+    claims: {team: audit}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [skipper-allow-branch], denials: [{rule: skip-deny-B2-auditors}]}
+  - name: a denial set to skip does not apply when the membership is known not to hold
+    subject: skipper
+    claims: {team: support}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [skipper-allow-branch], denials: []}
+  - name: an unknown membership makes the nesting group unknown, so its denial applies and its allow grants nothing
+    subject: nester
+    questions:
+      - {type: branch, resource: B3, action: write, allowed: false, decision: denied, granted_by: [nester-write-B3], denials: [{rule: deny-write-B3-sales-all}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [nester-allow-branch], denials: []}
+      - {type: branch, resource: B4, action: write, allowed: false, decision: no_access, granted_by: []}
+  - name: known not to be in the nested group, neither the denial nor the allow of the nesting group applies
+    subject: nester
+    claims: {department: hr}
+    questions:
+      - {type: branch, resource: B3, action: write, allowed: true, decision: allowed, granted_by: [nester-write-B3], denials: []}
+      - {type: branch, resource: B4, action: write, allowed: false, decision: no_access, granted_by: []}
+  - name: a member of the nested group is a member of the nesting group, for its denial and for its allow
+    subject: nester
+    claims: {department: sales}
+    questions:
+      - {type: branch, resource: B3, action: write, allowed: false, decision: denied, granted_by: [nester-write-B3], denials: [{rule: deny-write-B3-sales-all}]}
+      - {type: branch, resource: B4, action: write, allowed: true, decision: allowed, granted_by: [allow-write-B4-sales-all], denials: []}

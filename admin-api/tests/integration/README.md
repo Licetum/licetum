@@ -8,12 +8,36 @@ servers named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI`.
 | `api/` | `integration` | I | the admin and check APIs against real servers |
 | `cluster/` | `integration` | M | several check replicas on one PostgreSQL and one Redis; request cost counters; the fakes |
 | `chaos/` | `chaos` | C | Toxiproxy in front of PostgreSQL and Redis: latency, cut, black hole, a read-only Redis |
+| `contracts/` | `integration` | I | the engine runner of the decision contracts (DEC* in `contracts.yaml`) and their tests |
 | `harness/` | none | | the helpers the packages above share (not tests) |
 
 ```sh
-task go:test:integration   # tags integration: api/, cluster/ (and core/tests/integration)
+task go:test:integration   # tags integration: api/, cluster/, contracts/ (and core/tests/integration)
 task go:test:chaos         # tag chaos: chaos/ (slower, nightly in .github/workflows/chaos.yml)
 ```
+
+## The decision contracts (P1)
+
+`contracts.Load(t, infra, fixture)` loads a fixture of `core/testsupport/policyfix` (YAML under its `testdata/decisions`) into a
+cluster of its own (`harness.StartReplicas`, one check replica, a database per fixture): the services by slug, the types with their
+parents, inherit masks and `access_implies`, an http synchronizer per type with resources fed by the fake source (names, the declared
+parents, by the name of the parent type, and the attributes; a parent no resource has is an unresolved link), and the policy through
+`POST /batch`. `Loaded.Ask(case)` asks the questions of a case through `POST /service/{slug}/check?consistency=higher` with `explain`, as
+the case's subject (`preferred_username`) with its claims and request attributes, at the case's time: the replica's clock
+(`engine.App.SetClock`) is the time of the case, so the validity windows and the conditions on the hour are decided then. The answers
+name the rules of the fixture. `contracts.Compare` lists every difference from the expectations; `Loaded.ReplaceRules` swaps the policy
+(and the resources) on the same types, for the property test. `Loaded.CrossCheck(case, answers)` asks the case's
+`GET /service/{slug}/permission?consistency=higher` (same token, request attributes and time) and lists every question on which the
+list disagrees with the check: a resource of a sync type is allowed exactly when the list names it with the action, a not_sync type as
+a whole exactly when the action is among its levels (a sync type as a whole, `type_not_found` and `resource_not_found` are not compared).
+The check decides the asked resources (`CoversOf`), the list every resource (`coverNodes`): the cross-check keeps the two paths equal.
+
+| test | what it proves |
+|---|---|
+| `TestContract_DEC01_*` … `TestContract_DEC13_*` | the fixtures that name the contract get the answers they expect from the engine, and the permission list of each case agrees with them; a fixture that names several contracts is loaded and asked once per test binary; a contract without a fixture is skipped |
+| `TestContract_DECP_*` | on the generated fixtures of the seeds (`LICETUM_DECP_SEEDS`, default 1-20) the engine answers like the reference evaluator, and the permission list of each case agrees with the check |
+| `TestRunner_*` | every field of the fixture format reaches the engine as the fixture means it (validity windows and the hour at the case's time included), `ReplaceRules` leaves nothing of the previous policy, and `Compare` reports each mismatch; each case is cross-checked too |
+| `TestCrossCheck*` | the cross-check reports a disagreement in either direction and a resource listed twice, and leaves out what the list cannot answer |
 
 ## The harness
 

@@ -18,96 +18,99 @@
 #   oracle  what the answer is compared with; it never shares the code under test
 contracts:
   # ---------- DEC: decision semantics (core/decide; until P5 the engine of core/engine) ----------
+  # Until P5 the engine is checked through the check API on PostgreSQL (admin-api/tests/integration/contracts, level pg), and
+  # the permission list of every case (GET /permission) must agree with its check answers; the reference evaluator
+  # core/testsupport/refeval is checked against the same tables by its unit tests.
   - id: DEC01
     statement: A denial beats any allow, wherever the allow lies.
-    oracle: tables of expected decisions written from the semantics (core/decide/testdata/decisions)
-    level: unit
+    oracle: tables of expected decisions written from the semantics (core/testsupport/policyfix/testdata/decisions); the same tables check refeval
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC02
     statement: An exception lifts a denial only strictly below it; the deepest of the denials and exceptions above a resource decides and a tie goes to the denial.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC03
     statement: "\"Below\" is decided per level: point below point by the lineage, whole type below a higher type, a point below the whole of its own type."
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC04
-    statement: access_implies works both ways (granting write grants read, denying read denies write) and the denial level * denies every level.
+    statement: access_implies works both ways (granting write grants read, denying read denies write) and the denial level * denies every level that flows, and with it every level that includes one.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC05
     statement: The inherit masks of type links limit what flows down; with several parents the levels are the union over routes of the intersection along each route.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC06
     statement: A not_sync type is decided by whole-type rules only, with no cascade from ancestors; a whole-type rule on it still cascades to the resources of sync descendant types.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC07
     statement: Validity windows of rules and memberships are honoured at the time of the decision.
     oracle: decision tables with a manual clock
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC08
-    statement: Condition operators eq ne in not_in regex gt ge lt le in_cidr; a missing attribute never satisfies a condition, ne and not_in included.
+    statement: Condition operators eq ne in not_in regex gt ge lt le in_cidr; a missing attribute never satisfies a condition, ne and not_in included; eq, ne and regex with a list value never hold.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC09
     statement: on_missing_attribute decides whether a denial applies on an unknown condition; a membership reading a missing attribute is unknown, so a denial on the group applies.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC10
-    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_claim (resource_from_property after P3) matches by name, id and meta attributes.
+    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_claim (resource_from_property after P3) matches by name, id and meta attributes and anchors at the matched resource's ancestors of the rule's type through the resource links, whatever the inherit masks.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC11
-    statement: A resource with an unresolved parent link, or below an ancestor that has one, is treated as possibly under every denial that could cover the missing parent (fail closed, transitively).
+    statement: A resource with an unresolved parent link, or below an ancestor that has one, is treated as possibly under every denial that could cover the missing parent, a denial on the missing parent itself included, and a denial whose anchor is already a known ancestor for the levels the known routes do not carry (fail closed, transitively); only an exception provably below the denial lifts it.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC12
-    statement: Role assignments expand to their items with the effect and exception of the rule; nested groups resolve up to 16 levels; @name access groups expand to their levels.
+    statement: Role assignments expand to their items with the effect and exception of the rule; nested groups resolve through 16 nestings, whatever the order of the memberships; @name access groups expand to their levels.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC13
-    statement: An explanation names the granting rules, every denial with the exception that lifted it, and the denials assumed for an unresolved parent.
+    statement: An explanation names the granting rules, every denial with the exception that lifted it, and the denials assumed for an unresolved parent; a no_access answer names no denial.
     oracle: decision tables
-    level: unit
+    level: pg
     phase: P1
-    status: planned
+    status: active
   - id: DEC14
     statement: The time an answer is kept, and the time it stays correct (hold), end exactly at the next validity boundary.
-    oracle: property test against random policies with a manual clock
+    oracle: property test against random policies with a manual clock (core/engine/hold_property_test.go)
     level: unit
     phase: P1
-    status: planned
+    status: active
   - id: DECP
-    statement: The engine and the reference evaluator give the same decisions on generated policies and resource graphs (2000 fixed seeds per pull request, random seeds nightly).
-    oracle: core/internal/refeval (builds reachability from the edges itself, shares no code with the engine)
-    level: unit
+    statement: The engine and the reference evaluator give the same decisions and explanations on generated policies and resource graphs (core/testsupport/policygen; seeds 1-20 per pull request, 21-520 nightly; a unit-level run with many more seeds once the decision core is pure, P5).
+    oracle: core/testsupport/refeval (builds reachability from the edges itself, shares no code with the engine)
+    level: pg
     phase: P1
-    status: planned
+    status: active
 
   # ---------- ST: read model stores (core/readmodel/storetest against every adapter) ----------
   - id: ST01
@@ -118,7 +121,7 @@ contracts:
     status: planned
   - id: ST02
     statement: The descendants of an anchor by type, page by page, equal a range scan of PostgreSQL.
-    oracle: PostgreSQL closure
+    oracle: PostgreSQL closure without the anchor itself (descendant_v has no self rows, ADR 0002)
     level: pg
     phase: P5
     status: planned
@@ -147,14 +150,26 @@ contracts:
     phase: P5
     status: planned
   - id: ST07
-    statement: Every CQL row is written with the timestamp derived from its position; a statement without an explicit timestamp is refused by the write helper.
-    oracle: WRITETIME of the rows
+    statement: Every CQL row is written with the timestamp derived from its position; a statement without an explicit timestamp is refused by the write helper, and the helper never binds NULL (it would write a cell tombstone) but leaves an absent value unset.
+    oracle: WRITETIME of the rows and the values the helper binds
     level: cql
     phase: P6
     status: planned
   - id: ST08
-    statement: The newest version of a key is never deleted by the MVCC garbage collection; table options match the schema.
+    statement: The newest version of a key is never deleted by the MVCC garbage collection; a late re-insert of a collected version with its original timestamp stays invisible while the range tombstone exists, and reads at P >= v1 are unchanged after the tombstone is purged; table options match the schema.
     oracle: the versions written
+    level: cql
+    phase: P6
+    status: planned
+  - id: ST09
+    statement: The CQL schema and the statements of the CQL adapter use no lightweight transaction, materialized view, secondary index or tablets-only option, and the schema and the store tests pass on Apache Cassandra 5 and on ScyllaDB; the default store runs on every pull request, the second one nightly.
+    oracle: the store tests and the schema snapshot of each store
+    level: cql
+    phase: P6
+    status: planned
+  - id: ST10
+    statement: The applier refuses to write a version older than the GC horizon of its key, and the PDP refuses a read position older than the GC horizon.
+    oracle: writes and read positions injected below the horizon the test derives from the applied positions and MVCC__RETENTION
     level: cql
     phase: P6
     status: planned
@@ -213,6 +228,12 @@ contracts:
     oracle: the log
     level: pg
     phase: P6
+    status: planned
+  - id: PUB05
+    statement: Every log_chunk.body is at most 1 MiB of zstd and holds whole records.
+    oracle: the records encoded, decoded again chunk by chunk
+    level: unit
+    phase: P3
     status: planned
   - id: APP01
     statement: The applier never moves past a missing or mismatching entry; late, duplicate or reordered headers and chunks never produce a torn application; a missing chunk is read from another data center.

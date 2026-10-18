@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -22,10 +23,13 @@ const (
 	ResultCacheTTL = 60 * time.Second
 	// pendingAnswerTTL is how long an answer is kept when a type it reads has no data yet.
 	pendingAnswerTTL = 2 * time.Second
-	MaxGroupDepth    = 16
-	// resultCacheFormat is the version of the cached result format: when the format changes, new keys
-	// do not overlap the old ones, and stale entries simply expire by TTL.
-	resultCacheFormat = "t7"
+	// MaxGroupDepth is how many nestings of groups a membership resolves through: a group counts when the subject is
+	// matched by one of its own memberships, or by a group nested into it through at most this many groups.
+	MaxGroupDepth = 16
+	// resultCacheFormat is the version of the cached result format: when the format or the decisions change, new
+	// keys do not overlap the old ones (a release does not serve the answers of the previous one during a rolling
+	// update), and stale entries simply expire by TTL.
+	resultCacheFormat = "t8"
 )
 
 // PermissionResult — {type_resource_name: sync {resources} | not_sync {access}}.
@@ -198,7 +202,12 @@ func fingerprint(attrs []string, env Env) string {
 // closure: the subject plus every group it ends up in. Only memberships in force now count. The bool reports whether a
 // membership reads the time of the decision.
 func (a *App) ResolveIdentitySet(ctx context.Context, subject string, env Env) (identitySet, bool, error) {
-	members, err := a.LiveMemberships(ctx)
+	return a.resolveIdentitySet(ctx, subject, env, a.now())
+}
+
+// resolveIdentitySet is ResolveIdentitySet over the memberships in force at now.
+func (a *App) resolveIdentitySet(ctx context.Context, subject string, env Env, now time.Time) (identitySet, bool, error) {
+	members, err := a.liveMembershipsAt(ctx, now)
 	if err != nil {
 		return nil, false, err
 	}
@@ -208,9 +217,15 @@ func (a *App) ResolveIdentitySet(ctx context.Context, subject string, env Env) (
 
 // LiveMemberships reads the group memberships in force now.
 func (a *App) LiveMemberships(ctx context.Context) ([]model.GroupMember, error) {
+	return a.liveMembershipsAt(ctx, a.now())
+}
+
+// liveMembershipsAt reads the group memberships in force at now. The moment is the App's (see SetClock), not the database's:
+// the snapshot compares the windows in memory with it too.
+func (a *App) liveMembershipsAt(ctx context.Context, now time.Time) ([]model.GroupMember, error) {
 	rows, err := a.reader(ctx).Query(ctx, `
 		SELECT `+GroupMemberColumns+` FROM group_member
-		WHERE enabled AND (valid_from IS NULL OR valid_from <= now()) AND (expires_at IS NULL OR expires_at > now())`)
+		WHERE enabled AND (valid_from IS NULL OR valid_from <= $1) AND (expires_at IS NULL OR expires_at > $1)`, now)
 	if err != nil {
 		return nil, err
 	}
@@ -244,15 +259,19 @@ func IdentityOf(members []model.GroupMember, subject string, env Env) (identityS
 		}
 	}
 
-	// A member of a group that is a member of this one is a member of this one too, as far as the child is known.
+	// A member of a group that is a member of this one is a member of this one too, as far as the child is known. Each
+	// round reads the result of the previous one, so round k adds the groups k nestings away whatever the order of the
+	// memberships, and the depth is exactly MaxGroupDepth.
 	for range MaxGroupDepth {
+		next := maps.Clone(groups)
 		changed := false
 		for _, m := range nested {
-			if t := groups[m.GroupID].or(groups[*m.MemberGroupID]); t != groups[m.GroupID] {
-				groups[m.GroupID] = t
+			if t := next[m.GroupID].or(groups[*m.MemberGroupID]); t != next[m.GroupID] {
+				next[m.GroupID] = t
 				changed = true
 			}
 		}
+		groups = next
 		if !changed {
 			break
 		}
@@ -288,32 +307,34 @@ func (a *App) LoadRules(ctx context.Context, sql string, args ...any) ([]model.A
 
 // applicableRules loads the assignments in force that target the caller: a literal subject from the identity set,
 // every member of a group, or everyone whose conditions hold for the request. The assignments of roles are then
-// expanded into the permissions of their roles (see expandRoles). It returns the ids of the assignments that apply
-// only because a denial applies on a missing attribute, and whether a loaded rule reads the time of the decision.
-func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity identitySet, env Env) ([]model.AssignmentRule, map[uuid.UUID]bool, bool, error) {
+// expanded into the permissions of their roles (see expandRoles). Only the assignments in force at now count. It returns
+// the ids of the assignments that apply only because a denial applies on a missing attribute, and whether a loaded rule
+// reads the time of the decision.
+func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity identitySet, env Env, now time.Time) ([]model.AssignmentRule, map[uuid.UUID]bool, bool, error) {
 	identityList := make([]string, 0, len(identity))
 	for s := range identity {
 		identityList = append(identityList, s)
 	}
 
 	// An inline rule lives on a relevant type that is not deleted; a role assignment is checked by the
-	// types of its items in expandRoles.
+	// types of its items in expandRoles. A rule is in force at $2: RuleActiveSQL at the moment of the decision, which is
+	// the App's (see SetClock), as the snapshot has it.
 	const ruleQuery = `
 		SELECT ` + AssignmentRuleColumns + `
 		FROM assignment_rule ar
 		LEFT JOIN type_resource t ON t.id = ar.type_resource_id
-		WHERE ` + RuleActiveSQL + `
+		WHERE ar.enabled AND (ar.valid_from IS NULL OR ar.valid_from <= $2) AND (ar.expires_at IS NULL OR ar.expires_at > $2)
 		  AND (ar.role_id IS NOT NULL OR (ar.type_resource_id = ANY($1) AND t.deleted_at IS NULL))`
 
 	// Indexed path (formerly Grant): point rows with subject IN identity — fast even with a large
 	// number of point grants.
-	direct, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject = ANY($2) ORDER BY ar.id`, typeIDs, identityList)
+	direct, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject = ANY($3) ORDER BY ar.id`, typeIDs, now, identityList)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	// Rule path: a predicate over the request or member_of_group_id — scanned in full, since we cannot know in
 	// advance which rule matches which subject.
-	byRule, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject IS NULL ORDER BY ar.id`, typeIDs)
+	byRule, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject IS NULL ORDER BY ar.id`, typeIDs, now)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -501,24 +522,24 @@ func validityUntil(until *time.Time, now time.Time) (ttl, hold time.Duration) {
 
 // cacheTTL returns how long the cached result stays correct with respect to validity periods: the
 // time until the nearest moment a rule (on the given types) or a group membership starts or stops
-// being in force. Capped at ResultCacheTTL.
-func (a *App) cacheTTL(ctx context.Context, typeIDs []uuid.UUID) (ttl, hold time.Duration) {
+// being in force, counted from now. Capped at ResultCacheTTL.
+func (a *App) cacheTTL(ctx context.Context, typeIDs []uuid.UUID, now time.Time) (ttl, hold time.Duration) {
 	var until *time.Time
 	err := a.reader(ctx).QueryRow(ctx, `
 		SELECT min(b) FROM (
 			-- a role assignment has no type of its own: its boundaries count for every type
 			SELECT valid_from AS b FROM assignment_rule
-			WHERE valid_from > now() AND (type_resource_id = ANY($1) OR role_id IS NOT NULL)
+			WHERE valid_from > $2 AND (type_resource_id = ANY($1) OR role_id IS NOT NULL)
 			UNION ALL SELECT expires_at FROM assignment_rule
-			WHERE expires_at > now() AND (type_resource_id = ANY($1) OR role_id IS NOT NULL)
-			UNION ALL SELECT valid_from FROM group_member WHERE valid_from > now()
-			UNION ALL SELECT expires_at FROM group_member WHERE expires_at > now()
-		) x`, typeIDs).Scan(&until)
+			WHERE expires_at > $2 AND (type_resource_id = ANY($1) OR role_id IS NOT NULL)
+			UNION ALL SELECT valid_from FROM group_member WHERE valid_from > $2
+			UNION ALL SELECT expires_at FROM group_member WHERE expires_at > $2
+		) x`, typeIDs, now).Scan(&until)
 	if err != nil {
 		logDependency(ctx, slog.LevelWarn, "failed to read the next validity boundary", err)
 		return time.Second, time.Second
 	}
-	return validityUntil(until, time.Now())
+	return validityUntil(until, now)
 }
 
 // ServiceTypes returns the live types owned by a service.
@@ -588,15 +609,19 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	var identity identitySet
 	var identityUsesNow bool
 	var g *TypeGraph
+	// The decision is made at one moment: the memberships and the rules in force then count, and the time the answer stays
+	// correct is counted from it. It is taken inside the computation, so that the hold of the answer is never counted from
+	// before the computation started (see cachedAnswer).
+	now := a.now()
 	snap := state.snap
 	if snap != nil {
 		// The policy is in memory: the memberships and the graph cost no query.
-		identity, identityUsesNow = IdentityOf(snap.liveMembers(time.Now()), subject, env)
+		identity, identityUsesNow = IdentityOf(snap.liveMembers(now), subject, env)
 		g = snap.graph
 	} else {
 		eg, ectx := errgroup.WithContext(ctx)
 		eg.Go(func() (err error) {
-			identity, identityUsesNow, err = a.ResolveIdentitySet(ectx, subject, env)
+			identity, identityUsesNow, err = a.resolveIdentitySet(ectx, subject, env, now)
 			return err
 		})
 		eg.Go(func() (err error) {
@@ -623,7 +648,6 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	var missing map[uuid.UUID]bool
 	var rulesUseNow bool
 	if snap != nil {
-		now := time.Now()
 		rules, missing, rulesUseNow = applicableFromSnapshot(snap, relevant, identity, env, now)
 		p.ttl, p.hold = snap.validity(relevant, now)
 		p.syncTypes = map[uuid.UUID]bool{}
@@ -635,11 +659,11 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	} else {
 		eg, ectx := errgroup.WithContext(ctx)
 		eg.Go(func() (err error) {
-			rules, missing, rulesUseNow, err = a.applicableRules(ectx, relevantIDs, identity, env)
+			rules, missing, rulesUseNow, err = a.applicableRules(ectx, relevantIDs, identity, env, now)
 			return err
 		})
 		eg.Go(func() error {
-			p.ttl, p.hold = a.cacheTTL(ectx, relevantIDs)
+			p.ttl, p.hold = a.cacheTTL(ectx, relevantIDs, now)
 			return nil
 		})
 		eg.Go(func() (err error) {
@@ -671,7 +695,12 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 			involved[id] = true
 		}
 		if rule.ResourceFromClaim != nil {
+			// The lookup climbs from the matched resource to the rule's type through every type in between, also those no
+			// level flows through (DescendantsOf leaves them out): their data must be there, or the climb stops short.
 			involved[rule.ResourceFromClaim.LookupTypeResourceID] = true
+			for _, id := range g.TypesBetween(rule.ResourceFromClaim.LookupTypeResourceID, *rule.TypeResourceID) {
+				involved[id] = true
+			}
 		}
 	}
 	involvedIDs := Keys(involved)
@@ -701,7 +730,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		}
 	}
 
-	if p.Insts, err = a.buildInstances(ctx, snap, rules, env, missing); err != nil {
+	if p.Insts, err = a.buildInstances(ctx, g, snap, rules, env, missing); err != nil {
 		return nil, err
 	}
 	pairs, err := a.instancePairs(ctx, p.Insts)
@@ -716,16 +745,18 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 // A rule on a resource that is not in the cache has no anchor and no effect; a rule with resource_from_claim
 // yields one instance per ancestor found, and a rule with resource_where one per resource whose attributes match.
 // The lookups of all the rules run together, in parallel with the anchors of the rules that name a resource.
-func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
-	return a.buildInstances(ctx, nil, rules, env, missing)
+// g is the type graph the lookups climb (see findAncestorsBatch).
+func (a *App) BuildInstances(ctx context.Context, g *TypeGraph, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
+	return a.buildInstances(ctx, g, nil, rules, env, missing)
 }
 
 // buildInstances is BuildInstances reading the access groups from the snapshot when there is one.
-func (a *App) buildInstances(ctx context.Context, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
+func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
 	var refs []anchorRef
 	var lookups []ancestorLookup
 	claimValues := map[int]string{}
 	var groupTypes []uuid.UUID
+	between := map[[2]uuid.UUID][]uuid.UUID{}
 	for i, r := range rules {
 		if hasGroupReference(r.Access) {
 			groupTypes = append(groupTypes, *r.TypeResourceID)
@@ -738,9 +769,19 @@ func (a *App) buildInstances(ctx context.Context, snap *snapshot, rules []model.
 				continue
 			}
 			claimValues[i] = PyStr(value)
+			pair := [2]uuid.UUID{spec.LookupTypeResourceID, *r.TypeResourceID}
+			types, ok := between[pair]
+			if !ok {
+				types = g.TypesBetween(pair[0], pair[1])
+				between[pair] = types
+			}
+			if types == nil {
+				// The rule's type is neither the lookup type nor above it: no climb reaches it.
+				continue
+			}
 			lookups = append(lookups, ancestorLookup{
 				Index: i, Lookup: spec.LookupTypeResourceID, Target: *r.TypeResourceID,
-				Value: PyStr(value), MatchBy: spec.MatchBy,
+				Value: PyStr(value), MatchBy: spec.MatchBy, Between: types,
 			})
 		case r.ResourceID != nil:
 			refs = append(refs, anchorRef{Type: *r.TypeResourceID, Ext: *r.ResourceID})
@@ -794,10 +835,16 @@ func (a *App) buildInstances(ctx context.Context, snap *snapshot, rules []model.
 			}
 		case rule.ResourceID != nil:
 			id, ok := rows[anchorRef{Type: *rule.TypeResourceID, Ext: *rule.ResourceID}]
-			if !ok {
-				continue
-			}
 			in := base
+			if !ok {
+				// The local copy does not have the resource (yet). An allow or an exception on it covers nothing, but a
+				// denial stays: it covers nothing for real either, yet it may be the missing parent of an unresolved link,
+				// so the resources below such a link fall under it (CoversOf, pass C of coverNodes).
+				if !base.Deny {
+					continue
+				}
+				id, in.Absent = uuid.Nil, true
+			}
 			in.AnchorRow, in.AnchorExt = &id, *rule.ResourceID
 			out = append(out, in)
 		case len(rule.ResourceWhere) > 0:
@@ -821,7 +868,7 @@ func (a *App) instancePairs(ctx context.Context, insts []Instance) (map[[2]int]L
 	var idx [][2]int
 	var pairs [][2]uuid.UUID
 	for d := range insts {
-		if !insts[d].Deny || insts[d].Whole() {
+		if !insts[d].Deny || insts[d].Whole() || insts[d].Absent {
 			continue
 		}
 		for e := range insts {
@@ -850,8 +897,16 @@ type nodeState struct {
 	covers []Cover
 }
 
-func hasCover(n *nodeState, inst int) bool {
-	return slices.ContainsFunc(n.covers, func(c Cover) bool { return c.Inst == inst && !c.Assumed })
+// knownCover returns the levels through which an instance covers a resource for real, and whether it does.
+func knownCover(n *nodeState, inst int) (LevelSet, bool) {
+	var out LevelSet
+	found := false
+	for _, c := range n.covers {
+		if c.Inst == inst && !c.Assumed {
+			out, found = out.union(c.Mask), true
+		}
+	}
+	return out, found
 }
 
 // coverNodes finds the resources of the result types covered by the instances. Allow instances
@@ -887,7 +942,7 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 	var anchorInst []int
 	var anchorRows []uuid.UUID
 	for i := range p.Insts {
-		if !p.Insts[i].Whole() {
+		if !p.Insts[i].Whole() && !p.Insts[i].Absent {
 			anchorInst = append(anchorInst, i)
 			anchorRows = append(anchorRows, *p.Insts[i].AnchorRow)
 		}
@@ -897,7 +952,7 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 	// anchors, and the unresolved parent links of the result types.
 	var listed map[uuid.UUID][]graphNode
 	var expanded [][]CoveredNode
-	var unresolved map[uuid.UUID][]uuid.UUID
+	var unresolved map[uuid.UUID][]UnresolvedLink
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.Go(func() (err error) {
 		listed, err = a.listCachedResources(ectx, wholeTypeIDs)
@@ -979,31 +1034,22 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 			attach(i, n.graphNode, n.Mask, false)
 		}
 	}
-	// Pass C: a resource with an unresolved parent link may hang below any denial anchored above
-	// that parent's type — the hierarchy above it is not fully known, so the denial applies.
-	for id, parentTypes := range unresolved {
+	// Pass C: a resource with an unresolved parent link at or above it may hang below any denial anchored above the
+	// missing parent's type — the hierarchy above it is not fully known, so the denial applies. That holds for a denial
+	// whose anchor is a known ancestor as well: the missing parent could lie below the anchor too and let through levels
+	// the known routes do not (CoversOf).
+	for id, links := range unresolved {
 		n, ok := nodes[id]
 		if !ok {
 			continue
 		}
-		nodeType, _ := g.Node(n.Type)
 		for i := range p.Insts {
 			in := &p.Insts[i]
-			if !in.Deny || in.Whole() || hasCover(n, i) {
+			if !in.Deny || in.Whole() {
 				continue
 			}
-			for _, parentType := range parentTypes {
-				edgeMask := LevelSet{}
-				for _, e := range nodeType.Parents {
-					if e.Parent == parentType {
-						edgeMask = e.Inherit
-					}
-				}
-				flowMask, reaches := wholeMask(in.AnchorType, parentType)
-				if !reaches {
-					continue
-				}
-				if m := edgeMask.Intersect(flowMask); !m.empty() {
+			if m := g.assumedMask(in.AnchorType, links); !m.empty() {
+				if known, ok := knownCover(n, i); !ok || !m.SubsetOf(known) {
 					n.covers = append(n.covers, Cover{Inst: i, Mask: m, Assumed: true})
 				}
 			}

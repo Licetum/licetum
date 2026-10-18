@@ -1,0 +1,44 @@
+# DEC12 (the access groups part): @name in an access list stands for the levels the access group of the rule's type names
+# at the time of the decision. The integration test changes the levels of one group under its rule; a fixture is one
+# state, so the group after the change is a second group with the new levels, used by a second subject.
+contracts: [DEC12]
+description: A rule follows the levels of the access group it names, mixed with plain levels and in a denial.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+resources:
+  - {type: division, id: D1}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+access_groups:
+  - {type: branch, name: editor, levels: [read, write]}
+  # The editor group after its levels were changed to read only.
+  - {type: branch, name: editor-changed, levels: [read]}
+rules:
+  - {name: editor-on-B1, subject: user-1, type: branch, resource: B1, access: ["@editor"]}
+  - {name: changed-editor-on-B1, subject: user-2, type: branch, resource: B1, access: ["@editor-changed"]}
+  - {name: editor-and-audit-on-B2, subject: user-3, type: branch, resource: B2, access: ["@editor", audit]}
+  - {name: deny-editor-on-B2, subject: user-3, type: branch, resource: B2, access: ["@editor-changed"], deny: true}
+cases:
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences
+  - name: the rule grants the levels of the group
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [editor-on-B1]}
+      - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, granted_by: [editor-on-B1]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences
+  - name: the rule follows the changed levels of the group
+    subject: user-2
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [changed-editor-on-B1]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: no_access}
+  - name: a group mixed with a plain level, and a denial naming a group
+    subject: user-3
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [editor-and-audit-on-B2], denials: [{rule: deny-editor-on-B2}]}
+      - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [editor-and-audit-on-B2], denials: []}
+      - {type: branch, resource: B2, action: audit, allowed: true, decision: allowed, granted_by: [editor-and-audit-on-B2]}
