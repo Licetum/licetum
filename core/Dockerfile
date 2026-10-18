@@ -1,7 +1,7 @@
 # Build from the repository root: docker build -f core/Dockerfile --target <stage> .
 # The check runtime of Licetum (MIT): the binary licetum serves the permission-check API and runs the migrations.
 
-FROM golang:1.26-alpine AS base
+FROM golang:1.27-alpine AS base
 
 WORKDIR /src/core
 
