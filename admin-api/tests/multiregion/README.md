@@ -45,7 +45,7 @@ and takes the stack down. Environment of the scenarios:
 | `TestF6_2_*` | a denial written in region A is enforced in region B at p99 ≤ 5 s over 200 revocations |
 | `TestF6_3_*` | `at_least_as_fresh` in B is answered correctly at once, also with the replication stream delayed by 2 s |
 | `TestF6_4_*` | the lag above `DB__MAX_REPLICA_LAG` (5 s here) makes B not ready within 15 s, and it recovers |
-| `TestF6_5_*` | the link of B is cut for 60 s: it answers within `POLICY__MAX_STALENESS` (20 s here), then fails closed (503); the denial made meanwhile is enforced within 5 s of the link's return |
+| `TestF6_5_*` | the link of B is cut for 60 s: it answers within `POLICY__MAX_STALENESS` (20 s here), then fails closed (503); the denial made meanwhile is enforced within 5 s of the link's return; this needs `wal_retrieve_retry_interval` of 1 s or less on the standby (`postgres/replica-entrypoint.sh` sets it): once the link is back a standby asks for its stream again only that often (5 s by default) and replays nothing until it does, which would use up the 5 s before the replay starts |
 | `TestF6_6_*` | the source is asked by the worker of A (and the admin API of A once, when the synchronizer was created), never by a check pod |
 | `TestF6_7_*` | an admin write from B: reported (the write itself is six round trips, asserted in `chaos/f6_test.go`) |
 | `TestF6_8_*` | 600 requests a second over the three regions split 50/30/20 for 10 minutes: ≤ 0.1 % errors, p99 within 50 ms, no wrong answers |

@@ -381,7 +381,7 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 		seed:     m.opts.Seed,
 		rate:     int(math.Round(rate)),
 		seconds:  seconds,
-		preVUs:   preallocated(int(math.Round(rate)), m.opts.Concurrency),
+		preVUs:   preallocated(int(math.Round(rate)), m.opts.Concurrency, m.opts.Mode),
 		maxVUs:   m.opts.Concurrency,
 		base:     m.check.base,
 		bases:    m.bases,
@@ -662,8 +662,13 @@ func newClient(concurrency int, timeout time.Duration) *http.Client {
 
 // preallocated is how many virtual users k6 starts before a window: the rate itself, at least 50, and never more than the
 // most it may use. A virtual user that is started during the window initializes while an arrival waits for it, and an
-// arrival that waits too long is dropped, which makes the window invalid.
-func preallocated(rate, maxVUs int) int {
+// arrival that waits too long is dropped, which makes the window invalid. In the cold mode a request waits for a fresh
+// job of the worker (seconds, by design), so the requests in flight are the rate times that wait, many more than the rate:
+// every virtual user it may use is started before the window.
+func preallocated(rate, maxVUs int, mode string) int {
+	if mode == "cold" {
+		return maxVUs
+	}
 	return min(maxVUs, max(50, rate))
 }
 

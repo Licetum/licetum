@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"sync"
@@ -24,8 +25,9 @@ import (
 // syncBackend is what runs the jobs: the sync_job table (default) or DBOS workflows. Both give the same guarantees: one
 // execution per type shared by all callers, recovery after the death of an executor, and a result the callers wait for.
 type syncBackend interface {
-	// enqueue makes sure there is an active job for each type and returns a reference to it.
-	enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]string, error)
+	// enqueue makes sure there is an active job for each type and returns a reference to it. seen, when it is not nil, holds
+	// the version of the state of the types the caller read before it decided to wait for their job (see jobName).
+	enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string, seen map[uuid.UUID]string) (map[uuid.UUID]string, error)
 	// poll waits for the job to end (for at most jobPollCap) and says how it ended.
 	poll(ref string) (jobOutcome, error)
 }
@@ -131,6 +133,8 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 
 	deadline := time.Now().Add(opts.Wait)
 	const maxRounds = 3
+	// named holds the state each type's job was named after in the rounds so far (see jobName).
+	named := map[uuid.UUID]string{}
 	for round := 0; ; round++ {
 		states, err := loadSyncStates(ctx, a.DB, ids)
 		if err != nil {
@@ -158,6 +162,23 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 		if opts.Fresh {
 			block, async = ids, nil
 		}
+		// The job a request waits for is named after the state of the type it read, so that the requests that read the same
+		// state share one job even when it has ended by the time they ask (see jobName). A fresh request wants a job that
+		// starts after it, whatever the state. A job that ended without writing the state (the worker found nothing to do)
+		// would be found again under the same name: the next round asks for an unnamed one.
+		var seen map[uuid.UUID]string
+		if !opts.Fresh {
+			seen = make(map[uuid.UUID]string, len(block))
+			for _, id := range block {
+				v := "none"
+				if st, ok := states[id]; ok {
+					v = st.Version
+				}
+				if named[id] != v {
+					seen[id] = v
+				}
+			}
+		}
 		if len(async) > 0 {
 			a.requestInBackground(async, source)
 		}
@@ -172,21 +193,27 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 			return res, nil
 		}
 		if remaining <= 0 {
-			// A caller that does not wait only asks (the worker finds the job), and answers from what exists.
+			// A caller that does not wait only asks (the worker finds the job), and answers from what exists. Nobody waits for
+			// the job it asks for, so it is not named after a state: a job that ended without writing the state would be found
+			// again under its name, and the type would not be asked for until the schedule does.
 			res.Pending = true
-			if _, err := a.enqueueSync(ctx, block, opts.Fresh, source); err != nil && !errors.Is(err, errSyncUnavailable) {
+			if _, err := a.enqueueSync(ctx, block, opts.Fresh, source, nil); err != nil && !errors.Is(err, errSyncUnavailable) {
 				return res, err
 			}
 			return res, nil
 		}
 
-		jobs, err := a.enqueueSync(ctx, block, opts.Fresh, source)
+		jobs, err := a.enqueueSync(ctx, block, opts.Fresh, source, seen)
 		if errors.Is(err, errSyncUnavailable) {
 			// The backend is not ready (the first worker has not created its tables yet): try again while the wait lasts.
+			resume := pauseComputeSlot(ctx)
 			select {
 			case <-ctx.Done():
 				return res, ctx.Err()
 			case <-time.After(min(remaining, 100*time.Millisecond)):
+			}
+			if err := resume(ctx); err != nil {
+				return res, err
 			}
 			round--
 			continue
@@ -194,8 +221,14 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 		if err != nil {
 			return res, err
 		}
+		maps.Copy(named, seen)
+		// The wait is the worker's: the computation gives its slot back meanwhile (see computeSlot).
+		resume := pauseComputeSlot(ctx)
 		unanswered, finished := a.waitJobs(ctx, jobs, remaining)
 		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+		if err := resume(ctx); err != nil {
 			return res, err
 		}
 		if !finished {
@@ -233,7 +266,7 @@ func (a *App) requestInBackground(typeIDs []uuid.UUID, source string) {
 	// The writes (the demand, the job, the notification) are not part of the answer: they run on the background pool, and a
 	// full queue drops them — the next request asks again.
 	accepted := a.Background(func(bg context.Context) {
-		if _, err := a.enqueueSync(bg, ask, false, source); err != nil {
+		if _, err := a.enqueueSync(bg, ask, false, source, nil); err != nil {
 			level := slog.LevelWarn
 			if errors.Is(err, errSyncUnavailable) {
 				level = slog.LevelDebug // the first worker has not created its tables yet: not worth a line per type
@@ -251,7 +284,8 @@ func (a *App) requestInBackground(typeIDs []uuid.UUID, source string) {
 // enqueueSync makes sure there is an active job for each type and returns a reference to each. A type that has one (queued
 // or running) shares it. Each type has its own job, so that two requests that involve different sets of types still share
 // the source call of a type they have in common. Who asked is remembered: the worker keeps the types in demand fresh.
-func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]string, error) {
+// seen names the jobs after the state the caller read (see jobName); nil asks for unnamed ones.
+func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string, seen map[uuid.UUID]string) (map[uuid.UUID]string, error) {
 	if source != "schedule" {
 		if _, err := a.DB.Exec(ctx, `
 			INSERT INTO sync_demand (type_resource_id, last_asked_at) SELECT unnest($1::uuid[]), now()
@@ -260,12 +294,14 @@ func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, 
 			logDependency(ctx, slog.LevelWarn, "failed to remember the demand for the resource types", err)
 		}
 	}
-	return a.backend().enqueue(ctx, typeIDs, fresh, source)
+	return a.backend().enqueue(ctx, typeIDs, fresh, source, seen)
 }
 
 type pgBackend struct{ a *App }
 
-func (b pgBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]string, error) {
+// enqueue queues the jobs of the sync_job table, whose key is unique while a job is queued or running; the jobs are not named
+// after a state (seen).
+func (b pgBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string, _ map[uuid.UUID]string) (map[uuid.UUID]string, error) {
 	a := b.a
 	keys := make([]string, len(typeIDs))
 	for i, id := range typeIDs {

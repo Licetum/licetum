@@ -724,7 +724,7 @@ func (a *App) scheduleOnce(ctx context.Context) {
 	}
 	rows.Close()
 	if len(due) > 0 {
-		if _, err := a.enqueueSync(ctx, due, false, "schedule"); err != nil && ctx.Err() == nil {
+		if _, err := a.enqueueSync(ctx, due, false, "schedule", nil); err != nil && ctx.Err() == nil {
 			slog.WarnContext(ctx, "failed to queue the resource types that are due", "error", err)
 		}
 	}

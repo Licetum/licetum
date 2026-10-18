@@ -60,6 +60,7 @@ services:
   # ----- region A: the primary, the administration, the worker
   pg-primary:
     <<: *pg
+    # The replicas start with max_connections and max_wal_senders no lower than these (postgres/replica-entrypoint.sh).
     command: >
       postgres -c wal_level=replica -c max_wal_senders=20 -c hot_standby=on -c max_connections=600
       -c wal_keep_size=1GB -c fsync=off

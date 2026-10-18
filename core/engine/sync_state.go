@@ -77,6 +77,9 @@ type syncState struct {
 	Backoff   bool // the source failed lately and next_due_at is the end of the backoff
 	Attempts  int
 	LastError string
+	// Version is the version of the row (its xmin): every write of the row changes it, and every job that ends writes the
+	// row of each type it was due for (see jobName).
+	Version string
 }
 
 // usable says whether the stored digest can be compared: written by this release or the one before it.
@@ -88,7 +91,7 @@ func (s syncState) usable() bool {
 func loadSyncStates(ctx context.Context, q db.Querier, typeIDs []uuid.UUID) (map[uuid.UUID]syncState, error) {
 	rows, err := q.Query(ctx, `
 		SELECT type_resource_id, format, data_hash, graph_sig, applied_at IS NOT NULL,
-		       next_due_at <= now(), attempts > 0 AND next_due_at > now(), attempts, COALESCE(last_error, '')
+		       next_due_at <= now(), attempts > 0 AND next_due_at > now(), attempts, COALESCE(last_error, ''), xmin::text
 		FROM sync_state WHERE type_resource_id = ANY($1)`, typeIDs)
 	if err != nil {
 		return nil, err
@@ -97,7 +100,7 @@ func loadSyncStates(ctx context.Context, q db.Querier, typeIDs []uuid.UUID) (map
 	out := map[uuid.UUID]syncState{}
 	for rows.Next() {
 		var s syncState
-		if err := rows.Scan(&s.TypeID, &s.Format, &s.DataHash, &s.GraphSig, &s.Applied, &s.Due, &s.Backoff, &s.Attempts, &s.LastError); err != nil {
+		if err := rows.Scan(&s.TypeID, &s.Format, &s.DataHash, &s.GraphSig, &s.Applied, &s.Due, &s.Backoff, &s.Attempts, &s.LastError, &s.Version); err != nil {
 			return nil, err
 		}
 		out[s.TypeID] = s

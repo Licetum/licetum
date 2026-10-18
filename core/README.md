@@ -81,12 +81,12 @@ lists accept a JSON array or a comma-separated string.
 | `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the check API's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
 | `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
 | `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `at_least_as_fresh` waits for its revision before the answer is computed from the data) |
-| `COMPUTE__` | `COMPUTE__CONCURRENCY`: answers computed at once (default half of `DB__POOL_SIZE`); the rest of a wave of cache misses queues |
+| `COMPUTE__` | `COMPUTE__CONCURRENCY`: answers computed at once (default half of `DB__POOL_SIZE`); the rest of a wave of cache misses queues. A computation that waits for a synchronization job (the worker's) gives its slot back meanwhile |
 | `AUTH__` | `AUTH__STATE_SECRET`, `AUTH__STATE_TTL`; the token and key caches: `AUTH__TOKEN_L1_SIZE` (verified tokens kept in memory, default 50 000), `AUTH__JWKS_TTL` (default `10m`), `AUTH__JWKS_MIN_REFRESH` (default `30s`: an unknown key id refetches the key set at most this often), `AUTH__INVALID_TOKEN_TTL` (default `10s`) |
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
 | `PLATFORM__` | the self-service: its OAuth2 client (`PLATFORM__CLIENT_ID`, `PLATFORM__CLIENT_SECRET`, the authorization, token and JWKS URLs, the issuer) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`) |
-| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__ENGINE` (`dbos`, the default, or `postgres`), `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, outside `DB__POOL_SIZE`), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
+| `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__ENGINE` (`dbos`, the default, or `postgres`), `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, at least 3, outside `DB__POOL_SIZE`; the process runs at most (size - 1) / 2 enqueues at once, since a duplicate enqueue takes two connections and the listener keeps one), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | | The retention of both runs in the **worker** only (`licetum worker`): give it the same `SUBJECTS__RETENTION_DAYS` and `DELEGATION__AUDIT_RETENTION_DAYS` as the other processes, or the defaults (90 and 365 days) apply. |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person), `DELEGATION__AUDIT_MODE` (`strict`, default: the record is committed before the answer; `async`: buffered and written in batches), `DELEGATION__AUDIT_BUFFER` (async buffer size, default 100000) |
@@ -212,6 +212,12 @@ the traffic to another region, and the process recovers by itself; `primary` mov
 caught up. `POLICY__MAX_STALENESS` applies to the replica too: a replica more behind than that, with the reads on the replica, fails
 closed (503 `policy_unavailable`). The pool of the replica is the `read` pool in `licetum_db_pool_*`; size it like the request pool.
 
+The replica needs `wal_retrieve_retry_interval` of 1 s or less (the PostgreSQL default is 5 s). A standby whose link to the primary
+was cut asks for its stream again only that often once the link is back, and replays nothing until it does: a revocation written
+during the cut reaches the region up to that interval after the link returns, before its replay even starts. With the default that
+alone is the 5 s a revocation is meant to take in the region (F6-5, `admin-api/tests/multiregion`). A replica left at the default
+stays safe (the lag is measured, and `POLICY__MAX_STALENESS` fails it closed) but enforces a revocation later after an outage of the link.
+
 ### Migrations
 
 `licetum migrate` takes an advisory lock, so several runs started together (one per pod) apply each migration once; the seed of the
@@ -273,6 +279,11 @@ What the spike found, and what the engine does about it:
   nothing (`licetum_sync_lease_lost_total`), and the cancel of a takeover waits for a commit in flight.
 - The DBOS client holds a connection per waiting `GetResult`, and its pool has 20: the waiters of one workflow share a single
   poller per process, and `pool_max_conns` is set to 20 unless the URI says otherwise.
+- The deduplication id is free again once a workflow ends: a request that read the state of a type before a job brought it up
+  to date, and asks after the job ended (its client was still connecting, an enqueue slot was busy), would start a second job.
+  A request that waits for a job names it after the version of the `sync_state` row it read (`<deduplication id>@<xmin>`,
+  `@none` without a row), so the requests that read the same state share the job also once it has ended; every job writes the
+  state of the types it was due for. The concurrent requests of a process for the same workflow share one enqueue.
 - Through a link with a round trip of 150 ms an enqueue takes about 4 round trips (0.6 s) and the whole call about 1.4 s more than
   on a local network: put the workers and the check processes in the region of the database.
 - PgBouncer in transaction mode was not tried: DBOS listens for notifications and needs session connections. Use direct
