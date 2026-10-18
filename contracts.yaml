@@ -156,7 +156,7 @@ contracts:
     phase: P6
     status: planned
   - id: ST08
-    statement: The newest version of a key is never deleted by the MVCC garbage collection; a late re-insert of a collected version with its original timestamp stays invisible while the range tombstone exists, and reads at P >= v1 are unchanged after the tombstone is purged; table options match the schema.
+    statement: The newest version of a key is never deleted by the MVCC garbage collection; a late re-insert of a collected version with its original timestamp stays invisible while the range tombstone exists, and reads at P >= v1 are unchanged after the tombstone is purged; table options match the schema. The collection is switched on only after APP01 to APP03 and ASOF01 to ASOF03 pass under the kill tests.
     oracle: the versions written
     level: cql
     phase: P6
@@ -174,7 +174,7 @@ contracts:
     phase: P6
     status: planned
 
-  # ---------- POL / PUB / APP / ASOF: log, publication, application, reads "as of P" ----------
+  # ---------- POL / PUB / APP / ASOF / REC: log, publication, application, reads "as of P", reconciliation ----------
   - id: POL01
     statement: fold(checkpoint at a, entries (a, b]) equals the canonical state of PostgreSQL at b, for random histories of admin writes and synchronizations.
     oracle: the PostgreSQL loader at the exact revision
@@ -221,10 +221,10 @@ contracts:
     statement: "Heartbeat: every commit before pg_time has a revision at most the heartbeat's position."
     oracle: snapshots of PostgreSQL
     level: pg
-    phase: P6
+    phase: P5
     status: planned
   - id: PUB04
-    statement: A lost wake-up of the publisher is caught by its periodic tick, also through PgBouncer.
+    statement: The pg_notify of the writing transaction, delivered on commit, wakes the publisher, which reads outbox WHERE revision > last; its periodic tick catches a lost notification, also when the writes go through PgBouncer in transaction mode.
     oracle: the log
     level: pg
     phase: P6
@@ -247,6 +247,12 @@ contracts:
     level: cql
     phase: P6
     status: planned
+  - id: APP03
+    statement: With the garbage collection of versions on, a PDP that confirmed its view within S finds, for every key it reads, the newest version at or below its P, also under kill tests and during catch-up after a partition.
+    oracle: the versions written
+    level: fault
+    phase: P6
+    status: planned
   - id: ASOF01
     statement: A decision at position P reads every partition as of P; with the applier stopped in the middle of a write the decisions equal the reference at P, the counter-example of the ADR included.
     oracle: refeval over PostgreSQL at P
@@ -254,7 +260,7 @@ contracts:
     phase: P6
     status: planned
   - id: ASOF02
-    statement: A change of a type link or of inherit never coexists with lineages of the old structure; a type becomes sync together with its first data.
+    statement: A change of a type link or of inherit never coexists with lineages of the old structure; a type becomes sync together with its first data, and not_sync when its last live synchronizer is deleted, in one transaction with its outbox entry; the mode is sync when synced_at is set and a live synchronizer exists.
     oracle: the reference over PostgreSQL
     level: system
     phase: P6
@@ -263,6 +269,24 @@ contracts:
     statement: A generation built from checkpoints and the tail of the log equals the generation applied incrementally.
     oracle: an incrementally applied region
     level: cql
+    phase: P6
+    status: planned
+  - id: ASOF04
+    statement: An installation switched from the postgres read model to the CQL store with rebuild --all skips no position, its PDPs answer as the postgres adapter did at equal positions, and it ends with regions equal to those of an installation that used the CQL store from the start.
+    oracle: a region applied from the start, the outbox positions, and the postgres adapter at equal positions (secondary oracle)
+    level: system
+    phase: P6
+    status: planned
+  - id: REC01
+    statement: "Reconcile reports a write that bypassed the outbox check (a trigger disabled by the table owner): the canonical state of PostgreSQL at revision r differs from the fold of the outbox entries up to r."
+    oracle: the canonical loader
+    level: pg
+    phase: P5
+    status: planned
+  - id: REC02
+    statement: The nightly reconcile of a region reports a regional state that differs from PostgreSQL at the same position, and rebuild --stream restores it; the divergence is injected as a newest version lost on a quorum of replicas (a node replaced without repair).
+    oracle: hashes of PostgreSQL at the position
+    level: fault
     phase: P6
     status: planned
 
@@ -288,7 +312,7 @@ contracts:
     phase: P3
     status: planned
   - id: WR02
-    statement: A transaction that changes a projected policy table without an outbox row fails at COMMIT (raw SQL, cascades and seeds included).
+    statement: "A transaction that changed rows of a covered policy table (ADR 0001, 4.7), or truncated one, without an outbox row fails at COMMIT (raw SQL, cascades, the seed and restore-admin included). Only tuples actually changed count, so a statement that changed no row does not; the resource tables get the same check in P5. A bypass is not claimed impossible: REC01 reports it."
     oracle: the commit result
     level: pg
     phase: P3
@@ -330,13 +354,13 @@ contracts:
     phase: P3
     status: planned
   - id: HIS02
-    statement: Revert and rollback stay within one service.
+    statement: "Revert and rollback stay within one service. Records of the service's types, synchronizers and type links are reverted through the batch; one that cannot be restored exactly (a secret changed) is planned as partial, and the plan is applied only with allow_partial: true, otherwise 409 change_not_revertible names the records (ADR 0001, 8.7)."
     oracle: the change log of the service
     level: pg
     phase: P4
     status: planned
   - id: HIS03
-    statement: Export then import of a service is the identity.
+    statement: Export then import of a service is the identity; the document is licetum.policy/v2, and importing a v1 document is refused with an error that names the version.
     oracle: the exported document
     level: pg
     phase: P4
@@ -404,15 +428,21 @@ contracts:
     phase: P5
     status: planned
   - id: SYN09
-    statement: A source of region X is asked only by the executors of region X.
+    statement: The source of a type limited to region X is asked only by fetchers in region X (licetum-writer fetch --region X).
     oracle: calls counted per region
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN10
+    statement: A source that keeps answering without change is polled less and less often, up to a bound, and the polls of each source are counted.
+    oracle: calls counted by the fake source, and the metric
     level: pg
     phase: P5
     status: planned
 
   # ---------- CONS / REV / FC / FO: consistency, revocation, fail closed, failover ----------
   - id: CONS01
-    statement: With min_revision of a write, any region answers at or above it, or refuses (503 or decision false); a stale 200 never happens.
+    statement: A request carries the min_revision of a write in the top-level context.licetum; any region then answers at or above that revision, or refuses (503 revision_not_reached for /evaluation and the searches, decision false with context.error in /evaluations); a stale 200 never happens. Checked with the postgres adapter on a streaming replica and with the CQL adapter; phase P5 covers the postgres adapter, P6 the CQL adapter.
     oracle: the revision of each answer
     level: system
     phase: P5
@@ -424,7 +454,7 @@ contracts:
     phase: P5
     status: planned
   - id: CONS03
-    statement: No cached answer outlives the positions of its streams, its data or a validity boundary.
+    statement: "No cached answer outlives a validity boundary or a change of the positions it read: catalog, svc:x for every x in U(S), and data:<type> for every type read, ancestor types of other services included."
     oracle: manual clock and positions
     level: unit
     phase: P5
@@ -436,7 +466,7 @@ contracts:
     phase: P5
     status: planned
   - id: CONS05
-    statement: A warm decision reads nothing from the store; a miss reads at most a bound that does not depend on the size of the policy.
+    statement: A warm decision reads nothing from the store; a miss reads at most 1 + the point exception anchors + the attr_v buckets of the lookup type (buckets(type), ADR 0002) and the matches of each property lookup + the ancestors read for resource_where, a bound that does not depend on the size of the policy.
     oracle: counted reads
     level: system
     phase: P6
@@ -478,8 +508,8 @@ contracts:
     phase: P7
     status: planned
   - id: FC04
-    statement: freeze serves beyond the staleness limit and is accounted; unfreeze restores the limit.
-    oracle: metrics and the freeze log
+    statement: "freeze disables only the staleness gate: the log is still applied and the position keeps moving. The freeze is accounted in licetum_frozen, freeze_log and one log line a minute; unfreeze restores the gate."
+    oracle: metrics, freeze_log and the positions
     level: system
     phase: P6
     status: planned
@@ -490,7 +520,7 @@ contracts:
     phase: P5
     status: planned
   - id: FO01
-    statement: A PostgreSQL failover that loses published commits is detected, starts a new epoch, and every region converges to the new primary without an answer reflecting the lost write.
+    statement: A PostgreSQL failover that loses published commits is detected automatically and starts a new epoch (epoch_start); every region converges to the new primary and no later answer reflects the lost write. The time from the failover to the first answer of each region is reported, and S must exceed it.
     oracle: the state of the new primary
     level: fault
     phase: P7
@@ -504,7 +534,7 @@ contracts:
     phase: P2
     status: planned
   - id: AZ02
-    statement: Defaults of /evaluations are merged and the three semantics answer as in the examples of the specification.
+    statement: Defaults of /evaluations are merged and the three semantics answer as in the examples of the specification; context.licetum is read from the top-level context only.
     oracle: the examples of the specification (core/pdp/authzen/testdata/spec)
     level: unit
     phase: P2
@@ -516,7 +546,7 @@ contracts:
     phase: P2
     status: planned
   - id: AZ04
-    statement: Paging ends with next_token "", has no gaps or repeats, and a changed request is a 400.
+    statement: Each search page is computed at the current position, and no page expires. The cursor is (bucket, last key, digest of the request); until P5 it has no bucket and keys follow today's order by id (ADR 0001, 7.6). Paging ends with next_token "" and has no gaps or repeats for the items present throughout; a changed request is a 400 (authzen_page_invalid).
     oracle: the full result set
     level: unit
     phase: P2
@@ -576,13 +606,25 @@ contracts:
     phase: P2
     status: planned
   - id: AZ14
-    statement: An exhausted rate bucket is a 429 with Retry-After.
+    statement: An exhausted rate bucket is a 429 with Retry-After. The limit is per pod; a global limit belongs to the ingress.
     oracle: status and header
     level: unit
     phase: P2
     status: planned
+  - id: AZ15
+    statement: A client holds at most its share of the computation slots and of the requests in flight, and searches run in a pool of their own; a search storm from one client does not delay another client's evaluations.
+    oracle: the evaluations of a second client, counted and timed
+    level: system
+    phase: P5
+    status: planned
+  - id: AZ16
+    statement: "An explanation given to the PEP of service B names a rule of an upstream service A only as upstream: <slug of A> with the level; it never shows the rule's id, anchors or groups."
+    oracle: the explanation
+    level: unit
+    phase: P4
+    status: planned
   - id: PEP01
-    statement: A PEP JWT is accepted only from an allowed issuer, with the PDP audience, within exp/nbf, signed with an allowed algorithm.
+    statement: A PEP JWT is accepted only from an allowed issuer, with the PDP audience in aud (not checked today), within exp/nbf, signed with an allowed algorithm.
     oracle: RFC 7519 / RFC 9068
     level: unit
     phase: P2
@@ -667,6 +709,24 @@ contracts:
     level: pg
     phase: P4
     status: planned
+  - id: ADM11
+    statement: A service slug cannot be changed after creation and is never given to another service, also after the service is deleted.
+    oracle: status codes
+    level: pg
+    phase: P3
+    status: planned
+  - id: ADM12
+    statement: Only callers whose roles in S include directory_writer (a machine client of the admin IdP, or an editor of S through the role closure of ADR 0001, 8.2) write the directory of S, at a limited rate and without the admin_write lock; an unchanged batch takes no revision, directory_writer allows nothing else, and a role of one service cannot read the directory of another.
+    oracle: status codes and lock waits
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM13
+    statement: The seed and restore-admin need only the ADMIN_AUTH__* settings; with no PLATFORM__* OAuth variable set, the admin API is seeded and break-glass works. Today both require all six variables (Platform.IsConfigured).
+    oracle: status codes
+    level: pg
+    phase: P2
+    status: planned
 
   # ---------- OPS / API / LOAD / WEB ----------
   - id: OPS01
@@ -700,7 +760,7 @@ contracts:
     phase: P6
     status: planned
   - id: OPS06
-    statement: Least privilege of every process (CQL and PostgreSQL roles).
+    statement: Least privilege, checked by refused statements and by a list of every write path of each process (retention and the log settings included). The PDP's CQL role selects in its own region only, and in postgres mode its PostgreSQL role only selects; the applier writes the tables of its region and reads the log, and never creates or drops keyspaces (the migrate job creates the generation keyspaces up front); the writer writes the log; freeze uses an operator CQL role; the admin API has no CQL role, and its PostgreSQL role does not write the resource tables.
     oracle: refused statements
     level: system
     phase: P6
@@ -710,6 +770,18 @@ contracts:
     oracle: golden files
     level: helm
     phase: P7
+    status: planned
+  - id: OPS08
+    statement: migrate on a database of v0.1.x refuses with a message that names the release and says there is no upgrade path; schema v2 keeps its versions in a goose table of its own.
+    oracle: the error and the untouched database
+    level: pg
+    phase: P3
+    status: planned
+  - id: OPS09
+    statement: The subject-hash salt is in no outbox entry, checkpoint or regional row, and every process hashes a subject to the same value from the same LOG__SUBJECT_SALT. Phase P5 covers the outbox and the decision log, P6 the checkpoints and the regional rows.
+    oracle: the replicated state and the decision log
+    level: system
+    phase: P5
     status: planned
   - id: API01
     statement: The committed OpenAPI schemas (admin and PDP) and the CQL schema snapshot match the code.
@@ -736,13 +808,13 @@ contracts:
     phase: P2
     status: planned
   - id: LOAD02
-    statement: p99, store reads per evaluation and CPU per 1k requests stay within their budgets, on both sides of the tolerance.
+    statement: p99, store reads per evaluation and CPU per 1k requests stay within their budgets, on both sides of the tolerance; a run better than its budget by more than the tolerance fails until the budget is set again (today the load test only asks for that in its report).
     oracle: admin-api/loadtest/budgets.yaml
     level: load
     phase: P7
     status: planned
   - id: WEB01
-    statement: The BFF and the session are safe (Origin check, path sanitizing, encrypted cookie, PKCE state).
+    statement: The BFF and the session are safe (Origin check, path sanitizing, encrypted session cookie); the PKCE verifier, the state and the nonce of the admin sign-in live in a short-lived encrypted cookie, not in Redis (authz:pkce:* today).
     oracle: unit tests of the BFF
     level: web
     phase: P2
