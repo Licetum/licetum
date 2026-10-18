@@ -52,6 +52,23 @@ linters:
               desc: foundation packages are leaves
             - pkg: github.com/licetum/licetum/core/synchronizer
               desc: foundation packages are leaves
+        leaves:
+          # The HTTP helpers and the key sets of the PEP verifier are leaves: they depend on no engine, server, storage or
+          # Redis, so that the PEP authentication can be read, and reused by the admin API, on its own.
+          files: ["**/core/httpx/**", "**/core/pepauth/**"]
+          deny:
+            - pkg: github.com/licetum/licetum/core/server
+              desc: httpx and pepauth are leaves
+            - pkg: github.com/licetum/licetum/core/engine
+              desc: httpx and pepauth are leaves
+            - pkg: github.com/licetum/licetum/core/db
+              desc: httpx and pepauth are leaves
+            - pkg: github.com/licetum/licetum/core/redisx
+              desc: httpx and pepauth are leaves
+            - pkg: github.com/licetum/licetum/core/synchronizer
+              desc: httpx and pepauth are leaves
+            - pkg: github.com/redis/go-redis
+              desc: httpx and pepauth do not use Redis
         reference-evaluator:
           # The oracle of the decision contracts must not share code with what it checks.
           files: ["**/core/testsupport/refeval/**"]
