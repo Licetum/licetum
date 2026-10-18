@@ -249,10 +249,14 @@ func TestF6_5_ALinkCutFailsClosedAfterTheLimitAndRecoversWithTheRevocation(t *te
 	p := c.SeedPolicy("org", 0)
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
-	if res := r.Permission(c, p.Slug, alice); !hasAccess(res) {
+	path := "/service/" + p.Slug + "/permission"
+	// What the region answers after the cut is what it has cached: the answer must be cached under the view the region will hold.
+	// An answer asked with at_least_as_fresh is not kept when the view had not reached the revision yet, and a synchronization
+	// that ends after it moves the data revision past it: the plain request is repeated until it costs nothing.
+	eventually(t, 15*time.Second, "the region to see the policy", func() bool { return hasAccess(asUser(c, r, p.Slug, "alice")) })
+	if res := r.Warm(c, http.MethodGet, path, alice); !hasAccess(res) {
 		t.Fatalf("before the cut: %d %s", res.Status, res.Body)
 	}
-	path := "/service/" + p.Slug + "/permission"
 
 	c.ReplicaFault.Cut()
 	cutAt := time.Now()
