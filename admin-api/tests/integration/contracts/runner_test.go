@@ -5,7 +5,7 @@ package contracts_test
 // Tests of the runner itself: that every field of a fixture reaches the engine as the fixture means it (the answers are
 // written from the semantics, CLAUDE.md "Decision semantics"), that ReplaceRules swaps one policy for another on the same
 // graph, that Compare and Same report what differs, and that a case reaches the API as the fixture means it. Each case is also
-// cross-checked against its permission list (CrossCheck) and asked through POST /check (SecondOpinion).
+// cross-checked against the searches (CrossCheck) and asked through the routes that AuthZEN replaces (SecondOpinion).
 
 import (
 	"slices"
@@ -502,7 +502,7 @@ func TestRunner_SameReportsEveryDifferenceOfTwoAnswers(t *testing.T) {
 }
 
 // askAndCompare asks every case of the fixture and reports each answer that differs from the expectation, and each
-// question on which the permission list of the case, or POST /check, disagrees with the evaluations.
+// question on which the searches of the case, or the routes that AuthZEN replaces, disagree with the evaluations.
 func askAndCompare(t *testing.T, l *contracts.Loaded, f *policyfix.Fixture) {
 	t.Helper()
 	for i := range f.Cases {
@@ -515,10 +515,10 @@ func askAndCompare(t *testing.T, l *contracts.Loaded, f *policyfix.Fixture) {
 			}
 		}
 		for _, d := range l.CrossCheck(c, answers) {
-			t.Errorf("%s, case %q, GET /permission against the evaluations: %s", f.Name, c.Name, d)
+			t.Errorf("%s, case %q, the searches against the evaluations: %s", f.Name, c.Name, d)
 		}
 		for _, d := range l.SecondOpinion(c, answers) {
-			t.Errorf("%s, case %q, POST /check against the evaluations: %s", f.Name, c.Name, d)
+			t.Errorf("%s, case %q, POST /check and GET /permission against the evaluations: %s", f.Name, c.Name, d)
 		}
 	}
 }

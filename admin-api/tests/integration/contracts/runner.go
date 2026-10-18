@@ -10,14 +10,14 @@
 // Every question is asked with consistency=higher, so that no answer comes from a cache and each one is computed by the
 // engine from the current policy and data, and with explain, so that the rules that decided it are named.
 //
-// The evaluations decide only the asked resources; GET /service/{slug}/permission lists every resource the subject has
-// access to, through another path of the engine (coverNodes instead of CoversOf). CrossCheck asks the list for a case and
-// compares it with the answers of the evaluations of the same case, so that the tables and the generated policies check
-// that path too.
+// The evaluations decide only the asked resources; the searches list every resource the subject has access to (and the
+// levels of a type without resources), through another path of the engine (coverNodes instead of CoversOf). CrossCheck asks
+// the searches for a case and compares what they list with the evaluations of the same case, so that the tables and the
+// generated policies check that path too.
 //
-// While the check API still has POST /service/{slug}/check, which the evaluations replace, SecondOpinion asks it as well and
-// reports every way its answers differ from the evaluations: the oracle moved from one route to the other and lost nothing.
-// It goes with that route (legacy.go).
+// While the check API still has the routes that AuthZEN replaces (POST /service/{slug}/check and
+// GET /service/{slug}/permission), SecondOpinion asks them as well and reports every way they differ from the evaluations and
+// the searches: the oracle moved from one transport to the other and lost nothing. It goes with those routes (legacy.go).
 package contracts
 
 import (

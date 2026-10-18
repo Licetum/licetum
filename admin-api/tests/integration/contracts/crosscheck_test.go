@@ -7,15 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/licetum/licetum/core/engine"
-	"github.com/licetum/licetum/core/model"
 	"github.com/licetum/licetum/core/testsupport/policyfix"
 )
 
-// crossCheck reports each question on which the permission list and the check disagree, in either direction, and leaves
-// out the questions the list cannot answer: a sync type as a whole, an unknown type. A resource the check does not find
-// must not be in the list.
-func TestCrossCheckComparesTheListWithTheCheck(t *testing.T) {
+// crossCheck reports each question on which the searches and the evaluations disagree, in either direction, and leaves out
+// the questions the searches cannot answer: a type with resources as a whole, an unknown type. A resource the evaluation does
+// not find must not be listed.
+func TestCrossCheckComparesTheSearchesWithTheEvaluations(t *testing.T) {
 	f, err := policyfix.Parse("cross", []byte(`
 contracts: []
 services: [shop]
@@ -47,50 +45,89 @@ cases:
 	}
 	c := &f.Cases[0]
 	answers := []Answer{
-		{Allowed: true, Decision: policyfix.DecisionAllowed},           // listed with read: agrees
-		{Allowed: false, Decision: policyfix.DecisionNoAccess},         // listed without write: agrees
-		{Allowed: true, Decision: policyfix.DecisionAllowed},           // not listed: disagrees
-		{Allowed: false, Decision: policyfix.DecisionDenied},           // listed with read: disagrees
-		{Allowed: true, Decision: policyfix.DecisionAllowed},           // not_sync with list: agrees
-		{Allowed: false, Decision: policyfix.DecisionNoAccess},         // not_sync with export: disagrees
-		{Allowed: true, Decision: policyfix.DecisionAllowed},           // the type is listed as sync: disagrees
-		{Allowed: false, Decision: policyfix.DecisionNoAccess},         // a sync type as a whole: not compared
+		{Allowed: true, Decision: policyfix.DecisionAllowed},           // listed for read: agrees
+		{Allowed: false, Decision: policyfix.DecisionNoAccess},         // not listed for write: agrees
+		{Allowed: true, Decision: policyfix.DecisionAllowed},           // not listed for read: disagrees
+		{Allowed: false, Decision: policyfix.DecisionDenied},           // listed for read: disagrees
+		{Allowed: true, Decision: policyfix.DecisionAllowed},           // the levels of reports have list: agrees
+		{Allowed: false, Decision: policyfix.DecisionNoAccess},         // the levels of reports have export: disagrees
+		{Allowed: true, Decision: policyfix.DecisionAllowed},           // agrees, but the search for flags lists a resource
+		{Allowed: false, Decision: policyfix.DecisionNoAccess},         // a type with resources as a whole: not compared
 		{Allowed: false, Decision: policyfix.DecisionResourceNotFound}, // listed: disagrees
 		{Allowed: false, Decision: policyfix.DecisionTypeNotFound},     // not compared
 	}
-	list := engine.PermissionResult{
-		"store": {Type: model.TypeModeSync, Resources: []model.ResourceAccess{
-			{ID: "s1", Name: "s1", Access: []string{"read"}},
-			{ID: "s3", Name: "s3", Access: []string{"read", "audit"}},
-			{ID: "gone", Name: "gone", Access: []string{"read"}},
-		}},
-		"reports": {Type: model.TypeModeNotSync, Access: []string{"list", "export"}},
-		"flags":   {Type: model.TypeModeSync},
+	found := searched{
+		resources: map[search][]string{
+			{kind: resourcesOf, typeName: "store", action: "read"}: {"gone", "s1", "s3"},
+		},
+		levels:     map[string][]string{"reports": {"export", "list"}, "flags": {"on"}},
+		unexpected: map[string][]string{"reports": {}, "flags": {"x1"}},
 	}
-	got := crossCheck(f, c, answers, list)
+	got := crossCheck(f, c, answers, found)
 	want := []string{
-		"question 3, read on store/s2: the check says allowed=true (allowed), the permission list does not name store/s2",
-		`question 4, read on store/s3: the check says allowed=false (denied), the permission list gives store/s3 the levels ["audit" "read"]`,
-		`question 6, export on reports as a whole: the check says allowed=false (no_access), the permission list gives reports as a whole the levels ["export" "list"]`,
-		"question 7, on on flags as a whole: the permission list has flags as sync, not not_sync",
-		"question 9, read on store/gone: the check does not find it, the permission list names it",
+		"question 3, read on store/s2: the evaluation says allowed=true (allowed), the search does not list store/s2",
+		"question 4, read on store/s3: the evaluation says allowed=false (denied), the search lists store/s3",
+		`question 6, export on reports as a whole: the evaluation says allowed=false (no_access), the search gives reports as a whole the levels ["export" "list"]`,
+		"question 9, read on store/gone: the evaluation says resource_not_found, the search lists it",
+		`the resource search lists ["x1"] for flags, which has no resources`,
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("crossCheck:\n got %s\nwant %s", strings.Join(got, "\n     "), strings.Join(want, "\n     "))
 	}
 
-	// A list that agrees reports nothing; a resource listed twice is a defect of the list.
-	answers[2].Allowed, answers[3].Allowed, answers[5].Allowed, answers[6].Allowed = false, true, true, false
-	list["flags"] = model.TypePermission{Type: model.TypeModeNotSync}
-	list["store"] = model.TypePermission{Type: model.TypeModeSync, Resources: list["store"].Resources[:2]}
-	if got := crossCheck(f, c, answers, list); len(got) != 0 {
-		t.Fatalf("a list that agrees: %v", got)
+	// Searches that agree report nothing; a resource that one search lists twice is a defect of the list.
+	answers[2].Allowed, answers[3].Allowed, answers[5].Allowed = false, true, true
+	found.unexpected["flags"] = nil
+	found.resources[search{kind: resourcesOf, typeName: "store", action: "read"}] = []string{"s1", "s3"}
+	if got := crossCheck(f, c, answers, found); len(got) != 0 {
+		t.Fatalf("searches that agree: %v", got)
 	}
-	store := list["store"]
-	store.Resources = append(store.Resources, model.ResourceAccess{ID: "s1", Name: "s1", Access: []string{"write"}})
-	list["store"] = store
-	got = crossCheck(f, c, answers, list)
-	if !slices.ContainsFunc(got, func(m string) bool { return strings.Contains(m, "names store/s1 more than once") }) {
+	found.resources[search{kind: resourcesOf, typeName: "store", action: "read"}] = []string{"s1", "s1", "s3"}
+	got = crossCheck(f, c, answers, found)
+	if !slices.Equal(got, []string{"question 1, read on store/s1: the resource search lists store/s1 2 times"}) {
 		t.Fatalf("a resource listed twice: %v", got)
+	}
+}
+
+// searchesFor asks for each search once, and only for what the answers leave to the searches: a type without resources
+// asked as a whole gets an action search and one resource search whatever the number of its actions asked.
+func TestSearchesForAreTheOnesTheQuestionsNeed(t *testing.T) {
+	f, err := policyfix.Parse("needs", []byte(`
+contracts: []
+services: [shop]
+types:
+  - {name: store, service: shop, sync: true}
+  - {name: reports, service: shop, sync: false}
+resources:
+  - {type: store, id: s1}
+cases:
+  - name: questions
+    subject: ann
+    questions:
+      - {type: store, resource: s1, action: read, allowed: true}
+      - {type: store, resource: s1, action: read, allowed: true}
+      - {type: store, resource: s1, action: write, allowed: false}
+      - {type: reports, action: list, allowed: true}
+      - {type: reports, action: export, allowed: false}
+      - {type: store, action: read, allowed: false}
+      - {type: store, resource: gone, action: audit, allowed: false}
+      - {type: nowhere, action: read, allowed: false}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	answers := make([]Answer, len(f.Cases[0].Questions))
+	answers[6].Decision = policyfix.DecisionResourceNotFound
+	answers[7].Decision = policyfix.DecisionTypeNotFound
+	got := searchesFor(f, &f.Cases[0], answers)
+	want := []search{
+		{kind: resourcesOf, typeName: "store", action: "read"},
+		{kind: resourcesOf, typeName: "store", action: "write"},
+		{kind: levelsOf, typeName: "reports"},
+		{kind: noResourcesOf, typeName: "reports", action: "list"},
+		{kind: resourcesOf, typeName: "store", action: "audit"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("searchesFor:\n got %v\nwant %v", got, want)
 	}
 }

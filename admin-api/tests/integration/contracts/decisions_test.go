@@ -4,10 +4,10 @@ package contracts_test
 
 // The decision contracts DEC01 ... DEC13 of contracts.yaml, checked against the engine of the check API: every fixture of
 // core/testsupport/policyfix/testdata/decisions that names a contract is loaded into a cluster of its own and its questions
-// are asked through POST /service/{slug}/access/v1/evaluations (see package contracts); the permission list of each case
-// (GET /service/{slug}/permission) must agree with those answers, and so must POST /service/{slug}/check, which the
-// evaluations replace, while the check API has it (contracts.Loaded.SecondOpinion). A fixture that checks several contracts
-// is loaded and asked once per test binary; the test of each contract compares the answers with what the fixture expects.
+// are asked through POST /service/{slug}/access/v1/evaluations (see package contracts); what the searches of each case
+// (…/access/v1/search/resource and …/search/action) list must agree with those answers, and so must the routes that AuthZEN
+// replaces, while the check API has them (contracts.Loaded.SecondOpinion). A fixture that checks several contracts is loaded
+// and asked once per test binary; the test of each contract compares the answers with what the fixture expects.
 
 import (
 	"fmt"
@@ -71,8 +71,8 @@ func TestContract_DEC13_ExplanationsNameTheRules(t *testing.T) {
 }
 
 // runContract asks the questions of every fixture that checks the contract and reports each answer that differs from the
-// expectation, and each question on which the permission list, or POST /check, disagrees with the evaluations. A contract no
-// fixture checks yet is skipped: its table is still being written.
+// expectation, and each question on which the searches, or the older routes of the check API, disagree with the
+// evaluations. A contract no fixture checks yet is skipped: its table is still being written.
 func runContract(t *testing.T, contract string) {
 	fixtures, err := policyfix.Decisions()
 	if err != nil {
@@ -96,10 +96,10 @@ func runContract(t *testing.T, contract string) {
 						}
 					}
 					for _, d := range got[i].listDisagrees {
-						t.Errorf("GET /permission against the evaluations: %s", d)
+						t.Errorf("the searches against the evaluations: %s", d)
 					}
 					for _, d := range got[i].secondOpinion {
-						t.Errorf("POST /check against the evaluations: %s", d)
+						t.Errorf("POST /check and GET /permission against the evaluations: %s", d)
 					}
 				})
 			}
@@ -107,8 +107,8 @@ func runContract(t *testing.T, contract string) {
 	}
 }
 
-// caseAnswers is what a case of a fixture got: the answers of the evaluations to its questions, the questions on which its
-// permission list disagrees with them (contracts.Loaded.CrossCheck), and those on which POST /check does
+// caseAnswers is what a case of a fixture got: the answers of the evaluations to its questions, the questions on which the
+// searches disagree with them (contracts.Loaded.CrossCheck), and those on which the routes that AuthZEN replaces do
 // (contracts.Loaded.SecondOpinion).
 type caseAnswers struct {
 	answers       []contracts.Answer
