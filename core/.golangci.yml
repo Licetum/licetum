@@ -52,6 +52,16 @@ linters:
               desc: foundation packages are leaves
             - pkg: github.com/licetum/licetum/core/synchronizer
               desc: foundation packages are leaves
+        reference-evaluator:
+          # The oracle of the decision contracts must not share code with what it checks.
+          files: ["**/core/testsupport/refeval/**"]
+          deny:
+            - pkg: github.com/licetum/licetum/core/engine
+              desc: the reference evaluator decides on its own, without the engine
+            - pkg: github.com/licetum/licetum/core/server
+              desc: the reference evaluator decides on its own, without the engine
+            - pkg: github.com/licetum/licetum/core/db
+              desc: the reference evaluator decides on its own, without the engine
   exclusions:
     presets:
       - std-error-handling

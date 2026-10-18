@@ -36,7 +36,9 @@
 //     the denial. The action is denied when some denial is lifted by no exception.
 //   - Fail closed: an unresolved parent link at or above a resource puts the resource under every point denial whose
 //     anchor's type is the missing parent's type or above it, with the levels that would flow from that type down the
-//     link and the route. Such a denial is lifted only by an exception provably below its anchor, by the real links.
+//     link and the route. Such a denial is lifted only by an exception provably below its anchor: a point by the real
+//     links, the whole of a type by the types. A point exception on the resource itself does not lift it, since the
+//     resource is not known to lie below the anchor (the engine keeps the denial too: the conservative reading).
 //   - A question about a type as a whole (no resource), and so every question about a type with no synchronizer, is
 //     decided by the whole-type rules on that very type, with no cascade from the types above it.
 //   - Explanations: granted_by names every allow rule (exceptions included) that grants the action, whatever the

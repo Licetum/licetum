@@ -1,7 +1,7 @@
 // Package policyfix describes a policy and a resource graph in external terms — service slugs, type names, resource
 // external ids, group, role and rule names — together with questions and the answers expected of them. A fixture is the
 // input of the decision contracts (DEC* in contracts.yaml): the engine runner of the admin API tests loads it through the
-// API and the sources and asks the questions; the reference evaluator (core/internal/refeval) decides it in memory; the
+// API and the sources and asks the questions; the reference evaluator (core/testsupport/refeval) decides it in memory; the
 // generator (core/testsupport/policygen) writes random ones. Nothing here depends on how a decision is computed.
 //
 // Fixtures are YAML files (testdata/decisions/*.yaml of this package). They are read through JSON, so the conditions are

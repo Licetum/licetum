@@ -38,22 +38,21 @@ func (s *caseState) assumed(i *instance, r resKey) levelSet {
 
 // below reports whether the anchor of an exception lies strictly below the anchor of a denial for one level: the denial,
 // flowing down from its anchor, reaches the exception's anchor with that level. A point lies below a point that is its
-// ancestor through the resource links, a whole type below a higher whole type through the type links, a point below the
-// whole of its own type or of a type above its type; the whole of a type is never below a point. Equal anchors are a
-// tie, which goes to the denial.
+// ancestor through the resource links, and below the whole of its own type or of a type above its type. The whole of a
+// type lies below any anchor, point or whole, of a strictly higher type through the type links: "a whole-type anchor
+// is below another if its type is a lower type" (CLAUDE.md), whatever the resources of that type under the point. Equal
+// anchors, and the whole of the type of a point, are a tie, which goes to the denial.
 func (s *caseState) below(e, d *instance, level string) bool {
 	var flow levelSet
 	var ok bool
 	switch {
-	case d.whole && e.whole:
+	case e.whole:
 		if e.typ == d.typ {
 			return false
 		}
 		flow, ok = s.g.typeFlow(d.typ, e.typ)
 	case d.whole:
 		flow, ok = s.g.typeFlow(d.typ, e.typ)
-	case e.whole:
-		return false
 	default:
 		if e.key() == d.key() {
 			return false

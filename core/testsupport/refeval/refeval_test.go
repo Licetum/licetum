@@ -98,7 +98,8 @@ cases:
 }
 
 // Equal anchors tie and the denial wins; a point is below the whole of its own type and of a type above it; the whole
-// of a lower type is below the whole of a higher one; the whole of a type is never below a point.
+// of a lower type is below any anchor of a higher type, the whole or a point; the whole of a type is not below a point
+// of that same type.
 func TestTiesAndTheShapesOfBelow(t *testing.T) {
 	check(t, `
 services: [s]
@@ -123,6 +124,8 @@ rules:
   - {name: lower-except, subject: lower, type: branch, access: [read], exception: true}
   - {name: point-deny, subject: point, type: rrs, resource: R1, access: [read], deny: true}
   - {name: point-except, subject: point, type: branch, access: [read], exception: true}
+  - {name: tie-deny, subject: tie, type: branch, resource: B1, access: [read], deny: true}
+  - {name: tie-except, subject: tie, type: branch, access: [read], exception: true}
   - {name: cap-allow, subject: cap, type: cap, access: [use]}
   - {name: cap-deny, subject: cap, type: cap, access: [use], deny: true}
   - {name: cap-except, subject: cap, type: cap, access: [use], exception: true}
@@ -132,7 +135,8 @@ cases:
   - {name: a point below the whole of its type, subject: own, questions: [{type: branch, resource: B1, action: read, allowed: true, denials: [{rule: own-deny, lifted_by: [own-except]}]}]}
   - {name: a point below the whole of a higher type, subject: higher, questions: [{type: branch, resource: B1, action: read, allowed: true}]}
   - {name: a whole type below a higher one, subject: lower, questions: [{type: branch, resource: B1, action: read, allowed: true}]}
-  - {name: a whole type is not below a point, subject: point, questions: [{type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: point-deny}]}]}
+  - {name: a whole type is below a point of a higher type, subject: point, questions: [{type: branch, resource: B1, action: read, allowed: true, denials: [{rule: point-deny, lifted_by: [point-except]}]}]}
+  - {name: a whole type is not below a point of its own type, subject: tie, questions: [{type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: tie-deny}]}]}
   - {name: a capability ties, subject: cap, questions: [{type: cap, action: use, allowed: false, decision: denied, granted_by: [cap-allow, cap-except], denials: [{rule: cap-deny}]}]}
 `)
 }
