@@ -1,4 +1,4 @@
-package server
+package httpx
 
 import (
 	"compress/gzip"
@@ -12,10 +12,10 @@ import (
 // gzipPool reuses the compressors: a gzip writer carries a large window, too costly to allocate per response.
 var gzipPool = sync.Pool{New: func() any { return gzip.NewWriter(nil) }}
 
-// withGzip compresses the JSON responses for clients that accept gzip — a permission of a large service is a
+// WithGzip compresses the JSON responses for clients that accept gzip — a permission of a large service is a
 // big answer. The decision is taken when the status is written, by the Content-Type the handler set; any other
 // response passes through untouched.
-func withGzip(next http.Handler) http.Handler {
+func WithGzip(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			next.ServeHTTP(w, r)

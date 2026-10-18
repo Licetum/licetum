@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -44,7 +45,7 @@ func NewAdminAPI(app *service.App) (http.Handler, huma.API) {
 	h := &adminHandlers{app: app}
 	tags := append(append([]*huma.Tag{}, adminTags...), adminOpsTags...)
 	return server.NewServer(app.App, "Licetum — admin", tags, func(api huma.API) {
-		server.AddBearerScheme(api, "Access token issued by the IdP of the Licetum self-service (PLATFORM__*). "+
+		httpx.AddBearerScheme(api, "Access token issued by the IdP of the Licetum self-service (PLATFORM__*). "+
 			"Permissions come from the platform policies: service, type_resource, group, group_member, role, assignment_rule.")
 		api.UseMiddleware(platformAuth(app))
 		h.registerServices(api)
