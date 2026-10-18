@@ -553,7 +553,10 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
 
 - **Reverse lookup and preview** (`access_lookup.go`, `grant_preview.go`): `GET …/type_resource/{id}/access?resource_id=` lists the rules
   in force that cover a resource (`coversOf` over the instances of every subject's rules; denials first; rules found by a claim apart),
-  each with `via`, the levels that reach it, `who` and the known people; `POST /assignment_rule/preview` says what a rule body would do:
+  one entry per instance with `via`, the levels that reach it, `who` and the known people (a denial covered both for real and through a
+  missing parent is one entry: `assumed_levels` are the levels only assumed, `assumed` says none reaches for real; `reachesOf`; one rule
+  can still make several entries reached the same way — role items, `resource_where` anchors — so the interface keys rows by position);
+  `POST /assignment_rule/preview` says what a rule body would do:
   the resources it covers through the closure (`expandAnchors`), the known people it reaches, the denials and exceptions above or
   inside it that may reach the same people (`mayReachSame`), and the rules that already give the same. Both need read/write on the
   whole `assignment_rule` policy because they show other rules, and neither writes.

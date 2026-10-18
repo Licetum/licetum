@@ -12,6 +12,15 @@ import { describeConditions, type Decision } from '@/domain/rule';
 const decisionOf = (e: AccessEntry): Decision =>
   e.rule.effect === 'deny' ? 'deny' : e.rule.exception ? 'except' : 'allow';
 
+type KeyedEntry = AccessEntry & { key: number };
+
+/**
+ * Keys the entries by their position in the answer. The answer has one entry per rule instance, and one rule can make
+ * several reached the same way (a role with several items, a rule matched by attributes on several ancestors), so
+ * neither the rule nor how it reaches the resource is unique.
+ */
+const keyed = (entries: AccessEntry[]): KeyedEntry[] => entries.map((e, key) => ({ ...e, key }));
+
 function Who({ entry }: { entry: AccessEntry }) {
   const { t } = useTranslation();
   const { who } = entry;
@@ -86,6 +95,7 @@ export function WhoHasAccess({
   const data = query.data;
   if (!data) return null;
   const known = data.people.registry > 0;
+  const levelName = (l: string) => (l === '*' ? t('rule.allLevels') : l);
 
   const columns = [
     {
@@ -102,7 +112,7 @@ export function WhoHasAccess({
             {t(`whohas.decision.${decisionOf(e)}`)}
           </DecisionTag>
           <span className="mono" style={{ fontSize: 12 }}>
-            {e.levels.map((l) => (l === '*' ? t('rule.allLevels') : l)).join(', ')}
+            {e.levels.map(levelName).join(', ')}
           </span>
         </Flex>
       ),
@@ -116,10 +126,16 @@ export function WhoHasAccess({
           {e.via === 'ancestor' && e.rule.anchor.resource_id && (
             <span className="mono"> · {e.rule.anchor.resource_id}</span>
           )}
-          {e.assumed && (
+          {e.assumed ? (
             <Tag color="warning" style={{ marginLeft: 6 }}>
               {t('whohas.assumed')}
             </Tag>
+          ) : (
+            e.assumed_levels.length > 0 && (
+              <Tag color="warning" style={{ marginLeft: 6 }}>
+                {t('whohas.assumedLevels', { levels: e.assumed_levels.map(levelName).join(', ') })}
+              </Tag>
+            )
           )}
         </span>
       ),
@@ -144,11 +160,11 @@ export function WhoHasAccess({
       {data.entries.length === 0 ? (
         <Alert type="info" showIcon title={t('whohas.none')} />
       ) : (
-        <Table<AccessEntry>
-          rowKey={(e) => `${e.rule.rule_id}/${e.via}`}
+        <Table<KeyedEntry>
+          rowKey="key"
           size="small"
           pagination={false}
-          dataSource={data.entries}
+          dataSource={keyed(data.entries)}
           columns={columns}
           scroll={{ x: true }}
         />
@@ -163,11 +179,11 @@ export function WhoHasAccess({
               children: (
                 <Flex vertical gap={8}>
                   <Typography.Text type="secondary">{t('whohas.dynamicHint')}</Typography.Text>
-                  <Table<AccessEntry>
-                    rowKey={(e) => e.rule.rule_id}
+                  <Table<KeyedEntry>
+                    rowKey="key"
                     size="small"
                     pagination={false}
-                    dataSource={data.dynamic}
+                    dataSource={keyed(data.dynamic)}
                     columns={columns.filter((c) => c.key !== 'via')}
                   />
                 </Flex>
