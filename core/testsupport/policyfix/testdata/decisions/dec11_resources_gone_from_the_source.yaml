@@ -1,0 +1,81 @@
+# DEC11, the state of the resources after their sources changed (admin-api/tests/integration/api/enablers_test.go,
+# TestResourceStateIsReported): B9 appears with a parent, R9, that is in no source, so its link is unresolved; B4 leaves its
+# source, so it is switched off and only listed on request. The test reads the admin list; what it relies on for decisions
+# is that a resource gone from its source is not there to be decided, and that a resource whose parent is missing fails
+# closed. A fixture is loaded fresh, so B4 is simply a resource no source reports: the switched-off row of the test and a
+# resource that was never reported cannot be told apart here (both answer resource_not_found). I4, whose source still
+# names B4 as its parent, is left with an unresolved link of its own: its missing parent is a branch, so a denial anchored
+# at an rrs or a division could cover it.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# B1 ⊃ I1; B9 -> R9 (missing); I4 -> B4 (missing: B4 left its source).
+contracts: [DEC11]
+description: A resource gone from its source is not found, and the resources whose parent is missing fail closed.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B9, name: Branch 9, parents: [{type: rrs, id: R9}]}
+  - {type: item, id: I1, name: Item 1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, name: Item 4, parents: [{type: branch, id: B4}]}
+rules:
+  # Read on every branch, a denial on R1: B9 and I4 may lie under R1 for all anyone knows.
+  - {name: allow-branch, subject: user-1, type: branch, access: [read]}
+  - {name: deny-R1, subject: user-1, type: rrs, resource: R1, access: [read], deny: true}
+  # A denial on D2, the division B4 lay under before it left: nothing says so any more, so it is assumed as well.
+  - {name: d2-allow-branch, subject: division-denial, type: branch, access: [read]}
+  - {name: d2-deny-D2, subject: division-denial, type: division, resource: D2, access: [read], deny: true}
+  # No denial: a missing parent alone takes nothing away.
+  - {name: plain-allow-branch, subject: no-denial, type: branch, access: [read]}
+cases:
+  # from admin-api/tests/integration/api/enablers_test.go:TestResourceStateIsReported
+  - name: a resource gone from its source is not found
+    subject: user-1
+    questions:
+      - {type: branch, resource: B4, action: read, allowed: false, decision: resource_not_found}
+  # from admin-api/tests/integration/api/enablers_test.go:TestResourceStateIsReported
+  - name: a resource whose parent is in no source is assumed to be under the denial
+    subject: user-1
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-R1, unresolved_parent: true}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-R1}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+  - name: a resource whose parent left its source is assumed to be under the denial
+    subject: user-1
+    service: app
+    questions:
+      - {type: item, resource: I4, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-R1, unresolved_parent: true}]}
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-R1}]}
+  - name: a denial on the division the gone parent lay under is assumed for its child as for any orphan
+    subject: division-denial
+    service: app
+    questions:
+      - {type: item, resource: I4, action: read, allowed: false, decision: denied, granted_by: [d2-allow-branch], denials: [{rule: d2-deny-D2, unresolved_parent: true}]}
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [d2-allow-branch], denials: []}
+  - name: a denial on a division is assumed for the orphan branch too
+    subject: division-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [d2-allow-branch], denials: [{rule: d2-deny-D2, unresolved_parent: true}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: rrs, resource: R3, action: read, allowed: false, decision: no_access}
+  - name: without a denial the orphans keep their grant
+    subject: no-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: true, decision: allowed, granted_by: [plain-allow-branch], denials: []}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: resource_not_found}
+  - name: without a denial the orphan item keeps its grant
+    subject: no-denial
+    service: app
+    questions:
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [plain-allow-branch], denials: []}
