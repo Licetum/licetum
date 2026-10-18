@@ -34,7 +34,6 @@ const (
 	DefaultTokenCacheTTL = 300 * time.Second
 	pkceKeyPrefix        = "authz:pkce:"
 	pkceTTL              = 600 * time.Second
-	jwksTimeout          = 5 * time.Second
 	tokenExchangeTimeout = 10 * time.Second
 )
 
@@ -517,7 +516,7 @@ func (a *App) fetchAndVerify(ctx context.Context, svc *model.Service, token stri
 	}
 	kid, hasKid := unverified.Header["kid"]
 
-	key, err := a.jwksKeyFor(ctx, *svc.JwksURL, kid, hasKid)
+	key, err := a.keySets().keyFor(ctx, *svc.JwksURL, kid, hasKid)
 	if err != nil {
 		return nil, err
 	}

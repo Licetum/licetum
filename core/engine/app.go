@@ -87,8 +87,9 @@ type App struct {
 	tokensL1      *lruCache[Claims]
 	answersL1     *lruCache[any]
 	invalidTokens *lruCache[error]
-	// jwks holds the key sets of the identity providers (see jwksKeyFor).
-	jwks jwksCache
+	// jwks holds the key sets of the identity providers, configured on first use (see keySets).
+	jwks     KeySets
+	jwksOnce sync.Once
 	// local keeps the revision of the policy and its snapshot in memory (see localView).
 	local viewState
 	// ready answers the readiness probe (see Ready); health tells which dependencies the calls are failing on lately.

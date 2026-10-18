@@ -67,20 +67,32 @@ func sameKid(a, b any) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-// jwksCache holds the key set of every URL seen.
-type jwksCache struct {
+// KeySets holds the key set of every URL seen and fetches them. It belongs to no App: the settings and the
+// observer are given by the owner, so the verifiers of a process share one set of keys.
+type KeySets struct {
+	// HTTP is the client of the fetches; each call bounds its own time.
+	HTTP *http.Client
+	// TTL is how long a key set is trusted before it is fetched again; MinRefresh is how often an unknown key id may
+	// make it fetch again. A zero TTL fetches on every call.
+	TTL, MinRefresh time.Duration
+	// Observe, when set, is told the result of every fetch: "ok" or "error".
+	Observe func(result string)
+
 	mu     sync.Mutex
 	sets   map[string]*keySet
 	flight singleflight.Group
 }
 
-func (c *jwksCache) get(url string) *keySet {
+// jwksTimeout bounds one fetch of a key set.
+const jwksTimeout = 5 * time.Second
+
+func (c *KeySets) get(url string) *keySet {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sets[url]
 }
 
-func (c *jwksCache) put(url string, set *keySet) {
+func (c *KeySets) put(url string, set *keySet) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.sets == nil {
@@ -89,22 +101,21 @@ func (c *jwksCache) put(url string, set *keySet) {
 	c.sets[url] = set
 }
 
-// jwksKeyFor returns the key of the key set at jwksURL that signed a token with the given key id, or nil when the
+// keyFor returns the key of the key set at jwksURL that signed a token with the given key id, or nil when the
 // provider has no such key. A transport failure is an errJWKSUnavailable.
-func (a *App) jwksKeyFor(ctx context.Context, jwksURL string, kid any, hasKid bool) (*jwksKey, error) {
-	t := a.tuningOrDefault()
+func (ks *KeySets) keyFor(ctx context.Context, jwksURL string, kid any, hasKid bool) (*jwksKey, error) {
 	now := time.Now()
-	set := a.jwks.get(jwksURL)
-	if set != nil && now.Sub(set.fetchedAt) < t.jwksTTL {
+	set := ks.get(jwksURL)
+	if set != nil && now.Sub(set.fetchedAt) < ks.TTL {
 		if key := set.find(kid, hasKid); key != nil {
 			return key, nil
 		}
 		// An unknown key: the provider may have rotated. Ask again, but not more often than once per interval.
-		if now.Sub(set.fetchedAt) < t.jwksMinRefresh {
+		if now.Sub(set.fetchedAt) < ks.MinRefresh {
 			return nil, nil
 		}
 	}
-	fresh, err := a.fetchKeySet(ctx, jwksURL, now)
+	fresh, err := ks.fetchKeySet(ctx, jwksURL, now)
 	if err != nil {
 		return nil, err
 	}
@@ -113,14 +124,14 @@ func (a *App) jwksKeyFor(ctx context.Context, jwksURL string, kid any, hasKid bo
 
 // fetchKeySet fetches the key set of jwksURL, once for all the callers that wait for it. A caller that decided to fetch
 // at asked does not fetch again when a fetch has completed since.
-func (a *App) fetchKeySet(ctx context.Context, jwksURL string, asked time.Time) (*keySet, error) {
-	v, err, _ := a.jwks.flight.Do(jwksURL, func() (any, error) {
-		if set := a.jwks.get(jwksURL); set != nil && set.fetchedAt.After(asked) {
+func (ks *KeySets) fetchKeySet(ctx context.Context, jwksURL string, asked time.Time) (*keySet, error) {
+	v, err, _ := ks.flight.Do(jwksURL, func() (any, error) {
+		if set := ks.get(jwksURL); set != nil && set.fetchedAt.After(asked) {
 			return set, nil
 		}
-		doc, err := a.fetchJWKS(context.WithoutCancel(ctx), jwksURL)
-		if a.metrics != nil {
-			a.metrics.jwksFetches.WithLabelValues(resultOf(err)).Inc()
+		doc, err := ks.fetchJWKS(context.WithoutCancel(ctx), jwksURL)
+		if ks.Observe != nil {
+			ks.Observe(resultOf(err))
 		}
 		if err != nil {
 			return nil, err
@@ -134,7 +145,7 @@ func (a *App) fetchKeySet(ctx context.Context, jwksURL string, asked time.Time) 
 			kid, hasKid := meta["kid"]
 			set.keys = append(set.keys, &jwksKey{kid: kid, hasKid: hasKid, raw: raw})
 		}
-		a.jwks.put(jwksURL, set)
+		ks.put(jwksURL, set)
 		return set, nil
 	})
 	if err != nil {
@@ -148,7 +159,7 @@ type jwksDocument struct {
 }
 
 // fetchJWKS asks the provider for its key set.
-func (a *App) fetchJWKS(ctx context.Context, jwksURL string) (*jwksDocument, error) {
+func (ks *KeySets) fetchJWKS(ctx context.Context, jwksURL string) (*jwksDocument, error) {
 	ctx, cancel := context.WithTimeout(ctx, jwksTimeout)
 	defer cancel()
 
@@ -156,7 +167,7 @@ func (a *App) fetchJWKS(ctx context.Context, jwksURL string) (*jwksDocument, err
 	if err != nil {
 		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
 	}
-	resp, err := a.HTTP.Do(req)
+	resp, err := ks.HTTP.Do(req)
 	if err != nil {
 		return nil, errJWKSUnavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
 	}
