@@ -694,7 +694,12 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 			involved[id] = true
 		}
 		if rule.ResourceFromClaim != nil {
+			// The lookup climbs from the matched resource to the rule's type through every type in between, also those no
+			// level flows through (DescendantsOf leaves them out): their data must be there, or the climb stops short.
 			involved[rule.ResourceFromClaim.LookupTypeResourceID] = true
+			for _, id := range g.TypesBetween(rule.ResourceFromClaim.LookupTypeResourceID, *rule.TypeResourceID) {
+				involved[id] = true
+			}
 		}
 	}
 	involvedIDs := Keys(involved)
@@ -879,8 +884,16 @@ type nodeState struct {
 	covers []Cover
 }
 
-func hasCover(n *nodeState, inst int) bool {
-	return slices.ContainsFunc(n.covers, func(c Cover) bool { return c.Inst == inst && !c.Assumed })
+// knownCover returns the levels through which an instance covers a resource for real, and whether it does.
+func knownCover(n *nodeState, inst int) (LevelSet, bool) {
+	var out LevelSet
+	found := false
+	for _, c := range n.covers {
+		if c.Inst == inst && !c.Assumed {
+			out, found = out.union(c.Mask), true
+		}
+	}
+	return out, found
 }
 
 // coverNodes finds the resources of the result types covered by the instances. Allow instances
@@ -1009,7 +1022,9 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 		}
 	}
 	// Pass C: a resource with an unresolved parent link at or above it may hang below any denial anchored above the
-	// missing parent's type — the hierarchy above it is not fully known, so the denial applies.
+	// missing parent's type — the hierarchy above it is not fully known, so the denial applies. That holds for a denial
+	// whose anchor is a known ancestor as well: the missing parent could lie below the anchor too and let through levels
+	// the known routes do not (CoversOf).
 	for id, links := range unresolved {
 		n, ok := nodes[id]
 		if !ok {
@@ -1017,11 +1032,13 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 		}
 		for i := range p.Insts {
 			in := &p.Insts[i]
-			if !in.Deny || in.Whole() || hasCover(n, i) {
+			if !in.Deny || in.Whole() {
 				continue
 			}
 			if m := g.assumedMask(in.AnchorType, links); !m.empty() {
-				n.covers = append(n.covers, Cover{Inst: i, Mask: m, Assumed: true})
+				if known, ok := knownCover(n, i); !ok || !m.SubsetOf(known) {
+					n.covers = append(n.covers, Cover{Inst: i, Mask: m, Assumed: true})
+				}
 			}
 		}
 	}

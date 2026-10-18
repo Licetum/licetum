@@ -7,7 +7,9 @@
 # doc <- folder and doc <- space: X1 has the parents F1 (known) and S9 (missing); X2 has F2 and S2, both known.
 # page <- book (the link lets only read through): P1 -> K1 (known), P9 -> K9 (missing).
 # region <- country (read only), office <- region, desk <- office (read only): O1 -> G1 (known, G1 names no country);
-# O9 -> G9 (missing); T9 -> O9. Each subject holds the rules of one scenario.
+# O9 -> G9 (missing); T9 -> O9.
+# building <- campus, room <- campus (write only) and room <- building: M1 -> U1 (known) and H9 (missing); M2 -> U1.
+# Each subject holds the rules of one scenario.
 contracts: [DEC11]
 description: Several parents with one missing, and the masks that bound an assumed denial.
 services: [docs]
@@ -21,6 +23,9 @@ types:
   - {name: region, service: docs, sync: true, parents: [{type: country, inherit: [read]}]}
   - {name: office, service: docs, sync: true, parents: [{type: region}]}
   - {name: desk, service: docs, sync: true, parents: [{type: office, inherit: [read]}]}
+  - {name: campus, service: docs, sync: true}
+  - {name: building, service: docs, sync: true, parents: [{type: campus}]}
+  - {name: room, service: docs, sync: true, parents: [{type: campus, inherit: [write]}, {type: building}]}
 resources:
   - {type: space, id: S1}
   - {type: space, id: S2}
@@ -36,6 +41,9 @@ resources:
   - {type: office, id: O1, parents: [{type: region, id: G1}]}
   - {type: office, id: O9, parents: [{type: region, id: G9}]}
   - {type: desk, id: T9, parents: [{type: office, id: O9}]}
+  - {type: campus, id: U1}
+  - {type: room, id: M1, parents: [{type: campus, id: U1}, {type: building, id: H9}]}
+  - {type: room, id: M2, parents: [{type: campus, id: U1}]}
 rules:
   # A denial on a space: the missing space parent of X1 could be S1.
   - {name: m1-allow-doc, subject: missing-space, type: doc, access: [read]}
@@ -56,6 +64,10 @@ rules:
   # From a country down to a region only read flows, so a denial on a country can reach the missing region with read only.
   - {name: m7-allow-office, subject: flow-mask, type: office, access: [read, write]}
   - {name: m7-deny-C1, subject: flow-mask, type: country, resource: C1, access: [read, write], deny: true}
+  # U1 is a known ancestor of M1 through a link that lets only write through; the missing building H9 could lie below U1
+  # and let read through as well.
+  - {name: m8-allow-room, subject: known-route-and-missing, type: room, access: [read, write]}
+  - {name: m8-deny-U1, subject: known-route-and-missing, type: campus, resource: U1, access: [read, write], deny: true}
 cases:
   - name: one of several parents is missing and a denial could cover it
     subject: missing-space
@@ -94,3 +106,12 @@ cases:
       - {type: office, resource: O9, action: write, allowed: true, decision: allowed, granted_by: [m7-allow-office]}
       - {type: office, resource: O1, action: read, allowed: true, decision: allowed, granted_by: [m7-allow-office]}
       - {type: office, resource: O1, action: write, allowed: true, decision: allowed}
+  # found by DECP (seed 161): the engine assumed nothing for a denial whose anchor is already a known ancestor, so the
+  # levels the known route does not carry escaped the denial although the missing parent could carry them
+  - name: a known route from the denial's anchor does not bound what the missing parent could carry
+    subject: known-route-and-missing
+    questions:
+      - {type: room, resource: M1, action: read, allowed: false, decision: denied, granted_by: [m8-allow-room], denials: [{rule: m8-deny-U1, unresolved_parent: true}]}
+      - {type: room, resource: M1, action: write, allowed: false, decision: denied, granted_by: [m8-allow-room], denials: [{rule: m8-deny-U1}]}
+      - {type: room, resource: M2, action: read, allowed: true, decision: allowed, granted_by: [m8-allow-room], denials: []}
+      - {type: room, resource: M2, action: write, allowed: false, decision: denied, granted_by: [m8-allow-room], denials: [{rule: m8-deny-U1}]}

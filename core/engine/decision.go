@@ -65,6 +65,8 @@ type denial struct {
 	Inst     int
 	Level    string // the denied level that matched (the level of the rule, or of the hierarchy)
 	LiftedBy []int
+	// Assumed marks a denial of a level that reaches the resource only through an unresolved parent link.
+	Assumed bool
 }
 
 func (d denial) lifted() bool { return len(d.LiftedBy) > 0 }
@@ -149,10 +151,16 @@ func (e *engine) decide(nodeType uuid.UUID, covers []Cover) nodeVerdict {
 	grantedBy := map[string][]int{}
 	exceptionBy := map[string][]int{}
 	var denies []Cover
+	// known holds the levels through which a denial reaches the resource for real, when some denial is also assumed:
+	// a denial may cover a resource both ways, and a level it reaches for real is not reported again as assumed.
+	var known map[int]LevelSet
 	for _, c := range covers {
 		in := &e.insts[c.Inst]
 		if in.Deny {
 			denies = append(denies, c)
+			if c.Assumed && known == nil {
+				known = map[int]LevelSet{}
+			}
 			continue
 		}
 		for _, k := range in.Levels {
@@ -168,6 +176,14 @@ func (e *engine) decide(nodeType uuid.UUID, covers []Cover) nodeVerdict {
 		}
 	}
 
+	if known != nil {
+		for _, c := range denies {
+			if !c.Assumed {
+				known[c.Inst] = known[c.Inst].union(c.Mask)
+			}
+		}
+	}
+
 	levels := make([]string, 0, len(grantedBy))
 	for l := range grantedBy {
 		levels = append(levels, l)
@@ -179,7 +195,10 @@ func (e *engine) decide(nodeType uuid.UUID, covers []Cover) nodeVerdict {
 		lv := levelVerdict{Level: l, GrantedBy: uniqueSorted(grantedBy[l]), Allowed: true}
 		for _, c := range denies {
 			for _, k := range denyMatches(&e.insts[c.Inst], c.Mask, l, implies) {
-				d := denial{Inst: c.Inst, Level: k}
+				if c.Assumed && known[c.Inst].has(k) {
+					continue
+				}
+				d := denial{Inst: c.Inst, Level: k, Assumed: c.Assumed}
 				for _, ex := range uniqueSorted(exceptionBy[l]) {
 					if e.below(ex, c.Inst, k) {
 						d.LiftedBy = append(d.LiftedBy, ex)

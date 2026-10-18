@@ -625,8 +625,8 @@ func (a *App) anchorRowIDs(ctx context.Context, refs []anchorRef) (map[anchorRef
 }
 
 // ancestorLookup asks for the resources of type Lookup that match Value (by name, by id, or by an attribute,
-// see model.MatchBy*), and for their ancestors of type Target — the resource itself when the types are the
-// same. Index is the rule the lookup is for.
+// see model.MatchBy*), and for their ancestors of type Target through the resource links, whatever the inherit
+// masks along the way — the resource itself when the types are the same. Index is the rule the lookup is for.
 type ancestorLookup struct {
 	Index   int
 	Lookup  uuid.UUID
@@ -670,13 +670,31 @@ func (a *App) findAncestorsBatch(ctx context.Context, lookups []ancestorLookup) 
 		if attr == nil {
 			attr = make([]string, len(batch))
 		}
+		// The ancestors are found by walking the resolved edges up, not through resource_ancestor: the closure keeps
+		// only the pairs some level flows between (rebuildClosureSQL drops a route whose masks intersect to nothing),
+		// while the masks say what flows down a link, not which resource lies above which. Dropping such an ancestor
+		// would drop the anchor of a denial (fail open). The walk takes the edges the closure takes: resolved, to a live
+		// resource of a live type, along a live type link; UNION makes a cycle in the data terminate.
 		rows, err := a.reader(ctx).Query(ctx, `
-			SELECT DISTINCT q.idx, anc.id, anc.type_resource_id, anc.external_id, anc.name
-			FROM unnest($1::bigint[], $2::uuid[], $3::uuid[], $4::text[], $5::text[]) AS q(idx, lookup_type, target_type, value, attr)
-			JOIN resource_cache n ON n.type_resource_id = q.lookup_type AND n.active AND `+match+`
-			JOIN resource_ancestor ra ON ra.descendant_id = n.id
-			JOIN resource_cache anc ON anc.id = ra.ancestor_id AND anc.type_resource_id = q.target_type AND anc.active
-			ORDER BY q.idx, anc.external_id`, idx, lookup, target, value, attr)
+			WITH RECURSIVE up(idx, target_type, id) AS (
+				SELECT q.idx, q.target_type, n.id
+				FROM unnest($1::bigint[], $2::uuid[], $3::uuid[], $4::text[], $5::text[]) AS q(idx, lookup_type, target_type, value, attr)
+				JOIN resource_cache n ON n.type_resource_id = q.lookup_type AND n.active AND `+match+`
+				JOIN type_resource nt ON nt.id = n.type_resource_id AND nt.deleted_at IS NULL
+				UNION
+				SELECT up.idx, up.target_type, e.parent_id
+				FROM up
+				JOIN resource_cache cur ON cur.id = up.id
+				JOIN resource_edge e ON e.child_id = cur.id AND e.parent_id IS NOT NULL
+				JOIN resource_cache par ON par.id = e.parent_id AND par.active
+				JOIN type_resource pt ON pt.id = par.type_resource_id AND pt.deleted_at IS NULL
+				JOIN type_resource_parent trp
+				    ON trp.type_resource_id = cur.type_resource_id AND trp.parent_id = e.parent_type_id
+			)
+			SELECT DISTINCT up.idx, anc.id, anc.type_resource_id, anc.external_id, anc.name
+			FROM up
+			JOIN resource_cache anc ON anc.id = up.id AND anc.type_resource_id = up.target_type
+			ORDER BY up.idx, anc.external_id`, idx, lookup, target, value, attr)
 		if err != nil {
 			return err
 		}

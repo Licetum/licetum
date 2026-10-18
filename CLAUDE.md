@@ -365,7 +365,9 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   claims at check time (e.g. "job title → the branch-hierarchy node they're scoped to").
   `resource_from_claim.match_by` is `name`, `id` or `meta.<attribute>`: with an attribute the claim
   value is matched against the attribute the source reported (equal, or a list containing it — both
-  forms use the GIN index on `meta`). With the lookup type equal to the rule's type this is the
+  forms use the GIN index on `meta`). The anchors are the matched resource's ancestors of the rule's type through the
+  resolved resource links, whatever the inherit masks (`findAncestorsBatch` walks the edges, not the closure, which keeps
+  only pairs some level flows between); the types the climb passes are synchronized with the rest (`TypeGraph.TypesBetween`). With the lookup type equal to the rule's type this is the
   "owner" pattern: one rule `{claim: preferred_username, lookup type: project, match_by: meta.owner}`
   gives each user access to the projects (and their descendants) whose `owner` attribute is theirs.
   `effect` is `allow` (default) or `deny`; a denial may use the level `*` (every level). An allow
@@ -528,8 +530,11 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   treated as possibly lying under any denial that could cover it (`assumed` covers, reported as
   `unresolved_parent` in explanations); it recovers when the parent appears. A denial on a resource the cache does not
   have stays as an absent anchor (`Instance.Absent`): it covers nothing for real but is assumed below an unresolved link
-  like any point denial, so an orphan does not escape a denial on its own missing parent. Only an exception provably below
-  a denial lifts it, so a point exception on the orphan itself does not lift an assumed one.
+  like any point denial, so an orphan does not escape a denial on its own missing parent. A denial whose anchor is already a
+  known ancestor is assumed too, for the levels the known routes do not carry (`CoversOf`, pass C of `coverNodes`; the
+  explanation flags the assumed levels only). Only an exception provably below a denial lifts it, so a point exception on the
+  orphan itself does not lift an assumed one. Known gap: a `resource_from_claim` denial whose climb from the matched resource
+  reaches an unresolved link before the rule's type finds no anchor (both the engine and the reference evaluator).
 - Worked example (division → rrs → branch → item; `D1 ⊃ R1, R2`, `R1 ⊃ B1, B2`, `R2 ⊃ B3`, `B1 ⊃ I1`):
 
   | rules | branches visible |

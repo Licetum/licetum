@@ -2,6 +2,7 @@ package engine
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -29,5 +30,33 @@ func TestAWildcardDenialDeniesTheLevelsThatIncludeAFlowingOne(t *testing.T) {
 	}
 	if got := denyMatches(in, AllLevels, "write", nil); !slices.Equal(got, []string{"write"}) {
 		t.Errorf("* through every level, write: got %v", got)
+	}
+}
+
+// TypesBetween is structural: a type on a route no level flows through still lies between, and the order of the links
+// does not matter.
+func TestTypesBetweenFollowsTheLinksWhateverFlows(t *testing.T) {
+	zone, team, space, other := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	g := newTypeGraph([]*TypeNode{
+		{ID: zone},
+		{ID: team, Parents: []typeEdge{{Parent: zone, Inherit: LevelsOf("read")}}},
+		{ID: space, Parents: []typeEdge{{Parent: team, Inherit: LevelsOf("write")}}},
+		{ID: other},
+	})
+	got := g.TypesBetween(space, zone)
+	slices.SortFunc(got, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	want := []uuid.UUID{zone, team, space}
+	slices.SortFunc(want, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	if !slices.Equal(got, want) {
+		t.Fatalf("between space and zone: got %v, want %v", got, want)
+	}
+	if got := g.TypesBetween(zone, space); got != nil {
+		t.Fatalf("zone is above space, not below: %v", got)
+	}
+	if got := g.TypesBetween(space, other); got != nil {
+		t.Fatalf("an unrelated type: %v", got)
+	}
+	if got := g.TypesBetween(team, team); !slices.Equal(got, []uuid.UUID{team}) {
+		t.Fatalf("the type itself: %v", got)
 	}
 }

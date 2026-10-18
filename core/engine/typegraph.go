@@ -190,6 +190,26 @@ func (g *TypeGraph) AncestorTypes(ids ...uuid.UUID) map[uuid.UUID]bool {
 	return out
 }
 
+// TypesBetween returns the live types on some route of type links from lower up to upper, both included, whatever
+// levels flow along it (the walk of a resource_from_claim lookup climbs them: findAncestorsBatch). Nothing when upper is
+// neither lower nor above it.
+func (g *TypeGraph) TypesBetween(lower, upper uuid.UUID) []uuid.UUID {
+	if lower == upper {
+		return []uuid.UUID{lower}
+	}
+	above := g.AncestorTypes(lower)
+	if !above[upper] {
+		return nil
+	}
+	out := []uuid.UUID{lower, upper}
+	for t := range above {
+		if t != upper && g.AncestorTypes(t)[upper] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // signature fingerprints everything upstream of a type: the links (with their level filters) and the
 // state of the types on them. The resource paths of a type depend on the type graph, not only on the
 // data of its source, so a change anywhere above must change the sync hash and trigger a rebuild.

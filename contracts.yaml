@@ -75,13 +75,13 @@ contracts:
     phase: P1
     status: active
   - id: DEC10
-    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_claim (resource_from_property after P3) matches by name, id and meta attributes.
+    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_claim (resource_from_property after P3) matches by name, id and meta attributes and anchors at the matched resource's ancestors of the rule's type through the resource links, whatever the inherit masks.
     oracle: decision tables
     level: pg
     phase: P1
     status: active
   - id: DEC11
-    statement: A resource with an unresolved parent link, or below an ancestor that has one, is treated as possibly under every denial that could cover the missing parent, a denial on the missing parent itself included (fail closed, transitively); only an exception provably below the denial lifts it.
+    statement: A resource with an unresolved parent link, or below an ancestor that has one, is treated as possibly under every denial that could cover the missing parent, a denial on the missing parent itself included, and a denial whose anchor is already a known ancestor for the levels the known routes do not carry (fail closed, transitively); only an exception provably below the denial lifts it.
     oracle: decision tables
     level: pg
     phase: P1
