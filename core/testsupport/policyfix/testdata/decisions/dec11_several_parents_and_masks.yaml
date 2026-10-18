@@ -1,8 +1,9 @@
 # DEC11 at the edges: a resource with several parents of which one is missing, and the levels an assumed denial can
 # carry. A denial is assumed only for what it could reach if the missing parent were under it: through the link that
 # names the missing parent (its inherit mask), down the route from the resource that declares the link (the masks on
-# the way), and from the denial's anchor down to the missing parent's type (the masks between the types). A known
-# parent is decided by what is known.
+# the way), and from the denial's anchor down to the missing parent's type (the masks between the types). A denial on
+# a known ancestor covers through the known routes, and is also assumed for the levels the missing parent could carry
+# that those routes do not (m8).
 #
 # doc <- folder and doc <- space: X1 has the parents F1 (known) and S9 (missing); X2 has F2 and S2, both known.
 # page <- book (the link lets only read through): P1 -> K1 (known), P9 -> K9 (missing).

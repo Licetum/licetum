@@ -100,7 +100,7 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
   `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision`), invalidates the view and, for the replicas of the
   previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`, `authz:sync_epoch`);
-  this release does not read the first two. Answer keys are `authz:permission:t7:r<rules>:…` / `authz:check:t3:r<rules>:…`.
+  this release does not read the first two. Answer keys are `authz:permission:t8:r<rules>:…` / `authz:check:t4:r<rules>:…`.
 - The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
   (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
   (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
@@ -500,7 +500,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    `{name: {"type": "sync", "resources": [...]} | {"type": "not_sync", "access": [...]}}`; a `not_sync` type
    without rules is absent, on a name collision `sync` wins.
 7. Cached in memory and in Redis per `(service, subject, claims fingerprint, revision of the rules)`: key
-   `authz:permission:t7:r<revision>:<service>:<subject>:<fingerprint>` (bump `t7` when the format changes; the
+   `authz:permission:t8:r<revision>:<service>:<subject>:<fingerprint>` (bump `t8` when the format or the decisions change; the
    fingerprint covers only the claims and the request-context attributes the rules and the role items look at, which the snapshot
    knows — a process without it remembers them per revision, `attrsMemo`). TTL = min(60 s, the next moment a rule, a role item's
    assignment or a membership starts/stops being in force). Admin writes bump the revision of the rules in `revision_state`. A cached
@@ -508,7 +508,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one service leaves the answers that
    do not read it in place. The whole computation runs through `cachedAnswer` (`engine/cache.go`): the revisions come from the view
    (`readCacheState`), concurrent misses for the same key share one computation (singleflight) and queue for a computation slot, and the
-   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t3:…`, keyed by a hash of the
+   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t4:…`, keyed by a hash of the
    questions and of `explain`).
 
 ### Decision semantics (deny wins, explicit exceptions)

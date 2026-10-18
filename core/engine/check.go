@@ -24,8 +24,9 @@ const (
 	DecisionTypeNotFound     = "type_not_found"
 )
 
-// checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format.
-const checkResultFormat = "t3"
+// checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format and
+// with the decisions.
+const checkResultFormat = "t4"
 
 // CheckAccess answers the questions "may the caller do X with Y" without building the whole permission map: the
 // rules are loaded once, and the questions are answered together, each from the ancestors of its resource. The

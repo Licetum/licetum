@@ -26,9 +26,10 @@ const (
 	// MaxGroupDepth is how many nestings of groups a membership resolves through: a group counts when the subject is
 	// matched by one of its own memberships, or by a group nested into it through at most this many groups.
 	MaxGroupDepth = 16
-	// resultCacheFormat is the version of the cached result format: when the format changes, new keys
-	// do not overlap the old ones, and stale entries simply expire by TTL.
-	resultCacheFormat = "t7"
+	// resultCacheFormat is the version of the cached result format: when the format or the decisions change, new
+	// keys do not overlap the old ones (a release does not serve the answers of the previous one during a rolling
+	// update), and stale entries simply expire by TTL.
+	resultCacheFormat = "t8"
 )
 
 // PermissionResult — {type_resource_name: sync {resources} | not_sync {access}}.

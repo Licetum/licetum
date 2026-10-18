@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -30,6 +31,78 @@ func TestAWildcardDenialDeniesTheLevelsThatIncludeAFlowingOne(t *testing.T) {
 	}
 	if got := denyMatches(in, AllLevels, "write", nil); !slices.Equal(got, []string{"write"}) {
 		t.Errorf("* through every level, write: got %v", got)
+	}
+}
+
+// A denial may cover a node both for real and as assumed (its anchor is a known ancestor, and a missing parent could
+// lie below it too): the levels it reaches for real are denied for real and reported once, the others are assumed.
+func TestADenialCoveringForRealAndAsAssumedReportsEachLevelOnce(t *testing.T) {
+	campus, room, u1 := uuid.New(), uuid.New(), uuid.New()
+	readWrite := []string{"read", "write"}
+	for _, tc := range []struct {
+		name    string
+		deny    []string
+		implies map[string][]string
+		real    LevelSet
+		want    []levelVerdict
+	}{
+		{
+			name: "levels",
+			deny: readWrite,
+			real: LevelsOf("write"),
+			want: []levelVerdict{
+				{Level: "read", GrantedBy: []int{0}, Denials: []denial{{Inst: 1, Level: "read", Assumed: true}}},
+				{Level: "write", GrantedBy: []int{0}, Denials: []denial{{Inst: 1, Level: "write"}}},
+			},
+		},
+		{
+			// write includes read: the * reaches write for real, and read, which denies write as well, as assumed.
+			name:    "* with write including read, write known",
+			deny:    []string{model.AllLevels},
+			implies: map[string][]string{"write": {"read"}},
+			real:    LevelsOf("write"),
+			want: []levelVerdict{
+				{Level: "read", GrantedBy: []int{0}, Denials: []denial{{Inst: 1, Level: "read", Assumed: true}}},
+				{Level: "write", GrantedBy: []int{0}, Denials: []denial{
+					{Inst: 1, Level: "write"},
+					{Inst: 1, Level: "read", Assumed: true},
+				}},
+			},
+		},
+		{
+			// The * reaches read for real, and with it write; only the level write itself is assumed.
+			name:    "* with write including read, read known",
+			deny:    []string{model.AllLevels},
+			implies: map[string][]string{"write": {"read"}},
+			real:    LevelsOf("read"),
+			want: []levelVerdict{
+				{Level: "read", GrantedBy: []int{0}, Denials: []denial{{Inst: 1, Level: "read"}}},
+				{Level: "write", GrantedBy: []int{0}, Denials: []denial{
+					{Inst: 1, Level: "read"},
+					{Inst: 1, Level: "write", Assumed: true},
+				}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newTypeGraph([]*TypeNode{
+				{ID: campus},
+				{ID: room, Parents: []typeEdge{{Parent: campus, Inherit: AllLevels}}, Implies: tc.implies},
+			})
+			e := newEngine(g, []Instance{
+				{Levels: readWrite, AnchorType: room},
+				{Deny: true, Levels: tc.deny, AnchorType: campus, AnchorRow: &u1, AnchorExt: "U1"},
+			}, nil)
+			got := e.decide(room, []Cover{
+				{Inst: 0, Mask: AllLevels},
+				{Inst: 1, Mask: tc.real},
+				{Inst: 1, Mask: LevelsOf(readWrite...), Assumed: true},
+			})
+			want := nodeVerdict{Blocked: readWrite, Levels: tc.want}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("got %+v\nwant %+v", got, want)
+			}
+		})
 	}
 }
 
