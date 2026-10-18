@@ -304,6 +304,57 @@ func TestSyncWaitingForTheWorkerHoldsNoComputeSlot(t *testing.T) {
 	}
 }
 
+// Concurrent requests that ask for a job which is already queued do not wedge the DBOS client of the process. A DBOS enqueue
+// holds a connection of the client's pool in its transaction and, when the job is a duplicate, takes a second one to find the
+// job that holds the deduplication id, with no deadline, while the listener of the client keeps one connection for good: as
+// many concurrent duplicate enqueues as the pool had connections left each held one and waited for another forever (TestF2_2
+// hung so for 39 minutes, 20 concurrent admin writes enqueueing the six platform types each). The process now runs at most
+// (pool - 1) / 2 enqueues at once (engine.enqueueSlot).
+func TestSyncConcurrentDuplicateEnqueuesDoNotExhaustTheDBOSPool(t *testing.T) {
+	if syncEngine() != "dbos" {
+		t.Skip("the DBOS client only")
+	}
+	e := setup(t)
+	f := e.syncFixture("enqueues", newSource(t, branches("b1")...)) // its admin requests made the worker create the DBOS tables
+	e.stopWorker()                                                     // the job stays queued: every later enqueue is a duplicate
+	r := e.checkReplica(func(c *config.Config) { c.Sync.DBOSPoolSize = 3 }) // the listener's connection and two more
+	typ := uuid.MustParse(f.typ)
+	// The first request creates the DBOS client of the process (the requests meanwhile answer without it) and queues the job.
+	deadline := time.Now().Add(10 * time.Second)
+	for e.jobCount(f.typ, "queued") == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the job was not queued")
+		}
+		if _, err := r.app.Coordinator().Ensure(context.Background(), []uuid.UUID{typ}, engine.SyncOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for range 16 {
+			wg.Go(func() {
+				// No wait: the request only asks for the job (and answers from the data that exists).
+				if _, err := r.app.Coordinator().Ensure(context.Background(), []uuid.UUID{typ}, engine.SyncOptions{}); err != nil {
+					t.Errorf("ensure: %v", err)
+				}
+			})
+		}
+		wg.Wait()
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("16 concurrent requests for a queued job did not get through the enqueue in 20 s: the DBOS pool of 3 is wedged")
+	}
+	if got := e.jobCount(f.typ, "queued"); got != 1 {
+		t.Fatalf("%d queued jobs for the type, want the one they share", got)
+	}
+}
+
 // F3-3: a source that fails is asked once per backoff window by the whole cluster, and the answers come from the data
 // that exists.
 func TestSyncFailingSourceIsAskedOncePerBackoff(t *testing.T) {

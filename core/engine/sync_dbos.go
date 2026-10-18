@@ -63,6 +63,38 @@ type dbosState struct {
 	runtime dbos.Context
 	// connecting is set while a client is being created, so that callers do not queue behind the lock or start a second one.
 	connecting bool
+	// enqueueSlots bounds the enqueues the process runs at once (see enqueueSlot).
+	enqueueSlots     chan struct{}
+	enqueueSlotsOnce sync.Once
+}
+
+// enqueueSlot takes one of the slots of the DBOS enqueues of the process, waiting while ctx lasts; release gives it back.
+//
+// A DBOS enqueue (1.6) holds a connection of the pool in its transaction and, when the job is a duplicate (another request
+// queued it, the usual case under load), takes a second connection to find the job that holds the deduplication id, with no
+// deadline; and the listener of the notifications keeps one connection of the same pool for good. As many duplicate enqueues
+// at once as the pool has connections left would each hold one and wait for another forever, and with them every request
+// of the process that needs a synchronization. The process runs at most (pool - 1) / 2 enqueues at once: each of them finds
+// its second connection.
+func (a *App) enqueueSlot(ctx context.Context) (release func(), err error) {
+	s := &a.dbos
+	s.enqueueSlotsOnce.Do(func() {
+		size := minDBOSPool
+		if raw, err := a.dbosURL(); err == nil { // pool_max_conns as the URI sets it
+			if u, err := url.Parse(raw); err == nil {
+				if n, err := strconv.Atoi(u.Query().Get("pool_max_conns")); err == nil && n > size {
+					size = n
+				}
+			}
+		}
+		s.enqueueSlots = make(chan struct{}, (size-1)/2)
+	})
+	select {
+	case s.enqueueSlots <- struct{}{}:
+		return func() { <-s.enqueueSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (a *App) dbosBackend() syncBackend { return dbosBackend{a} }
@@ -76,9 +108,13 @@ func (a *App) dbosSchema() string {
 	return "dbos"
 }
 
+// minDBOSPool is the smallest pool a DBOS client can enqueue a duplicate job with: the listener's connection, the
+// transaction's and the lookup's (see enqueueSlot).
+const minDBOSPool = 3
+
 func (a *App) dbosPoolSize() int {
 	if a.Cfg != nil && a.Cfg.Sync.DBOSPoolSize > 0 {
-		return a.Cfg.Sync.DBOSPoolSize
+		return max(minDBOSPool, a.Cfg.Sync.DBOSPoolSize)
 	}
 	return 20
 }
@@ -99,7 +135,7 @@ func (a *App) dbosURL() (string, error) {
 		return "", err
 	}
 	q := u.Query()
-	if !q.Has("pool_max_conns") {
+	if n, err := strconv.Atoi(q.Get("pool_max_conns")); err != nil || n < minDBOSPool {
 		// The waiters of one workflow share a poller, so the pool is for the enqueues and the workflows; it is outside DB__POOL_SIZE.
 		q.Set("pool_max_conns", strconv.Itoa(a.dbosPoolSize()))
 	}
@@ -165,11 +201,19 @@ func (b dbosBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh boo
 	var firstErr error
 	for _, id := range typeIDs {
 		wg.Go(func() {
+			release, err := b.a.enqueueSlot(ctx)
+			if err != nil {
+				mu.Lock()
+				defer mu.Unlock()
+				firstErr = errors.Join(firstErr, err)
+				return
+			}
 			h, err := dbos.Enqueue[dbosSyncOut](client, dbosQueue, dbosWorkflow,
 				dbosSyncIn{TypeID: id.String(), Fresh: fresh, Source: source},
 				dbos.WithEnqueueDeduplicationID(dedupKey([]uuid.UUID{id}, fresh)),
 				dbos.WithEnqueueDeduplicationPolicy(dbos.DeduplicationPolicyReturnExisting),
 				dbos.WithEnqueueAttributes(map[string]any{"type": id.String(), "fresh": fresh}))
+			release()
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -434,11 +478,16 @@ func (a *App) dbosTakeOver(ctx context.Context, c dbos.Context, self string, lea
 			slog.WarnContext(ctx, "failed to cancel the workflow of a dead synchronization executor", "workflow", w.ID, "error", err)
 			continue
 		}
+		release, err := a.enqueueSlot(ctx)
+		if err != nil {
+			return
+		}
 		_, err = dbos.Enqueue[dbosSyncOut](c, dbosQueue, dbosWorkflow, in,
 			dbos.WithEnqueueWorkflowID(w.ID+dbosReplacement),
 			dbos.WithEnqueueDeduplicationID(dedupKey([]uuid.UUID{typeID}, in.Fresh)),
 			dbos.WithEnqueueDeduplicationPolicy(dbos.DeduplicationPolicyReturnExisting),
 			dbos.WithEnqueueAttributes(map[string]any{"type": typeID.String(), "fresh": in.Fresh}))
+		release()
 		if err != nil && !errors.Is(err, dbos.ErrConflictingWorkflowID) && !errors.Is(err, dbos.ErrWorkflowIDInUse) {
 			slog.WarnContext(ctx, "failed to queue the replacement of a taken over workflow", "workflow", w.ID, "error", err)
 			continue
