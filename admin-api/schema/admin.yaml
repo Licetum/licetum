@@ -601,7 +601,7 @@ components:
             - string
             - "null"
         target_valid:
-          description: "Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted"
+          description: "Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted — and for a resource_from_claim that looks a resource up in, or climbs through, such a type. A denial of that kind still applies below the links to the resources the type left"
           type: boolean
         type_resource_id:
           description: Resource type id of the inline permission; null for a role rule
@@ -2496,7 +2496,7 @@ components:
           description: Name of the service that owns the resource type
           type: string
         target_valid:
-          description: "Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer (see AssignmentRule.target_valid)"
+          description: "Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer, or that looks a resource up in, or climbs through, such a type (see AssignmentRule.target_valid)"
           type: boolean
         type_resource_id:
           description: Resource type id
@@ -3339,7 +3339,7 @@ openapi: 3.1.0
 paths:
   /assignment_rule:
     get:
-      description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted): such a rule does not take effect."
+      description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted), or a rule that looks a resource up in, or climbs through, such a type: such a rule does not take effect (a denial of that kind still applies below the links to the resources the type left)."
       operationId: list_assignment_rules
       responses:
         "200":

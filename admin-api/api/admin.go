@@ -859,7 +859,7 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/assignment_rule",
 		Summary:     "All access rules",
-		Description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted): such a rule does not take effect.",
+		Description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted), or a rule that looks a resource up in, or climbs through, such a type: such a rule does not take effect (a denial of that kind still applies below the links to the resources the type left).",
 		Tags:        []string{"AssignmentRule"},
 	}, requireAny(model.PlatformAssignmentRule, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.AssignmentRuleWithContext], error) {
 		out, err := h.app.ListAssignmentRules(ctx)

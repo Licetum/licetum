@@ -770,7 +770,13 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 	var lookups []ancestorLookup
 	claimValues := map[int]string{}
 	var groupTypes []uuid.UUID
-	between := map[[2]uuid.UUID][]uuid.UUID{}
+	type climb struct {
+		types []uuid.UUID
+		cut   bool
+	}
+	between := map[[2]uuid.UUID]climb{}
+	// cut are the rules whose lookup climbs through a type that has no resources (see climbTypes).
+	cut := map[int]bool{}
 	for i, r := range rules {
 		if hasGroupReference(r.Access) {
 			groupTypes = append(groupTypes, *r.TypeResourceID)
@@ -784,18 +790,19 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 			}
 			claimValues[i] = PyStr(value)
 			pair := [2]uuid.UUID{spec.LookupTypeResourceID, *r.TypeResourceID}
-			types, ok := between[pair]
+			c, ok := between[pair]
 			if !ok {
-				types = climbTypes(g, pair[0], pair[1], sourced)
-				between[pair] = types
+				c.types, c.cut = climbTypes(g, pair[0], pair[1], sourced)
+				between[pair] = c
 			}
-			if types == nil {
+			cut[i] = c.cut
+			if c.types == nil {
 				// The rule's type is neither the lookup type nor above it, or one of them has no resources: no climb reaches it.
 				continue
 			}
 			lookups = append(lookups, ancestorLookup{
 				Index: i, Lookup: spec.LookupTypeResourceID, Target: *r.TypeResourceID,
-				Value: PyStr(value), MatchBy: spec.MatchBy, Between: types,
+				Value: PyStr(value), MatchBy: spec.MatchBy, Between: c.types,
 			})
 		case r.ResourceID != nil:
 			// A resource of a type without resources is not looked up: it is not in the cache (see below).
@@ -841,6 +848,17 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 			Levels: expandAccess(rule.Access, groups[*rule.TypeResourceID]), AnchorType: *rule.TypeResourceID,
 			Note: RuleOrigin(*rule), Missing: missing[rule.ID],
 		}
+		// absent is the instance of a denial that cannot be anchored because a type it needs has no resources: it covers
+		// nothing for real, like a denial on a resource the local copy does not have, but the resources below a link to a
+		// missing parent fall under it (CoversOf, pass C of coverNodes), so deleting the synchronizer of a type does not
+		// lift the denials that read its resources.
+		absent := func(why string) Instance {
+			in := base
+			id := uuid.Nil
+			in.AnchorRow, in.Absent = &id, true
+			in.Note += "; " + why
+			return in
+		}
 		switch {
 		case rule.ResourceFromClaim != nil:
 			for _, n := range found[i] {
@@ -849,6 +867,9 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 				in.AnchorRow, in.AnchorExt = &id, n.Ext
 				in.Note += fmt.Sprintf("; resource %s found by claim %s=%s", n.Ext, rule.ResourceFromClaim.Claim, claimValues[i])
 				out = append(out, in)
+			}
+			if base.Deny && cut[i] {
+				out = append(out, absent(fmt.Sprintf("a type its claim %s is looked up through has no resources", rule.ResourceFromClaim.Claim)))
 			}
 		case rule.ResourceID != nil:
 			id, ok := rows[anchorRef{Type: *rule.TypeResourceID, Ext: *rule.ResourceID}]
@@ -872,6 +893,9 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 				in.Note += fmt.Sprintf("; resource %s matches its attributes", n.Ext)
 				out = append(out, in)
 			}
+			if base.Deny && !sourced(*rule.TypeResourceID) {
+				out = append(out, absent("its type has no resources to match the attributes of"))
+			}
 		default:
 			out = append(out, base)
 		}
@@ -883,17 +907,25 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 // resource of the lookup type up to the rule's type may pass. Only types with resources count: a type without a live
 // synchronizer has none to match, to pass or to anchor at. It is nil when the lookup type or the rule's type has none,
 // and leaves out the types between without one, where the climb stops as at an unresolved link (findAncestorsBatch).
-func climbTypes(g *TypeGraph, lower, upper uuid.UUID, sourced func(uuid.UUID) bool) []uuid.UUID {
-	if !sourced(lower) || !sourced(upper) {
-		return nil
+// cut says a type the climb needs was left out, or the lookup type or the rule's type has no resources: the anchors of the
+// rule cannot all be found, and a denial keeps an absent anchor for the ones that cannot (buildInstances). It is false for
+// a pair of types no climb reaches, which has no anchor to lose.
+func climbTypes(g *TypeGraph, lower, upper uuid.UUID, sourced func(uuid.UUID) bool) (types []uuid.UUID, cut bool) {
+	between := g.TypesBetween(lower, upper)
+	if between == nil {
+		return nil, false
 	}
-	var out []uuid.UUID
-	for _, id := range g.TypesBetween(lower, upper) {
+	if !sourced(lower) || !sourced(upper) {
+		return nil, true
+	}
+	for _, id := range between {
 		if sourced(id) {
-			out = append(out, id)
+			types = append(types, id)
+		} else {
+			cut = true
 		}
 	}
-	return out
+	return types, cut
 }
 
 // instancePairs relates the anchors of denials and exceptions: for every denial and exception both

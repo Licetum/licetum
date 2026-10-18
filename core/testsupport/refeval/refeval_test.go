@@ -502,3 +502,79 @@ func TestClockConditions(t *testing.T) {
 		t.Errorf("the weekday is read in UTC: %v", got)
 	}
 }
+
+// A denial by claim or by attributes that cannot find its anchors because a type it needs has no synchronizer keeps an
+// anchor that is no resource: it covers nothing for real, and covers what lies below a link to a parent that is not there.
+// A claim that is not given (missing, null, or falsy as Python reads it) is not looked up, so it keeps none.
+func TestADenialThatCannotFindItsAnchorsKeepsAnAbsentOne(t *testing.T) {
+	check(t, `
+services: [s]
+types:
+  - {name: root, service: s, sync: true}
+  - {name: mid, service: s, sync: false, parents: [{type: root}]}
+  - {name: leaf, service: s, sync: true, parents: [{type: mid}]}
+  - {name: other, service: s, sync: true, parents: [{type: root}]}
+resources:
+  - {type: root, id: R1, name: Root}
+  - {type: leaf, id: L1, name: Leaf, parents: [{type: mid, id: M1}]}
+  - {type: leaf, id: L2, name: Leaf 2}
+  - {type: other, id: O1, name: Other, parents: [{type: root, id: R1}]}
+rules:
+  - {name: grant-leaf, subject: u, type: leaf, access: [read]}
+  - {name: grant-other, subject: u, type: other, access: [read]}
+  # The climb from a leaf to the root passes mid, which has no synchronizer.
+  - {name: deny-root-by-claim, subject: u, type: root, access: ["*"], deny: true, from_claim: {claim: leaf_name, lookup_type: leaf}}
+  # The claim is looked up in mid, which has none.
+  - {name: deny-by-claim-in-mid, subject: v, type: root, access: ["*"], deny: true, from_claim: {claim: mid_name, lookup_type: mid}}
+  - {name: grant-v, subject: v, type: leaf, access: [read]}
+  # The climb from other to root passes nothing: it finds R1 for real.
+  - {name: deny-root-from-other, subject: w, type: root, access: ["*"], deny: true, from_claim: {claim: other_name, lookup_type: other}}
+  - {name: grant-w, subject: w, type: other, access: [read]}
+  # An attribute match on a type without resources.
+  - {name: deny-mid-by-tier, subject: x, type: mid, access: ["*"], deny: true, where: [{attr: tier, op: eq, value: gold}]}
+  - {name: grant-x, subject: x, type: leaf, access: [read]}
+  # An allow rule that finds no anchor grants nothing.
+  - {name: allow-by-claim-in-mid, subject: y, type: root, access: [read], from_claim: {claim: mid_name, lookup_type: mid}}
+cases:
+  - name: the climb passes a type without resources
+    subject: u
+    claims: {leaf_name: Leaf}
+    questions:
+      - {type: leaf, resource: L1, action: read, allowed: false, decision: denied, denials: [{rule: deny-root-by-claim, unresolved_parent: true}]}
+      - {type: leaf, resource: L2, action: read, allowed: true, decision: allowed}
+      - {type: other, resource: O1, action: read, allowed: true, decision: allowed}
+  - name: a claim that is not given is not looked up
+    subject: u
+    claims: {leaf_name: ""}
+    questions:
+      - {type: leaf, resource: L1, action: read, allowed: true, decision: allowed}
+  - name: no claim at all
+    subject: u
+    questions:
+      - {type: leaf, resource: L1, action: read, allowed: true, decision: allowed}
+  - name: the lookup type has no resources
+    subject: v
+    claims: {mid_name: Mid}
+    questions:
+      - {type: leaf, resource: L1, action: read, allowed: false, decision: denied, denials: [{rule: deny-by-claim-in-mid, unresolved_parent: true}]}
+      - {type: leaf, resource: L2, action: read, allowed: true, decision: allowed}
+  - name: a climb that loses nothing finds its anchor for real
+    subject: w
+    claims: {other_name: Other}
+    questions:
+      - {type: other, resource: O1, action: read, allowed: false, decision: denied, denials: [{rule: deny-root-from-other}]}
+  - name: the attributes of a type without resources
+    subject: x
+    questions:
+      - {type: leaf, resource: L1, action: read, allowed: false, decision: denied, denials: [{rule: deny-mid-by-tier, unresolved_parent: true}]}
+      - {type: leaf, resource: L2, action: read, allowed: true, decision: allowed}
+  - name: an allow rule that finds no anchor grants nothing
+    subject: y
+    claims: {mid_name: Mid}
+    questions:
+      - {type: leaf, resource: L1, action: read, allowed: false, decision: no_access}
+before:
+  types:
+    - {name: mid, service: s, sync: true, parents: [{type: root}]}
+`)
+}

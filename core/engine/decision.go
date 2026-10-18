@@ -42,8 +42,9 @@ type Instance struct {
 	AnchorRow  *uuid.UUID // nil: the whole type
 	AnchorExt  string
 	Note       string // how the rule reached the subject / how the anchor was found, for explanations
-	// Absent marks a denial on a resource the local copy does not have: its AnchorRow is uuid.Nil and it covers a
-	// resource only as assumed, below an unresolved parent link (fail closed).
+	// Absent marks a denial on a resource the local copy does not have, or whose anchor cannot be found because a type it
+	// needs has no resources (AnchorExt is then empty: buildInstances): its AnchorRow is uuid.Nil and it covers a resource
+	// only as assumed, below an unresolved parent link (fail closed).
 	Absent bool
 	// Missing marks a denial that applies only because a condition reads an attribute the request does not carry
 	// (on_missing_attribute = apply): it is applied as a fail-closed guess, and explanations say so.

@@ -241,6 +241,36 @@ func (g *graph) matchesClaim(r *policyfix.Resource, matchBy, value string) bool 
 
 // pyStr renders a value as Python's str() would, which is how claim values, request attributes and resource attributes
 // are compared: True and False, integers without a fraction (JSON numbers arrive as float64), lists as ['a', 'b'].
+// truthy mirrors Python's `if not value` for a value decoded from JSON.
+func truthy(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case string:
+		return x != ""
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case float32:
+		return x != 0
+	case int:
+		return x != 0
+	case int64:
+		return x != 0
+	case json.Number:
+		f, err := x.Float64()
+		return err != nil || f != 0
+	case []any:
+		return len(x) > 0
+	case []string:
+		return len(x) > 0
+	case map[string]any:
+		return len(x) > 0
+	}
+	return true
+}
+
 func pyStr(v any) string {
 	switch x := v.(type) {
 	case nil:

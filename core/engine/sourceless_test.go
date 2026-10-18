@@ -42,14 +42,20 @@ func TestATypeWithoutASynchronizerHasNoResourcesForARule(t *testing.T) {
 	if got := sourcelessGraph(org, app, types, true, false).withoutResources(); got == nil || len(got) != 0 {
 		t.Fatalf("withoutResources of a graph where every type is sync = %#v, want an empty list", got)
 	}
-	if got := climbTypes(g, item, branch, g.IsSync); got != nil {
-		t.Fatalf("a lookup among the resources of item climbs nowhere: %v", got)
+	if got, cut := climbTypes(g, item, branch, g.IsSync); got != nil || !cut {
+		t.Fatalf("a lookup among the resources of item climbs nowhere, and its anchors are cut: %v %v", got, cut)
 	}
-	if got := climbTypes(g, part, branch, g.IsSync); slices.Contains(got, item) || !slices.Contains(got, part) || !slices.Contains(got, branch) {
-		t.Fatalf("a climb from part to branch does not pass item: %v", got)
+	if got, cut := climbTypes(g, part, branch, g.IsSync); slices.Contains(got, item) || !slices.Contains(got, part) || !slices.Contains(got, branch) || !cut {
+		t.Fatalf("a climb from part to branch does not pass item, and says it was cut: %v %v", got, cut)
 	}
-	if got := climbTypes(g, part, division, func(id uuid.UUID) bool { return id != division }); got != nil {
-		t.Fatalf("the rule's type without resources: %v", got)
+	if got, cut := climbTypes(g, part, division, func(id uuid.UUID) bool { return id != division }); got != nil || !cut {
+		t.Fatalf("the rule's type without resources: %v %v", got, cut)
+	}
+	if got, cut := climbTypes(g, branch, part, g.IsSync); got != nil || cut {
+		t.Fatalf("a rule's type below the lookup type is reached by no climb, and has no anchor to lose: %v %v", got, cut)
+	}
+	if got, cut := climbTypes(g, branch, division, g.IsSync); len(got) != 2 || cut {
+		t.Fatalf("a climb between types that have resources loses nothing: %v %v", got, cut)
 	}
 
 	i1 := "I1"
@@ -71,20 +77,54 @@ func TestATypeWithoutASynchronizerHasNoResourcesForARule(t *testing.T) {
 			r.ResourceWhere = []model.PredicateCondition{{Attr: "owner", Op: model.OpEq, Value: model.PredicateValue{Str: "alice"}}}
 		}),
 		rule('5', model.EffectAllow, func(*model.AssignmentRule) {}),
+		// The denials that read the resources of item or climb through them cannot be anchored.
+		rule('6', model.EffectDeny, func(r *model.AssignmentRule) {
+			branchID := branch
+			r.TypeResourceID = &branchID
+			r.ResourceFromClaim = &model.ResourceFromClaim{Claim: "item_name", LookupTypeResourceID: item, MatchBy: model.MatchByName}
+		}),
+		rule('7', model.EffectDeny, func(r *model.AssignmentRule) {
+			r.ResourceWhere = []model.PredicateCondition{{Attr: "owner", Op: model.OpEq, Value: model.PredicateValue{Str: "alice"}}}
+		}),
+		// A denial with no claim to look up is not applied, as for a lookup that is not cut.
+		rule('8', model.EffectDeny, func(r *model.AssignmentRule) {
+			branchID := branch
+			r.TypeResourceID = &branchID
+			r.ResourceFromClaim = &model.ResourceFromClaim{Claim: "missing", LookupTypeResourceID: item, MatchBy: model.MatchByName}
+		}),
 	}
-	// No resource is looked up for any of them: an App without a database answers.
+	// No resource is looked up for any of them (a lookup among the resources of part would be): an App without a database answers.
 	insts, err := (&App{}).BuildInstances(context.Background(), g, rules, NewEnv(Claims{"item_name": "Item 1"}, nil), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(insts) != 2 {
-		t.Fatalf("got %d instances, want the absent denial and the whole-type rule: %+v", len(insts), insts)
+	type want struct {
+		rule   int // the index in rules
+		anchor uuid.UUID
+		ext    string
+		whole  bool
 	}
-	if d := insts[0]; d.Rule.ID != rules[1].ID || !d.Deny || !d.Absent || d.AnchorRow == nil || d.AnchorExt != "I1" {
-		t.Errorf("the denial on I1 is absent: %+v", d)
+	wants := []want{
+		{rule: 1, anchor: item, ext: "I1"},   // the denial on I1
+		{rule: 4, anchor: item, whole: true}, // the whole-type rule on item
+		{rule: 5, anchor: branch},            // the claim is looked up among the resources of item
+		{rule: 6, anchor: item},              // the attributes of the resources of item
 	}
-	if w := insts[1]; w.Rule.ID != rules[4].ID || !w.Whole() || w.AnchorType != item {
-		t.Errorf("the whole-type rule on item: %+v", w)
+	if len(insts) != len(wants) {
+		t.Fatalf("got %d instances, want %d: %+v", len(insts), len(wants), insts)
+	}
+	for i, w := range wants {
+		in := insts[i]
+		if in.Rule.ID != rules[w.rule].ID || in.AnchorType != w.anchor || in.Whole() != w.whole {
+			t.Errorf("instance %d: %+v, want rule %d at %v", i, in, w.rule, w.anchor)
+			continue
+		}
+		if w.whole {
+			continue
+		}
+		if !in.Deny || !in.Absent || in.AnchorRow == nil || *in.AnchorRow != uuid.Nil || in.AnchorExt != w.ext {
+			t.Errorf("instance %d is an absent denial that covers nothing for real (ext %q): %+v", i, w.ext, in)
+		}
 	}
 }
 

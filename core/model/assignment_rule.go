@@ -446,5 +446,5 @@ type AssignmentRuleWithContext struct {
 	ServiceName      *string    `json:"service_name" doc:"Name of the service that owns the resource type; null for a role rule"`
 	TypeResourceName *string    `json:"type_resource_name" doc:"Resource type name; null for a role rule"`
 	RoleName         *string    `json:"role_name" doc:"Name of the granted role; null for an inline rule"`
-	TargetValid      bool       `json:"target_valid" doc:"Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted"`
+	TargetValid      bool       `json:"target_valid" doc:"Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted — and for a resource_from_claim that looks a resource up in, or climbs through, such a type. A denial of that kind still applies below the links to the resources the type left"`
 }

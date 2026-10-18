@@ -228,7 +228,7 @@ func (p *Prepared) RuleRef(inst int) model.RuleRef {
 	if in.Deny {
 		ref.Effect = model.EffectDeny
 	}
-	if !in.Whole() {
+	if !in.Whole() && in.AnchorExt != "" {
 		ext := in.AnchorExt
 		ref.Anchor.ResourceID = &ext
 	}

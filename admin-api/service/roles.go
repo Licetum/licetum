@@ -235,6 +235,7 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 	defer rows.Close()
 
 	out := []model.RolePermissionWithContext{}
+	var graph lookupGraph
 	for rows.Next() {
 		var c model.RolePermissionWithContext
 		p, err := engine.ScanRolePermission(rows, &c.ServiceID, &c.ServiceName, &c.TypeResourceName, &c.TargetValid)
@@ -242,6 +243,13 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 			return nil, err
 		}
 		c.RolePermission = *p
+		if c.TargetValid && p.ResourceFromClaim != nil {
+			cut, err := graph.cut(ctx, a, p.ResourceFromClaim.LookupTypeResourceID, p.TypeResourceID)
+			if err != nil {
+				return nil, err
+			}
+			c.TargetValid = !cut
+		}
 		out = append(out, c)
 	}
 	return out, rows.Err()

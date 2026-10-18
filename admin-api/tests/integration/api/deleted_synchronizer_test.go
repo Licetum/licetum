@@ -388,6 +388,149 @@ func TestIntegrationASynchronizationThatStartedBeforeTheSynchronizerWasDeletedDo
 	}
 }
 
+// A resource_from_claim that looks a resource up in a type without a synchronizer, or climbs through one, finds nothing:
+// the rule list and the items of a role say its target does not take effect (target_valid) and the lint reports it, until
+// the synchronizer is there again. A claim looked up among the resources of a type that has them is not touched.
+func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *testing.T) {
+	w := newWorld(t)
+	w.partBelowItem()
+	claim := func(name, lookup string) map[string]any {
+		return map[string]any{"resource_from_claim": map[string]any{
+			"claim": name, "lookup_type_resource_id": w.typeByName[lookup], "match_by": "name"}}
+	}
+	withEffect := func(m map[string]any) map[string]any { m["effect"] = "deny"; return m }
+	inItem := w.rule("branch", "", withEffect(claim("item_name", "item")))      // looks in item
+	throughItem := w.rule("branch", "", withEffect(claim("part_name", "part"))) // climbs from part through item to branch
+	inBranch := w.rule("branch", "", withEffect(claim("branch_name", "branch")))
+	role := w.must("POST", "/role", map[string]any{"name": "by-item"})["id"].(string)
+	w.must("POST", "/role/"+role+"/permission", map[string]any{
+		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "resource_from_claim": claim("item_name", "item")["resource_from_claim"]})
+
+	valid := func() (rules map[string]bool, items []bool) {
+		t.Helper()
+		var list []model.AssignmentRuleWithContext
+		if err := json.Unmarshal(w.mustRaw("GET", "/assignment_rule"), &list); err != nil {
+			t.Fatal(err)
+		}
+		rules = map[string]bool{}
+		for _, r := range list {
+			rules[r.ID.String()] = r.TargetValid
+		}
+		var perms []model.RolePermissionWithContext
+		if err := json.Unmarshal(w.mustRaw("GET", "/role/"+role+"/permission"), &perms); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range perms {
+			items = append(items, p.TargetValid)
+		}
+		return rules, items
+	}
+	lintedDead := func() map[string]bool {
+		t.Helper()
+		var report model.LintReport
+		if err := json.Unmarshal(w.mustRaw("GET", "/service/"+w.org+"/policy/lint"), &report); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, f := range report.Findings {
+			if f.Code == "lint_rule_lookup_dead" && f.RuleID != nil {
+				if f.Severity != model.LintError || f.Message == "" {
+					t.Fatalf("the finding: %+v", f)
+				}
+				out[f.RuleID.String()] = true
+			}
+		}
+		return out
+	}
+	expect := func(when string, in, through, branch, item bool) {
+		t.Helper()
+		rules, items := valid()
+		if rules[inItem] != !in || rules[throughItem] != !through || rules[inBranch] != !branch || len(items) != 1 || items[0] != !item {
+			t.Fatalf("%s: target_valid %v, items %v; want the lookup in item dead=%v, through item dead=%v, in branch dead=%v, role item dead=%v",
+				when, rules, items, in, through, branch, item)
+		}
+		dead := lintedDead()
+		if dead[inItem] != in || dead[throughItem] != through || dead[inBranch] != branch {
+			t.Fatalf("%s: lint findings %v", when, dead)
+		}
+	}
+
+	expect("while item has its synchronizer", false, false, false, false)
+	w.must(http.MethodDelete, w.typePath("item")+"/resource/synchronizer/"+w.syncs["item"], nil)
+	expect("without a synchronizer of item", true, true, false, true)
+	w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
+	expect("with a synchronizer of item again", false, false, false, false)
+}
+
+// The denials that read the resources of a type without a synchronizer, or the rows that type left, keep an anchor that is no
+// resource (the tables dec06_denials_that_lose_their_type.yaml decide it): P1 of part names I1 of item as its parent, so a
+// denial by claim whose anchor is an item covers P1 once item has no resources, on the query path and on the snapshot path,
+// in the permission list and in the explanation. The same denial does not cover P3, which has no parent.
+func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.partBelowItem()
+	w.source("part", "P3", "Part 3", "")
+	w.rule("part", "", nil)
+	denial := w.rule("item", "", map[string]any{"effect": "deny", "access": []string{"*"}, "resource_from_claim": map[string]any{
+		"claim": "part_name", "lookup_type_resource_id": w.typeByName["part"], "match_by": "name"}})
+
+	claims := engine.Claims{"preferred_username": hierarchySubject, "part_name": "Part 1"}
+	asked := func(ids ...string) []model.CheckRequest {
+		var out []model.CheckRequest
+		for _, id := range ids {
+			out = append(out, model.CheckRequest{Type: "part", ResourceID: &id, Action: "read"})
+		}
+		return out
+	}
+	decide := func(consistency engine.Consistency) []model.CheckResult {
+		t.Helper()
+		results, err := w.app.CheckAccess(ctx, uuid.MustParse(w.appSvc), hierarchySubject, engine.NewEnv(claims, nil),
+			asked("P1", "P3"), true, consistency)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return results
+	}
+	// verify checks the answers about P1 and P3: P3 has no parent, so the denial never covers it; P1 is denied, by the item the
+	// claim finds while item has resources, and as an assumed denial anchored at no resource while it has none.
+	verify := func(when string, results []model.CheckResult, p1 string, assumed bool) {
+		t.Helper()
+		if results[0].Explanation.Decision != p1 || results[1].Explanation.Decision != engine.DecisionAllowed {
+			t.Fatalf("%s: P1 %s (want %s), P3 %s (want allowed)", when, results[0].Explanation.Decision, p1, results[1].Explanation.Decision)
+		}
+		if p1 != engine.DecisionDenied {
+			return
+		}
+		d := results[0].Explanation.Denials
+		if len(d) != 1 || d[0].Rule.RuleID.String() != denial || d[0].UnresolvedParent != assumed || (d[0].Rule.Anchor.ResourceID == nil) != assumed {
+			t.Fatalf("%s: the denial of P1: %+v", when, d)
+		}
+	}
+
+	verify("while item has its synchronizer", decide(engine.HigherConsistency), engine.DecisionDenied, false)
+	w.must(http.MethodDelete, w.typePath("item")+"/resource/synchronizer/"+w.syncs["item"], nil)
+	verify("the query path", decide(engine.HigherConsistency), engine.DecisionDenied, true)
+	verify("the snapshot path", decide(engine.MinimizeLatency), engine.DecisionDenied, true)
+	if !w.app.PolicySnapshotLoaded() {
+		t.Fatal("the check did not decide from a policy snapshot")
+	}
+	list, err := w.app.GetPermission(ctx, uuid.MustParse(w.appSvc), hierarchySubject, engine.NewEnv(claims, nil), engine.HigherConsistency)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(list, "part"); !slices.Equal(got, []string{"P3"}) {
+		t.Fatalf("the permission list names %v, want P3 alone", got)
+	}
+	// A request without the claim is not under the denial.
+	claims = engine.Claims{"preferred_username": hierarchySubject}
+	verify("without the claim", decide(engine.HigherConsistency), engine.DecisionAllowed, false)
+	claims = engine.Claims{"preferred_username": hierarchySubject, "part_name": "Part 1"}
+
+	w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
+	verify("with a synchronizer of item again", decide(engine.HigherConsistency), engine.DecisionDenied, false)
+}
+
 // A synchronization that is writing the component of the type holds the lock the change waits for: the change is refused with
 // a 503 that says to retry (nothing is written), and goes through once the lock is free.
 func TestIntegrationChangingASynchronizerWaitsForTheSynchronizationOfItsComponentAndAnswersBusy(t *testing.T) {

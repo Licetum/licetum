@@ -153,6 +153,15 @@ func (g *TypeGraph) IsSync(id uuid.UUID) bool {
 	return ok && !n.Deleted && n.Sync
 }
 
+// LookupCut says the anchors of a resource_from_claim rule of type target, looked up among the resources of type lookup,
+// cannot all be found: the lookup type or the rule's type has no live synchronizer, or a type on a route between them has
+// none, so that the climb from a matched resource meets a parent that is not there (climbTypes). A pair of types no climb
+// reaches has no anchor to lose.
+func (g *TypeGraph) LookupCut(lookup, target uuid.UUID) bool {
+	_, cut := climbTypes(g, lookup, target, g.IsSync)
+	return cut
+}
+
 // withoutResources returns the live types that have no live synchronizer, sorted: no resource of them leads anywhere in
 // the closure, and a link to one is unresolved. It is a parameter of queries (x <> ALL), so it is never nil: a nil slice
 // would be sent as NULL, and nothing is unequal to all of NULL. The graph is shared and never changed: so is the slice.

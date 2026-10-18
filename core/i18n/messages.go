@@ -55,6 +55,7 @@ const (
 	LintRuleDisabled              Key = "lint_rule_disabled"
 	LintRuleNotInForce            Key = "lint_rule_not_in_force"
 	LintRuleTargetDead            Key = "lint_rule_target_dead"
+	LintRuleLookupDead            Key = "lint_rule_lookup_dead"
 	LintRuleEveryone              Key = "lint_rule_everyone"
 	LintDenyMissingClaim          Key = "lint_deny_missing_claim"
 	LintGroupEmpty                Key = "lint_group_empty"
@@ -357,6 +358,11 @@ var catalog = map[Key]Text{
 		EN: "Rule %s names a resource, but its type has no synchronizer: it decides nothing",
 		RU: "Правило %s указывает ресурс, но у его типа нет синхронизатора: оно ничего не решает",
 		ZH: "规则 %s 指定了资源，但其类型没有同步器：它不做任何决定",
+	},
+	LintRuleLookupDead: {
+		EN: "Rule %s looks its resource up in a type that has no synchronizer, or climbs through one: it finds no resource there (a denial still applies below the links to the resources that type left)",
+		RU: "Правило %s ищет ресурс в типе без синхронизатора или проходит через такой тип: оно не находит там ресурса (запрет по-прежнему действует ниже ссылок на ресурсы, которые тип оставил)",
+		ZH: "规则 %s 在没有同步器的类型中查找资源，或经过这样的类型：它在那里找不到资源（拒绝规则在指向该类型所遗留资源的链接之下仍然适用）",
 	},
 	LintRuleEveryone: {
 		EN: "Rule %s grants its access to everyone who signs in",

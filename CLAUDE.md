@@ -300,7 +300,13 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   asks: a point rule on one anchors nothing (a denial stays as an absent anchor, see "Decision semantics"), a question about one is
   `resource_not_found` (`decideChecks`, `CacheLookup`, the reverse lookup, AuthZEN, the simulations), no cascade reaches the type (the result
   types are the types that have resources) and `resource_where` matches none; a `resource_from_claim` rule whose lookup type has none matches
-  nothing and its climb does not pass through such a type (`climbTypes`). A link of a resource of a type below to one of those rows is
+  nothing and its climb does not pass through such a type (`climbTypes`). An allow rule that finds nothing for that reason covers nothing;
+  a **denial** must not lapse with the resources it read, so it keeps an absent anchor at the rule's type (`buildInstances`: a
+  `resource_from_claim` denial with a claim in the request whose lookup type, rule type or a type on a route between them has no resources
+  (`TypeGraph.LookupCut`), and a `resource_where` denial on a type that has none; whether or not the claim matches anything, since the
+  anchor is not known): like the denial on a missing resource it covers nothing for real, and the resources below a link to a parent that
+  is not there fall under it. Such a rule is `target_valid = false` and `GET /service/{id}/policy/lint` reports it
+  (`lint_rule_lookup_dead`). A link of a resource of a type below to one of those rows is
   unresolved (`UnresolvedParents`, `resourceParents`): the closure does not lead through them (`rebuildClosureSQL`). The closure is stored,
   so it follows the mode in the write that changes it: creating or deleting a synchronizer runs `engine.App.ChangeMode` in the same
   transaction (the lock of the type's component, the timeouts of a synchronization, `rebuildClosure` of the type's rows and of the rows
@@ -555,8 +561,11 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   like any point denial, so an orphan does not escape a denial on its own missing parent. A denial whose anchor is already a
   known ancestor is assumed too, for the levels the known routes do not carry (`CoversOf`, pass C of `coverNodes`; the
   explanation flags the assumed levels only). Only an exception provably below a denial lifts it, so a point exception on the
-  orphan itself does not lift an assumed one. Known gap: a `resource_from_claim` denial whose climb from the matched resource
-  reaches an unresolved link before the rule's type finds no anchor (both the engine and the reference evaluator).
+  orphan itself does not lift an assumed one. The same holds for a denial that cannot find its anchors because a type it needs
+  has no synchronizer (see "Domain model", Type mode). Known gap: a `resource_from_claim` denial whose climb from the matched resource
+  reaches an unresolved link (a parent that is not in the cache, not a type without resources) before the rule's type finds no anchor
+  (both the engine and the reference evaluator). A denial by claim whose lookup type has no resources denies the rule's own type nowhere
+  (its anchor is not known), only what lies below a missing parent.
 - Worked example (division → rrs → branch → item; `D1 ⊃ R1, R2`, `R1 ⊃ B1, B2`, `R2 ⊃ B3`, `B1 ⊃ I1`):
 
   | rules | branches visible |

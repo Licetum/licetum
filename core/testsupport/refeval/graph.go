@@ -251,3 +251,29 @@ func merge[K comparable](m map[K]levelSet, k K, levels levelSet) {
 	}
 	m[k] = levels
 }
+
+// lookupIsCut reports whether the anchors of a resource_from_claim rule of type target, looked up among the resources of
+// type lookup, cannot all be found: the lookup type or the rule's type has no synchronizer, or a type on a route between
+// them has none, so that the climb from a matched resource meets a parent that is not there. A pair of types the links do
+// not join (target is neither lookup nor above it) has no anchor to lose.
+func (g *graph) lookupIsCut(lookup, target string) bool {
+	if g.types[lookup] == nil || g.types[target] == nil {
+		return false
+	}
+	above := g.typeAncestors(lookup)
+	if _, ok := above[target]; !ok && lookup != target {
+		return false
+	}
+	if !g.types[lookup].Sync || !g.types[target].Sync {
+		return true
+	}
+	for mid := range above {
+		if mid == target || g.types[mid].Sync {
+			continue
+		}
+		if _, ok := g.typeAncestors(mid)[target]; ok {
+			return true
+		}
+	}
+	return false
+}
