@@ -268,7 +268,9 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		client:      newClient(1, warmUpTimeout),
 		tokens:      tokens,
 		backend:     backend,
+		profile:     opts.Profile,
 		consistency: opts.Consistency,
+		retry:       synchronizeRetry,
 	}
 	rep.WarmUp, err = warm.warmUp(ctx)
 	if err != nil {

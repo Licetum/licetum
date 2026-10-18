@@ -1,4 +1,4 @@
-// Load test of the Licetum check API, run by admin-api/loadtest (see its README).
+// Load test of the AuthZEN API of Licetum, run by admin-api/loadtest (see its README).
 //
 // Arrivals are an open model: k6 starts a request at each tick of the rate whether or not earlier answers have come
 // back, so a server that falls behind shows as late answers and dropped iterations, not as a lower rate. Every request
@@ -34,9 +34,9 @@ const measureSeconds = Number(__ENV.MEASURE_SECONDS || 60);
 // The tokens are read once for all the virtual users: one token per subject, in the order of the subjects.
 const tokens = new SharedArray('tokens', () => JSON.parse(open(__ENV.TOKENS)));
 
-// The operations, in the order the harness reports them.
-const ops = ['permission', 'check1', 'check10', 'check100', 'authzen', 'authzen_batch', 'on_behalf'];
-const weights = parseMix(__ENV.MIX || 'permission=2,check1=3,authzen=3,authzen_batch=1,on_behalf=1');
+// The operations, in the order the harness reports them (opNames in mix.go lists the same, and a test keeps them so).
+const ops = ['search_resource', 'evaluation', 'evaluations10', 'evaluations100', 'evaluation_properties'];
+const weights = parseMix(__ENV.MIX || 'search_resource=2,evaluation=5,evaluations10=2,evaluation_properties=1');
 
 const phases = ['warmup', 'measure'];
 const metrics = {};
@@ -112,38 +112,33 @@ export default function () {
   const op = ops[pick()];
   let res;
   switch (op) {
-    case 'permission':
-      res = http.get(`${base}/service/${service}/permission?type=document&limit=20&consistency=${consistency}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+    case 'search_resource':
+      // One page of the documents the subject may read.
+      res = http.post(
+        `${base}/service/${service}/access/v1/search/resource?consistency=${consistency}`,
+        `{"subject":{"type":"user","id":"${subject}"},"resource":{"type":"document"},"action":{"name":"read"},"page":{"limit":20}}`,
+        { headers: jsonHeaders(token) },
+      );
       break;
-    case 'check1':
-      res = checkRequest(base, token, consistency, [doc]);
-      break;
-    case 'check10':
-      res = checkRequest(base, token, consistency, questions(subjectIndex, 10));
-      break;
-    case 'check100':
-      res = checkRequest(base, token, consistency, questions(subjectIndex, 100));
-      break;
-    case 'authzen':
+    case 'evaluation':
       res = http.post(
         `${base}/service/${service}/access/v1/evaluation?consistency=${consistency}`,
         `{"subject":{"type":"user","id":"${subject}"},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
         { headers: jsonHeaders(token) },
       );
       break;
-    case 'authzen_batch':
-      res = http.post(
-        `${base}/service/${service}/access/v1/evaluations?consistency=${consistency}`,
-        authzenBatch(subjectIndex),
-        { headers: jsonHeaders(token) },
-      );
+    case 'evaluations10':
+      res = evaluationsRequest(base, token, consistency, subjectIndex, 10);
       break;
-    case 'on_behalf':
+    case 'evaluations100':
+      res = evaluationsRequest(base, token, consistency, subjectIndex, 100);
+      break;
+    case 'evaluation_properties':
+      // The token is the one of the client application the service trusts; the subject is another person, whose claims
+      // the client brings.
       res = http.post(
-        `${base}/service/${service}/on_behalf/check?consistency=${consistency}`,
-        `{"subject":"${subject}","claims":{"department":"${dept}"},"checks":[{"type":"document","resource_id":"${doc}","action":"read"}]}`,
+        `${base}/service/${service}/access/v1/evaluation?consistency=${consistency}`,
+        `{"subject":{"type":"user","id":"${subject}","properties":{"department":"${dept}"}},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
         { headers: jsonHeaders(backend) },
       );
       break;
@@ -151,11 +146,17 @@ export default function () {
 
   m.latency[op].add(res.timings.duration);
   m.requests[op].add(1);
-  const ok = res.status >= 200 && res.status < 300;
+  let ok = res.status >= 200 && res.status < 300;
+  let answers = { total: 0, allowed: 0 };
+  if (ok) {
+    answers = countDecisions(res.body);
+    // An evaluation the API could not decide comes back in a 200 answer as decision false with context.error. It is not
+    // a denial: it counts as a failed request.
+    ok = answers.errors === 0;
+  }
   m.failed.add(!ok);
   if (ok) {
     m.answered2xx.add(1);
-    const answers = countDecisions(res.body);
     m.decisions.add(answers.total);
     m.allowed.add(answers.allowed);
   } else {
@@ -163,19 +164,11 @@ export default function () {
   }
 }
 
-// checkRequest asks the check API the given questions, each (document, read).
-function checkRequest(base, token, consistency, docs) {
-  const checks = docs.map((d) => `{"type":"document","resource_id":"${d}","action":"read"}`).join(',');
-  return http.post(`${base}/service/${service}/check?consistency=${consistency}`, `{"checks":[${checks}]}`, {
-    headers: jsonHeaders(token),
-  });
-}
-
 function jsonHeaders(token) {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-// questions are n documents the subject may read, for a check with n questions.
+// questions are n documents the subject may read, for a batch of n evaluations.
 function questions(subjectIndex, n) {
   const out = [];
   for (let k = 0; k < n; k++) {
@@ -184,13 +177,14 @@ function questions(subjectIndex, n) {
   return out;
 }
 
-// authzenBatch is a batch of ten evaluations of documents the subject may read.
-function authzenBatch(subjectIndex) {
-  const evaluations = [];
-  for (let k = 0; k < 10; k++) {
-    evaluations.push(`{"resource":{"type":"document","id":"${accessibleDoc(subjectIndex)}"}}`);
-  }
-  return `{"subject":{"type":"user","id":"user-${subjectIndex}"},"action":{"name":"read"},"evaluations":[${evaluations.join(',')}]}`;
+// evaluationsRequest is a batch of n evaluations of documents the subject may read, about the subject.
+function evaluationsRequest(base, token, consistency, subjectIndex, n) {
+  const evaluations = questions(subjectIndex, n).map((d) => `{"resource":{"type":"document","id":"${d}"}}`);
+  return http.post(
+    `${base}/service/${service}/access/v1/evaluations?consistency=${consistency}`,
+    `{"subject":{"type":"user","id":"user-${subjectIndex}"},"action":{"name":"read"},"evaluations":[${evaluations.join(',')}]}`,
+    { headers: jsonHeaders(token) },
+  );
 }
 
 // accessibleDoc is a document the subject may read, most of the time. The owner pattern grants the documents of the
@@ -291,12 +285,14 @@ function parseMix(spec) {
   return out;
 }
 
-// countDecisions counts the answers of a response: every "allowed" (check, on-behalf) and "decision" (AuthZEN) field,
-// and the granted ones. The bodies are the ones the API writes, so the fields are matched as written.
+// countDecisions counts the answers of a response: every "decision" field of the AuthZEN API, the granted ones, and the
+// evaluations that carry context.error. The bodies are the ones the API writes, so the fields are matched as written.
+// A search has no decisions.
 function countDecisions(body) {
   const count = (s) => body.split(s).length - 1;
   return {
-    total: count('"allowed":') + count('"decision":'),
-    allowed: count('"allowed":true') + count('"decision":true'),
+    total: count('"decision":'),
+    allowed: count('"decision":true'),
+    errors: count('"error":'),
   };
 }

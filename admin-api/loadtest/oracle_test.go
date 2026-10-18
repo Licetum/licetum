@@ -29,7 +29,7 @@ func TestOracleSeparatesWrongAnswersFromUnanswered(t *testing.T) {
 	}
 
 	denyAll := run(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"results":[{"allowed":false}]}`))
+		_, _ = w.Write([]byte(`{"decision":false}`))
 	})
 	if denyAll.Unanswered != 0 || denyAll.Mismatches != denyAll.Granted || denyAll.Granted == 0 {
 		t.Fatalf("a server that denies everything is wrong exactly where access is expected: %+v", denyAll)
