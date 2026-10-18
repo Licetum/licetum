@@ -55,8 +55,18 @@ The epic is being refactored to the design of issue #49 (regional AuthZEN PDP, s
 **contracts**: `contracts.yaml` (root) lists them (id, statement, oracle, level, phase, status); a test checking one is named
 `TestContract_<ID>_<What>`; `task contracts:check` (part of `task check`, `core/internal/tools/contractscheck`) fails on an
 active contract without a test, a test naming an unknown contract, or a planned contract that already has a test. What used to
-run on every pull request through PgBouncer runs nightly: `.github/workflows/nightly-suite.yml` (PgBouncer, chaos,
+run on every pull request through PgBouncer runs nightly: `.github/workflows/nightly-suite.yml` (PgBouncer, DECP, chaos,
 multi-region, load test) is called by the dispatcher `nightly.yml` on `main` with the ref of the epic.
+
+The decision contracts (DEC01–DEC14, DECP) are tables, not code: `core/testsupport/policyfix` is the fixture format (services,
+types, resources, groups, roles, rules, cases with claims, context and a time, questions with the expected decision and
+explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides answer them: the engine through the check API
+(`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its resources, `Ask` asks
+at the case's time through `App.SetClock`; level `pg`), and `core/testsupport/refeval`, a reference evaluator written from the
+semantics that shares no code with the engine (depguard keeps it away from engine, server and db). `core/testsupport/policygen`
+generates random valid fixtures; DECP compares the two sides on them (seeds 1–20 per pull request, `LICETUM_DECP_SEEDS`,
+`task go:test:decp`, `decp.yml` nightly over 21–520). A disagreement is a defect of one side or an open point of the semantics:
+settle it in both, then pin it in a table.
 
 Backend (run from `backend/`, Go 1.26):
 ```
@@ -333,7 +343,8 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   `model.GroupSubject(groupID)` = `group:<uuid>`. Table `user_group` (`group` is a reserved word in SQL).
 - **GroupMember**: makes a subject a member of a Group, either directly or via a `predicate` matched against
   JWT claims (e.g. "everyone with `department=sales`"). Members can also be other groups (`member_group_id`),
-  forming nested group membership resolved transitively in `internal/service/permission.go::resolveIdentitySet`.
+  forming nested group membership resolved transitively in `core/engine/permission.go::IdentityOf`: round by round, each
+  reading the previous one, through at most `MaxGroupDepth` (16) nestings whatever the order of the memberships.
 - **Role** (`00008_role_permission.sql`): a *named set of permissions*. Its items (`role_permission`) each carry
   a target and access levels, the same shape as an inline rule — the whole type, a `resource_id` or a
   `resource_from_claim` (checked by `checkResourceTarget`, like a rule). A role is neither a subject nor a member
@@ -361,7 +372,8 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   rule with `exception = true` lifts the denials above it. `valid_from`/`expires_at` bound the time
   the rule is in force (also on GroupMember). Predicate operators: `eq`, `ne`, `in`, `not_in`,
   `regex`; a claim missing from the token never satisfies a condition, `ne`/`not_in` included
-  ("everyone except ivanovich" is `username ne ivanovich`). A role assignment takes the effect and the
+  ("everyone except ivanovich" is `username ne ivanovich`). `eq`, `ne` and `regex` take one value: with a list value they
+  never hold (validation lets it through, as the Python version did; use `in`/`not_in`). A role assignment takes the effect and the
   exception of the rule for all of the role's items; `expandRoles` turns it into one rule per item (same id,
   subject and validity, the item's target and access), so the engine treats role permissions like inline ones.
 - **Conditions and request context** (`predicate.go`, `conditions.go`): a condition reads a claim (`source` claim, the
@@ -510,10 +522,14 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   (`pairs` from the closure); a whole-type anchor is below another if its type is a lower type; a point
   anchor is below a whole-type anchor of its own type.
 - Level hierarchy (`access_implies`): granting `write` grants `read`; denying `read` denies `write`.
-  Denial level `*` denies every level.
+  Denial level `*` denies every level that flows to the resource, and with it every level that includes one: `*` arriving
+  through a read-only link denies read, and write where write includes read (`denyMatches`).
 - **Fail closed**: a resource with an unresolved parent edge (the parent is not in the cache) is
   treated as possibly lying under any denial that could cover it (`assumed` covers, reported as
-  `unresolved_parent` in explanations); it recovers when the parent appears.
+  `unresolved_parent` in explanations); it recovers when the parent appears. A denial on a resource the cache does not
+  have stays as an absent anchor (`Instance.Absent`): it covers nothing for real but is assumed below an unresolved link
+  like any point denial, so an orphan does not escape a denial on its own missing parent. Only an exception provably below
+  a denial lifts it, so a point exception on the orphan itself does not lift an assumed one.
 - Worked example (division → rrs → branch → item; `D1 ⊃ R1, R2`, `R1 ⊃ B1, B2`, `R2 ⊃ B3`, `B1 ⊃ I1`):
 
   | rules | branches visible |
@@ -524,8 +540,9 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   | + exception on B1 and deny on I1 | B1, B2, B3; I1 is still gone (denial below the exception) |
   | allow read on the whole type `branch` + deny `*` on B2 | all but B2 |
 
-  These scenarios live in `internal/service/decision_test.go` (pure engine) and
-  `internal/api/graph_test.go` (through the API).
+  These scenarios, and the rest of the semantics, are the decision contracts: the tables in
+  `core/testsupport/policyfix/testdata/decisions` (`worked_example.yaml` is this one), checked against the engine and the
+  reference evaluator (see "Commands").
 
 ### Batch, history and policy tools
 

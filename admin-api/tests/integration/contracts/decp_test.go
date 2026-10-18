@@ -8,7 +8,6 @@ package contracts_test
 // names the seed, and LICETUM_DECP_SEEDS=<seed> runs that one again.
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -77,7 +76,7 @@ func seedRange(t *testing.T) (first, last int64) {
 		last, err = strconv.ParseInt(to, 10, 64)
 	}
 	if err != nil || last < first {
-		t.Fatal(fmt.Sprintf("LICETUM_DECP_SEEDS=%q: want a seed or first-last", spec))
+		t.Fatalf("LICETUM_DECP_SEEDS=%q: want a seed or first-last", spec)
 	}
 	return first, last
 }
