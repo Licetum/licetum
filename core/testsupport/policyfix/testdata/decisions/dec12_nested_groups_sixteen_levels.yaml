@@ -7,8 +7,7 @@
 # Around the test: the group itself as a subject of a rule (group:<id>) reaches the members of the groups nested into it;
 # a claim the token does not carry never makes a subject a member (DEC08), nor does another value; a chain of sixteen
 # groups, each nested into the next, resolves to its last group — sixteen levels, counting the group the subject is a
-# member of directly. Beyond sixteen levels the engine's answer depends on the order of the memberships, so the fixture does
-# not ask.
+# member of directly. The limit itself (17 levels count, 18 do not) is pinned in dec12_nested_groups.yaml.
 #
 # division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
 # R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4.

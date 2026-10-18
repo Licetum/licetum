@@ -6,7 +6,9 @@
 # arriving on a doc brings read with it, although read itself does not flow. The hierarchy of the anchor's type does not
 # travel: write granted on F1 includes read on F1, yet nothing reaches H1, because write does not flow to it. The same
 # mask filters denials, and the wildcard among them: * on a folder denies only the levels that flow down the link, so it
-# denies write on E1 and leaves read, which the doc's own grant gives.
+# denies write on E1 and leaves read, which the doc's own grant gives. The levels it denies take the hierarchy of the
+# resource's type with them: * through the read-only link to an album (approve ⊃ read) denies read there, and so approve
+# (found by DECP, seed 16: the engine checked only the asked level against the mask).
 contracts: [DEC04, DEC05]
 description: The hierarchy of a type and the wildcard denial across a write-only type link.
 services: [lib]
@@ -15,6 +17,7 @@ types:
   - {name: doc, service: lib, sync: true, parents: [{type: folder, inherit: [write]}], implies: {write: [read]}}
   - {name: note, service: lib, sync: true, parents: [{type: folder, inherit: [write]}]}
   - {name: photo, service: lib, sync: true, parents: [{type: folder, inherit: [read]}]}
+  - {name: album, service: lib, sync: true, parents: [{type: folder, inherit: [read]}], implies: {approve: [read]}}
 resources:
   - {type: folder, id: F1}
   - {type: folder, id: F2}
@@ -22,6 +25,7 @@ resources:
   - {type: doc, id: E2, parents: [{type: folder, id: F2}]}
   - {type: note, id: N1, parents: [{type: folder, id: F1}]}
   - {type: photo, id: H1, parents: [{type: folder, id: F1}]}
+  - {type: album, id: A1, parents: [{type: folder, id: F1}]}
 rules:
   - {name: rw-F1, subject: rw-folder, type: folder, resource: F1, access: [read, write]}
   - {name: r-F1, subject: read-folder, type: folder, resource: F1, access: [read]}
@@ -36,6 +40,8 @@ rules:
   - {name: ds-N1, subject: star-folder, type: note, resource: N1, access: [read, write]}
   - {name: ds-deny-F1, subject: star-folder, type: folder, resource: F1, access: ["*"], deny: true}
   - {name: wf-folder, subject: whole-folder, type: folder, access: [read, write]}
+  - {name: sa-A1, subject: star-album, type: album, resource: A1, access: [approve, write]}
+  - {name: sa-deny-F1, subject: star-album, type: folder, resource: F1, access: ["*"], deny: true}
   - {name: ws-doc, subject: whole-star, type: doc, access: [read, write]}
   - {name: ws-deny-folder, subject: whole-star, type: folder, access: ["*"], deny: true}
 cases:
@@ -101,3 +107,9 @@ cases:
       - {type: doc, resource: E2, action: write, allowed: false, decision: denied}
       - {type: doc, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [ws-doc]}
       - {type: doc, resource: E2, action: read, allowed: true}
+  - name: the wildcard denies the levels that flow and every level that includes one of them
+    subject: star-album
+    questions:
+      - {type: album, resource: A1, action: read, allowed: false, decision: denied, granted_by: [sa-A1], denials: [{rule: sa-deny-F1}]}
+      - {type: album, resource: A1, action: approve, allowed: false, decision: denied, granted_by: [sa-A1], denials: [{rule: sa-deny-F1}]}
+      - {type: album, resource: A1, action: write, allowed: true, decision: allowed, granted_by: [sa-A1], denials: []}

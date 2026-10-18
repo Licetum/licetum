@@ -1,19 +1,18 @@
 # DEC12, nested groups: a group nested as a whole into another one makes its members members of that one, transitively,
-# up to 16 levels: the group the subject is in directly is level 1, the group that nests it level 2, and so on. A rule
-# reaches the members of the deepest group of a chain of 16, whether it names the members of the group (member_of) or
-# the group as a subject (group:<id>). Nesting follows only the memberships in force: a disabled one, or one outside its
-# validity window, links nothing. A cycle of nesting gives nobody a membership they do not have, two routes to one group
-# make one membership, a membership by a predicate passes through the nesting, and a denial reaches the members of the
-# nested groups as a grant does.
+# through at most 16 nestings: the group the subject is in directly is level 1, the group that nests it level 2, and so
+# on up to level 17. A rule reaches the members of the deepest group of such a chain, whether it names the members of the
+# group (member_of) or the group as a subject (group:<id>), and no further. Nesting follows only the memberships in force:
+# a disabled one, or one outside its validity window, links nothing. A cycle of nesting gives nobody a membership they do
+# not have, two routes to one group make one membership, a membership by a predicate passes through the nesting, and a
+# denial reaches the members of the nested groups as a grant does.
 #
-# The chain g16 ⊃ g15 ⊃ ... ⊃ g1 ∋ deep is listed from the top: the engine propagates the memberships in rounds over
-# the nestings in the order they were written, so this order needs a round per nesting (15 for 16 levels). Nothing is
-# asked of a deeper group: there the engine and the reference evaluator differ. The engine runs 16 rounds, so it always
-# reaches level 17, and deeper when the nestings come in a favourable order; the reference evaluator stops at level 16.
+# The chain g18 ⊃ g17 ⊃ ... ⊃ g1 ∋ deep is listed from the top, the order in which an engine that updates the groups in
+# place within a round would get further than the limit: each round must read the groups of the previous one, so the
+# answer does not depend on the order of the memberships (found by the reference evaluator).
 #
 # cap is a capability (no synchronizer); division <- branch; D1 ⊃ B1, B2; D2 ⊃ B3.
 contracts: [DEC12]
-description: Nested groups resolve transitively up to 16 levels, through the memberships in force only.
+description: Nested groups resolve transitively through 16 nestings (17 levels), through the memberships in force only.
 services: [org]
 types:
   - {name: cap, service: org, sync: false}
@@ -26,7 +25,9 @@ resources:
   - {type: branch, id: B2, parents: [{type: division, id: D1}]}
   - {type: branch, id: B3, parents: [{type: division, id: D2}]}
 groups:
-  # A chain of 16 levels, from the top.
+  # A chain of 18 levels, from the top.
+  - {name: g18, members: [{group: g17}]}
+  - {name: g17, members: [{group: g16}]}
   - {name: g16, members: [{group: g15}]}
   - {name: g15, members: [{group: g14}]}
   - {name: g14, members: [{group: g13}]}
@@ -68,6 +69,8 @@ groups:
   - {name: suspended-all, members: [{group: suspended}]}
   - {name: suspended, members: [{subject: worker}]}
 rules:
+  - {name: chain-18, member_of: g18, type: cap, access: [level18]}
+  - {name: chain-17, member_of: g17, type: cap, access: [level17]}
   - {name: chain-16, member_of: g16, type: cap, access: [level16]}
   - {name: chain-16-as-subject, subject_group: g16, type: cap, access: [subject16]}
   - {name: chain-9, member_of: g9, type: cap, access: [level9]}
@@ -83,9 +86,11 @@ rules:
   - {name: org-read-D1, member_of: org-all, type: division, resource: D1, access: [read]}
   - {name: suspended-deny-B2, member_of: suspended-all, type: branch, resource: B2, access: [read], deny: true}
 cases:
-  - name: the member of the bottom of a chain of 16 levels is a member of every group of the chain
+  - name: the member of the bottom of a chain is a member of every group up to 16 nestings above, and of no group beyond
     subject: deep
     questions:
+      - {type: cap, action: level17, allowed: true, decision: allowed, granted_by: [chain-17], denials: []}
+      - {type: cap, action: level18, allowed: false, decision: no_access, granted_by: [], denials: []}
       - {type: cap, action: level16, allowed: true, decision: allowed, granted_by: [chain-16], denials: []}
       - {type: cap, action: subject16, allowed: true, decision: allowed, granted_by: [chain-16-as-subject], denials: []}
       - {type: cap, action: level9, allowed: true, decision: allowed, granted_by: [chain-9]}

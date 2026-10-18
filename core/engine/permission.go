@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -22,7 +23,9 @@ const (
 	ResultCacheTTL = 60 * time.Second
 	// pendingAnswerTTL is how long an answer is kept when a type it reads has no data yet.
 	pendingAnswerTTL = 2 * time.Second
-	MaxGroupDepth    = 16
+	// MaxGroupDepth is how many nestings of groups a membership resolves through: a group counts when the subject is
+	// matched by one of its own memberships, or by a group nested into it through at most this many groups.
+	MaxGroupDepth = 16
 	// resultCacheFormat is the version of the cached result format: when the format changes, new keys
 	// do not overlap the old ones, and stale entries simply expire by TTL.
 	resultCacheFormat = "t7"
@@ -255,15 +258,19 @@ func IdentityOf(members []model.GroupMember, subject string, env Env) (identityS
 		}
 	}
 
-	// A member of a group that is a member of this one is a member of this one too, as far as the child is known.
+	// A member of a group that is a member of this one is a member of this one too, as far as the child is known. Each
+	// round reads the result of the previous one, so round k adds the groups k nestings away whatever the order of the
+	// memberships, and the depth is exactly MaxGroupDepth.
 	for range MaxGroupDepth {
+		next := maps.Clone(groups)
 		changed := false
 		for _, m := range nested {
-			if t := groups[m.GroupID].or(groups[*m.MemberGroupID]); t != groups[m.GroupID] {
-				groups[m.GroupID] = t
+			if t := next[m.GroupID].or(groups[*m.MemberGroupID]); t != next[m.GroupID] {
+				next[m.GroupID] = t
 				changed = true
 			}
 		}
+		groups = next
 		if !changed {
 			break
 		}
@@ -810,10 +817,16 @@ func (a *App) buildInstances(ctx context.Context, snap *snapshot, rules []model.
 			}
 		case rule.ResourceID != nil:
 			id, ok := rows[anchorRef{Type: *rule.TypeResourceID, Ext: *rule.ResourceID}]
-			if !ok {
-				continue
-			}
 			in := base
+			if !ok {
+				// The local copy does not have the resource (yet). An allow or an exception on it covers nothing, but a
+				// denial stays: it covers nothing for real either, yet it may be the missing parent of an unresolved link,
+				// so the resources below such a link fall under it (CoversOf, pass C of coverNodes).
+				if !base.Deny {
+					continue
+				}
+				id, in.Absent = uuid.Nil, true
+			}
 			in.AnchorRow, in.AnchorExt = &id, *rule.ResourceID
 			out = append(out, in)
 		case len(rule.ResourceWhere) > 0:
@@ -837,7 +850,7 @@ func (a *App) instancePairs(ctx context.Context, insts []Instance) (map[[2]int]L
 	var idx [][2]int
 	var pairs [][2]uuid.UUID
 	for d := range insts {
-		if !insts[d].Deny || insts[d].Whole() {
+		if !insts[d].Deny || insts[d].Whole() || insts[d].Absent {
 			continue
 		}
 		for e := range insts {
@@ -903,7 +916,7 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 	var anchorInst []int
 	var anchorRows []uuid.UUID
 	for i := range p.Insts {
-		if !p.Insts[i].Whole() {
+		if !p.Insts[i].Whole() && !p.Insts[i].Absent {
 			anchorInst = append(anchorInst, i)
 			anchorRows = append(anchorRows, *p.Insts[i].AnchorRow)
 		}

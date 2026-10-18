@@ -42,6 +42,9 @@ type Instance struct {
 	AnchorRow  *uuid.UUID // nil: the whole type
 	AnchorExt  string
 	Note       string // how the rule reached the subject / how the anchor was found, for explanations
+	// Absent marks a denial on a resource the local copy does not have: its AnchorRow is uuid.Nil and it covers a
+	// resource only as assumed, below an unresolved parent link (fail closed).
+	Absent bool
 	// Missing marks a denial that applies only because a condition reads an attribute the request does not carry
 	// (on_missing_attribute = apply): it is applied as a fail-closed guess, and explanations say so.
 	Missing bool
@@ -116,14 +119,18 @@ func withImplied(level string, implies map[string][]string) []string {
 
 // denyMatches finds the levels of a denial that deny the given level of a node: the level itself,
 // a level it includes (denying read denies write), or the wildcard. Returns every matching level
-// that flows along the covering mask.
+// that flows along the covering mask. The wildcard denies every level that flows, and so every level
+// that includes one of them: a * that reaches a node through a read-only link denies read, and with
+// it write when write includes read.
 func denyMatches(in *Instance, mask LevelSet, level string, implies map[string][]string) []string {
 	var out []string
 	for _, k := range in.Levels {
 		switch {
 		case k == model.AllLevels:
-			if mask.has(level) {
-				out = append(out, level)
+			for _, l := range withImplied(level, implies) {
+				if mask.has(l) {
+					out = append(out, l)
+				}
 			}
 		case mask.has(k) && (k == level || slices.Contains(implies[level], k)):
 			out = append(out, k)

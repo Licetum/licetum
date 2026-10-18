@@ -50,6 +50,14 @@ rules:
   # The assumed denial takes only the level it names.
   - {name: t7-allow-branch, subject: levels, type: branch, access: [read, write]}
   - {name: t7-deny-R1, subject: levels, type: rrs, resource: R1, access: [write], deny: true}
+  # A denial on the missing parent itself: the local copy does not have R9, yet the denial names exactly the parent of B9.
+  - {name: t8-allow-branch, subject: missing-parent-denial, type: branch, access: [read]}
+  - {name: t8-deny-R9, subject: missing-parent-denial, type: rrs, resource: R9, access: [read], deny: true}
+  # A point exception on the orphan itself does not lift the assumed denial: B9 is not known to lie below R1, so the
+  # exception is not provably below it (the conservative reading, kept on purpose).
+  - {name: t9-allow-branch, subject: orphan-exception, type: branch, access: [read]}
+  - {name: t9-deny-R1, subject: orphan-exception, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: t9-except-B9, subject: orphan-exception, type: branch, resource: B9, access: [read], exception: true}
 cases:
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationOrphanFailsClosed
   - name: B9 may lie under R1, so the denial on R1 is assumed to cover it
@@ -110,3 +118,13 @@ cases:
       - {type: branch, resource: B9, action: write, allowed: false, decision: denied, granted_by: [t7-allow-branch], denials: [{rule: t7-deny-R1, unresolved_parent: true}]}
       - {type: branch, resource: B1, action: write, allowed: false, decision: denied, denials: [{rule: t7-deny-R1}]}
       - {type: branch, resource: B3, action: write, allowed: true, decision: allowed}
+  # found by refeval: a denial on a resource the local copy lacks was dropped, so B9 escaped the denial on its own parent
+  - name: a denial on the missing parent covers the orphan, and nothing else
+    subject: missing-parent-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [t8-allow-branch], denials: [{rule: t8-deny-R9, unresolved_parent: true}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [t8-allow-branch], denials: []}
+  - name: a point exception on the orphan does not lift the denial assumed above it
+    subject: orphan-exception
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [t9-allow-branch, t9-except-B9], denials: [{rule: t9-deny-R1, unresolved_parent: true}]}
