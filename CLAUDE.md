@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout (since the module split)
 
-- `core/` — Go module `github.com/licetum/licetum/core`, MIT: the engine (`core/engine`), the check API (`core/server`),
+- `core/` — Go module `github.com/licetum/licetum/core`, MIT: the engine (`core/engine`), the check API (`core/server`), the HTTP helpers (`core/httpx`) and the key sets of the identity providers (`core/pepauth`, leaves: see depguard),
   the database schema and migrations (`core/db`), synchronizers, models. Binary: `core/cmd/licetum` (`check`, `migrate`,
   `openapi check`). Schema: `core/schema/check.yaml`.
 - `admin-api/` — Go module `github.com/licetum/licetum/admin-api`, AGPL-3.0-only: the admin API (`admin-api/api`), the admin
@@ -96,7 +96,7 @@ format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite 
 (the Licetum service within itself, its policy types, their sources, the admin group) is seeded by `db.SeedPlatform`, run by
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
 
-Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `jwks.go`, `background.go`, `tuning.go`; `core/redisx/fastfail.go`;
+Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `background.go`, `tuning.go`, `keysets.go`; the key sets in `core/pepauth/jwks.go`; `core/redisx/fastfail.go`;
 settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TOKEN_TTL`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`,
 `REDIS__HOT_TIMEOUT`; the numbers are in `core/README.md`):
 - **The revision lives in PostgreSQL** (`revision_state`, migration `00002`, `db.BumpRevision` / `db.LoadRevisions`, `core/db/revision.go`):
@@ -640,7 +640,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
   `explain: true` adds `{decision: allowed|denied|no_access|resource_not_found|type_not_found,
   granted_by, denials[{rule, level, lifted_by, unresolved_parent}]}`. It decides only for the asked
   resources (`coversOf`, the questions of one request are read together: `decideChecks`), with the same engine as `/permission`.
-- **AuthZEN** (`core/server/authzen.go`, `core/model/authzen.go`, tag `AuthZEN`): the OpenID AuthZEN Authorization API 1.0 scoped to a service
+- **AuthZEN** (`core/server/authzen_run.go` the run layer, `authzen_caller.go`, `authzen_routes.go`; `core/model/authzen.go`; tag `AuthZEN`): the OpenID AuthZEN Authorization API 1.0 scoped to a service
   (the service, by id or slug, is in the path, so the "PDP" is `<public url>/service/<ref>` and the default paths of the spec are appended to it).
   `POST …/access/v1/evaluation` and `…/evaluations` (defaults at the top level, `options.evaluations_semantic` = `execute_all` | `deny_on_first_deny`
   | `permit_on_first_permit`: the batch is decided as a whole and cut at the stopping evaluation; without `evaluations` it is one evaluation and the

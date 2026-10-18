@@ -1,5 +1,8 @@
 package server
 
+// The caller of an AuthZEN request: the holder of a verified token, who asks about themselves or, for a client
+// application the service trusts, about other people. note and flush are the audit of those calls.
+
 import (
 	"context"
 

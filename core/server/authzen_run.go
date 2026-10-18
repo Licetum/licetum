@@ -1,5 +1,9 @@
 package server
 
+// The run layer of AuthZEN: the evaluations and the searches, decided on the check engine. The operations
+// (authzen_routes.go) and the caller that verified the token (authzen_caller.go) feed it; nothing in this file
+// registers an operation or reads a request.
+
 import (
 	"context"
 	"crypto/sha256"
