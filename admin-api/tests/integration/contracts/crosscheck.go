@@ -11,6 +11,7 @@ import (
 
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 	"github.com/licetum/licetum/core/testsupport/policyfix"
 )
 
@@ -34,7 +35,7 @@ func (l *Loaded) CrossCheck(c *policyfix.Case, answers []Answer) []string {
 		query.Set("context", string(raw))
 	}
 	path := "/service/" + url.PathEscape(l.f.ServiceOf(c)) + "/permission?" + query.Encode()
-	res := l.askOnce(http.MethodGet, path, l.tokenOf(c), nil)
+	res := l.askOnce(authzenreq.Request{Method: http.MethodGet, Path: path}, l.tokenOf(c))
 	var list engine.PermissionResult
 	if err := json.Unmarshal(res.Body, &list); err != nil {
 		l.t.Fatalf("fixture %s, case %q: the permission list does not decode: %v %s", l.f.Name, c.Name, err, res.Body)

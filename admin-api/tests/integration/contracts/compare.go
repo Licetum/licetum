@@ -58,6 +58,33 @@ func Compare(q *policyfix.Question, a Answer) []string {
 	return out
 }
 
+// Same returns every way the answer got differs from the answer want, in words; none when they agree. Unlike Compare it
+// compares the decision whether or not it is set, and an explanation that names no rule against one that names some: it
+// is for two answers to one question, from two routes of the API. The rules are compared as Compare does.
+func Same(want, got Answer) []string {
+	var out []string
+	if got.Allowed != want.Allowed {
+		out = append(out, fmt.Sprintf("allowed: got %t, want %t", got.Allowed, want.Allowed))
+	}
+	if got.Decision != want.Decision {
+		out = append(out, fmt.Sprintf("decision: got %q, want %q", got.Decision, want.Decision))
+	}
+	if diff := setDiff(got.GrantedBy, want.GrantedBy); diff != "" {
+		out = append(out, "granted_by: "+diff)
+	}
+	names := func(denials []Denial) []string {
+		out := make([]string, len(denials))
+		for i, d := range denials {
+			out[i] = d.String()
+		}
+		return out
+	}
+	if diff := setDiff(names(got.Denials), names(want.Denials)); diff != "" {
+		out = append(out, "denials: "+diff)
+	}
+	return out
+}
+
 // setDiff says how two lists differ as sets: what is missing from got and what got has besides; "" when they are equal.
 func setDiff(got, want []string) string {
 	got, want = sortedUnique(got), sortedUnique(want)

@@ -4,7 +4,8 @@ package contracts_test
 
 // Tests of the runner itself: that every field of a fixture reaches the engine as the fixture means it (the answers are
 // written from the semantics, CLAUDE.md "Decision semantics"), that ReplaceRules swaps one policy for another on the same
-// graph, and that Compare reports what differs. Each case is also cross-checked against its permission list (CrossCheck).
+// graph, that Compare and Same report what differs, and that a case reaches the API as the fixture means it. Each case is also
+// cross-checked against its permission list (CrossCheck) and asked through POST /check (SecondOpinion).
 
 import (
 	"slices"
@@ -467,8 +468,41 @@ func TestRunner_CompareReportsEveryMismatch(t *testing.T) {
 	}
 }
 
+// TestRunner_SameReportsEveryDifferenceOfTwoAnswers: Same compares the answers to one question from two routes, the
+// decision and an explanation that names no rule included, and ignores the order and the repeats of the rules.
+func TestRunner_SameReportsEveryDifferenceOfTwoAnswers(t *testing.T) {
+	answer := contracts.Answer{
+		Allowed: false, Decision: policyfix.DecisionDenied, GrantedBy: []string{"a", "b"},
+		Denials: []contracts.Denial{{Rule: "d", Level: "read", LiftedBy: []string{"x"}}, {Rule: "e", Level: "write", UnresolvedParent: true}},
+	}
+	reordered := contracts.Answer{
+		Allowed: false, Decision: policyfix.DecisionDenied, GrantedBy: []string{"b", "a", "a"},
+		Denials: []contracts.Denial{{Rule: "e", Level: "read", UnresolvedParent: true}, {Rule: "d", Level: "write", LiftedBy: []string{"x"}}},
+	}
+	if got := contracts.Same(answer, reordered); len(got) != 0 {
+		t.Fatalf("the same answer in another order: %v", got)
+	}
+	if got := contracts.Same(contracts.Answer{}, contracts.Answer{}); len(got) != 0 {
+		t.Fatalf("two answers with no explanation: %v", got)
+	}
+	// Unlike Compare, a decision or a list of rules that one answer has and the other has not is a difference.
+	differs := contracts.Answer{Allowed: true, Decision: policyfix.DecisionAllowed}
+	got := contracts.Same(answer, differs)
+	for _, want := range []string{"allowed: got true, want false", `decision: got "allowed", want "denied"`, `missing ["a" "b"]`, `missing ["d lifted by [x]" "e (unresolved parent)"]`} {
+		if !slices.ContainsFunc(got, func(m string) bool { return strings.Contains(m, want) }) {
+			t.Errorf("no difference says %q: %v", want, got)
+		}
+	}
+	if len(got) != 4 {
+		t.Errorf("want 4 differences (allowed, decision, granted_by, denials), got %d: %v", len(got), got)
+	}
+	if got := contracts.Same(contracts.Answer{Allowed: true}, contracts.Answer{Allowed: true, Decision: policyfix.DecisionAllowed}); len(got) != 1 {
+		t.Errorf("an answer with a decision against one without: %v", got)
+	}
+}
+
 // askAndCompare asks every case of the fixture and reports each answer that differs from the expectation, and each
-// question on which the permission list of the case disagrees with the check.
+// question on which the permission list of the case, or POST /check, disagrees with the evaluations.
 func askAndCompare(t *testing.T, l *contracts.Loaded, f *policyfix.Fixture) {
 	t.Helper()
 	for i := range f.Cases {
@@ -481,7 +515,10 @@ func askAndCompare(t *testing.T, l *contracts.Loaded, f *policyfix.Fixture) {
 			}
 		}
 		for _, d := range l.CrossCheck(c, answers) {
-			t.Errorf("%s, case %q, GET /permission against POST /check: %s", f.Name, c.Name, d)
+			t.Errorf("%s, case %q, GET /permission against the evaluations: %s", f.Name, c.Name, d)
+		}
+		for _, d := range l.SecondOpinion(c, answers) {
+			t.Errorf("%s, case %q, POST /check against the evaluations: %s", f.Name, c.Name, d)
 		}
 	}
 }

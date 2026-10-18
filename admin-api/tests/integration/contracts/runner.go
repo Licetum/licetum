@@ -3,15 +3,21 @@
 // Package contracts is the engine runner of the decision contracts (DEC* in contracts.yaml): it loads a policy fixture
 // (core/testsupport/policyfix) into a running Licetum — the services, the resource types, a synchronizer per type with
 // resources fed by the fake source of the harness, and the policy written through the admin API — and asks the questions of
-// the fixture through the check API, as a client service does, at the moment the fixture names. The answers come back in the
-// terms of the fixture (rule names), so a test compares them with what the fixture expects (see Compare).
+// the fixture through the AuthZEN API of the check API, as a client service does, at the moment the fixture names. The
+// answers come back in the terms of the fixture (rule names), so a test compares them with what the fixture expects (see
+// Compare). The requests are built, and the answers read, by core/testsupport/authzenreq.
 //
 // Every question is asked with consistency=higher, so that no answer comes from a cache and each one is computed by the
 // engine from the current policy and data, and with explain, so that the rules that decided it are named.
 //
-// The check API decides only the asked resources; GET /service/{slug}/permission lists every resource the subject has
+// The evaluations decide only the asked resources; GET /service/{slug}/permission lists every resource the subject has
 // access to, through another path of the engine (coverNodes instead of CoversOf). CrossCheck asks the list for a case and
-// compares it with the check answers of the same case, so that the tables and the generated policies check that path too.
+// compares it with the answers of the evaluations of the same case, so that the tables and the generated policies check
+// that path too.
+//
+// While the check API still has POST /service/{slug}/check, which the evaluations replace, SecondOpinion asks it as well and
+// reports every way its answers differ from the evaluations: the oracle moved from one route to the other and lost nothing.
+// It goes with that route (legacy.go).
 package contracts
 
 import (
@@ -20,7 +26,6 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
-	"net/url"
 	"reflect"
 	"slices"
 	"strconv"
@@ -39,6 +44,7 @@ import (
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
 	support "github.com/licetum/licetum/core/testsupport"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 	"github.com/licetum/licetum/core/testsupport/policyfix"
 )
 
@@ -586,40 +592,57 @@ func (l *Loaded) runBatch(ops []model.BatchOperation, what []string) {
 	}
 }
 
-// maxQuestions is the most questions POST /service/{id}/check takes at once.
-const maxQuestions = 100
-
 // Ask asks the questions of a case of the loaded fixture: as the case's subject, with the case's claims in the token
-// (preferred_username is the subject), the case's request attributes in the body, at the case's time (the clock of the
-// replica), through POST /service/{slug}/check?consistency=higher with explain. The answers are in the order of the
-// questions. A request that fails, or an answer made without the data of some type, fails the test.
+// (preferred_username is the subject), the case's request attributes in the context, at the case's time (the clock of the
+// replica), through POST /service/{slug}/access/v1/evaluations?consistency=higher with explain. The explanation of an
+// evaluation is its context.reason_admin. The answers are in the order of the questions. A request that fails, an evaluation
+// the API could not decide (it answers decision false with context.error, which is not a denial) or an answer made without
+// the data of some type fails the test.
 func (l *Loaded) Ask(c *policyfix.Case) []Answer {
 	l.t.Helper()
+	if _, clash := c.Context["explain"]; clash {
+		l.t.Fatalf("fixture %s, case %q: the context names an attribute explain, which is how an evaluation asks for its explanation", l.f.Name, c.Name)
+	}
 	l.clock.Set(l.f.NowOf(c))
 	token := l.tokenOf(c)
-	path := "/service/" + url.PathEscape(l.f.ServiceOf(c)) + "/check?consistency=higher"
 
 	answers := make([]Answer, 0, len(c.Questions))
-	for start := 0; start < len(c.Questions); start += maxQuestions {
-		batch := c.Questions[start:min(start+maxQuestions, len(c.Questions))]
-		checks := make([]model.CheckRequest, len(batch))
-		for i, q := range batch {
-			checks[i] = model.CheckRequest{Type: q.Type, Action: q.Action}
-			if q.Resource != "" {
-				checks[i].ResourceID = ptr(q.Resource)
-			}
+	for start := 0; start < len(c.Questions); start += authzenreq.MaxEvaluations {
+		batch := c.Questions[start:min(start+authzenreq.MaxEvaluations, len(c.Questions))]
+		req := evaluationsOf(l.f.ServiceOf(c), c, batch)
+		res := l.askOnce(req, token)
+		decisions, err := authzenreq.Decisions(res.Status, res.Body)
+		if err != nil {
+			l.t.Fatalf("fixture %s, case %q: %s %s: %v", l.f.Name, c.Name, req.Method, req.Path, err)
 		}
-		body := model.CheckInput{Checks: checks, Explain: true, Context: c.Context}
-		res := l.askOnce(http.MethodPost, path, token, body)
-		var out model.CheckResponse
-		if err := json.Unmarshal(res.Body, &out); err != nil || len(out.Results) != len(checks) {
-			l.t.Fatalf("fixture %s, case %q: the answer does not decode into %d results: %v %s", l.f.Name, c.Name, len(checks), err, res.Body)
+		if len(decisions) != len(batch) {
+			l.t.Fatalf("fixture %s, case %q: %d decisions for %d evaluations: %s", l.f.Name, c.Name, len(decisions), len(batch), res.Body)
 		}
-		for _, r := range out.Results {
-			answers = append(answers, l.answerOf(r))
+		for _, d := range decisions {
+			answers = append(answers, l.answerOf(model.CheckResult{Allowed: d.Allowed, Explanation: d.Explanation}))
 		}
 	}
 	return answers
+}
+
+// evaluationsOf is the request that asks the questions (at most authzenreq.MaxEvaluations) of a case of the service: all
+// about the case's subject, with the attributes of the case and the request for an explanation as their context. The context
+// of the case is copied into the request: the fixture's own is not changed.
+func evaluationsOf(service string, c *policyfix.Case, questions []policyfix.Question) authzenreq.Request {
+	return authzenreq.Evaluations(service, c.Subject, questionsOf(questions),
+		authzenreq.Fresh(), authzenreq.Explain(), authzenreq.WithContext(c.Context))
+}
+
+// questionsOf are the questions of a case as evaluations: a question without a resource is about the type as a whole.
+func questionsOf(qs []policyfix.Question) []authzenreq.Question {
+	out := make([]authzenreq.Question, len(qs))
+	for i, q := range qs {
+		out[i] = authzenreq.Question{Resource: authzenreq.On(q.Type, q.Resource), Action: q.Action}
+		if q.Resource == "" {
+			out[i].Resource = authzenreq.Whole(q.Type)
+		}
+	}
+	return out
 }
 
 // tokenOf is the token of a case: its claims, with the subject as preferred_username.
@@ -631,19 +654,23 @@ func (l *Loaded) tokenOf(c *policyfix.Case) string {
 }
 
 // askOnce sends one request to the check replica. An answer made while the synchronization of some type had not finished
-// (X-Authz-Sync: pending) lacks data the fixture declares: it is asked again a few times before the test fails.
-func (l *Loaded) askOnce(method, path, token string, body any) *harness.Result {
+// (the Trace of the request says SyncPending, which the X-Authz-Sync header reports as well) lacks data the fixture declares:
+// it is asked again a few times before the test fails.
+func (l *Loaded) askOnce(req authzenreq.Request, token string) *harness.Result {
 	l.t.Helper()
 	for attempt := 1; ; attempt++ {
-		res := l.replica.Do(l.Cluster, method, path, token, body)
+		res := l.replica.Do(l.Cluster, req.Method, req.Path, token, req.Body)
 		if res.Status != http.StatusOK {
-			l.t.Fatalf("fixture %s: %s %s: %d %s", l.f.Name, method, path, res.Status, res.Body)
+			l.t.Fatalf("fixture %s: %s %s: %d %s", l.f.Name, req.Method, req.Path, res.Status, res.Body)
 		}
-		if res.Header.Get("X-Authz-Sync") != "pending" {
+		if res.Trace == nil {
+			l.t.Fatalf("fixture %s: %s %s: the harness kept no Trace of the request", l.f.Name, req.Method, req.Path)
+		}
+		if !res.Trace.SyncPending() {
 			return res
 		}
 		if attempt == 3 {
-			l.t.Fatalf("fixture %s: %s %s: the answer was made without the data of some type three times", l.f.Name, method, path)
+			l.t.Fatalf("fixture %s: %s %s: the answer was made without the data of some type three times", l.f.Name, req.Method, req.Path)
 		}
 	}
 }
