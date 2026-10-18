@@ -13,26 +13,34 @@
 tolerance: 0.15
 latency_slack_ms: 5
 budgets:
+    # cold: every request asks with consistency=higher. Since F3 such a request waits for a fresh synchronization job of the
+    # worker instead of fetching the sources itself, and the fresh jobs ask a type's source at most once per
+    # SYNC__FRESH_MIN_INTERVAL (1 s): its p50 was 0.90 to 0.93 s from 2 to 8 requests/s (2.53 to 2.55 s with 100 ms added),
+    # where the F0 baseline (the fetch in the request) had 0.40 s (2.27 s). The p50 and its step are those of the nightly run
+    # 39121082518 (8882ff5c, ubuntu-latest) at the highest step it sustained. Its sustained rate (8 and 4 requests/s) was
+    # capped by the computations that held their slot of COMPUTE__CONCURRENCY while they waited for the worker (fixed in
+    # d4c5ed6: on one shared 4-CPU machine the 16 requests/s step went from 59.5 % errors to none), so the rate floor stays
+    # the baseline's; so do the ceilings of queries and round trips, which the run is under.
     - profile: medium
       mode: cold
       added_latency_ms: 0
       rps: 16
-      reference_rps: 16
-      p50_ms: 396.83
+      reference_rps: 8
+      p50_ms: 932.7
       p99_ms: 0
       db_queries_per_request: 15.42
       redis_round_trips_per_request: 5.65
-      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
+      note: 'rps, queries and round trips: lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate, commits b7859306 and 5abcc757 (loadtest/notebook/results); p50 at 8 requests/s: nightly run 39121082518, 8882ff5c'
     - profile: medium
       mode: cold
       added_latency_ms: 100
       rps: 8
-      reference_rps: 8
-      p50_ms: 2268.97
+      reference_rps: 4
+      p50_ms: 2531.0
       p99_ms: 0
       db_queries_per_request: 15.23
       redis_round_trips_per_request: 5.19
-      note: 'lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate: commits b7859306 and 5abcc757, see loadtest/notebook/results'
+      note: 'rps, queries and round trips: lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate, commits b7859306 and 5abcc757 (loadtest/notebook/results); p50 at 4 requests/s: nightly run 39121082518, 8882ff5c'
     - profile: medium
       mode: mix
       added_latency_ms: 0
