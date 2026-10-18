@@ -1,0 +1,93 @@
+# The integration test TestIntegrationDenyAndExceptions (admin-api/tests/integration/api/graph_test.go), state by state.
+# It is the worked example (worked_example.yaml) run in the larger world of the integration tests, which also has D2, R3,
+# B4 and I4 outside D1: those are the resources no rule reaches, and the lists of the test say they get nothing. The test
+# adds rules one after another to one subject; a fixture is one state, so each step is a subject holding the rules added
+# up to that step.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4.
+contracts: [DEC01, DEC02]
+description: The steps of TestIntegrationDenyAndExceptions, one subject per step.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+rules:
+  # Step 1: read on D1.
+  - {name: s1-allow-D1, subject: step1, type: division, resource: D1, access: [read]}
+  # Step 2: + a denial on R1.
+  - {name: s2-allow-D1, subject: step2, type: division, resource: D1, access: [read]}
+  - {name: s2-deny-R1, subject: step2, type: rrs, resource: R1, access: [read], deny: true}
+  # Step 3: + an exception on B2.
+  - {name: s3-allow-D1, subject: step3, type: division, resource: D1, access: [read]}
+  - {name: s3-deny-R1, subject: step3, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: s3-except-B2, subject: step3, type: branch, resource: B2, access: [read], exception: true}
+  # Step 4: + a denial on I1 and an exception on B1.
+  - {name: s4-allow-D1, subject: step4, type: division, resource: D1, access: [read]}
+  - {name: s4-deny-R1, subject: step4, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: s4-except-B2, subject: step4, type: branch, resource: B2, access: [read], exception: true}
+  - {name: s4-deny-I1, subject: step4, type: item, resource: I1, access: [read], deny: true}
+  - {name: s4-except-B1, subject: step4, type: branch, resource: B1, access: [read], exception: true}
+cases:
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyAndExceptions
+  - name: step 1 — read on D1 reaches the branches below it and nothing outside it
+    subject: step1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [s1-allow-D1]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyAndExceptions
+  - name: step 2 — a denial below a grant takes the level away from its whole subtree
+    subject: step2
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [s2-allow-D1], denials: [{rule: s2-deny-R1}]}
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed}
+      - {type: rrs, resource: R3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: s2-deny-R1}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed}
+      - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyAndExceptions
+  - name: step 3 — an exception below the denial lifts it for what it covers only
+    subject: step3
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: s3-deny-R1}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [s3-allow-D1, s3-except-B2], denials: [{rule: s3-deny-R1, lifted_by: [s3-except-B2]}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyAndExceptions
+  - name: step 4 — a denial below the exception wins again
+    subject: step4
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [s4-allow-D1, s4-except-B1], denials: [{rule: s4-deny-R1, lifted_by: [s4-except-B1]}, {rule: s4-deny-I1}]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationDenyAndExceptions
+  - name: step 4 — the exceptions on B1 and B2 lift the denial on R1 for both
+    subject: step4
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [s4-allow-D1, s4-except-B1], denials: [{rule: s4-deny-R1, lifted_by: [s4-except-B1]}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [s4-allow-D1, s4-except-B2], denials: [{rule: s4-deny-R1, lifted_by: [s4-except-B2]}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: step 4 — the exceptions below R1 do not lift its denial for R1 itself
+    subject: step4
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [s4-allow-D1], denials: [{rule: s4-deny-R1}]}
