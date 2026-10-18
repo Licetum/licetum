@@ -70,6 +70,11 @@ c.Replicas[1].Warm(c, "GET", "/service/org/permission", token) // until the cost
   (`c.RedisFault`) for the replicas: `Latency`, `Cut`, `BlackHole`, `Reset`. Toxiproxy runs inside the test process (the
   toxiproxy server library, driven through its HTTP API), so no extra image is needed. `harness.WithReplicaRedis(uri)` points
   the replicas at another Redis, for the read-only test (`REPLICAOF` to an address nobody serves).
+- **Levers.** The freshness of a request is `?consistency=higher` for its caller, and `engine.WithConsistency` in the context for
+  the process that serves it (it wins over the query, and no network input sets it). `harness.Levers(handler)` is the test-only
+  wrapper that turns the header `X-Test-Consistency` (`higher` or `minimize_latency`) into it; it lives under `tests/`, so no
+  binary has it. `core/testsupport/authzenreq` builds the AuthZEN requests (`Fresh()`, `AtLeast(rev)`) and decodes the answers.
+  A test that needs to know whether an answer lacked the data of a type reads `Trace.SyncPending()` of its own `engine.WithTrace`.
 
 Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in the pull request which criteria it covers.
 
