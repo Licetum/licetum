@@ -190,6 +190,7 @@ func answer(granted map[string]bool, byRule map[string]*denialFacts) Answer {
 	switch {
 	case len(granted) == 0:
 		a.Decision = policyfix.DecisionNoAccess
+		a.Denials = nil
 	case deniedNow:
 		a.Decision = policyfix.DecisionDenied
 	default:

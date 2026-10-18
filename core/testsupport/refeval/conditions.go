@@ -83,25 +83,33 @@ func (a attrs) holds(conds []model.PredicateCondition) truth {
 	return out
 }
 
-// compare applies an operator to the text of an attribute. A scalar value of in and not_in is a list of one item, and a
-// list value of eq holds when the attribute equals one of its items (validation lets both through). Numeric operators
-// and in_cidr are false on an attribute that is not a number or an address.
+// compare applies an operator to the text of an attribute. A scalar value of in and not_in is a list of one item. eq, ne
+// and regex take one value: with a list they never hold (validation lets it through, and the Python version compared
+// the text with the list, which never matched). Numeric operators and in_cidr take one value too (in_cidr a list of
+// networks as well) and are false on an attribute that is not a number or an address; the text is parsed as it is.
 func compare(op string, v model.PredicateValue, s string) bool {
 	values := v.List
 	if !v.IsList {
 		values = []string{v.Str}
 	}
 	switch op {
-	case model.OpEq, model.OpIn:
+	case model.OpEq:
+		return !v.IsList && s == v.Str
+	case model.OpNe:
+		return !v.IsList && s != v.Str
+	case model.OpIn:
 		return slices.Contains(values, s)
-	case model.OpNe, model.OpNotIn:
+	case model.OpNotIn:
 		return !slices.Contains(values, s)
 	case model.OpRegex:
+		if v.IsList {
+			return false
+		}
 		re, err := regexp.Compile(v.Str)
 		return err == nil && re.MatchString(s)
 	case model.OpGt, model.OpGe, model.OpLt, model.OpLe:
-		x, err1 := strconv.ParseFloat(strings.TrimSpace(s), 64)
-		y, err2 := strconv.ParseFloat(strings.TrimSpace(v.Str), 64)
+		x, err1 := strconv.ParseFloat(s, 64)
+		y, err2 := strconv.ParseFloat(v.Str, 64)
 		if err1 != nil || err2 != nil || v.IsList {
 			return false
 		}
@@ -115,7 +123,7 @@ func compare(op string, v model.PredicateValue, s string) bool {
 		}
 		return x <= y
 	case model.OpInCIDR:
-		ip := net.ParseIP(strings.TrimSpace(s))
+		ip := net.ParseIP(s)
 		if ip == nil {
 			return false
 		}

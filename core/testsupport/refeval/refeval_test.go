@@ -218,26 +218,27 @@ cases:
 `)
 }
 
-// Nested groups resolve up to level 16: a group the subject is in directly is level 1.
-func TestNestedGroupsResolveUpToSixteenLevels(t *testing.T) {
+// Nested groups resolve through sixteen nestings: a group the subject is in directly is level 1, level 17 still counts
+// and level 18 does not.
+func TestNestedGroupsResolveThroughSixteenNestings(t *testing.T) {
 	raw := `
 services: [s]
 types: [{name: cap, service: s, sync: false}]
 groups:
   - {name: g1, members: [{subject: u}]}
 `
-	for i := 2; i <= 17; i++ {
+	for i := 2; i <= 18; i++ {
 		raw += "  - {name: g" + strconv.Itoa(i) + ", members: [{group: g" + strconv.Itoa(i-1) + "}]}\n"
 	}
 	raw += `rules:
-  - {name: level16, member_of: g16, type: cap, access: [a]}
-  - {name: level17, member_of: g17, type: cap, access: [b]}
+  - {name: level17, member_of: g17, type: cap, access: [a]}
+  - {name: level18, member_of: g18, type: cap, access: [b]}
   - {name: as-subject, subject_group: g3, type: cap, access: [c]}
 cases:
   - name: the subject at the bottom of the chain
     subject: u
     questions:
-      - {type: cap, action: a, allowed: true, granted_by: [level16]}
+      - {type: cap, action: a, allowed: true, granted_by: [level17]}
       - {type: cap, action: b, allowed: false, decision: no_access}
       - {type: cap, action: c, allowed: true}
   - name: somebody else
@@ -456,8 +457,10 @@ func TestOperators(t *testing.T) {
 		attr  string
 		want  bool
 	}{
-		{model.OpEq, str("a"), "a", true}, {model.OpEq, str("a"), "b", false}, {model.OpEq, list("a", "b"), "b", true},
+		{model.OpEq, str("a"), "a", true}, {model.OpEq, str("a"), "b", false},
 		{model.OpNe, str("a"), "b", true}, {model.OpNe, str("a"), "a", false},
+		// eq, ne and regex take one value: a list never holds.
+		{model.OpEq, list("a", "b"), "b", false}, {model.OpNe, list("a", "b"), "c", false}, {model.OpRegex, list("a"), "a", false},
 		{model.OpIn, list("a", "b"), "a", true}, {model.OpIn, list("a"), "c", false}, {model.OpIn, str("a"), "a", true},
 		{model.OpNotIn, list("a", "b"), "c", true}, {model.OpNotIn, list("a"), "a", false},
 		{model.OpRegex, str("^ad"), "admin", true}, {model.OpRegex, str("min"), "admin", true}, {model.OpRegex, str("^min"), "admin", false},
@@ -467,6 +470,8 @@ func TestOperators(t *testing.T) {
 		{model.OpInCIDR, str("10.0.0.0/8"), "10.1.2.3", true}, {model.OpInCIDR, list("192.168.0.0/16", "10.0.0.0/8"), "10.9.9.9", true},
 		{model.OpInCIDR, str("10.0.0.0/8"), "11.0.0.1", false}, {model.OpInCIDR, str("10.0.0.0/8"), "not an address", false},
 		{model.OpInCIDR, str("2001:db8::/32"), "2001:db8::1", true},
+		// The text is parsed as it is.
+		{model.OpGt, str("5"), " 6", false}, {model.OpInCIDR, str("10.0.0.0/8"), " 10.1.2.3", false},
 	} {
 		if got := compare(tc.op, tc.value, tc.attr); got != tc.want {
 			t.Errorf("%s %+v on %q = %v, want %v", tc.op, tc.value, tc.attr, got, tc.want)

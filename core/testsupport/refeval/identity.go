@@ -5,8 +5,9 @@ import (
 	"github.com/licetum/licetum/core/testsupport/policyfix"
 )
 
-// maxNesting is the number of levels of groups a membership resolves through: a group the subject matches directly is
-// level 1, a group that nests it level 2, and so on up to this level.
+// maxNesting is the number of nestings of groups a membership resolves through: a group the subject matches directly is
+// level 1, a group that nests it level 2, and so on up to level maxNesting+1 (sixteen groups nested in one another
+// above the one matched).
 const maxNesting = 16
 
 // instance is a permission of a rule on one anchor: the whole of a type, or one resource. A rule that grants a role has
@@ -81,7 +82,7 @@ func (s *caseState) resolveGroups() {
 		direct[g.Name] = t
 	}
 	current := direct
-	for level := 2; level <= maxNesting; level++ {
+	for level := 2; level <= maxNesting+1; level++ {
 		next := map[string]truth{}
 		for _, g := range s.f.Groups {
 			t := direct[g.Name]

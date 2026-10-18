@@ -44,7 +44,7 @@ type Answer struct {
 	// GrantedBy names the rules that grant the level, sorted, each once (a role assignment and a rule that finds several
 	// anchors take part through several instances).
 	GrantedBy []string
-	// Denials are the denials that apply to the level, as the explanation lists them.
+	// Denials are the denials that apply to the level, one per rule (see byRule).
 	Denials []Denial
 }
 
@@ -535,7 +535,49 @@ func (l *Loaded) answerOf(r model.CheckResult) Answer {
 		denial.LiftedBy = sortedUnique(denial.LiftedBy)
 		a.Denials = append(a.Denials, denial)
 	}
+	a.Denials = byRule(a.Denials)
 	return a
+}
+
+// byRule merges the denials of an explanation by rule, as the fixtures and the reference evaluator state them. The engine
+// lists a denial per instance and matched level (a role with two items, or a rule found at two anchors, appears twice,
+// each with its anchor). A rule with a standing denial is listed once, standing; a rule whose every denial is lifted is
+// listed once, with every exception that lifts one of them. It is assumed for an unresolved parent when every denial
+// that decides it is (the standing ones, or all when none stands), and its Level is the first of those.
+func byRule(in []Denial) []Denial {
+	var order []string
+	standing, lifted := map[string][]Denial{}, map[string][]Denial{}
+	for _, d := range in {
+		if _, seen := standing[d.Rule]; !seen {
+			if _, seen := lifted[d.Rule]; !seen {
+				order = append(order, d.Rule)
+			}
+		}
+		if len(d.LiftedBy) == 0 {
+			standing[d.Rule] = append(standing[d.Rule], d)
+		} else {
+			lifted[d.Rule] = append(lifted[d.Rule], d)
+		}
+	}
+	out := make([]Denial, 0, len(order))
+	for _, rule := range order {
+		merged := Denial{Rule: rule, UnresolvedParent: true}
+		deciding := standing[rule]
+		if len(deciding) == 0 {
+			deciding = lifted[rule]
+			for _, d := range deciding {
+				merged.LiftedBy = append(merged.LiftedBy, d.LiftedBy...)
+			}
+			merged.LiftedBy = sortedUnique(merged.LiftedBy)
+		}
+		merged.Level = deciding[0].Level
+		for _, d := range deciding {
+			merged.UnresolvedParent = merged.UnresolvedParent && d.UnresolvedParent
+			merged.MissingAttribute = merged.MissingAttribute || d.MissingAttribute
+		}
+		out = append(out, merged)
+	}
+	return out
 }
 
 // ruleName is the name of a rule the runner wrote; a rule it did not write (it should not take part) is named by its id.

@@ -9,7 +9,7 @@
 //
 //   - Identity: the subject, and every group it belongs to. A membership names the subject, or has a predicate over the
 //     claims, the request context and the clock (an empty one, everybody, always holds), or nests another group; a group
-//     the subject matches directly is level 1 and nesting resolves up to level 16 (maxNesting). Disabled memberships and
+//     the subject matches directly is level 1 and nesting resolves through 16 groups, up to level 17 (maxNesting). Disabled memberships and
 //     memberships outside their validity window at the time of the case count for nothing.
 //   - Three-valued conditions: a condition on an attribute the request does not carry (a claim or a context attribute
 //     that is absent or null) is unknown, whatever the operator, ne and not_in included. AND is the minimum and OR the
@@ -44,18 +44,21 @@
 //   - Explanations: granted_by names every allow rule (exceptions included) that grants the action, whatever the
 //     denials; denials names every denying rule that reaches the resource with a level of the action, standing or lifted.
 //     The decision is no_access when nothing grants, denied when something grants and a denial stands, allowed otherwise.
+//     A no_access answer lists no denials: nothing granted the action, so no denial decided it.
 //
 // The choices where the description leaves room, taken as the most literal reading:
 //
 //   - Claim values, context values and resource attributes are compared as their Python text (pyStr): a list claim is
 //     the text ['a', 'b'], not its items. The claim of a resource_from_claim is matched the same way.
-//   - A scalar value of in and not_in is a list of one item; a list value of eq holds when the attribute equals one of its
-//     items. Numeric operators and in_cidr are false (not unknown) on an attribute that is not a number or an address.
+//   - A scalar value of in and not_in is a list of one item; eq, ne, regex and the numeric operators with a list value
+//     never hold (as in the engine and the Python version before it). Numeric operators and in_cidr are false (not
+//     unknown) on an attribute that is not a number or an address, parsed as it is, without trimming.
 //     On a list attribute of a resource_where, ne and not_in hold when no item matches, the other operators when one does.
 //   - "Strictly below for a level" means that the denial, flowing down from its anchor, reaches the exception's anchor
 //     with that level: the structural relation of CLAUDE.md, with the inherit masks along the way.
 //   - The anchors of a resource_from_claim are found through the resource links regardless of their inherit masks.
-//   - Nested groups: level 1 is a group that the subject matches directly; the last level that counts is 16.
+//   - Nested groups: level 1 is a group that the subject matches directly; the last level that counts is 17, sixteen
+//     nestings above it (the engine's MaxGroupDepth).
 //   - A question about a type with a synchronizer but no resource is decided as one about a type with none.
 //   - In an explanation, a rule with several denials (anchors or levels) is listed once: with no exception when one of
 //     its denials stands, otherwise with every exception that lifts one of them; unresolved_parent is set when no denial
