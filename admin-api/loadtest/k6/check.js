@@ -25,8 +25,8 @@ const backend = __ENV.BACKEND_TOKEN;
 const mode = __ENV.MODE || 'mix';
 const consistencySetting = __ENV.CONSISTENCY || 'minimize_latency';
 const seed = Number(__ENV.SEED || 1);
-// The number of the first iteration of this invocation among all the iterations of the run: the cold mode asks every
-// question once, so a later window must go on where the earlier ones stopped.
+// The number of the first iteration of this invocation among all the iterations of the run: the cold mode asks each
+// evaluation question once, so a later window must go on where the earlier ones stopped.
 const firstIteration = Number(__ENV.FIRST_ITERATION || 0);
 
 // The generator the current draws come from. It is declared before the warm pool is drawn at start-up.
@@ -100,7 +100,8 @@ export default function () {
     subjectIndex = pair.subject;
     doc = pair.doc;
   } else if (mode === 'cold') {
-    // Every request asks what no earlier request of the run asked, so no answer a cache holds fits it.
+    // The evaluations ask what no earlier request of the run asked, so no cached answer fits them. A search repeats for a
+    // subject in every round: the permission cache of the subject answers it, not a cache of questions.
     const n = firstIteration + exec.scenario.iterationInTest;
     subjectIndex = coldSubject(n);
     doc = coldDoc(subjectIndex, Math.floor(n / users));
@@ -112,8 +113,8 @@ export default function () {
   const subject = `user-${subjectIndex}`;
   const dept = `dept-${subjectIndex % groups}`;
   const token = tokens[subjectIndex];
-  // The cold mode sends no consistency query: its questions are new, so no cache holds an answer to them. The other modes
-  // ask with the consistency of the run.
+  // The cold mode sends no consistency query: its evaluation questions are new, so no cache holds an answer to them. The
+  // other modes ask with the consistency of the run.
   const consistencyQuery = mode === 'cold' ? '' : `?consistency=${consistencySetting}`;
 
   const op = ops[pick()];
@@ -231,8 +232,8 @@ function accessibleDoc(subjectIndex) {
 
 // The cold mode walks the subjects in rounds: each round visits every subject once, in an order that scrambles them, and
 // the k-th visit of a subject asks it about the k-th document of a sequence of its own that repeats none. So no pair of
-// (subject, document) is asked twice, and a question about a subject is never the one an earlier request asked. A search
-// lists everything a subject may read, so it is new only the first time a subject comes up (the first round).
+// (subject, document) of an evaluation is asked twice. A search lists everything a subject may read, so it repeats for a
+// subject in every round: the permission cache of the subject answers it, not a cache of questions.
 const subjectStride = coprimeStride(users);
 
 function coldSubject(n) {

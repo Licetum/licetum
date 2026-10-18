@@ -41,7 +41,7 @@ type k6Runner struct {
 	// cpus is the CPU list k6 is pinned to (taskset), empty when it is not pinned.
 	cpus string
 	// issued is how many iterations the windows run so far have started. The next window numbers its iterations from
-	// there (FIRST_ITERATION), so that the cold mode, which asks each question once, does not ask a window's questions again
+	// there (FIRST_ITERATION), so that the cold mode, which asks each evaluation question once, does not ask a window's questions again
 	// in the next one.
 	issued int
 }

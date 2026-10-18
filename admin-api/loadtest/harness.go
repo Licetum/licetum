@@ -44,7 +44,7 @@ type Options struct {
 	CheckBin      string        // the licetum binary that serves the check API
 	K6Bin         string        // the k6 binary that sends the traffic
 	OutDir        string        // where the results, the environment, the time series and the k6 logs are written
-	Mode          string        // warm (the caches answer), cold (every request asks what none asked before) or mix (a skewed traffic)
+	Mode          string        // warm (the caches answer), cold (the evaluations ask what none asked before; a search repeats per subject) or mix (a skewed traffic)
 	Seed          int64         // the seed of the choices of the traffic and of the oracle
 	Mix           Mix           // the share of each request
 	Consistency   string        // minimize_latency (caches allowed) or higher (every request is computed); the cold traffic sends none
