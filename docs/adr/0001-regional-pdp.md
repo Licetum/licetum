@@ -9,7 +9,7 @@
 
 ### 1.1 Context
 
-The facts below were checked against `229c4ed`, the tip of `epic/production-load-readiness` (PR #59); its Go code is the same as at `8989ed4` (PR #48), the last commit of the read-replica design. File references point into that tree.
+The facts below were checked against `229c4ed`, the tip of `epic/production-load-readiness` (PR #59); its product code is the same as at `8989ed4` (PR #48), the last commit of the read-replica design. It adds `contracts.yaml`, the tool `core/internal/tools/contractscheck` with its task, and CI workflows. File references point into that tree.
 
 **What runs today**
 
@@ -28,7 +28,7 @@ The facts below were checked against `229c4ed`, the tip of `epic/production-load
   - the PKCE state of the sign-in (`authz:pkce:*`, `core/engine/oauth.go`);
   - the breaker state;
   - the revision counters that are kept for the previous release.
-- Multi-region (F6) is a PostgreSQL primary with one streaming replica per region. A check process sends each read either to the replica or to the primary (`App.reader`, `withPrimary`, `DB__LAG_ACTION`). The tag `archive/pg-replica-design` (on `8989ed4`) keeps this design for reference.
+- Multi-region (F6) is a PostgreSQL primary with asynchronous streaming replicas, one or more per region (`docs/deployment.md`). A check process sends each read either to the replica or to the primary (`App.reader`, `withPrimary`, `DB__LAG_ACTION`). The tag `archive/pg-replica-design` (on `8989ed4`) keeps this design for reference.
 
 **Released state**
 
@@ -63,7 +63,7 @@ The facts below were checked against `229c4ed`, the tip of `epic/production-load
 9. **Short-circuit semantics do not short-circuit.** `deny_on_first_deny` and `permit_on_first_permit` decide every evaluation and only then cut the response (`applySemantic`, `core/server/authzen.go:294`).
 10. **The check path writes to PostgreSQL.**
     - `ensure` writes `sync_demand` and enqueues a synchronization: a DBOS workflow by default, a `sync_job` row with `SYNC__ENGINE=postgres` (`enqueueSync`, `core/engine/sync_jobs.go:254`).
-    - `NoteSubject` records `known_subject` after a token verification, at most once per ten minutes per subject and process.
+    - When `SUBJECTS__ENABLED` is on (it is off by default; the Compose stack turns it on), `NoteSubject` records `known_subject` after a token verification, at most once per ten minutes per subject and process.
     - Every delegated call writes `delegated_call`.
 11. **AuthZEN deviations.**
     - The `Bearer ` prefix is matched case-sensitively, and any other scheme gives 400 (`core/server/check.go:67`).
@@ -177,7 +177,7 @@ The facts below were checked against `229c4ed`, the tip of `epic/production-load
 
 8. **Revocation has a hard bound.**
    - **The bound.** An answer is served at PDP time τ only while τ − T(P) ≤ S. A revocation committed at t is therefore enforced from t + S + ε.
-     - T(P) comes from heartbeats stamped with PostgreSQL commit time.
+     - T(P) is a time on PostgreSQL's clock: the start of the heartbeat statement (4.9.3), or, for a PDP that reads the primary, the start of its own read of the revision (6.2).
      - S defaults to 60 s, and configuration validation rejects `0`.
      - ε is the clock skew between the PDP and PostgreSQL. It is measured from the hosts' clock discipline (chrony, `node_timex_*`), not from the heartbeat.
    - **Beyond the bound** the region fails closed: 503 and `/readyz` false.
@@ -226,7 +226,7 @@ The facts below were checked against `229c4ed`, the tip of `epic/production-load
 | 3: "scaling becomes simpler" | This is true for reads only. The cost moves to the CQL store, the ordered publisher, the PostgreSQL↔CQL reconcile and an applier per region. | The cost is budgeted and listed among the risks. Repair (or repair-based node operations after a node replacement) and a nightly reconcile per region are correctness requirements, not only durability measures. |
 | 4: "Licetum's rights over itself need a hierarchy" | The flaw is in the mechanism as well as the missing hierarchy. Six flat platform types are filled by SQL self-synchronizers that keep `DB__URI`, password included, in `synchronizer.config`. `invalidatePlatformSync` makes the next admin request wait for the worker. If administration went through the replicated store, revoking an administrator would become eventual. | Explicit role bindings per scope, computed in PostgreSQL within the request and checked again in the write transaction. The dogfooding is removed entirely. |
 | 5: "contracts may be broken" | True, but the epic is the only executable specification of the semantics today. | Contracts are written against the current engine first (P1), in external terms. Removals come only after them. |
-| 6: "the F tests are inconvenient" | The problem is the oracles, not the names. `decision.go` has no direct tests (there is no `core/engine/decision_test.go`). `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` compares two loaders on top of the same `decision.go`. `chaos.yml`, `multiregion.yml` and `helm.yml` are not on `main`, so their schedules never ran. | A catalog of contracts, an independent reference evaluator (`refeval`), and the PostgreSQL closure as the storage oracle. Nightly runs are started from `main` by a thin dispatcher that calls reusable workflows at the epic's ref. |
+| 6: "the F tests are inconvenient" | The problem is the oracles, not the names. `decision.go` has no direct tests (there is no `core/engine/decision_test.go`). `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` compares two loaders on top of the same `decision.go`. `chaos.yml` and `multiregion.yml` are not on `main`, so their schedules never ran. `helm.yml` is not on `main` either; it has no schedule and runs on pull requests that touch the chart. | A catalog of contracts, an independent reference evaluator (`refeval`), and the PostgreSQL closure as the storage oracle. Nightly runs are started from `main` by a thin dispatcher that calls reusable workflows at the epic's ref. |
 | Implied: the PDP "only reads" | The check path writes to PostgreSQL today: `sync_demand` and a synchronization job (`ensure`: a DBOS workflow by default, a `sync_job` row with the table engine), `known_subject` after a token verification, and `delegated_call` on every delegated call. | All of these are removed. The writer schedules synchronization, and requests never start it. Contract OPS06 lists every path by which the PDP reaches a database. |
 | Implied: fail-closed | The current code has the transitive fail-open described in section 1.1, item 1. | Fixed in P1, before anything moves. A transitive set `unresolved_up` is computed together with the closure and fixed by contract DEC11. The change of semantics is announced. |
 | Implied: staleness | `POLICY__MAX_STALENESS = 0` means no limit, which fails open under a network partition. | The default is 60 s, and validation rejects `0`. Only the audited `freeze` disables the gate, and application of the log continues under it. |
@@ -277,7 +277,7 @@ The facts below were checked against `229c4ed`, the tip of `epic/production-load
    - Publication no longer goes through a queue.
    - Any latency budget that does depend on a queue must set `WithQueueBasePollingInterval` explicitly and fix it with a contract.
 6. **"The check path writes `known_subject` on a cache miss."**
-   - Imprecise: `NoteSubject` runs after every token verification, at most once per ten minutes per subject and process, and is buffered.
+   - Imprecise: while `SUBJECTS__ENABLED` is on (it is off by default), `NoteSubject` runs after every token verification, at most once per ten minutes per subject and process, and is buffered.
    - `delegated_call` is written on every delegated call.
    - Contract OPS06 lists every path, not only these.
 7. **"`get_resource` and refresh ignore the service in the path."**
@@ -327,7 +327,7 @@ The consistency section defines these terms exactly; this section uses them as f
 - S is `POLICY__MAX_STALENESS`. It defaults to 60 s, and `0` is refused. Today the default is `0`, which means no limit (`core/config/config.go:314`).
 
 Compared with today, the architecture drops:
-- the `check` process, which routes its reads to a replica (`DB__READ_URI`, `App.reader`) and writes to the primary from the request path: `ensure` queues synchronization jobs, `delegated_call` rows are written in the strict audit mode, and `NoteSubject` records subjects;
+- the `check` process, which routes its reads to a replica (`DB__READ_URI`, `App.reader`) and writes to the primary from the request path: `ensure` queues synchronization jobs, `delegated_call` rows are written for every delegated call (at once in the strict audit mode, buffered in the async one), and `NoteSubject` records subjects;
 - the table synchronization engine (`sync_job`);
 - Redis in every process;
 - the platform self-service that synchronizes Licetum's own tables.
@@ -342,7 +342,7 @@ Compared with today, the architecture drops:
 | `licetum-writer run --role project` | `core`, MIT | Home region, 2 replicas, one of them the leader. | The primary, through one direct session. With `cql`, also `licetum_log`. | The leader publishes the outbox to the log (`cql`), writes the heartbeat, takes the per-stream checkpoints (`cql`), and removes old outbox rows. It also fetches the JWKS of the PEP issuers and stores key sets that changed (`IssuerKeys`). It runs no DBOS workflow. |
 | `licetum-writer fetch --region <r>` | `core`, MIT | Optional, in region `r`. | None. | When the home `SyncType` asks over mTLS, runs the SQL or HTTP adapter of a synchronizer whose `regions` name `r` and returns the normalized answer. Holds no credentials for PostgreSQL or the CQL store. |
 | `licetum-writer apply --dc <dc>` | `core`, MIT | Every region with the `cql` store. 2 replicas; a Kubernetes Lease picks the active one. | Reads `licetum_log`. Writes `licetum_r_<dc>` and its generation keyspaces. No PostgreSQL. | The regional applier of the log. Two active replicas would write identical rows, so the Lease only saves work; correctness does not depend on it. |
-| `licetum-writer migrate`, `rebuild`, `reconcile`, `checkpoint`, `failover`, `freeze`, `unfreeze` | `core`, MIT | Job, CronJob or run by an operator. | PostgreSQL and the CQL store. | `migrate` runs the goose migrations of schema v2 (with their own version table; it refuses a v0.1.x database), then the CQL migrations, all under one PostgreSQL advisory lock. `reconcile` is the nightly comparison of every region with PostgreSQL. `rebuild`, `checkpoint` and `failover` are the procedures in the consistency section. `freeze` and `unfreeze` are the break-glass switch of a region. |
+| `licetum-writer migrate`, `rebuild`, `reconcile`, `checkpoint`, `failover`, `freeze`, `unfreeze` | `core`, MIT | Job, CronJob or run by an operator. | PostgreSQL and the CQL store; `freeze` and `unfreeze` only the region's own keyspace (5.4). | `migrate` runs the goose migrations of schema v2 (with their own version table; it refuses a v0.1.x database), then the CQL migrations, all under one PostgreSQL advisory lock. `reconcile` is the nightly comparison of every region with PostgreSQL. `rebuild`, `checkpoint` and `failover` are the procedures in the consistency section. `freeze` and `unfreeze` are the break-glass switch of a region. |
 | `web` | `web`, AGPL-3.0-only | Home region, optionally others. | None. | The Next.js BFF and OIDC client of the admin IdP (code flow with PKCE; code exchange and refresh happen on the server). It talks only to `licetum-admin`. |
 
 - **Images.** There are three images, as today: `core` contains both `licetum-pdp` and `licetum-writer`, `admin-api` contains `licetum-admin`, and `web` contains the interface.
@@ -360,6 +360,7 @@ Compared with today, the architecture drops:
   - `licetum-admin` writes the policy, the bindings, the PEP clients and credentials, the subject directory and the log settings. When it creates or deletes a synchronizer, it also clears `synced_at` of the type and resets its `sync_state` (4.2).
   - `licetum-writer` writes:
     - the resource graph (`resource_cache`, `resource_edge`, `resource_ancestor`, `resource_unresolved`);
+    - the effective columns of `type_resource_parent` (`RebuildComponent`) and `type_resource.synced_at` (the first applied synchronization, 4.2);
     - `sync_state`;
     - the issuer key sets;
     - `publish_state`;
@@ -372,8 +373,8 @@ Compared with today, the architecture drops:
 | Topology | `READMODEL__STORE` | Home region | Each other region |
 |---|---|---|---|
 | One region (default) | `postgres` | PostgreSQL (HA as the operator chooses), `pdp ×n`, `admin ×2`, `writer` (`sync`, `project`), `web`. | — |
-| Regions on PostgreSQL replicas | `postgres` | A PostgreSQL primary with a synchronous standby and fencing, plus the same processes as above. | An asynchronous streaming replica (hot standby, cascading allowed) and `pdp ×n` reading it as `licetum_pdp`. |
-| Regions on the CQL store | `cql` | A PostgreSQL primary with a synchronous standby and fencing, `admin`, `writer` (`sync`, `project`), `apply --dc home`, `pdp ×n`, `web`, and the CQL DC `home`. | A CQL DC, `apply --dc <dc>` and `pdp ×n`. No PostgreSQL credentials. |
+| Regions on PostgreSQL replicas | `postgres` | A fenced PostgreSQL primary with a synchronous standby (or S derived from the measured failover time, 6.8), plus the same processes as above. | An asynchronous streaming replica (hot standby, cascading allowed) and `pdp ×n` reading it as `licetum_pdp`. |
+| Regions on the CQL store | `cql` | A fenced PostgreSQL primary with a synchronous standby (or S derived from the measured failover time, 6.8), `admin`, `writer` (`sync`, `project`), `apply --dc home`, `pdp ×n`, `web`, and the CQL DC `home`. | A CQL DC, `apply --dc <dc>` and `pdp ×n`. No PostgreSQL credentials. |
 
 - **Common to all topologies.** `licetum-admin`, `licetum-writer run`, the migration Job and usually `web` run only in the home region. A PDP reads only storage in its own region. Nothing needs Redis.
 - **Sources reachable from one region only.**
@@ -390,7 +391,7 @@ Compared with today, the architecture drops:
 - **Regions on the CQL store.**
   - **Replication.** `licetum_log` is replicated with RF 3 to every DC. `licetum_r_<dc>` and its generation keyspaces `licetum_r_<dc>_g<gen>` are replicated only within their own DC (`{<dc>: 3}`), so each DC needs at least three nodes. The cluster runs outside the Helm chart, under an operator.
   - **Generation keyspaces.** The migration Job creates them in advance, from the home region. Creating a keyspace is a schema change that needs schema agreement across the whole cluster, which a cut-off region cannot reach. The applier therefore only writes.
-  - **Freshness.** T(P) is `region_state.fresh_pg_time`. Every second the leader reads `now()` and the revision in one statement and writes both to `log_heartbeat`. The applier moves `fresh_pg_time` forward once it has applied that revision.
+  - **Freshness.** T(P) is `region_state.fresh_pg_time`. Every second the leader runs the heartbeat statement of 4.9.3, which reads `statement_timestamp()`, the epoch and the revision in one snapshot, and writes them to `log_heartbeat`. The applier moves `fresh_pg_time` forward once it has applied that revision.
   - **MVCC.** The newest version of a key is never deleted. P6 starts append-only, with manual rotation of generations. The garbage collection of superseded versions is switched on only after the APP and ASOF contracts pass under kill tests.
   - **Repair is required for correctness.** This means repair itself, or repair-based node operations after a node replacement. If two of the three replicas in a DC lose the newest version of a key, a `LOCAL_QUORUM` read at P returns an older version, for example a resource that is still active or an old lineage. That is fail-open. The nightly `reconcile` of every region is mandatory.
   - **Freeze.** `freeze --dc X` writes `region_freeze` and `freeze_log` into the region's keyspace, using an operator CQL role of its own. It disables only the staleness gate; the applier keeps applying the log as it arrives.
@@ -485,8 +486,8 @@ One region, and regions on PostgreSQL replicas:
       INSERT INTO outbox (...) SELECT ... FROM r RETURNING epoch, revision
       ```
       The same batch inserts the `change_log` rows stamped with that revision and sends `pg_notify` with the revision. The lock on the `revision_state` row is held until COMMIT. As a result, revisions have no gaps (a rollback uses up no number) and follow the commit order.
-   5. `COMMIT`. A deferred constraint trigger refuses the commit if the transaction changed rows of a projected table and no `outbox` row carries its `xid`.
-      - The trigger counts the tuples the transaction actually changed, so a statement that changed nothing does not count. It also fires on `TRUNCATE`.
+   5. `COMMIT`. A deferred constraint trigger refuses the commit if the transaction changed rows of a table the check covers (4.7) and no `outbox` row carries its `xid`.
+      - Statement-level triggers mark the transaction only when a statement actually changed tuples (4.7), so a statement that changed nothing does not count. An `AFTER TRUNCATE` trigger covers `TRUNCATE`.
       - A table owner or superuser can bypass it (a disabled or dropped trigger, a restore with triggers off). `session_replication_role = replica` alone does not, because the triggers are `ENABLE ALWAYS`. `reconcile` finds the result; the schema does not claim to prevent it.
       - PostgreSQL delivers the NOTIFY only if the transaction commits.
 4. The response is 200 with `Licetum-Revision: <epoch>.<r>`.
@@ -495,7 +496,7 @@ One region, and regions on PostgreSQL replicas:
    - **`cql`.**
      1. The NOTIFY wakes the `project` leader. A 1 s tick covers a notification lost while the leader was reconnecting.
      2. The leader reads `outbox WHERE revision > last_published` in revision order. For each position it writes the `log_chunk` rows and then the `log_entry`, with `USING TIMESTAMP` derived from the position.
-     3. It advances `publish_state` over the contiguous prefix of what it has written. If a `log_entry` already exists with a different sha256, that is a divergence: publication stops and the epoch procedure starts.
+     3. It advances `publish_state` to each position once its chunks and entry are written, one position at a time (4.9.2). If a `log_entry` already exists and differs from the outbox row (its header, or the sha256 of a stream), that is a divergence: publication stops and the epoch procedure starts.
      4. The CQL store replicates the log to every DC. Each applier materializes the entry and advances `region_state`.
      5. Each PDP polls `region_state` every 100 ms, pulls the deltas of its streams, swaps its view atomically, and drops the cached answers the change affects.
 
@@ -534,11 +535,11 @@ Some writes differ from an ordinary policy write:
 4. **Failures.**
    - A source that does not answer leaves the data as it is. `sync_state` records `attempts + 1`, `last_error`, and `next_due_at = now() + min(30 s · 2^attempts, 10 min)`; the backoff applies across the whole cluster.
    - A component lock held by another transaction defers the job by 5 s, and does not count as a failure.
-5. **Lock order.** A synchronization takes the component advisory locks, then the revision row. An admin transaction takes `admin_write`, then the revision row, and never takes a component lock. There is no cycle, so there is no deadlock.
+5. **Lock order.** A synchronization takes the component advisory locks, then its entity rows, then the revision row. An admin transaction takes `admin_write`, then its entity rows, then the revision row, and never takes a component lock. The rows both can touch (`type_resource_parent`, `synchronizer`, `type_resource`, `sync_state`) are taken in one fixed order (4.5). There is no cycle, so there is no deadlock.
 6. **Publication.**
    - DBOS Go v1.6.0 refuses `WithEnqueueTransaction` inside a workflow (`dbos/workflow.go:2126` in `dbos-transact-golang` v1.6.0). The apply step runs inside `SyncType`, `SyncOne` or `RebuildComponent`, so a synchronization could not enqueue a publication in its own transaction anyway.
    - It does not need to. The NOTIFY in its transaction wakes the `project` leader just as an admin write does, and the leader's tick covers a lost notification.
-7. **Revocation through data** (a resource switched off or moved) takes the publication path of the write flow plus `refresh_interval`. After "refresh now", it takes only the publication path.
+7. **Revocation through data** (a resource switched off or moved) takes the publication path of the write flow plus the type's polling interval: `refresh_interval`, or up to `refresh_interval_max` for a quiet source (4.9.1). After "refresh now", it takes only the publication path.
 
 ### 3.6 Decision flow (`POST /service/orders/access/v1/evaluation`)
 
@@ -575,11 +576,11 @@ Some writes differ from an ordinary policy write:
 
    The entry records the position of `data:<type>` for every type the decision read, including ancestor types owned by other services, and is served only while those positions are unchanged (5.12).
 9. **On a cache miss, reads at P.**
-   - **`cql`.** Rows come from the row cache, keyed `(key, ver)` because a version never changes. Its "newest version ≤ P" index follows `applied.changed_keys`, so a warm decision reads nothing from the store. A missing row is read with `SELECT … WHERE pk AND ver <= P LIMIT 1` at `LOCAL_QUORUM`.
+   - **`cql`.** Rows come from the row cache, keyed `(key, ver)` because a version never changes. Its "newest version ≤ P" index follows `applied_keys`, so a warm decision reads nothing from the store. A missing row is read with `SELECT … WHERE pk AND ver <= P LIMIT 1` at `LOCAL_QUORUM`.
    - **`postgres`.** Rows are read in one `REPEATABLE READ READ ONLY` transaction at its own revision Q, as described in 3.7.
    - Then come the pure `CoversOf` (the lineage plus the transitive `unresolved_up`, failing closed) and `decide`.
    - An unknown type or resource gives `decision: false`, not an error.
-   - The explanation is added when it was asked for and the client has the operation `explain`. Rules of an upstream service appear in it only as `upstream: <slug>` with the level.
+   - The explanation is added when it was asked for. A client without the operation `explain` that asks for it gets 403 `authzen_forbidden` (7.7, AZ12). Rules of an upstream service appear in the explanation only as `upstream: <slug>` with the level.
 10. **Response.** The response is `{decision, context?}` with the header `Licetum-Revision`. One decision-log line records the client, subject, resource, action, decision, P and request id.
 
 The other endpoints follow the same steps, with these differences:
@@ -607,10 +608,11 @@ With `READMODEL__STORE=postgres`, the PDP reads PostgreSQL through `pgstore`, as
    - When the revision has moved, it reads the outbox rows after P in one snapshot and folds them with `policy.Fold`, the same function the applier uses. The new view replaces the old one atomically.
    - A data row only advances the position of its `data:<type>` stream. Since data are read from the tables, that is enough to invalidate the answers and cached rows of that type.
    - The PDP polls even on the primary, because a hot standby refuses `LISTEN`.
-3. **Reload instead of fold.** The PDP reloads its view from a fresh snapshot, and drops its answer cache, in three cases:
+3. **Reload instead of fold.** The PDP reloads its view from a fresh snapshot, and drops its answer cache, in two cases:
    - the epoch changed (a failover);
-   - the revision is below P within the same epoch (counted in `licetum_revision_regressions_total`);
    - the outbox rows after P have already been removed.
+
+   A revision below P within the same epoch (a pooled address that spans standbys, or a store fault) is not loaded, because a view never goes back (CONS02). The PDP keeps its view without confirming it and counts the read in `licetum_revision_regressions_total`; if the fault persists, T(P) stops moving and the PDP refuses requests after S (5.11).
 4. **Data at the decision's position.**
    - On a cache miss, the resource rows (`resource_cache`, `resource_ancestor`, `resource_unresolved`, `subject_directory`) are read in one `REPEATABLE READ READ ONLY` transaction, which also reads its own revision Q.
    - The decision then runs at Q, using:
@@ -619,7 +621,7 @@ With `READMODEL__STORE=postgres`, the PDP reads PostgreSQL through `pgstore`, as
      - cached rows whose `data:<type>` position did not move up to Q.
    - Policy and data always come from one position.
 5. **T(P).**
-   - **On the primary**, T(P) is `transaction_timestamp()` of the snapshot transaction: every commit acknowledged before that moment is in the snapshot.
+   - **On the primary**, T(P) is the `statement_timestamp()` of the latest poll that read P from `revision_state`, once the view has folded up to that revision (6.2), or the `transaction_timestamp()` of the load that read P. Every commit acknowledged before that moment is visible to that statement or snapshot. The 100 ms poll keeps T(P) moving while nothing is written.
    - **On a replica** (`pg_is_in_recovery()`), T(P) is the `pg_time` of the heartbeat row read in the same snapshot.
      - The `project` leader commits this row on the primary every second.
      - Any commit acknowledged before that `pg_time` has its commit record earlier in the WAL. A snapshot that sees the heartbeat therefore also sees that commit.
@@ -671,7 +673,7 @@ A service owns everything under it, and composite foreign keys enforce this. A r
 
 - **`identity_domain(id, name UNIQUE)`** (new). A namespace of subject identifiers: services in one domain agree that one `subject.id` is one subject. The migration inserts a `default` row. Only `platform_admin` manages domains.
 - **`service(id, slug, name, url, icon, identity_domain_id, deleted_at, created_at)`**, with `UNIQUE (id, identity_domain_id)`.
-  - The OAuth columns and `trusted_clients` are gone (removed in P2c).
+  - The OAuth columns and `trusted_clients` are gone: P2c stops using them, and schema v2 does not have them (11.1).
   - `slug` is unique over **all** rows, deleted ones included. Today `uq_service_slug` covers only live rows (`WHERE deleted_at IS NULL`, `00001_init.sql:422`), and `PATCH` can change the slug (`core/model/service.go:90`).
   - A `BEFORE UPDATE` trigger refuses any change of `slug` or `identity_domain_id`.
   - Service rows are soft-deleted and never removed, so a slug is never reused.
@@ -710,7 +712,7 @@ A service owns everything under it, and composite foreign keys enforce this. A r
 | Table | Shape | Notes |
 |---|---|---|
 | `revision_state` | `(scope PK, epoch int, revision bigint)` | One row, `'global'`. The scopes `rules`, `data:<service>` and `log_settings` go. `failover` raises `epoch` (see the failover section). |
-| `outbox` | `(revision bigint PK, epoch int, xid xid8 NOT NULL DEFAULT pg_current_xact_id(), kind text, committed_at timestamptz, services uuid[], streams text[], policy jsonb, payload uuid, chunk_count int, payload_sha256 bytea, published_at timestamptz)` | Index on `xid`; partial index `WHERE published_at IS NULL`. `kind` is `change` or `epoch_start`. `committed_at` is `clock_timestamp()` of the bump, which is the last statement before `COMMIT`. |
+| `outbox` | `(revision bigint PK, epoch int, xid xid8 NOT NULL DEFAULT pg_current_xact_id(), kind text, committed_at timestamptz, services uuid[], streams text[], policy jsonb, payload uuid, chunk_count int, payload_sha256 bytea, published_at timestamptz)` | Index on `xid`; partial index `WHERE published_at IS NULL`. `kind` is `change` or `epoch_start`. `committed_at` is `clock_timestamp()` of the bump, in the final batch before `COMMIT` (4.6). |
 | `outbox_chunk` | `(payload uuid, stream text, n int, body bytea, PRIMARY KEY (payload, stream, n))` | zstd, at most 1 MiB per chunk. |
 | `change_log` | `(revision, seq, at, actor, service_id, entity, entity_id, action, before, after, PRIMARY KEY (revision, seq))` | Index `(service_id, revision)`. Replaces `authz_change`. `service_id` is required except for platform-scope records. |
 | `heartbeat` | `(id = 1, epoch, position, pg_time)` | See 4.9.3. |
@@ -726,14 +728,14 @@ A service owns everything under it, and composite foreign keys enforce this. A r
 - **`resource_unresolved(descendant_id, parent_type_id, inherit, PRIMARY KEY (descendant_id, parent_type_id))`** (new). It is the transitive set used for fail-closed and is rebuilt together with the closure. Its mask is defined as follows:
   - take every ancestor `a` of a resource, the resource itself included;
   - for each edge of `a` with `parent_id IS NULL` to a type `U`, the mask is `inherit(a.type → U) ∩ closure_mask(a → resource)`.
-- **`sync_state` stays without `invalidated_at`.** The platform self-synchronizers that needed `invalidated_at` are removed in P4.
+- **`sync_state` keeps `invalidated_at` until P4.** `invalidatePlatformSync` writes it until P4 removes the platform self-synchronizers; the column goes with them.
 - **The DBOS system tables live in schema `dbos` of the same database.** The admin API enqueues workflows in its own transaction (4.6), and `WithEnqueueTransaction` requires a shared database.
 - **`sync_executor` stays** for the janitor (4.9.1).
-- **Removed:** `delegated_call` with `delegated_call_id_seq`, `known_subject`, `sync_job`, `sync_job_token_seq`, `sync_demand` and `authz_change`.
+- **Removed:** `delegated_call` with `delegated_call_id_seq`, `known_subject`, `sync_job`, `sync_job_token_seq` and `authz_change`. `sync_demand` stays until P5, which removes `ensure`, its writer (11.9).
 
 ### 4.5 One revision, in commit order
 
-Every transaction that changes something a decision reads takes its revision in its last statement before `COMMIT`:
+Every transaction that changes something a decision reads takes its revision in its final batch, just before `COMMIT`; after the bump it only inserts and calls `pg_notify` (see the lock order below):
 
 ```sql
 WITH r AS (UPDATE revision_state SET revision = revision + 1 WHERE scope = 'global'
@@ -749,15 +751,15 @@ The row lock on `revision_state` is held until `COMMIT`. That gives three proper
 - **Revision order is commit order.** The next writer can read the row only after the previous transaction has committed.
 - **Every snapshot sees a contiguous prefix of revisions.** This holds on the primary and on a streaming replica, which replays commits in WAL order.
 
-Today `TestF2_2` (`admin-api/tests/integration/cluster/f2_test.go:84`) checks only that revisions increase. In v2 the whole property carries the design, and WR01 is its contract.
+Today `TestF2_2` (`admin-api/tests/integration/cluster/f2_test.go:84`) checks that 20 concurrent writers get distinct revisions with no gaps; it does not check that revision order is commit order or that every snapshot sees a prefix. In v2 the whole property carries the design, and WR01 is its contract.
 
 **Lock order.** Every writer takes its locks in this order:
 
 1. `admin_write` (admin writes only) or the component advisory locks from `ComponentKeys` (synchronization only);
-2. the entity rows;
+2. the entity rows. Admin and synchronization transactions share a few of them: `type_resource_parent`, `synchronizer`, `type_resource` (`synced_at`) and `sync_state`. Every writer takes these in this table order, and the rows of one table in key order; for `SyncType` the fence on the `synchronizer` row (4.9.1) is the first of them;
 3. the revision row.
 
-While a transaction holds the revision row, it only inserts (`outbox`, `change_log`), calls `pg_notify` and commits. It never waits for another lock, so the revision row is never part of a wait cycle. A synchronization waits for an admin transaction for at most that transaction's final batch and commit (WR07).
+While a transaction holds the revision row, it only inserts (`outbox`, `change_log`), calls `pg_notify` and commits. It never waits for another lock, so the revision row is never part of a wait cycle. A synchronization waits for an admin transaction no longer than that transaction's commit (WR07): only for its final batch and commit when they share no row, and from the admin's write of a shared row to its commit when they do.
 
 **Throughput.** The revision row serializes the commits of decision-changing transactions. At most one commits per commit latency, and that latency includes the synchronous standby's acknowledgement. Admin writes and synchronization commits arrive at tens per second, well within this. WR06 and the load budgets measure it. Sharding `admin_write` by service is not part of v1.
 
@@ -846,7 +848,7 @@ The schema checks the rule at `COMMIT`; it does not rely on convention.
   - The chunk key carries `part = n / K`: `log_chunk((epoch, position, stream, part), n)`. `checkpoint_chunk` does the same.
   - K is fixed by the P0.5 spike so that a partition stays within what both ScyllaDB and Cassandra 5 handle well. The starting value is 8, which bounds a partition to 8 MiB (5.1).
   - Each chunk is a single write of at most 1 MiB.
-  - The applier records changed keys per `(position, stream, part)`. When one position changes more than `APPLY__CHANGED_KEYS_MAX` keys of a stream, it records only a whole-stream marker, and a PDP that sees the marker drops its cached rows of that type.
+  - The applier records the changed keys of each `(position, stream)` in `applied_keys` rows of at most 4096 keys (5.3). When one position changes more than `APPLY__CHANGED_KEYS_MAX` keys of a stream (65 536, that is 16 rows), it records only a whole-stream marker (`-1`), and a PDP that sees the marker drops its cached rows of that type.
 
 ### 4.9 The writer
 
@@ -855,7 +857,8 @@ The schema checks the rule at `COMMIT`; it does not rely on convention.
 | `licetum-writer run --role sync` | StatefulSet, 2+ replicas, `DBOS__VMID` = pod name | yes | yes | Synchronization workflows, janitor |
 | `licetum-writer run --role project` | StatefulSet, 2 replicas, one leader | no | yes (direct session) | Publication, heartbeat, checkpoints, retention, issuer keys |
 | `licetum-writer fetch --region <r>` | Deployment in region `r` | no | no | Asks the sources that only region `r` can reach |
-| `licetum-writer migrate`, `rebuild`, `reconcile`, `checkpoint`, `failover`, `freeze`, `unfreeze` | Job / CronJob | no | yes | Operations (see the read model and failover sections) |
+| `licetum-writer migrate`, `rebuild`, `reconcile`, `checkpoint`, `failover` | Job / CronJob | no | yes | Operations (see the read model and failover sections) |
+| `licetum-writer freeze`, `unfreeze` (CQL mode) | Run by an operator inside the region | no | no | Break-glass switch of the region's staleness gate, with the operator CQL role (5.4, 6.5) |
 
 Both roles are StatefulSets:
 
@@ -892,7 +895,7 @@ Both roles are StatefulSets:
 - **Workflow retention.** `dbosPrune` (`sync_dbos.go:450`) already deletes ended synchronization workflows. The review said workflows are never deleted; that is not the case on this branch. `dbosPrune` is kept, with a fixed retention instead of one derived from `SYNC__DEMAND_WINDOW`.
 - **Schedule without demand**.
   - The PDP writes nothing, so it cannot record demand. `sync_demand` goes, and every type with a live synchronizer is polled on its schedule.
-  - `refresh_interval` defaults to 5 minutes, with a minimum of 10 s.
+  - `refresh_interval` has a minimum of 10 s. Its default starts at 5 minutes (4.2) and is set in P5 from the metric of calls to sources (13.3 #4).
   - `refresh_interval_max` optionally stretches the interval for quiet sources: each unchanged answer doubles the interval up to the maximum, and any change resets it.
   - A revocation that arrives through data takes effect within `refresh_interval_max`, or within `refresh_interval` when no maximum is set.
   - The number of requests per source is exported as a metric.
@@ -914,7 +917,7 @@ Both roles are StatefulSets:
   - PostgreSQL serializes the commits of transactions that issued `NOTIFY` on one global lock. Here those transactions are already serialized by the revision row, so this adds no contention of its own.
 - **Loop.** `SELECT … FROM outbox WHERE revision > $last_published ORDER BY revision LIMIT 256`. The prefix property of 4.5 guarantees that no later commit can bring a smaller revision.
 - **Order** (one choice). Positions are published strictly in revision order, one at a time:
-  1. Check `log_entry(epoch, r)`. If it exists with a different sha256, the histories have diverged: publication stops and the epoch procedure starts (see the failover section).
+  1. Check `log_entry(epoch, r)`. If it exists and differs from the outbox row (its header, or the sha256 of a stream), the histories have diverged: publication stops and the epoch procedure starts (see the failover section).
   2. Write the chunks of the position, in parallel up to a bound.
   3. Write the header after all of them.
   4. In one PostgreSQL transaction, advance `publish_state.last_published` (`WHERE last_published < r`), `stream_state.head` and `outbox.published_at`.
@@ -942,7 +945,7 @@ Both roles are StatefulSets:
 - **CQL mode.** The leader also writes `log_heartbeat(epoch, day, pg_time) → position`. The heartbeat does not depend on publication progress: the applier uses it only after it has applied up to `position`.
 - **`postgres` mode.** A PDP reads `revision_state` and `heartbeat` in one snapshot.
   - On a streaming replica, T(P) is the heartbeat's `pg_time`. The replica replays commits in order, so seeing the heartbeat's commit implies seeing every revision up to `position`.
-  - On the primary, the start time of the PDP's own snapshot-taking statement is a later proof and is used instead. A stopped writer then does not close a single-region PDP that reads the primary.
+  - On the primary, the start of the PDP's own read of `revision_state` (`statement_timestamp()` of its poll, 6.2) is a later proof and is used instead. A stopped writer then does not close a single-region PDP that reads the primary.
 
 #### 4.9.4 Checkpoints (CQL mode)
 
@@ -974,7 +977,7 @@ Both roles are StatefulSets:
   - The v2 chain with its own version table, and the `migrate` refusal.
   - `PolicyTx` for admin writes, batches, `SeedPlatform` and `restore-admin`.
   - The global revision, `outbox` and `change_log`.
-  - The deferred check on the policy tables, the PEP tables, `log_settings` and `subject_directory`.
+  - The deferred check on the policy tables, the PEP tables, `log_settings`, `subject_directory` and `admin_binding` (4.7).
   - Synchronization commits bump the global revision and write header-only entries: `streams = {data:<type id>}`, the corrected `services`, no payload yet.
   - Until P5 the current engine keys its answers by the global revision.
   - Nothing publishes the outbox yet. It is retained by age.
@@ -984,7 +987,7 @@ Both roles are StatefulSets:
   - The platform self-synchronizers go. Today `seedPlatformType` (`core/db/migrate.go:273`) stores `DB__URI` in their configuration.
 - **P5**
   - The writer process, `RebuildComponent` and `SyncOne`.
-  - The data payload, `resource_unresolved` and the heartbeat.
+  - The data payload, the filling of `resource_unresolved` together with the closure (the table comes with schema v2 in P3, 11.7), and the heartbeat.
   - The resource tables get the deferred check: by now the self-synchronizers are gone (P4) and inline `resolve()` is replaced, so the writer is their only writer.
   - The PDP runs in `postgres` mode.
 - **P6**
@@ -999,7 +1002,7 @@ Both roles are StatefulSets:
 | WR03 | The outbox images reproduce exactly the changed rows. |
 | WR05 | Every write route produces exactly its streams and `services`. |
 | WR06 | An admin write stays within the round-trip budget measured per route (about 7 expected). A structural write is counted separately. |
-| WR07 | A synchronization waits for an admin transaction no longer than that transaction's final batch and commit. |
+| WR07 | A synchronization waits for an admin transaction no longer than that transaction's commit, and never in a cycle (the lock order of 4.5). |
 | SYN07 | A repeat with the same data writes nothing and spends no revision. |
 | SYN09 | The source of a type limited to region X is asked only by fetchers in region X. |
 | ASOF02 | Adds the cases of 4.2: deleting a synchronizer turns the type `not_sync` at that revision, and a new synchronizer makes the type `sync` only with its first applied data. |
@@ -1025,11 +1028,11 @@ The CQL engine is ScyllaDB or Apache Cassandra 5, chosen in phase P0.5 after a s
   - The adapter is `cql` (`READMODEL__STORE=postgres|cql`) and its package is `core/readmodel/cqlstore`.
   - Settings use the prefix `CQL__`: `CQL__LOCAL_DC`, `CQL__DCS`, `CQL__LISTING_CONSISTENCY`.
   - The code uses the gocql API. The ScyllaDB fork of the driver replaces it through a `replace` directive. P0.5 pins the driver version together with the engine.
-- **Both engines in CI until the choice.** Until P0.5 decides, `storetest` and the contracts of level `cql` run against both engines. After that, the chosen engine runs on every pull request and the other one runs nightly, so the schema cannot drift out of the portable subset.
+- **Both engines in CI.** The P0.5 spike runs the model on both engines. From P6, `storetest` and the contracts of level `cql` run against the chosen engine on every pull request and against the other one nightly (10.2, ST09), so the schema cannot drift out of the portable subset.
 - **Every write carries its timestamp.**
   - Writes go through the helpers of `cqlstore`. A helper takes a position and a phase and sets `USING TIMESTAMP ts(position, phase) = 2·position + phase`. Phase 0 deletes, phase 1 upserts.
   - A statement without an explicit timestamp is refused (`ST07`). A server timestamp is microseconds since 1970, about 1.7·10^15, so it would beat every position-stamped value of its cell forever.
-  - A few cells are not stamped with positions: `current_generation`, `fresh_pg_time` and the freeze cells. Each is named below with its own time domain.
+  - A few cells are not stamped with positions: `current_generation`, `fresh_pg_time`, `log_epoch` (the epoch), the rows of `log_heartbeat` (their `pg_time`) and `schema_migration` (their `applied_at`), and the freeze cells. Each is named below with its own time domain.
 - **No time-window compaction.** Time-window compaction groups SSTables by write timestamp, and here the write timestamps are positions, not times. Tables with a TTL use the engine's default strategy. A TTL counts from the local time of the write, so it works as usual.
 - **Bounded partitions.** No partition grows with the size of one change.
   - A chunked body keeps at most 8 chunks of at most 1 MiB per partition (`part = n / 8`). The same rule applies to the log, the checkpoints and the policy snapshots.
@@ -1048,13 +1051,14 @@ log_entry        ((epoch int, bucket bigint), position bigint)
 log_chunk        ((epoch int, position bigint, stream text, part int), n int) → body blob
                    -- part = n / 8; body ≤ 1 MiB zstd, the outbox chunk byte for byte; TTL 14 d
 log_heartbeat    ((epoch int, day int), pg_time timestamp) → position bigint
-                   -- CLUSTERING ORDER BY (pg_time DESC); TTL 2 d
+                   -- CLUSTERING ORDER BY (pg_time DESC); TTL 2 d; USING TIMESTAMP = pg_time in microseconds
 log_epoch        (k text PRIMARY KEY) → epoch int, start_position bigint, base_position bigint
                    -- USING TIMESTAMP = epoch
 checkpoint_head  ((stream text), position bigint) → chunks int, sha256 blob, format smallint
                    -- CLUSTERING ORDER BY (position DESC)
 checkpoint_chunk ((stream text, position bigint, part int), n int) → body blob    -- part = n / 8
 schema_migration ((keyspace_name text), version int) → applied_at timestamp
+                   -- USING TIMESTAMP = applied_at in microseconds
 ```
 
 - **Entry kinds and payloads.**
@@ -1142,7 +1146,7 @@ Each job gets one role with the least privilege it needs (`OPS06`). CQL grants a
 | role | used by | privileges |
 |---|---|---|
 | `licetum_migrate` | `licetum-writer migrate` and the generation job, home region | creates, alters and drops the Licetum keyspaces and grants on them; the only role that runs DDL |
-| `licetum_writer` | publisher, heartbeat, checkpoints, `rebuild` | `SELECT`, `MODIFY` on `licetum_log` |
+| `licetum_writer` | publisher, heartbeat, checkpoints, `rebuild`, `failover` (`log_epoch`, `epoch_start`) | `SELECT`, `MODIFY` on `licetum_log` |
 | `licetum_apply_<dc>` | `licetum-writer apply --dc <dc>` | `SELECT` on `licetum_log`; `SELECT`, `MODIFY` on `licetum_r_<dc>.region_state` and on the generation keyspaces of `<dc>` |
 | `licetum_pdp_<dc>` | `licetum-pdp` in `<dc>` | `SELECT` on `licetum_r_<dc>` and on the generation keyspaces of `<dc>` |
 | `licetum_reconcile` | `licetum-writer reconcile` | `SELECT` on `licetum_log` and on the regional keyspaces |
@@ -1243,7 +1247,7 @@ How `reconcile` works:
 - **One position.** It compares PostgreSQL and the region at one position c. It reads PostgreSQL in one `REPEATABLE READ READ ONLY` transaction with c read inside it, waits until the region has applied c, and reads the region as of c.
 - **What it compares.** The canonical hash of every policy stream, and, per type, an XOR hash of `(ext, active, name, meta, lineage, unresolved_up)`.
 - **Keys changed after c.** These are left out of the run and checked by the next one. Their newer versions came from PostgreSQL after c, and leaving them out keeps a long scan from being confused by garbage collection.
-- **On a difference.** It counts `licetum_projection_drift_total{dc, stream}`, raises an alert and starts `rebuild --stream`.
+- **On a difference.** It counts `licetum_projection_drift_total{dc, stream}` and raises an alert. `reconcile` only reads (5.4); the repair, `rebuild --stream`, runs with the role `licetum_writer` (5.4).
 
 `REC02` injects the scenario above, the newest version lost on two replicas, and requires `reconcile` to report it. The PDP adds a cheap detector of its own (5.12).
 
@@ -1257,10 +1261,10 @@ In PostgreSQL mode the PDP reads the canonical tables as `licetum_pdp`, which ha
   - A `REPEATABLE READ` snapshot on the standby therefore sees a prefix of the revisions, with all the data of each.
   - A standby cancels a query that conflicts with replay. The PDP's loads need `hot_standby_feedback = on`, or a `max_standby_streaming_delay` longer than a load. A cancelled load is retried and counted.
 - **T(P) in PostgreSQL mode.**
-  - The writer's leader updates one row every second: `UPDATE heartbeat SET pg_time = now(), position = (SELECT revision FROM revision_state WHERE scope = 'global')`.
-  - Every commit acknowledged before `now()`, the start of that transaction, is visible to the statement. So `PUB03` holds for this row just as for `log_heartbeat`, which publishes the same values.
+  - The writer's leader updates one row every second with the statement of 4.9.3: `pg_time = statement_timestamp()`, and `epoch` and `position` from `revision_state`.
+  - Every commit acknowledged before `statement_timestamp()`, the start of that statement, is visible to it. So `PUB03` holds for this row just as for `log_heartbeat`, which publishes the same values.
   - The PDP reads the row in the same snapshot in which it reads P. T(P) is that row's `pg_time`.
-  - On the primary, the PDP also counts the start of its own snapshot transaction, for the same reason. A single-region installation then does not close when the writer stops.
+  - On the primary, the PDP also counts the start of its own read of `revision_state` (`statement_timestamp()` of its poll, 6.2), for the same reason. A single-region installation then does not close when the writer stops.
   - On a replica, only the row counts: the replica's own clock says nothing about its replay lag.
 - **Policy and data at one position.**
   - Resource reads run in one `REPEATABLE READ READ ONLY` snapshot, with its revision Q read inside it.
@@ -1410,7 +1414,7 @@ The revision alone does not give `T(P)`. When nothing is written the revision st
 
 **CQL adapter**
 
-- Every second, the publication leader of `licetum-writer` (the `project` role) runs one statement, `SELECT now(), revision FROM revision_state WHERE scope = 'global'`. It writes the result to `log_heartbeat((epoch, day), pg_time) → position`.
+- Every second, the publication leader of `licetum-writer` (the `project` role) runs the statement of 4.9.3, which updates the `heartbeat` row and returns `pg_time` (`statement_timestamp()`), `epoch` and `position`. It writes the result to `log_heartbeat((epoch, day), pg_time) → position`.
 - Because one statement reads both values under one snapshot, every commit acknowledged before `pg_time` has a revision `≤ position` (PUB03).
 - The property does not depend on how far publication has got. A heartbeat whose position is not yet published is not used until the applier reaches that position.
 - After applying a position, the applier sets `region_state.fresh_pg_time` to the newest `pg_time` whose position it has applied.
@@ -1451,7 +1455,7 @@ So from `t + S + ε` on, no region serves an answer that ignores the revocation,
 | Any change, any region, any failure | `t + S + ε`, the hard bound above. |
 | A policy change, home region | p99 ≤ 1 s (REV01).<br>CQL adapter: the `pg_notify` sent in the writing transaction is delivered on commit and wakes the publication leader. The leader reads `outbox WHERE revision > last` and writes the log (about 50 ms). Then the applier poll (100 ms) and the PDP poll (100 ms) follow. If the leader was reconnecting and missed the notification, its periodic tick (1 s) picks the change up.<br>`postgres` adapter: the PDP poll (100 ms) and the fold of the outbox row. |
 | A policy change, other regions | p99 ≤ 5 s (REV02, decision D3). About 2 s is expected: the replication of `licetum_log` or of WAL, then the same polls. |
-| A resource switched off or moved at its source | The same path, counted from the commit of the synchronization, plus up to the source's `refresh_interval`. A refresh from the admin API starts the synchronization at once. The hard bound counts from the commit in PostgreSQL, not from the change at the source. |
+| A resource switched off or moved at its source | The same path, counted from the commit of the synchronization, plus up to the source's polling interval (`refresh_interval`, or `refresh_interval_max` for a quiet source, 4.9.1). A refresh from the admin API starts the synchronization at once. The hard bound counts from the commit in PostgreSQL, not from the change at the source. |
 | A narrower `inherit`, or a removed type link | At the commit of `RebuildComponent`, which applies the new structure together with the closure. The admin write answers `{revision, effective: false, job}`, and the job reports the revision at which the change is in force. |
 | An administrator's role binding | On the next admin request. Bindings are read from PostgreSQL in the request and checked again in the write's transaction. |
 | A PEP client or API key | Like a policy change, through the `pep` stream (PEP02). |
@@ -1523,7 +1527,7 @@ The position of an answer is the position of the data it read:
 **Recovery**
 
 - Recovery needs no operator. The log (or WAL) is applied in order and without gaps. Every revocation made while a region was cut off is therefore applied before any grant made after it (FC03).
-- A view never goes back to an older position (CONS02). Two resets are accounted for: a new epoch and a new generation. A position that goes backwards outside them is counted in `licetum_revision_regressions_total` (kept from today) and drops the answer caches.
+- A view never goes back to an older position (CONS02). Two resets are accounted for: a new epoch and a new generation. A read that shows a lower position outside them is counted in `licetum_revision_regressions_total` (kept from today) and drops the answer caches; the view keeps its position unconfirmed, and the PDP refuses requests after `S` if the fault persists (5.11).
 
 **Freeze**
 
@@ -1553,7 +1557,7 @@ Freeze is the operator's answer to losing the home region. It lifts the gate in 
 The CQL read model is correct only if a read at `LOCAL_QUORUM` returns the newest version `≤ P` of every key.
 
 - The applier writes, and the PDP reads `region_state`, `policy_*`, `resource_v` and `subject_v`, at `LOCAL_QUORUM` with RF 3 in the DC. Every read therefore overlaps every acknowledged write, provided no two replicas of a partition have lost that write.
-- The listing tables (`descendant_v`, `type_member_v`, `attr_v`) may be read at `LOCAL_ONE`. Every candidate is decided again from `resource_v` at `LOCAL_QUORUM`, so a stale listing can miss a resource but cannot grant one.
+- The listing tables (`descendant_v`, `type_member_v`, and `attr_v` when it lists search candidates) may be read at `LOCAL_ONE`. Every candidate is decided again from `resource_v` at `LOCAL_QUORUM`, so a stale listing can miss a resource but cannot grant one. `attr_v` is read at `LOCAL_QUORUM` when it finds the anchors of rules (5.5).
 
 The proviso fails in two cases:
 
@@ -1611,7 +1615,7 @@ A failover of the primary is the only failure that can take back changes the reg
 **Procedure**
 
 1. **Detection.** At start and while it publishes, the publication leader compares the log with the outbox. Either of the following means divergence:
-   - a `log_entry(epoch, r)` whose sha256 differs from outbox row `r`;
+   - a `log_entry(epoch, r)` that differs from outbox row `r` (its header, or the sha256 of a stream);
    - a revision in PostgreSQL below the head of the log.
 
    Publication stops and never overwrites the log. The failover then runs, automatically or through `licetum-writer failover`.
@@ -1627,7 +1631,7 @@ A failover of the primary is the only failure that can take back changes the reg
 **Preconditions**
 
 - **Fencing.** The old primary is fenced (Patroni or equivalent). Without fencing, its later writes conflict with the log by hash and stop publication. They are never written over silently.
-- **A synchronous standby in the home region, or S derived from the failover time measured without one.** That means `synchronous_commit = on`, with the HA standby listed in `synchronous_standby_names`.
+- **A synchronous standby in the home region, or S derived from the failover time measured without one.** A synchronous standby means `synchronous_commit = on`, with the HA standby listed in `synchronous_standby_names`.
   - With only an asynchronous standby, `epoch_start` must carry every key the lost commits touched. After a large synchronization that can be whole types, which can take longer than `S` and close every region.
   - A synchronous standby makes the loss rare but not impossible. A commit whose wait for the standby is cancelled stays committed on the old primary only, so the epoch procedure remains necessary.
 - **`S` must exceed the measured failover time.** That time covers promotion, the writer's leader reconnecting, and the first heartbeat applied in every region. The failover drill in the runbook, and FO01 nightly, measure it. A deployment where it exceeds `S` raises `S`; otherwise every failover would close every region.
@@ -1635,7 +1639,7 @@ A failover of the primary is the only failure that can take back changes the reg
 ### 6.9 Time
 
 - Validity windows of rules and memberships, and the `hour` and `weekday` conditions, are evaluated on the PDP's clock.
-- The TTL and `Hold` of an answer are the exact distance to the next boundary (`validityUntil`, `core/engine/permission.go:494`; DEC14).
+- The `Hold` of an answer is the exact distance to the next boundary; its TTL is that distance capped at `ResultCacheTTL` (60 s), with a floor of 1 s (`validityUntil`, `core/engine/permission.go:494`; DEC14).
 - Clock skew between regions moves a boundary by the size of the skew. This is documented. The same clock discipline that bounds `ε` bounds it.
 
 ### 6.10 Failure matrix
@@ -1670,6 +1674,7 @@ The hard bound is only as good as the signals that show it holds. The chart gets
 | `licetum_gate_refused_total{reason}` | pdp | Answers refused with `policy_unavailable` or `revision_not_reached`. |
 | `licetum_frozen` | pdp | 1 while the region is frozen. |
 | `licetum_revision_regressions_total` | pdp | Kept from today: a position that went backwards outside an accounted reset. |
+| `licetum_cql_version_regressions_total` | pdp | Reads that returned a version older than the one the row cache's index names: the store lost a newest version (5.12). |
 | `licetum_heartbeat_age_seconds` | writer | Time since the publication leader last wrote a heartbeat. |
 | `licetum_outbox_rows{state}`, `licetum_outbox_oldest_pending_seconds` | writer | Outbox rows that are `pending` or `published` (the latter awaiting retention), and the age of the oldest pending row (the publication lag). |
 | `licetum_publish_conflict` | writer | 1 while publication is stopped on a hash conflict. |
@@ -1966,7 +1971,7 @@ Inside `/evaluations`, the same statuses go into `context.error.status` of each 
   - `verifiedCaller` (`core/server/check.go`) uses `strings.CutPrefix(authorization, "Bearer ")`, which is case-sensitive.
   - Any other scheme is a 400 `auth_header_required`.
 
-**Order of checks.** Authentication and the operation check run before the body is parsed. A caller that is not authenticated, or not bound to the service, gets a 401 or 403, never a 400 that reveals the expected shape. The service is resolved only after the credential is verified, and every failure to find the client in the service is the same 403, so the access routes do not reveal which slugs exist (AZ09).
+**Order of checks.** Authentication and the check of the route's operation run before the body is parsed; the `explain` operation is checked once `context.licetum` has been read. A caller that is not authenticated, or not bound to the service, gets a 401 or 403, never a 400 that reveals the expected shape. The service is resolved only after the credential is verified, and every failure to find the client in the service is the same 403, so the access routes do not reveal which slugs exist (AZ09).
 
 **`X-Request-ID` (AZ07).** The specification requires the PDP to return the same identifier the PEP sent.
 - The header is returned verbatim. Any value `net/http` accepted is a valid field value.
@@ -2279,7 +2284,7 @@ The tables arrive with schema v2 in P3. Authorization starts reading them in P4.
 
 ### 8.8 People of a service: the subject directory
 
-- **Table.** `subject_directory(service_id, subject_type, subject_id, display_name, properties jsonb, updated_at, PRIMARY KEY (service_id, subject_type, subject_id))` replaces `known_subject`. `known_subject` is filled by every token verification (`NoteSubject`) and is global: anyone with read on the whole `group_member` policy can read `/subject` (`admin-api/api/admin_subjects.go:29,48`), whatever the service.
+- **Table.** `subject_directory(service_id, subject_type, subject_id, display_name, properties jsonb, updated_at, PRIMARY KEY (service_id, subject_type, subject_id))` replaces `known_subject`. `known_subject` is filled by every token verification while `SUBJECTS__ENABLED` is on (`NoteSubject`; off by default) and is global: anyone with read on the whole `group_member` policy can read `/subject` (`admin-api/api/admin_subjects.go:29,48`), whatever the service.
 - **Who fills it.** The editors of S or the application itself, through `PUT /service/{ref}/subjects` (an upsert of up to 1000 entries per call) and `DELETE` of single entries. The PDP never writes it.
 - **What it feeds.** AuthZEN subject search, the list of people a rule reaches in who-has-access and preview, and the person page.
 - **Who reads it.** Only the roles of S, including `group_manager` of a group of S, who picks members from it.
@@ -2461,7 +2466,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 |---|---|---|---|
 | `core/engine/snapshot.go` | split | **To `core/policy`, as the model of the policy at P:** the structures and their pure methods (`applicable`, `expandRoles`, `liveMembers`, `validity`, `serviceID`, `accessGroupLevels`, `ruleActive`, `memberActive`).<br>**To `pgstore`:** `loadSnapshot`. It reads the revision inside its own `REPEATABLE READ READ ONLY` transaction; today the revision comes from an earlier statement (`localstate.go:299`).<br>**Deleted:** the size estimate (`ruleBytes`, `itemBytes`), `errSnapshotTooLarge`, `oversized`, `logSnapshotFallback` and `licetum_snapshot_fallback_total`. `ServiceCheckColumns` goes with the per-service OAuth. | P2c, P5 |
 | `core/engine/localstate.go` | split | **To `core/pdp/view`:** the immutable view, singleflight renewal, waiting for a revision, and the regression detector (`licetum_revision_regressions_total`).<br>**To `pgstore`, behind the `LogSource` port:** the PostgreSQL side (`readView`, `WatchRevision` over `revision_state`), for PG mode.<br>In CQL mode the view follows `region_state` and opens no PostgreSQL connection. | P5, P6 |
-| `core/engine/cache.go` | split | **Kept and moved to `core/pdp/cache`:** the `cachedAnswer` mechanics (`DoChan`, `computeSlots`, `cachedEntry` with `Exp`/`Hold`/`stale`).<br>**Deleted in P2e:** the Redis level, `dataVersionsKey`, `recordDataChange` and `liveWithoutRedis`.<br>**Deleted in P5:** `attrsMemo` and `forConsistency`.<br>`bumpDataRevisions` is replaced by the bump at the end of the sync transaction (P3). The answer key holds the positions of `catalog`, of `svc:<x>` for x in U(S), and of `data:<type>` for every type read, foreign ancestor types included. | P2e, P3, P5 |
+| `core/engine/cache.go` | split | **Kept and moved to `core/pdp/cache`:** the `cachedAnswer` mechanics (`DoChan`, `computeSlots`, `cachedEntry` with `Exp`/`Hold`/`stale`).<br>**Deleted in P2e:** the Redis level, `dataVersionsKey`, `recordDataChange` and `liveWithoutRedis`.<br>**Deleted in P5:** `attrsMemo` and `forConsistency`.<br>`bumpDataRevisions` is replaced by the bump at the end of the sync transaction (P3). The answer key holds the positions of `catalog` and of `svc:<x>` for x in U(S); each entry records the positions of `data:<type>` for every type read, foreign ancestor types included, and is served only while they are unchanged (5.12). | P2e, P3, P5 |
 | `core/engine/lru.go` | move | `core/pdp/cache` | P5 |
 | `core/engine/store.go` | split | The column lists and scanners (`AssignmentRuleColumns`, `ScanAssignmentRule`, `GroupMemberColumns`, `RolePermissionColumns`, `SynchronizerColumns`, `ActiveSynchronizer`) go to `pgstore` for reads and to `admin-api/service` for writes. `RuleActiveSQL`, which only the query path uses, is deleted. | P5 |
 | `core/engine/permission_page.go` | delete | Goes with `/permission`. Search pages use the cursor of `core/pdp/authzen`. | P2c |
@@ -2490,7 +2495,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 
 | Path | Decision | Where and how | Phase |
 |---|---|---|---|
-| `core/engine/jwks.go` | move | Goes to `core/pepauth`: one key set per URL, singleflight, a refetch for an unknown `kid`, transport failures not cached. The writer uses it to fetch the issuer keys of the PEPs into `pep_issuer_keys` (stream `pep`), and the admin API uses it for the admin IdP. The PDP never fetches JWKS. | P2b |
+| `core/engine/jwks.go` | move | Goes to `core/pepauth`: one key set per URL, singleflight, a refetch for an unknown `kid`, transport failures not cached. The writer uses it to fetch the issuer keys of the PEPs into `pep_issuer_keys` (stream `pep`), and the admin API uses it for the admin IdP. From P5 the PDP never fetches JWKS; until then it fetches them through this package (11.6). | P2b, P5 |
 | `core/engine/oauth.go` | split | **To `core/pepauth`:** `fetchAndVerify`, now with `aud` required, an `alg` allowlist, `exp`/`nbf` with 60 s leeway and an optional `typ=at+jwt`.<br>**Deleted:** `StartLogin`, `FinishLogin`, `RefreshTokens`, `CreateState`/`VerifyState`, PKCE in Redis, the per-service `VerifyToken`, `invalidTokens`, `authz:token:*`, the `jwks:<svc>` breaker and `GetServiceForCheck`. | P2b, P2c |
 | `core/engine/token_cache_test.go` | rewrite | Becomes the test of the verified-token L1 of `core/pepauth` (PEP03). | P2b |
 | `core/engine/delegation_runtime.go` | delete | The checks of `PrepareDelegated` are applied to every AuthZEN `subject` in `core/pdp/authzen`: at most 100 properties and 16 KiB, no `group:` prefix, and `preferred_username` defaults to `subject.id`. `AuthorizeDelegate`, `ClientOfClaims` and `RecordDelegatedCall` are deleted. | P2b, P2c |
@@ -2529,7 +2534,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `core/model/authzen.go` | rewrite | Required fields are set per endpoint: search ignores the ids the spec says to omit. Adds `resource.id = "*"` and `context.licetum`. | P2b |
 | `core/model/service.go` | rewrite | The OAuth fields, `client_secret`, `trusted_clients` and `NormalizeTrustedClients` are deleted. The slug is set at creation and never changes: `ServiceUpdate.Slug` (`service.go:90`) goes, and a slug is never reused after its service is deleted. A service belongs to an identity domain. | P2c, P3 |
 | `core/model/{assignment_rule,role,group,type_resource,synchronizer,policy}.go` | rewrite | Adds `subject_type`, `subject_group_id` (instead of the literal `group:<uuid>`), `source: subject`, `resource_from_property`, `exported`, desired and effective parents and `refresh_interval`; drops `cache_ttl`. `PolicyDocumentFormat` becomes `licetum.policy/v2`, and a v1 document is refused. | P2e, P3, P4 |
-| `core/config/config.go` | rewrite | **New sections, per role:** `PDP__`, `READMODEL__` (the store, and for PG mode a DSN that may point at a streaming replica), `CQL__`, `PEP__`, `ADMIN_AUTH__`, `WRITER__`, `APPLY__`, `MVCC__`, `CHECKPOINT__`.<br>**Changed:** `POLICY__MAX_STALENESS` defaults to 60 s, and 0 is refused.<br>**Renamed:**<br>- `HTTP__PUBLIC_URL` → `PDP__PUBLIC_URL`;<br>- `REVISION__POLL_INTERVAL` and `REVISION__WAIT_MAX` → the poll interval of `PDP__` and `PDP__FRESHNESS_WAIT`.<br>**Deleted:**<br>- Redis and the old sign-in: `REDIS__*`, `AUTH__STATE_*`, `AUTH__INVALID_TOKEN_TTL`;<br>- `PLATFORM__*`: the OAuth half in P2d, the rest in P4; bootstrap uses `ADMIN_AUTH__BOOTSTRAP_*`;<br>- removed features: `DELEGATION__*`, `SUBJECTS__*`, `CORS__*`;<br>- replicas and the snapshot: `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_*`, `SNAPSHOT__*`;<br>- the request-driven sync and the table engine: `SYNC__ENGINE`, `SYNC__REQUEST_WAIT`, `SYNC__DEMAND_WINDOW`, `SYNC__KEEP_WARM`, `SYNC__FETCH_TTL`, `SYNC__LEASE`, `SYNC__LOCK_*`, `WORKER__REGION`. | P2–P6 |
+| `core/config/config.go` | rewrite | **New sections, per role:** `PDP__`, `READMODEL__` (the store, and for PG mode a DSN that may point at a streaming replica), `CQL__`, `PEP__`, `ADMIN_AUTH__`, `WRITER__`, `PUBLISH__`, `OUTBOX__`, `APPLY__`, `MVCC__`, `GENERATION__`, `CHECKPOINT__`, `LOG__` (`LOG__SUBJECT_SALT`).<br>**Changed:** `POLICY__MAX_STALENESS` defaults to 60 s, and 0 is refused.<br>**Renamed:**<br>- `HTTP__PUBLIC_URL` → `PDP__PUBLIC_URL`;<br>- `REVISION__POLL_INTERVAL` and `REVISION__WAIT_MAX` → the poll interval of `PDP__` and `PDP__FRESHNESS_WAIT`.<br>**Deleted:**<br>- Redis and the old sign-in: `REDIS__*`, `AUTH__STATE_*`, `AUTH__INVALID_TOKEN_TTL`;<br>- `PLATFORM__*`: the OAuth half in P2d, the rest in P4; bootstrap uses `ADMIN_AUTH__BOOTSTRAP_*`;<br>- removed features: `DELEGATION__*`, `SUBJECTS__*`, `CORS__*`;<br>- replicas and the snapshot: `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_*`, `SNAPSHOT__*`;<br>- the request-driven sync and the table engine: `SYNC__ENGINE`, `SYNC__REQUEST_WAIT`, `SYNC__DEMAND_WINDOW`, `SYNC__KEEP_WARM`, `SYNC__FETCH_TTL`, `SYNC__LOCK_*`, `WORKER__REGION`.<br>**Kept:** `SYNC__LEASE`, which times the executor heartbeat and the janitor's takeover of DBOS workflows (`dbosHeartbeat`, `dbosJanitor`, 4.9.1). | P2–P6 |
 | `core/cli/cli.go` | rewrite | `Serve`, `StopServing` and `connectionBudget` stay, per process. `Worker` is deleted. `Failover` becomes the epoch procedure. `roleOf` knows the roles `pdp`, `writer` and `apply`. | P2b, P5, P6 |
 | `core/cmd/licetum` | split | `licetum check` becomes `licetum pdp` in P2b. Later there are two binaries in the same image:<br>- `core/cmd/licetum-pdp`: `serve`, `openapi`;<br>- `core/cmd/licetum-writer`: `run`, `fetch`, `apply`, `migrate`, `rebuild`, `reconcile`, `checkpoint`, `failover`, `freeze`, `unfreeze`.<br>`licetum worker` is deleted. | P2b, P5, P6 |
 | `core/redisx/*` | delete | Goes with every use of Redis: answer and token L2, breakers, `authz:fetch_all`, PKCE, the counters kept for the previous release, and the retention lock. The exit check: `go list -deps` of both modules shows no go-redis. | P2e |
@@ -2550,13 +2555,13 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `core/outbox` | core | `Project`: the canonical images of entities and resources. The write path, checkpoints, `rebuild` and `reconcile` all use it. | P3 |
 | `core/logfmt` | core | Log entry, chunk and checkpoint formats, hashes, reading formats N and N−1. | P6 |
 | `core/writer/sync`, `graph`, `fetch` | core | DBOS synchronization, graph apply and closure, the region-local fetcher. | P5 |
-| `core/writer/publish` | core | The publisher. A single leader, woken by `NOTIFY` and a periodic tick, reads `outbox WHERE revision > last` and writes the log. The leader also writes the heartbeat, runs retention and polls the issuer keys. | P3 (PostgreSQL side), P6 |
+| `core/writer/publish` | core | The publisher. A single leader, woken by `NOTIFY` and a periodic tick, reads `outbox WHERE revision > last` and writes the log. The leader also writes the heartbeat, runs retention and polls the issuer keys. | P5 (the leader: heartbeat, outbox retention, issuer keys), P6 (publication to the log) |
 | `core/writer/checkpoint`, `reconcile`, `failover` | core | Checkpoints per stream, nightly reconcile per region (mandatory), epochs. | P6 |
 | `core/applier` | core | The regional applier: contiguity, hashes, MVCC rows. It starts append-only with manual generation rotation. The MVCC garbage collection is switched on only after APP and ASOF pass under kill tests. | P6 |
 | `core/pdp/view`, `cache`, `authzen`, `decisionlog` | core | The view (position, generation, T(P), frozen), the staleness gate in front of the caches, the answer L1 and the row cache, the AuthZEN handlers, the decision log. | P5, P6 |
 | `core/pepauth` | core | Verification of PEP JWTs and API keys, and JWKS fetching for the writer and the admin API. | P2b |
-| `core/httpx` | core | The server plumbing of `core/server`. | P5 |
-| `core/internal/refeval` | core | The reference evaluator, in external terms (type names, external ids). It shares no code with `decision.go` or `check.go`, and production code does not import it. | P1 |
+| `core/httpx` | core | The server plumbing of `core/server`. `bearer.go` and `gzip.go` move in P2b, the rest by P5 (9.2, 9.5). | P2b, P5 |
+| `core/testsupport/refeval` | core | The reference evaluator, in external terms (type names, external ids). It shares no code with `decision.go` or `check.go`, and production code does not import it. It is not under `core/internal`: DECP runs the engine through the `admin-api` tests, and Go does not let another module import an `internal` package. | P1 |
 | `core/testsupport/policygen`, `crash` | core | `policygen`: the generator taken from `snapshot_differential_test.go`. `crash`: kill -9 by re-exec. `policyfix` already exists. | P1, P5 |
 | `admin-api/authz` | admin-api (AGPL) | The role matrix (`matrix.go`), bindings, scopes, the last `platform_admin` and the last `service_owner`. | P4 |
 | `admin-api/bootstrap` | admin-api | `bootstrap`, which runs once (`platform_state`), and `restore-admin`. | P4 |
@@ -2566,7 +2571,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | Path | Decision | Where and how | Phase |
 |---|---|---|---|
 | `admin-api/api/auth.go` | keep | The mechanism stays: `withPolicy`, `platformAuth`, `server.PolicyMetadataKey`. Authorization runs before the body is parsed, so a stranger gets 403, not 422. In P2d the token is checked against `ADMIN_AUTH__*`, with authorization still by the platform policies. In P4 a policy becomes `(scope, kind, action)` from `admin-api/authz`, and `filterAllowed` gives way to `WHERE service_id = $S`. | P2d, P4 |
-| `admin-api/api/admin_targets.go` | rewrite | Checks scopes, backed by the composite foreign keys. `authorizePlatformTargets` and `checkPlatformTargets` go. Retargeting a rule needs what creating it needs. A rule that grants a role is checked against every item of the role. The lookup type of `resource_from_property` must be the service's own type or an exported ancestor. | P4 |
+| `admin-api/api/admin_targets.go` | rewrite | Checks scopes, backed by the composite foreign keys. `authorizePlatformTargets` goes, and so does its wrapper for role items, `checkPlatformTargets` (`admin-api/api/admin.go:784`). Retargeting a rule needs what creating it needs. A rule that grants a role is checked against every item of the role. The lookup type of `resource_from_property` must be the service's own type or an exported ancestor. | P4 |
 | `admin-api/api/admin.go` | rewrite | All routes move under `/service/{ref}/`, including those that have no service in the path today:<br>- `GET /type_resource` (`admin.go:267`);<br>- `/type_resource/{id}/resource` (`:296`) and `…/resource/refresh` (`:314`);<br>- `/group…`, `/role…`, `/assignment_rule…`.<br>A child entity of another service is a 404. `registerOAuth` is deleted after P2d. `registerPlatform` is replaced by `GET /me` and `/platform/*`. | P2c, P4 |
 | `admin-api/api/admin_batch.go`, `admin_policy.go`, `admin_access_groups.go` | keep | Each is limited to one service. The batch also covers types, synchronizers (without secrets) and type links, so revert and rollback no longer fail with `change_not_revertible` because of the kind of a record (8.7). | P4 |
 | `admin-api/api/admin_ops.go` | rewrite | Simulation becomes `/service/{ref}/simulate/access/v1/{evaluation,evaluations,search/*}`. Explain is always on, and the admin right `simulate` is required. `claimsOf` becomes `properties`. | P2c |
@@ -2589,7 +2594,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | Path | Decision | Where and how | Phase |
 |---|---|---|---|
 | `admin-api/tests/integration/api/{graph,hierarchy,conditions,roles,gaps,escalation}_test.go` | split | Their scenarios are extracted first: they become DEC tables (`policyfix` YAML), ADM04 and a thin AuthZEN smoke test. Then the files are deleted. | P1, P4, P5 |
-| `…/api/snapshot_differential_test.go` | rewrite | Its generator goes to `core/testsupport/policygen`. The comparison becomes DEC-P (`decide` ≡ `refeval`) and REF01. | P1 |
+| `…/api/snapshot_differential_test.go` | rewrite | Its generator goes to `core/testsupport/policygen`. The comparison becomes DECP (the engine, `core/decide` from P5, ≡ `refeval`) and REF01. | P1 |
 | `…/api/{sync_test,sync_crash_test,regions_test}.go` | rewrite | SYN01–SYN09 | P5 |
 | `…/api/{delegation_test,audit_test,f4_test,f4_kill_test}.go` | delete | They go with their features. | P2c |
 | `…/api/authzen_test.go` | rewrite | AZ01–AZ14 | P2b |
@@ -2612,7 +2617,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `web/src/app/auth/*`, `web/src/lib/admin-api.ts` | rewrite | The BFF becomes the OIDC client of the admin IdP: code flow with PKCE, with the exchange and refresh at the IdP on the server. `code_verifier`, `state` and `nonce` live in a short-lived encrypted cookie. The `/platform` lookup and `/service/{id}/oauth/*` go. | P2d |
 | `web/src/features/services/connect-wizard.tsx` (OIDC step), `delegation-section.tsx`, `service-overview.tsx` (sign-in card); `web/src/app/api/discover`, `web/src/app/api/check` | delete | | P2c |
 | `web/src/features/services/integration-tab.tsx`, `web/src/features/check/check-workspace.tsx` | rewrite | They send AuthZEN requests (simulate and the integration snippets) and manage PEP clients and keys. | P2c, P4 |
-| `web/src/lib/access.tsx` | rewrite | Becomes `can(serviceId, kind, action)` and `canPlatform`, from `GET /me`. | P4 |
+| `web/src/lib/access.tsx` | rewrite | Becomes `can(serviceId, kind, action)` and `canPlatform`: `canPlatform` from `GET /me`, `can` from `GET /service/{ref}/me` (8.5). | P4 |
 | `web/src/features/shell/*` | rewrite | A service switcher, with routes `/services/[slug]/{rules,people,groups,roles,check,history,integration,sources,types,policy,access}`. | P4 |
 | `web/src/features/settings/settings-admins.tsx` | split | Split into platform bindings and service bindings. | P4 |
 | `web/src/features/data/queries.ts` | rewrite | Uses paged, service-scoped endpoints, with no global lists and no N+1 queries. | P4 |
@@ -2627,7 +2632,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | Path | Decision | Where and how | Phase |
 |---|---|---|---|
 | `deploy/helm/licetum/templates/check.yaml` | rewrite | Becomes `pdp.yaml`: in every region, with an ops port. Egress goes only to the CQL store (9042/9142), or to PostgreSQL in PG mode. There are no PostgreSQL secrets in CQL mode. | P2b, P7 |
-| `templates/worker.yaml` | rewrite | Becomes `writer`: two StatefulSets (`sync`, `project`) with a stable `DBOS__VMID`, and egress to the sources and to the JWKS of the PEP issuers. | P5, P7 |
+| `templates/worker.yaml` | rewrite | Becomes `writer`: two StatefulSets, `sync` (with a stable `DBOS__VMID`) and `project` (no DBOS), and egress to the sources and to the JWKS of the PEP issuers. | P5, P7 |
 | `templates/` for `apply`, `fetch`, `reconcile` | add | `apply` runs in every region as a Deployment of 2, with a Lease and its RBAC, and no PostgreSQL. `fetch` runs only in regions that have regional sources. `reconcile` is a CronJob. | P6, P7 |
 | `templates/migrate.yaml` | rewrite | Runs the PostgreSQL and CQL migrations, creates the generation keyspaces, and sets up the CQL roles and grants. | P6 |
 | `templates/{admin,web,configmap,secret,serviceaccount}.yaml` | rewrite | New settings; no Redis, no `PLATFORM__*`, no `AUTH__STATE_*`. | each phase |
@@ -2639,7 +2644,7 @@ Some of P0 and P1 is already done (P0 in the epic at `229c4ed`; the P1 items on 
 | `infra/cql.compose.yml` | add | One node, in developer mode, of the store chosen in P0.5. | P6 |
 | `infra/postgres.compose.yml`, `scripts/pg-replica.sh`, `scripts/hooks` | keep | `pg-replica.sh` serves PG mode on a streaming replica. | |
 | `.github/workflows/ci.yml` job `previous-release` | delete | v0.1.x is not upgraded. The rule "Migrations must work with the previous release" (`CONTRIBUTING.md`) applies again from the first v2 release. | P3 |
-| `ci.yml` job `go-test-replica` | rewrite | The routing tests go in P2e. From P5 the job runs the PG-mode contracts against a streaming replica (`task go:test:integration:replica`). | P2e, P5 |
+| `ci.yml` job `go-test-replica` | delete | The routing tests go in P2e, and the job with them (11.6). From P5 the PG-mode contracts run against a streaming replica in the nightly suite (`scripts/pg-replica.sh`, `task go:test:integration:replica`, 10.6). | P2e, P5 |
 | `ci.yml` job `go-test` | rewrite | One integration run on PostgreSQL plus one CQL node. | P6 |
 | `pgbouncer.yml`, `nightly-suite.yml`, `chaos.yml`, `loadtest.yml`, `helm.yml`, `codeql.yml`, `release.yml` | keep | PgBouncer covers the write path only. Releases ship two core binaries in one image. | |
 | `multiregion.yml`, `Taskfile.yaml` `go:test:multiregion` | rewrite | Become `multidc` and `go:test:multidc`. | P7 |
@@ -2683,7 +2688,7 @@ The check reads names only. It does not look at build tags or results, so it can
 New tests do not use:
 
 - F-identifiers (`TestF3_4_…`). Today `admin-api/tests/integration/README.md` asks for them.
-- The tier letters U/I/M/L/C/R (the tier column of that README).
+- The tier letters U/I/M/L/C/R of #31 (the tier column of that README uses I, M and C).
 - Constants that scale a figure under `-race`: `raceFactor` (`admin-api/tests/integration/cluster/race_test.go`), `slowdown` and `loadDivisor` (`admin-api/tests/integration/chaos/{race,norace}_test.go`). A latency is either a contract measured without `-race` or not asserted.
 
 The existing F-tests stay green until the contracts that replace them are active (10.8). P7 removes what is left of them, together with the tier tables and these constants.
@@ -2714,7 +2719,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
   - They use external terms from the start: service slugs, type names, external ids, and the names of groups, roles and rules. The same files therefore still hold after P5 moves the anchors from `resource_cache.id` to `(type_id, external_id)`.
   - The first fixture is the worked example of the decision semantics (`worked_example.yaml`).
   - P1 extracts the scenarios of `admin-api/tests/integration/api/{graph,hierarchy,conditions,escalation,gaps,roles}_test.go` into fixtures, one table row per scenario.
-- **`core/internal/refeval`.** An in-memory evaluator of the same semantics, written apart from the engine. It builds lineages and the type flow by walking the declared links. It imports only the standard library, `core/model` and `policyfix`. depguard forbids every production package to import it.
+- **`core/testsupport/refeval`.** An in-memory evaluator of the same semantics, written apart from the engine. It builds lineages and the type flow by walking the declared links. It imports only the standard library, `core/model` and `policyfix`. depguard keeps it from importing `core/engine`, `core/server` and `core/db`; the rule that no production package imports it comes with the new packages (10.6).
 - **`core/testsupport/policygen`.** The generator of random policies and graphs. It starts from `policyGenerator` of `admin-api/tests/integration/api/snapshot_differential_test.go`.
   - A run fails when its policies are degenerate. It needs at least 20 non-empty policies, 100 allowed answers and 20 denied answers.
   - Every run prints its seed, and the seed repeats the run.
@@ -2760,7 +2765,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 | ST04 | A lookup by attribute finds scalars and list elements. A lookup by a non-unique name works. | the rows written | pg | P5 |
 | ST05 | A resource that was switched off is absent from a read at a position after the switch and present at a position before it. | the history written | cql | P6 |
 | ST06 | `unresolved_up` is transitive and equals `resource_unresolved` of PostgreSQL. | PostgreSQL | pg | P5 |
-| ST07 | Every CQL row is written with the timestamp `ts(position, phase)` of its position. The write helper refuses a statement without `USING TIMESTAMP`. | `WRITETIME` of the rows | cql | P6 |
+| ST07 | Every CQL row is written with the timestamp `ts(position, phase)` of its position, or with the time domain 5.1 names for the cells that are not positions. The write helper refuses a statement without `USING TIMESTAMP`. | `WRITETIME` of the rows | cql | P6 |
 | ST08 | The garbage collection of versions never deletes the newest version of a key. Table options (compaction) match the schema. The collection is switched on only after APP01 to APP03 and ASOF01 to ASOF03 pass under the kill tests. | the versions written | cql | P6 |
 | ST09 | The CQL schema and the statements of the CQL adapter use no lightweight transaction, materialized view, secondary index or tablets-only option. `storetest` passes on ScyllaDB and on Apache Cassandra 5. | the schema snapshot; both stores | cql | P6 |
 
@@ -2775,7 +2780,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 | POL05 | The PDP and the applier read formats N and N−1. | fixtures of both formats | unit | P7 |
 | PUB01 | With `kill -9` at every point of a publication, the log equals the outbox, with the same hash at every position. The points are: after the commit, among the chunks, after the chunks, after the header, before the mark. Two publishers running during a change of leader give the same result. | hashes of the outbox | fault | P6 |
 | PUB02 | Positions are continuous. Empty entries count too: a write of an admin binding takes a revision and an empty header. | the outbox | pg | P3 |
-| PUB03 | Heartbeat: every commit before `pg_time` has a revision no higher than the heartbeat's position. | snapshots of PostgreSQL | pg | P6 |
+| PUB03 | Heartbeat: every commit before `pg_time` has a revision no higher than the heartbeat's position. | snapshots of PostgreSQL | pg | P5 |
 | PUB04 | The `pg_notify` of the writing transaction, delivered on commit, wakes the publisher, which reads `outbox WHERE revision > last`. Its periodic tick catches a lost notification, also when the writes go through PgBouncer in transaction mode. | the log | pg | P6 |
 | APP01 | The applier never moves past a missing or mismatching entry. Late, duplicate or reordered headers and chunks never produce a torn application. A missing chunk is read from another data center. | an injected log | cql | P6 |
 | APP02 | Two appliers running at once converge byte for byte, and the regional position never goes back. | the regional state | cql | P6 |
@@ -2799,7 +2804,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 | ID | Statement | Oracle | Level | Phase |
 |---|---|---|---|---|
 | WR01 | A commit takes exactly one revision, a rollback none, a batch one. With 20 concurrent writers there are no gaps and every snapshot sees a prefix. | the outbox and `revision_state` | pg | P3 |
-| WR02 | A transaction that changed rows of a projected policy table, or truncated one, without an outbox row fails at COMMIT. This includes raw SQL, cascades, the seed and `restore-admin`. The count is of tuples actually changed, so a statement that changed no row does not count. The resource tables get the same check in P5. A bypass is not claimed impossible: REC01 reports it. | the commit result | pg | P3 |
+| WR02 | A transaction that changed rows of a covered policy table (4.7), or truncated one, without an outbox row fails at COMMIT. This includes raw SQL, cascades, the seed and `restore-admin`. The count is of tuples actually changed, so a statement that changed no row does not count. The resource tables get the same check in P5. A bypass is not claimed impossible: REC01 reports it. | the commit result | pg | P3 |
 | WR03 | The outbox images reproduce exactly the rows that a write changed. | a diff of the tables around the operation | pg | P3 |
 | WR04 | Concurrent writes cannot together remove the last admin access, create a cycle of types, or delete an entity in use. | the final state | pg | P3 |
 | WR05 | Each write route produces exactly its streams and its affected services. The expectations are generated from the route table. | the route table | pg | P3 |
@@ -2823,7 +2828,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 | SYN06 | Components of the type graph do not block each other. A busy component lock delays the job without starting a backoff. | timings and `sync_state` | pg | P5 |
 | SYN07 | A repeat with the same data writes nothing and takes no revision. | the outbox | pg | P5 |
 | SYN08 | A change of a type link rebuilds the closure without asking the source. Renaming a service invalidates nothing. | calls counted, the closure | pg | P5 |
-| SYN09 | A source reachable only from region X is asked only from region X. | calls counted per region | pg | P5 |
+| SYN09 | The source of a type limited to region X is asked only by fetchers in region X (`licetum-writer fetch --region X`). | calls counted per region | pg | P5 |
 | SYN10 | A source that keeps answering without change is polled less and less often, up to a bound, and the polls of each source are counted. | calls counted by the fake source; the metric | pg | P5 |
 
 **CONS, REV, FC, FO: consistency, revocation, fail closed, failover.**
@@ -2852,7 +2857,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 | AZ01 | A missing required field is a 400, endpoint by endpoint. A search does not require `subject.id` or `resource.id` where the specification says to omit or ignore them. | the specification | unit | P2 |
 | AZ02 | The defaults of `/evaluations` merge as the specification says, and the three semantics answer as in its examples. `context.licetum` is read from the top-level `context` only. | the examples of the specification | unit | P2 |
 | AZ03 | A short-circuiting batch evaluates nothing after the stopping evaluation. Today `applySemantic` computes every evaluation first. | an evaluation counter | unit | P2 |
-| AZ04 | Each search page is computed at the current position. The cursor is (bucket, last key, digest of the request). Paging ends with `next_token` `""` and has no gaps or repeats for the items present throughout. A changed request is a 400 (`authzen_page_invalid`). No page expires. | the full result set | unit | P2 |
+| AZ04 | Each search page is computed at the current position. The cursor is (bucket, last key, digest of the request); until P5 it has no bucket and keys follow today's order by id (7.6). Paging ends with `next_token` `""` and has no gaps or repeats for the items present throughout. A changed request is a 400 (`authzen_page_invalid`). No page expires. | the full result set | unit | P2 |
 | AZ05 | The metadata name an https PDP identifier and only the endpoints that are implemented. | the specification | unit | P2 |
 | AZ06 | Unknown fields are ignored. A nested `context` value is ignored by the conditions instead of refused. | status and decision | unit | P2 |
 | AZ07 | `X-Request-ID` is returned verbatim when it is safe for a header. | the response header | unit | P2 |
@@ -2875,7 +2880,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 | ID | Statement | Oracle | Level | Phase |
 |---|---|---|---|---|
 | ADM01 | A missing token, an invalid token, or a token for another audience gives a 401 with `WWW-Authenticate`. A 403 comes before the body is validated. | status codes | pg | P2 |
-| ADM02 | The isolation matrix, generated from the route table, holds. It crosses every route with these callers: `platform_admin`, `platform_viewer`, `service_creator`, each of `service_owner`, `service_editor`, `policy_editor`, `member_manager` and `service_viewer` of A, `service_owner` of B, `group_manager` of G, and nobody. Roles of A on entities of B give 403 or 404. Lists hold only the caller's scope. A route without a policy fails the build. | the route table and the role matrix | pg | P4 |
+| ADM02 | The isolation matrix, generated from the route table, holds. It crosses every route with these callers: `platform_admin`, `platform_viewer`, `service_creator`, each of `service_owner`, `service_editor`, `policy_editor`, `member_manager`, `service_viewer` and `directory_writer` (a machine client) of A, `service_owner` of B, `group_manager` of G, and nobody. Roles of A on entities of B give 403 or 404. Lists hold only the caller's scope. A route without a policy fails the build. | the route table and the role matrix | pg | P4 |
 | ADM03 | Creating needs a role in the scope. Creating a service needs `platform_admin` or `service_creator`. | status codes | pg | P4 |
 | ADM04 | No escalation. Foreign groups, roles and types are refused, also by the composite foreign keys; the only exception is an exported parent type. A binding above one's own role is refused. Batch, import, revert and rollback stay within the service. Retargeting an entity counts as creating it. A role with foreign items is refused. | status codes and the state | pg | P4 |
 | ADM05 | The last `platform_admin` and the last owner of a service cannot be removed, also not by two concurrent revocations. | the final state | pg | P4 |
@@ -2916,7 +2921,7 @@ An oracle never shares code with what it checks. The oracles of the epic are:
 contracts.yaml                                     the index
 core/internal/tools/contractscheck/                the check (task contracts:check)
 core/testsupport/policyfix/ (+ testdata/decisions) decision fixtures in external terms             DEC
-core/internal/refeval/                             reference evaluator, never imported by production code
+core/testsupport/refeval/                          reference evaluator, never imported by production code
 core/testsupport/policygen/                        generator of policies and graphs                 DECP, REF
 core/testsupport/{containers.go (+ CQL node), fault.go, idp.go, source.go, crash/}
 core/decide/*_test.go                              DEC, DECP (from P5; before, the engine runner of the admin API tests)
@@ -2929,7 +2934,7 @@ admin-api/tests/e2e/      one topology builder (PostgreSQL, CQL store, writer, a
                           and source), a typed policy builder, a database or namespace per test, t.Parallel
                                                                                         REF, ASOF, CONS, FC, OPS
 admin-api/tests/fault/    Toxiproxy and kill -9 (replaces tests/integration/chaos)
-                                                         PUB01, SYN05, REC02, REV03, FC02, FC03, FO01
+                                                         PUB01, SYN05, APP03, REC02, REV03, FC02, FC03, FO01
 admin-api/tests/multidc/  two CQL data centers and Toxiproxy (replaces tests/multiregion)          REV02
 admin-api/loadtest/                                                                                 LOAD
 deploy/helm/{test.sh, kind-test.sh}                                                         OPS02, OPS07
@@ -2961,10 +2966,10 @@ web/tests/                                                                      
 **Nightly.** `nightly-suite.yml` of the epic is called by the dispatcher `nightly.yml` on `main` (03:11 UTC) with the ref of the epic.
 
 - The dispatcher only holds the schedule and the ref. The jobs, tags and environment come from the epic's own commit, so the epic changes its nightly suite without touching `main`.
-- Today the suite runs the integration tests through PgBouncer, the chaos suite, the multi-region environment and the medium load test.
+- Today the suite runs the integration tests through PgBouncer, the chaos suite, the multi-region environment and the load test. A scheduled run measures the medium and the large profiles, because `loadtest.yml` reads the caller's `github.event_name`.
 - The phases add:
   - the random seeds of DECP and REF01 (each seed goes in the job summary);
-  - every crash point of PUB01, SYN05, REC02, FC02, FC03, FO01 and REV03;
+  - every crash point of PUB01, SYN05, APP03, REC02, FC02, FC03, FO01 and REV03;
   - REV01 and REV02 on a runner without `-race`;
   - LOAD02 at the medium and large profiles;
   - `storetest` against the CQL store not chosen in P0.5;
@@ -2985,7 +2990,7 @@ Between P2 and P7 the admin schema, the settings and the processes change under 
   - The Compose stack (`task dev`).
 - **API changes.** A pull request that changes the admin API changes the web interface in the same pull request.
 - **Settings and process changes.** A pull request that removes or renames a setting or a process updates, in the same pull request, the chart, its golden files, `docker-compose.yml` and `infra/*.compose.yml`. Examples: `REDIS__*`, `AUTH__STATE_*`, the OAuth half of `PLATFORM__*`, `CORS__*`, `DB__READ_URI`, the `check` and `worker` processes.
-- **When the chart job runs.** `helm.yml` runs on pull requests that touch `deploy/helm/**` or the Dockerfiles. Its path filter also gets `core/config/**`, so a change of settings renders the chart.
+- **When the chart job runs.** `helm.yml` runs on pull requests that touch `deploy/helm/**`, `core/Dockerfile`, `admin-api/Dockerfile` or the workflow itself; `web/Dockerfile` does not start it. Its path filter also gets `core/config/**`, so a change of settings renders the chart.
 - **Compose.** The author starts the Compose stack for a pull request that changes settings, processes or images.
 - **When a check cannot stay green.** Sometimes a phase cannot keep a check green, for example a page that is rewritten only in P4. The pull request then disables that check explicitly in the workflow, with a comment that names the phase that restores it. The contracts that cover the check stay `planned` with that phase.
 
@@ -3016,6 +3021,7 @@ It also changes these entries:
 | Entry | Change |
 |---|---|
 | DEC oracle path | `core/testsupport/policyfix/testdata/decisions`, not `core/decide/testdata/decisions`. |
+| DECP oracle path | `core/testsupport/refeval`, not `core/internal/refeval` (already changed on `refactor/p1-decision-contracts`). |
 | WR02 | Policy tables only, counted by tuples actually changed, `TRUNCATE` included; bypasses are left to REC01. |
 | PUB04 | A leader woken by `pg_notify`, with a periodic tick; no transactional enqueue. |
 | CONS01, AZ02 | `context.licetum` is read only from the top-level `context`. CONS01 also runs with both adapters. |
@@ -3033,6 +3039,8 @@ It also changes these entries:
 | WEB01 | The sign-in cookie. |
 | PEP01 | `aud`. |
 | AZ14 | The limit is per pod. |
+| PUB03 | Phase P5, when the `postgres` adapter on a standby starts taking T(P) from the heartbeat. |
+| SYN09 | Asked only by the fetchers of region X, not by executors there; no executor runs outside the home region (4.9.1). |
 
 POL05 and OPS02 stay `planned` until P7.
 
@@ -3069,7 +3077,7 @@ The refactor lands on `epic/production-load-readiness` in nine phases: P0 to P7,
   - CI is green before a merge;
   - `main` is merged into the epic with a merge commit, and nothing is force-pushed;
   - a pull request names its phase and the contract IDs it makes active, in place of F-IDs.
-- **Stale branches.** The candidates are `fix/epic-ci-flakes`, `f6/read-replica` and `tails/close-epic-tails` (remote and local) and the local `epic-sync`.
+- **Stale branches.** The candidates are `fix/epic-ci-flakes`, `f6/read-replica` and `tails/close-epic-tails` (remote and local), the local `epic-sync`, and the branches of the two P0 pull requests, `refactor/p0-tracking` (#59) and `ci/nightly-dispatcher` (#60).
   - They were merged by squash, so `git branch -r --merged` does not show them (it lists only the epic). Before a branch is deleted, check that its content is in the epic: an identical tree (`git diff --quiet`), equal patch-ids, or the merged state of its pull request through the REST API.
   - `origin/loadtest-results` stays, because `loadtest.yml` publishes there.
   - Of the `loadtest-results-*` branches, one baseline set stays and the owner deletes the rest.
@@ -3138,7 +3146,7 @@ Runs in parallel with P1.
   - Apache Cassandra is licensed under Apache-2.0.
   - The question is whether an MIT/AGPL product that is self-hosted by enterprises can require or recommend ScyllaDB.
 - **Reach of the `postgres` adapter on regional streaming replicas.** The spike records how many regions, what write rate and what revocation latency this setup carries. An operator can then tell when an installation needs the CQL store.
-- **Output.** `docs/adr/0002-read-store.md` chooses ScyllaDB or Apache Cassandra 5. Its numbers set the chunk size and the `part` component of the log chunk key, the bucket counts, and the threshold above which `changed_keys` invalidates a whole type.
+- **Output.** `docs/adr/0002-read-store.md` chooses ScyllaDB or Apache Cassandra 5. Its numbers set the chunk size and the `part` component of the log chunk key, the bucket counts, and the threshold above which the applier lists no `applied_keys` of a stream and a whole type is invalidated.
   - The numbers are needed before P3 fixes the outbox format.
   - The decision gates P6.
 - **Exit:** ADR 0002 is merged with measured numbers.
@@ -3148,7 +3156,7 @@ Runs in parallel with P1.
 - **Decision tables DEC01 to DEC14** come from the scenarios of `admin-api/tests/integration/api/{graph,hierarchy,conditions,roles,gaps,escalation}_test.go` and from the worked example of the decision semantics. They run against `core/engine` until P5 moves the engine to `core/decide`.
 - **External terms from day one.** Fixtures name everything in external terms: service slugs, type names, external ids, and group, role and rule names. They use the fixture format `core/testsupport/policyfix`, with YAML under its `testdata/decisions`.
   - Because of this, the same files serve `core/decide` when P5 moves anchors from `resource_cache.id` to `(type, external id)`.
-- **Reference evaluator `core/internal/refeval`.**
+- **Reference evaluator `core/testsupport/refeval`.**
   - It is written in the same external terms.
   - It builds reachability from the edges itself and shares no code with `decision.go` or `check.go`.
   - Production code never imports it.
@@ -3192,7 +3200,7 @@ The steps are separate pull requests, in this order.
     - https metadata;
     - the ops port.
   - Only the slug addresses the service in the path.
-  - Search pages are computed at the current position of each page. The cursor holds the bucket, the last key and the request digest. There is no `authzen_page_expired`.
+  - Search pages are computed at the current position of each page. The cursor holds the last key and the request digest, in today's order by id; the bucket joins it with the read-model port in P5 (7.6). There is no `authzen_page_expired`.
   - The `check` role becomes `pdp`.
 - **2d: admin OIDC.**
   - `ADMIN_AUTH__*` settings: issuer, a mandatory audience, the JWKS URL and the subject claim.
@@ -3243,7 +3251,7 @@ The steps are separate pull requests, in this order.
   - the `dbos` schema in the same database.
 - **Slugs.** A slug is immutable after creation: `PATCH` refuses `slug`. Uniqueness covers deleted services too, so a slug is never reused.
 - **The outbox check covers policy tables only:** `identity_domain`, `service`, `type_resource`, `type_resource_parent`, `synchronizer`, `access_group`, `user_group`, `group_member`, `role`, `role_permission`, `assignment_rule`, `admin_binding`, the `pep_*` tables, `log_settings` and `subject_directory`.
-  - A deferred constraint trigger checks at COMMIT that a transaction which actually changed tuples of these tables wrote its outbox row. It counts the tuples inserted, updated and deleted by the transaction, so a statement that touched no row needs no outbox.
+  - Statement-level triggers with transition tables mark a transaction that actually inserted, updated or deleted tuples of these tables, and a deferred constraint trigger checks at COMMIT that a marked transaction wrote its outbox row (4.7). A statement that touched no row marks nothing and needs no outbox.
   - An `AFTER TRUNCATE` trigger covers truncation.
   - The triggers are `ENABLE ALWAYS`, so `session_replication_role = replica` does not bypass them. A `DISABLE TRIGGER` by the table owner is not claimed impossible. Reconciliation catches it.
   - The resource tables follow in P5. Until then their legacy writers are alive: the platform self-synchronizers (until P4), the inline `resolve()` of the admin API and the sync executor.
@@ -3260,7 +3268,7 @@ The steps are separate pull requests, in this order.
   - The policy document becomes `licetum.policy/v2`. An import of a v1 document is refused with a clear message.
 - **Removed:**
   - `authz_change`;
-  - the after-commit `AfterWrite` (the view is renewed by its poll);
+  - the view part of the after-commit `AfterWrite` (the view is renewed by its poll); its call of `invalidatePlatformSync` stays until P4 removes the platform types;
   - the `previous-release` job;
   - the tables and columns P2 stopped using.
 - **Contracts:** PUB02, WR01 to WR06, HIS01, HIS04, HIS05, ADM11, OPS08, OPS04 (the PostgreSQL half; P6 adds the CQL half).
@@ -3352,7 +3360,7 @@ The steps are separate pull requests, in this order.
   - the snapshot size guard;
   - `ensure`, `SYNC__REQUEST_WAIT`, `Pending`, `X-Authz-Sync` and `sync_demand`;
   - the `licetum worker` subcommand.
-- **Contracts:** ST01 to ST04, ST06, POL01 to POL04, REF01, WR07, SYN01 to SYN10, CONS01 to CONS04, FC05, AZ15, REC01, OPS01, OPS03, OPS09.
+- **Contracts:** ST01 to ST04, ST06, POL01 to POL04, PUB03, REF01, WR07, SYN01 to SYN10, CONS01 to CONS04, FC05, AZ15, REC01, OPS01, OPS03, OPS09.
 - **Exit:**
   - depguard keeps `pgx`, `dbos`, the CQL driver and `net/http` out of `core/decide` and `core/policy`, and `pgx`, `core/db` and `dbos` out of `core/pdp`;
   - these contracts are green;
@@ -3361,7 +3369,7 @@ The steps are separate pull requests, in this order.
 
 ### 11.10 P6: CQL log, regional applier, PDP in CQL mode (#57)
 
-The CQL store is the one ADR 0002 chose. The model stays compatible with Apache Cassandra 5 whichever store is chosen. If ScyllaDB is chosen, `storetest` also runs nightly against Cassandra 5.
+The CQL store is the one ADR 0002 chose. The model stays compatible with Apache Cassandra 5 whichever store is chosen. `storetest` also runs nightly against the store that was not chosen (10.2, ST09).
 
 - **6a: log and publication.**
   - `core/logfmt`.
@@ -3372,19 +3380,19 @@ The CQL store is the one ADR 0002 chose. The model stays compatible with Apache 
   - `IssuerKeys` feeds the `pep` stream.
   - Epochs, with automatic detection of a divergence.
   - The commands `rebuild`, `reconcile`, `failover`, `freeze` and `unfreeze`.
-    - `reconcile` runs nightly in every region, and that run is mandatory.
+    - `reconcile --dc X` runs nightly for every region X, as a CronJob in the home region (5.8), and that run is mandatory.
     - `freeze` uses an operator CQL role. It disables only the staleness gate; the log goes on being applied.
   - The migrate job of the home region creates the keyspaces or tables of generations ahead of time. The applier only writes.
   - A CQL container in `core/testsupport`, with one keyspace per package.
 - **6b: applier and PDP.**
   - `core/applier` checks continuity and hashes and writes MVCC rows append-only. It also writes `policy_snapshot`, manages generations with manual rotation, and reads a missing chunk from another data center.
-  - `core/pdp` serves from the regional view. It applies the staleness gate before the answer cache, waits for `min_revision`, and keeps a row cache. The row cache is invalidated by `changed_keys`, which are split per stream and chunk; above the threshold, a whole type is invalidated.
+  - `core/pdp` serves from the regional view. It applies the staleness gate before the answer cache, waits for `min_revision`, and keeps a row cache. The row cache is invalidated by `applied_keys`, split per stream into rows of at most 4096 keys; above the threshold, a whole type is invalidated.
   - Search uses `descendant_v`, `type_member_v`, `attr_v` and `subject_v`, and computes each page at the current position.
 - **MVCC garbage collection.**
   - The code and ST08 land in this phase, with the collection off by default.
   - A separate pull request turns it on by default, and only after APP01 to APP03 and ASOF01 to ASOF03 have passed under the kill tests of the nightly suite.
 - **Removed:** the PostgreSQL poll of `revision_state` from the CQL mode of the PDP, and the PostgreSQL half of `localstate.go`.
-- **Contracts:** ST05, ST07 to ST09, PUB01, PUB03, PUB04, APP01 to APP03, ASOF01 to ASOF04, REC02, REF02, CONS05, FC01, FC04, PEP04, OPS04 (the CQL half), OPS05, OPS06.
+- **Contracts:** ST05, ST07 to ST09, PUB01, PUB04, APP01 to APP03, ASOF01 to ASOF04, REC02, REF02, CONS05, FC01, FC04, PEP04, OPS04 (the CQL half), OPS05, OPS06.
 - **Exit:**
   - these contracts are green on fixed seeds;
   - REF01 passes in CQL mode;
@@ -3433,17 +3441,17 @@ The CQL store is the one ADR 0002 chose. The model stays compatible with Apache 
 | **Amount of mechanism.** The log, applier, MVCC, epochs and generations are more moving parts than "a store as a replica". | The `postgres` adapter is the default. It covers one region, and several regions on streaming replicas, without any of these parts. The applier is a role of the writer binary, so there are still three images. The garbage collection waits for the kill tests. The fold equation and the POL, APP and ASOF contracts check the parts. | P5, P6 |
 | **Availability is coupled across regions.** If PostgreSQL or the publisher leader stops for longer than S, every region closes. A standby that stops replaying ages the same way. | Fenced PostgreSQL with a synchronous standby, or S above the measured failover time. Two or more `project` replicas with one leader. An alert at a heartbeat age of 10 s. `freeze` for a disaster: it turns off only the gate, and the log goes on being applied. | FC02, FO01, REV03 |
 | **One ordered publication chain.** A malformed entry blocks every region. | Bounded retries, `licetum_projection_stuck`, an alert on publication lag, and the runbook `rebuild --stream`. Regions close after S instead of serving a policy with a hole. | P6, P7 |
-| **Write amplification.** A first load or a structural change carries the full lineage of every touched resource through the outbox, the log and every region. A type of 1M resources means gigabytes. | Chunks written with COPY and compressed with zstd. A `part` component in the chunk key. `changed_keys` split per stream and chunk, with a whole-type invalidation above the threshold. Checkpoints per stream, rebuilds into a new generation, and a memory budget for the writer. Measured in P0.5 before the format is fixed. | P0.5, P5, P6 |
+| **Write amplification.** A first load or a structural change carries the full lineage of every touched resource through the outbox, the log and every region. A type of 1M resources means gigabytes. | Chunks written with COPY and compressed with zstd. A `part` component in the chunk key. `applied_keys` split per stream into rows of 4096 keys, with a whole-type invalidation above the threshold. Checkpoints per stream, rebuilds into a new generation, and a memory budget for the writer. Measured in P0.5 before the format is fixed. | P0.5, P5, P6 |
 | **License of the CQL store.** ScyllaDB from 2025.1 is source-available: free up to 50 vCPU and 10 TB per organization, last AGPL release 6.2. A larger self-hosted installation would need a commercial license. | The choice is made in P0.5. The model stays Cassandra-compatible (no LWT, no MV, no secondary indexes, no tablets-only features), and `storetest` runs on Cassandra 5 too. The `postgres` adapter on regional standbys gives a multi-region setup without any CQL store. | P0.5, P6 |
-| **Durability is part of correctness.** Suppose two of three replicas lose the newest version of a key, because a node was replaced without repair or the hints expired. A `LOCAL_QUORUM` read then returns an older version, such as a resource that is still active or an old lineage. That is fail-open. | Repair, or repair-based node operations after a node replacement, is a correctness requirement with a runbook. The nightly reconcile per region is mandatory; on drift it raises `licetum_projection_drift_total` and runs `rebuild --stream`. An alert fires on the age of the last repair. | P6, P7 |
+| **Durability is part of correctness.** Suppose two of three replicas lose the newest version of a key, because a node was replaced without repair or the hints expired. A `LOCAL_QUORUM` read then returns an older version, such as a resource that is still active or an old lineage. That is fail-open. | Repair, or repair-based node operations after a node replacement, is a correctness requirement with a runbook. The nightly reconcile per region is mandatory; on drift it raises `licetum_projection_drift_total`, and `rebuild --stream` repairs the stream. Alerts fire on drift (`LicetumProjectionDrift`) and on a reconcile missing for 26 h (`LicetumReconcileMissing`, 6.11). | P6, P7 |
 | **CQL specifics.** Large `descendant_v` partitions for root anchors, hot `attr_v` values, range tombstones from the garbage collection, and the `LOCAL_QUORUM` tail on cold misses. | Buckets per type, generation rotation, a scan budget for search, and the row cache. The garbage collection is off until the kill tests pass. Measured in P0.5. | P0.5, P6 |
 | **The MVCC garbage collection and generation rotation are the main sources of fail-open.** | P6 starts append-only with manual rotation. The collection is turned on only after APP and ASOF pass under the kill tests. ST08 checks that the newest version is never deleted. | P6 |
-| **PostgreSQL split brain, or commits lost on failover.** | Fencing is a precondition. A hash mismatch stops publication instead of overwriting. Epochs with `epoch_start`. A synchronous standby for the CQL topology. | FO01 |
+| **PostgreSQL split brain, or commits lost on failover.** | Fencing is a precondition. A hash mismatch stops publication instead of overwriting. Epochs with `epoch_start`. A synchronous standby, or S above the measured failover time (6.8). | FO01 |
 | **A restore older than the log TTL (14 days), or a new data center.** `epoch_start` cannot refer to entries of another history that have already expired. `ALTER KEYSPACE` does not move data that is already written. | Runbooks: a restore needs `rebuild --all` and a new generation; a new data center needs `nodetool rebuild` before its applier starts. The time of a full rebuild is measured on the large profile. | P7 |
 | **Trust moves to the PEP.** A bound PEP can assert any subject and any properties, including ones that satisfy predicates written for claims an IdP verified. | Bindings per service and per operation. `explain` and `search_subject` are separate operations, off by default. Identity domains. The trust model is documented. Passing the user's token through can come later. | P2, P4 |
 | **Subject namespaces across services.** The same id under two IdPs is two people. An exported cascade could apply the literals or predicates of service A to the subjects of service B. | Cross-service links are allowed only within one identity domain. | ADM09 |
 | **Upstream rules leak through explain** to the PEP of a downstream service. | Upstream rules are reported only as `upstream: <slug>` and a level. The group predicates of the upstream service are never shown. | P4 |
-| **Limits of DBOS Go v1.6.0.** It recovers only the workflows of its own executor. `WithEnqueueTransaction` is refused inside a workflow. Queue polling defaults to 1 s and grows to 120 s on errors. Prepared statements conflict with PgBouncer in transaction mode. Only the synchronization queue is pruned today (`dbosPrune`), so any new queue needs the same. | Publication does not use DBOS: a leader woken by NOTIFY, plus a tick. Two StatefulSets with a stable `DBOS__VMID`, and a generalized janitor. An explicit `WithQueueBasePollingInterval`. A DBOS connection straight to PostgreSQL (`SYNC__DBOS_URI`). Retention through `dbos.DeleteWorkflows`. DBOS Conductor is evaluated before P6. | P5 |
+| **Limits of DBOS Go v1.6.0.** It recovers only the workflows of its own executor. `WithEnqueueTransaction` is refused inside a workflow. Queue polling defaults to 1 s and grows to 120 s on errors. Prepared statements conflict with PgBouncer in transaction mode. Only the synchronization queue is pruned today (`dbosPrune`), so any new queue needs the same. | Publication does not use DBOS: a leader woken by NOTIFY, plus a tick. Two StatefulSets, `sync` (with a stable `DBOS__VMID`) and `project` (no DBOS), and a generalized janitor. An explicit `WithQueueBasePollingInterval`. A DBOS connection straight to PostgreSQL (`SYNC__DBOS_URI`). Retention through `dbos.DeleteWorkflows`. DBOS Conductor is evaluated before P6. | P5 |
 | **Formats evolve.** The log and the CQL tables are a contract between the writer and the regions. | The PDP and the applier read formats N and N−1. The upgrade order is fixed in a runbook: PostgreSQL migrate, CQL migrate, `apply` and `pdp`, `writer`, `admin`, `web`. | POL05, OPS02 |
 | **Coverage gaps during the transition.** | P1 comes before P2. 2a moves the oracles before the endpoints go. A contract stays `planned` until its phase. | P1, P2 |
 | **The fail-closed fix changes answers.** Resources allowed today become denied. | Release notes, DEC11, and a measurement of the added join on the medium profile. | P1 |
@@ -3458,7 +3466,7 @@ The CQL store is the one ADR 0002 chose. The model stays compatible with Apache 
 | **Services can be enumerated** through the public metadata (404 against 200). | A slug is not a secret. The access routes answer the same 403. The metadata stays public, as the specification requires. | P2 |
 | **The audit of calls becomes best-effort,** because the decision log goes to stdout or OTel. | The requirement on the log pipeline is documented. A durable audit is a later feature. | P2 |
 | **Admin tools load the primary:** simulate, who-has-access, lint and policy tests. | Measured in P5. If needed, they read through the `postgres` adapter on a standby. | P5 |
-| **Load isolation.** `PEP__RATE_LIMIT` works per pod. There is no fair share between clients, and search scans up to 10 000 rows. | Concurrency quotas per client and a separate pool for search in the PDP. A global limit belongs to the ingress. | P2, P6 |
+| **Load isolation.** `PEP__RATE_LIMIT` works per pod. There is no fair share between clients, and search scans up to 10 000 rows. | Concurrency quotas per client and a separate pool for search in the PDP. A global limit belongs to the ingress. | P2, P5 |
 | **Source load without demand.** Every type is polled every `refresh_interval` forever, while today only types asked for within `SYNC__DEMAND_WINDOW` are polled. | A default of minutes, a backoff for unchanged answers, and a metric of calls to sources. | P5 |
 
 ## 13. Open questions and the defaults taken
@@ -3502,7 +3510,7 @@ These follow the plan with the critique applied. A later ADR, or a pull request 
 | 11 | Who deletes a service | Only `platform_admin`. An owner can switch off the service's PEP clients and empty the service. |
 | 12 | Revocation SLO | p99 ≤ 1 s in the home region and ≤ 5 s in every region, with the hard bound S + ε. Measured at night on a runner without `-race`. |
 | 13 | What replaces the audit of delegated calls | A structured decision log (stdout or OTel) with the client, subject, resource, action, decision, position and request id. A durable audit is a later feature. |
-| 14 | Recovery of workflows of dead executors | Two StatefulSets with a stable `DBOS__VMID`, and a generalized janitor for scale-down. |
+| 14 | Recovery of workflows of dead executors | Two StatefulSets, `sync` (with a stable `DBOS__VMID`) and `project` (no DBOS), and a generalized janitor for scale-down. |
 | 15 | License of the writer and the applier | MIT, in `core`. `bootstrap`, `restore-admin` and the admin role model are AGPL, in `admin-api`. |
 | 16 | Retention | The log TTL is 14 days. A stream that changed gets a checkpoint at least every 7 days (policy streams every 256 changes or 4 MiB, data streams at a delta of 20 %). Superseded checkpoints are deleted after the log TTL. Generations rotate by metric, at most once a week. Buckets: 16 per type, 8 for `attr_v`. |
 | 17 | Sources reachable from one region only | A region-local fetcher without PostgreSQL credentials passes the source's answer to the executor in the home region. |
@@ -3535,7 +3543,7 @@ Question 3, the salt for hashing subjects in logs, is settled: see 13.2 #29. The
 
 ## Appendix: defects of the current code found while planning
 
-These defects came up while the plan was written. Each one was checked against the code again on 2026-10-18. Unless a line says otherwise, file and line references point to the tip of the epic `epic/production-load-readiness` (`229c4ed`). "In `v0.1.0`" says whether the released version has the same defect. The plan does not include a backport to 0.1.x.
+These defects came up while the plan was written. Each one was checked against the code again on 2026-10-18. Unless a line says otherwise, file and line references point to the tip of the epic `epic/production-load-readiness` (`229c4ed`). "In `v0.1.0`" says whether the released version has the same defect. This ADR does not include a backport to 0.1.x.
 
 | # | Defect | In `v0.1.0` | Closed by |
 |---|---|---|---|
@@ -3558,11 +3566,11 @@ Items 1–6 are those of the plan. Items 7–9 were confirmed while re-checking 
   - Rules: allow `read` on the whole type `branch`, deny `read` on the division `D1`.
   - The rrs `R9` names a division `D9` that the source of divisions does not report yet.
   - The branch `B9` under `R9` was visible, although `D9` may turn out to be `D1`.
-- **Status.** Fixed in P1 by `6fc6c1a` on `refactor/p1-decision-contracts`, not yet merged into the epic.
+- **Status.** Fixed in P1 by `5393b2b` on `refactor/p1-decision-contracts`, not yet merged into the epic.
   - `UnresolvedParents` now starts from the unresolved edges (partial index `ix_resource_edge_unresolved`) and walks down `resource_ancestor`.
   - For each resource it returns every unresolved link at or above it as an `UnresolvedLink`: the type that declares the link, the missing parent type and the levels of the route down.
   - `TypeGraph.assumedMask` turns these links into the mask of an assumed cover, on both paths.
-  - Contract DEC11 is `planned` until its `TestContract_DEC11_*` lands.
+  - Contract DEC11 becomes `active` in the P1 pull request, together with its `TestContract_DEC11_*` tests.
   - The new join runs on every cache miss of a listing. It has to be measured on the loadtest medium profile before P1 merges.
   - The "Fail closed" bullet of `CLAUDE.md` still describes only a resource's own edge and has to say "at or above".
 
@@ -3643,7 +3651,7 @@ Items 1–6 are those of the plan. Items 7–9 were confirmed while re-checking 
 - **Effect.**
   - A write committed between the two statements is in the snapshot, but labelled with the earlier revision.
   - The content is never older than its label, so no revoked grant is served.
-  - But answers kept under one revision key (L1 and Redis, `authz:permission:t7:r<revision>:…`) can come from different policy states in different processes. So a revision is not an exact position of the policy, which the plan's positions (ASOF) cannot accept.
+  - But answers kept under one revision key (L1 and Redis, `authz:permission:t7:r<revision>:…`) can come from different policy states in different processes. So a revision is not an exact position of the policy, which the positions of this ADR (ASOF) cannot accept.
 - **Status.** P5: the PostgreSQL loader reads the revision inside its snapshot transaction.
 
 ### 8. Slugs can be changed and reused
@@ -3659,7 +3667,7 @@ Items 1–6 are those of the plan. Items 7–9 were confirmed while re-checking 
 - `verifiedCaller` (`core/server/check.go:67-69`) accepts only the exact prefix `Bearer `. `bearer …` or another scheme gets 400 `auth_header_required`. The admin API's `bearerToken` (`admin-api/service/platform.go:105-111`) compares the scheme case-insensitively. Target (AZ08): case-insensitive, and 401 for another scheme.
 - `requestID` (`core/server/server.go:293-300`) replaces an `X-Request-ID` that is not `[A-Za-z0-9._-]{1,128}` with a generated UUID. Target (AZ07): returned verbatim when it is safe for a header.
 - `RequestContext.Validate` (`core/model/check.go:39-56`) refuses an object, or a list within a list, in the AuthZEN `context`: a 400 for a single evaluation, an error decision in a batch. Target (AZ06): such a value is ignored by conditions.
-- `resource.id` is optional, and an empty one means the type as a whole (`core/model/authzen.go:20`). Target (AZ01): it is required; the plan carries the whole-type question as `resource.id="*"`.
+- `resource.id` is optional, and an empty one means the type as a whole (`core/model/authzen.go:20`). Target (AZ01): it is required; the whole-type question is carried as `resource.id="*"` (7.4).
 
 All four are fixed in P2 (2b).
 
