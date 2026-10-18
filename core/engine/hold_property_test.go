@@ -62,9 +62,9 @@ const (
 	ttlPrecision = time.Second + maxComputeStep
 )
 
-// TestStaleAnswersNeverOutliveAValidityBoundary (F5-6, the property behind "the replica keeps answering from its copy"): over
-// random policies with validity windows, random request times (many of them close to a boundary), random computation times
-// and random periods without PostgreSQL, through the real cachedAnswer:
+// TestContract_DEC14_StaleAnswersNeverOutliveAValidityBoundary (the property behind "the replica keeps answering from its
+// copy", F5-6 before the contracts): over random policies with validity windows, random request times (many of them
+// close to a boundary), random computation times and random periods without PostgreSQL, through the real cachedAnswer:
 //
 //   - safety: an answer served stale (the entry is past its time and the process cannot compute another) is the answer of
 //     the moment, that is, no validity boundary has passed since it was computed;
@@ -73,7 +73,7 @@ const (
 //   - an answer served in the usual way is behind a boundary by at most ttlPrecision.
 //
 // The oracle is the world itself: the answer is the number of boundaries that have passed. A failure names the seed.
-func TestStaleAnswersNeverOutliveAValidityBoundary(t *testing.T) {
+func TestContract_DEC14_StaleAnswersNeverOutliveAValidityBoundary(t *testing.T) {
 	var stale, refusedAfterGone, recomputed int
 	for seed := uint64(1); seed <= 200; seed++ {
 		s, r, c := runHoldScenario(t, seed)
@@ -227,10 +227,10 @@ func runHoldScenario(t *testing.T, seed uint64) (stale, refused, computations in
 	return stale, refused, computations
 }
 
-// TestValidityIsTheExactDistanceToTheNextRelevantBoundary: whatever the boundaries are (past, other types, role assignments,
+// TestContract_DEC14_ValidityIsTheExactDistanceToTheNextRelevantBoundary: whatever the boundaries are (past, other types, role assignments,
 // memberships, under a second away), snapshot.validity stops the hold at the nearest one that can change the answer and never
 // later, and the ttl is that distance within the one-second floor and the cap.
-func TestValidityIsTheExactDistanceToTheNextRelevantBoundary(t *testing.T) {
+func TestContract_DEC14_ValidityIsTheExactDistanceToTheNextRelevantBoundary(t *testing.T) {
 	for seed := uint64(1); seed <= 2000; seed++ {
 		rng := rand.New(rand.NewPCG(seed, 77))
 		now := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)

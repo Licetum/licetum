@@ -98,10 +98,10 @@ contracts:
     status: planned
   - id: DEC14
     statement: The time an answer is kept, and the time it stays correct (hold), end exactly at the next validity boundary.
-    oracle: property test against random policies with a manual clock
+    oracle: property test against random policies with a manual clock (core/engine/hold_property_test.go)
     level: unit
     phase: P1
-    status: planned
+    status: active
   - id: DECP
     statement: The engine and the reference evaluator give the same decisions on generated policies and resource graphs (2000 fixed seeds per pull request, random seeds nightly).
     oracle: core/testsupport/refeval (builds reachability from the edges itself, shares no code with the engine)
