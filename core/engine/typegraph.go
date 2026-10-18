@@ -146,6 +146,32 @@ func (g *TypeGraph) reaches(a, b uuid.UUID, level string) bool {
 // DescendantsOf lists the strict descendant types of a (with the flowing levels).
 func (g *TypeGraph) DescendantsOf(a uuid.UUID) map[uuid.UUID]LevelSet { return g.flow[a] }
 
+// assumedMask is the set of levels a denial anchored at a resource of type anchorType may reach a resource with, through
+// the unresolved links at or above it (see UnresolvedParents): a missing parent could be the anchor or lie below it, and
+// the levels then flow from it along the type link that names it, and down the route to the resource. Empty when no link
+// can be reached from the anchor's type.
+func (g *TypeGraph) assumedMask(anchorType uuid.UUID, unresolved []UnresolvedLink) LevelSet {
+	var out LevelSet
+	for _, u := range unresolved {
+		flow := AllLevels
+		if anchorType != u.ParentType {
+			m, ok := g.DescendantsOf(anchorType)[u.ParentType]
+			if !ok {
+				continue
+			}
+			flow = m
+		}
+		var link LevelSet
+		for _, e := range g.liveParents(u.FromType) {
+			if e.Parent == u.ParentType {
+				link = e.Inherit
+			}
+		}
+		out = out.union(link.Intersect(u.Route).Intersect(flow))
+	}
+	return out
+}
+
 // AncestorTypes returns every strict ancestor type of the given types (any flowing levels).
 func (g *TypeGraph) AncestorTypes(ids ...uuid.UUID) map[uuid.UUID]bool {
 	out := map[uuid.UUID]bool{}

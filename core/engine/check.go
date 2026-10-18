@@ -88,7 +88,7 @@ func (a *App) checkAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 type checkInputs struct {
 	rows       map[anchorRef]uuid.UUID              // the resources the questions name
 	ancestors  map[uuid.UUID]map[uuid.UUID]LevelSet // per resource row: its ancestors, with the levels flowing from them
-	unresolved map[uuid.UUID][]uuid.UUID            // per resource row: the parent types of its unresolved links
+	unresolved map[uuid.UUID][]UnresolvedLink       // per resource row: the unresolved links at or above it
 }
 
 // decideChecks answers the questions of one request. The resources they name, their ancestors and their unresolved
@@ -111,7 +111,7 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 	}
 
 	in := &checkInputs{}
-	var unresolved map[uuid.UUID][]uuid.UUID
+	var unresolved map[uuid.UUID][]UnresolvedLink
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.Go(func() (err error) {
 		in.rows, err = a.anchorRowIDs(ectx, refs)
@@ -185,9 +185,8 @@ func (p *Prepared) answerCheck(in *checkInputs, typeID uuid.UUID, found bool, r 
 }
 
 // CoversOf finds the instances that cover one resource of type typeID, given its ancestors with the levels that
-// flow from them, and the parent types of its unresolved links.
-func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, unresolvedParents []uuid.UUID) []Cover {
-	nodeType, _ := p.Graph.Node(typeID)
+// flow from them, and the unresolved links at or above it (see UnresolvedParents).
+func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, unresolved []UnresolvedLink) []Cover {
 	covers := []Cover{}
 	for i := range p.Insts {
 		in := &p.Insts[i]
@@ -206,24 +205,9 @@ func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, 
 		if !in.Deny {
 			continue
 		}
-		// A denial may reach a resource whose parent is not known.
-		for _, parentType := range unresolvedParents {
-			edgeMask := LevelSet{}
-			for _, e := range nodeType.Parents {
-				if e.Parent == parentType {
-					edgeMask = e.Inherit
-				}
-			}
-			flow := AllLevels
-			if in.AnchorType != parentType {
-				var ok bool
-				if flow, ok = p.Graph.DescendantsOf(in.AnchorType)[parentType]; !ok {
-					continue
-				}
-			}
-			if m := edgeMask.Intersect(flow); !m.empty() {
-				covers = append(covers, Cover{Inst: i, Mask: m, Assumed: true})
-			}
+		// A denial may reach a resource whose hierarchy is not fully known.
+		if m := p.Graph.assumedMask(in.AnchorType, unresolved); !m.empty() {
+			covers = append(covers, Cover{Inst: i, Mask: m, Assumed: true})
 		}
 	}
 	return covers

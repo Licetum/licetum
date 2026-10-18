@@ -897,7 +897,7 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 	// anchors, and the unresolved parent links of the result types.
 	var listed map[uuid.UUID][]graphNode
 	var expanded [][]CoveredNode
-	var unresolved map[uuid.UUID][]uuid.UUID
+	var unresolved map[uuid.UUID][]UnresolvedLink
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.Go(func() (err error) {
 		listed, err = a.listCachedResources(ectx, wholeTypeIDs)
@@ -979,33 +979,20 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 			attach(i, n.graphNode, n.Mask, false)
 		}
 	}
-	// Pass C: a resource with an unresolved parent link may hang below any denial anchored above
-	// that parent's type — the hierarchy above it is not fully known, so the denial applies.
-	for id, parentTypes := range unresolved {
+	// Pass C: a resource with an unresolved parent link at or above it may hang below any denial anchored above the
+	// missing parent's type — the hierarchy above it is not fully known, so the denial applies.
+	for id, links := range unresolved {
 		n, ok := nodes[id]
 		if !ok {
 			continue
 		}
-		nodeType, _ := g.Node(n.Type)
 		for i := range p.Insts {
 			in := &p.Insts[i]
 			if !in.Deny || in.Whole() || hasCover(n, i) {
 				continue
 			}
-			for _, parentType := range parentTypes {
-				edgeMask := LevelSet{}
-				for _, e := range nodeType.Parents {
-					if e.Parent == parentType {
-						edgeMask = e.Inherit
-					}
-				}
-				flowMask, reaches := wholeMask(in.AnchorType, parentType)
-				if !reaches {
-					continue
-				}
-				if m := edgeMask.Intersect(flowMask); !m.empty() {
-					n.covers = append(n.covers, Cover{Inst: i, Mask: m, Assumed: true})
-				}
+			if m := g.assumedMask(in.AnchorType, links); !m.empty() {
+				n.covers = append(n.covers, Cover{Inst: i, Mask: m, Assumed: true})
 			}
 		}
 	}

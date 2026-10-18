@@ -830,28 +830,55 @@ func (a *App) AncestorMasks(ctx context.Context, nodes []uuid.UUID) (map[uuid.UU
 	return out, rows.Err()
 }
 
-// UnresolvedParents lists, for the resources of the given types that have declared parents missing
-// from the cache, the parent types of those unresolved links. Such resources are "incomplete": the
-// hierarchy above them is not fully known, so denials fail closed for them.
-func (a *App) UnresolvedParents(ctx context.Context, typeIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
-	out := map[uuid.UUID][]uuid.UUID{}
+// UnresolvedLink is a parent link that is not resolved at or above a resource: the resource itself, or one of its
+// ancestors (FromType is the type of the one that declares it), names a parent of type ParentType that is not in the cache.
+// Route is the set of levels that flow from the one that declares it down to the resource (all levels for the resource
+// itself): a denial above the missing parent could reach the resource only with those levels.
+type UnresolvedLink struct {
+	FromType   uuid.UUID
+	ParentType uuid.UUID
+	Route      LevelSet
+}
+
+// UnresolvedParents lists, for the active resources of the given types, the unresolved parent links at or above them:
+// their own and those of every ancestor. Such resources are "incomplete": the hierarchy above them is not fully known,
+// so denials fail closed for them — a resource below an ancestor whose parent is missing may lie under any denial that
+// could cover that parent, as much as one whose own parent is missing. The query starts from the unresolved edges
+// (a partial index) and walks down the closure, whose row of a resource for itself carries the link of its own edges.
+func (a *App) UnresolvedParents(ctx context.Context, typeIDs []uuid.UUID) (map[uuid.UUID][]UnresolvedLink, error) {
+	out := map[uuid.UUID][]UnresolvedLink{}
 	if len(typeIDs) == 0 {
 		return out, nil
 	}
 	rows, err := a.reader(ctx).Query(ctx, `
-		SELECT e.child_id, e.parent_type_id
-		FROM resource_edge e JOIN resource_cache c ON c.id = e.child_id AND c.active
-		WHERE e.parent_id IS NULL AND c.type_resource_id = ANY($1)`, typeIDs)
+		SELECT anc.descendant_id, x.type_resource_id, e.parent_type_id, anc.inherit
+		FROM resource_edge e
+		JOIN resource_cache x ON x.id = e.child_id AND x.active
+		JOIN resource_ancestor anc ON anc.ancestor_id = e.child_id
+		JOIN resource_cache d ON d.id = anc.descendant_id AND d.active
+		WHERE e.parent_id IS NULL AND anc.descendant_type_id = ANY($1)`, typeIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	seen := map[uuid.UUID]map[string]bool{}
 	for rows.Next() {
-		var child, parentType uuid.UUID
-		if err := rows.Scan(&child, &parentType); err != nil {
+		var node, fromType, parentType uuid.UUID
+		var route []string
+		if err := rows.Scan(&node, &fromType, &parentType, &route); err != nil {
 			return nil, err
 		}
-		out[child] = append(out[child], parentType)
+		link := UnresolvedLink{FromType: fromType, ParentType: parentType, Route: levelsFromDB(route)}
+		// Several missing parents of one type, at one place, are one link.
+		key := fromType.String() + parentType.String() + link.Route.key()
+		if seen[node] == nil {
+			seen[node] = map[string]bool{}
+		}
+		if seen[node][key] {
+			continue
+		}
+		seen[node][key] = true
+		out[node] = append(out[node], link)
 	}
 	return out, rows.Err()
 }
