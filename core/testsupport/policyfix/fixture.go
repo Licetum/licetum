@@ -77,7 +77,7 @@ func (f *Fixture) TypesAtFirstSync() []Type {
 	if f.Before == nil {
 		return slices.Clone(f.Types)
 	}
-	out := make([]Type, 0, len(f.Types)+len(f.Before.Types))
+	out := make([]Type, 0, len(f.Types))
 	for _, t := range f.Types {
 		if i := slices.IndexFunc(f.Before.Types, func(b Type) bool { return b.Name == t.Name }); i >= 0 {
 			t = f.Before.Types[i]
@@ -98,7 +98,7 @@ func (f *Fixture) ResourcesAtFirstSync() []Resource {
 	if f.Before == nil {
 		return slices.Clone(f.Resources)
 	}
-	out := make([]Resource, 0, len(f.Resources)+len(f.Before.Resources))
+	out := make([]Resource, 0, len(f.Resources))
 	for _, r := range f.Resources {
 		if b, ok := f.Before.resourceOf(r.Type, r.ID); ok {
 			r = *b
