@@ -258,7 +258,7 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 			group[j] = evals[i].req
 			anyExplain = anyExplain || evals[i].explain
 		}
-		env := engine.NewEnv(first.sp.claims, first.attrs)
+		env := c.app.NewEnv(first.sp.claims, first.attrs)
 		results, err := c.app.CheckAccess(ctx, c.serviceID, first.sp.subject, env, group, anyExplain, consistency)
 		if err != nil {
 			return nil, err
@@ -470,7 +470,7 @@ func parseSearch(kind string, in model.AuthzenSearchRequest) (*search, *apperr.E
 
 // permissions reads what the speaker may do in the service.
 func (c *authzenCaller) permissions(ctx context.Context, sp speaker, attrs model.RequestContext, consistency engine.Consistency) (engine.PermissionResult, error) {
-	return c.app.GetPermission(ctx, c.serviceID, sp.subject, engine.NewEnv(sp.claims, attrs), consistency)
+	return c.app.GetPermission(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), consistency)
 }
 
 func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.Consistency, in model.AuthzenSearchRequest) (*model.AuthzenResourceSearchResponse, error) {
@@ -568,7 +568,7 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 	for i, l := range candidates {
 		questions[i] = model.CheckRequest{Type: res.Type, Action: l}
 	}
-	answers, err := c.app.CheckAccess(ctx, c.serviceID, sp.subject, engine.NewEnv(sp.claims, attrs), questions, false, consistency)
+	answers, err := c.app.CheckAccess(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), questions, false, consistency)
 	if err != nil {
 		return nil, err
 	}
@@ -668,7 +668,7 @@ func (c *authzenCaller) decideKnown(ctx context.Context, consistency engine.Cons
 			if err != nil {
 				return nil
 			}
-			answers, err := c.app.CheckAccess(ectx, c.serviceID, k.Subject, engine.NewEnv(claims, attrs), question, false, consistency)
+			answers, err := c.app.CheckAccess(ectx, c.serviceID, k.Subject, c.app.NewEnv(claims, attrs), question, false, consistency)
 			if err != nil {
 				return err
 			}

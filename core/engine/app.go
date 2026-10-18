@@ -104,16 +104,29 @@ type App struct {
 	snapshotWarn sync.Once
 	// replica is what WatchReplica measured about ReadDB.
 	replica replicaState
-	// clock is the time of the answer cache; nil is time.Now. Tests replace it to follow hours of validity windows at once.
+	// clock is the time of the decisions and of the answer cache; nil is time.Now. Tests replace it (SetClock) to follow
+	// hours of validity windows at once, or to ask a question at a given moment.
 	clock func() time.Time
 }
 
-// now is the time the answer cache reasons with (see cachedAnswer).
+// now is the time the decisions are made at (which rules and memberships are in force) and the answer cache reasons with
+// (see cachedAnswer).
 func (a *App) now() time.Time {
 	if a.clock != nil {
 		return a.clock()
 	}
 	return time.Now()
+}
+
+// SetClock makes the App decide at the times now returns instead of time.Now (nil goes back to time.Now): the validity
+// windows of the rules and the memberships, the hour and the weekday the conditions read, and the times of the answer
+// cache. It is for the tests that ask a question at a given moment through the real request path (the decision contracts);
+// it must be called before the App serves a request, and now must be safe for concurrent use.
+func (a *App) SetClock(now func() time.Time) { a.clock = now }
+
+// NewEnv is the environment of a request decided by this App: the claims, the request attributes and the time of its clock.
+func (a *App) NewEnv(claims Claims, context map[string]any) Env {
+	return Env{Claims: claims, Context: context, Now: a.now()}
 }
 
 func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
