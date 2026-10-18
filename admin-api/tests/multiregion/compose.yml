@@ -1,0 +1,229 @@
+# The multi-region test environment (F6, tier R): three "regions", each with two check replicas and a Redis; one PostgreSQL primary
+# in region A and a streaming replica in each of the others; Toxiproxy adding the latency of the links between the regions and
+# the primary; a source of resources that only region A can reach. The identity provider is the test process itself
+# (MR_IDP_HOST_URL, reached through host.docker.internal).
+#
+#   docker build -f core/Dockerfile --target runtime -t licetum:mr .
+#   docker build -f admin-api/Dockerfile --target runtime -t licetum-admin:mr .
+#   MR_IDP_URL=http://host.docker.internal:PORT docker compose -f admin-api/tests/multiregion/compose.yml up -d
+#
+# `task go:test:multiregion` does all of it and runs the scenarios (admin-api/tests/multiregion/*_test.go).
+#
+# Networks: net-a, net-b, net-c are the regions; wan joins the primary and the proxy. A pod of region B can reach its own Redis and
+# replica, and the proxy (which reaches the primary); it cannot reach the primary, the other regions or the source.
+name: licetum-mr
+
+x-go: &go
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  # A pod that starts before its database is ready exits and is started again, as an orchestrator does.
+  restart: on-failure
+
+x-env: &env
+  AUTH__STATE_SECRET: multiregion-state-secret
+  SUBJECTS__ENABLED: "true"
+  SHUTDOWN__DRAIN: 1s
+  SHUTDOWN__TIMEOUT: 10s
+  SYNC__ENGINE: postgres
+  SYNC__REQUEST_WAIT: 5s
+  DB__LAG_INTERVAL: 500ms
+  DB__MAX_REPLICA_LAG: ${MR_MAX_REPLICA_LAG:-10s}
+  DB__LAG_ACTION: ${MR_LAG_ACTION:-unready}
+  POLICY__MAX_STALENESS: ${MR_MAX_STALENESS:-0}
+  HTTP__PUBLIC_URL: http://localhost:18001
+  PLATFORM__NAME: Licetum
+  PLATFORM__URL: ${MR_IDP_URL}/app
+  PLATFORM__ICON: ${MR_IDP_URL}/icon.png
+  PLATFORM__AUTHORIZATION_URL: ${MR_IDP_URL}/realm/auth
+  PLATFORM__TOKEN_URL: ${MR_IDP_URL}/realm/token
+  PLATFORM__JWKS_URL: ${MR_IDP_URL}/jwks
+  PLATFORM__ISSUER: ${MR_IDP_URL}/realm
+  PLATFORM__CLIENT_ID: licetum
+  PLATFORM__CLIENT_SECRET: multiregion
+  PLATFORM__ADMIN_GROUP_NAME: Platform administrator
+  PLATFORM__ADMIN_CLAIM: preferred_username
+  PLATFORM__ADMIN_CLAIM_VALUES: '["admin"]'
+
+x-check: &check
+  <<: *go
+  image: licetum:mr
+  command: ["check", "-addr", ":8001"]
+
+x-pg: &pg
+  image: postgres:16
+  environment:
+    POSTGRES_USER: licetum
+    POSTGRES_PASSWORD: licetum
+    POSTGRES_DB: licetum
+
+services:
+  # ----- region A: the primary, the administration, the worker
+  pg-primary:
+    <<: *pg
+    command: >
+      postgres -c wal_level=replica -c max_wal_senders=20 -c hot_standby=on -c max_connections=600
+      -c wal_keep_size=1GB -c fsync=off
+    volumes:
+      - ./postgres/primary-init.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
+    ports: ["25432:5432"]
+    networks: [net-a, wan]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U licetum -d licetum"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis-a: {image: "redis:7-alpine", networks: [net-a]}
+  redis-b: {image: "redis:7-alpine", networks: [net-b]}
+  redis-c: {image: "redis:7-alpine", networks: [net-c]}
+
+  migrate:
+    <<: *go
+    image: licetum:mr
+    command: ["migrate"]
+    environment:
+      <<: *env
+      DB__URI: postgres://licetum:licetum@pg-primary:5432/licetum?sslmode=disable
+      REDIS__URI: redis://redis-a:6379/0
+    depends_on:
+      pg-primary: {condition: service_healthy}
+    networks: [net-a]
+
+  admin-a:
+    <<: *go
+    image: licetum-admin:mr
+    command: ["admin", "-addr", ":8000"]
+    environment:
+      <<: *env
+      DB__URI: postgres://licetum:licetum@pg-primary:5432/licetum?sslmode=disable
+      REDIS__URI: redis://redis-a:6379/0
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    ports: ["18000:8000"]
+    networks: [net-a]
+
+  worker-a:
+    <<: *go
+    image: licetum:mr
+    command: ["worker", "-addr", ":8002"]
+    environment:
+      <<: *env
+      DB__URI: postgres://licetum:licetum@pg-primary:5432/licetum?sslmode=disable
+      REDIS__URI: redis://redis-a:6379/0
+      # Takes the jobs of the types whose source can be reached from region a (the synchronizer of the test lists it).
+      WORKER__REGION: a
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    networks: [net-a]
+
+  # The source that only region A can reach.
+  source:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./source/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./source/www:/www:ro
+    networks: [net-a]
+
+  check-a1: &check-a
+    <<: *check
+    environment:
+      <<: *env
+      DB__URI: postgres://licetum:licetum@pg-primary:5432/licetum?sslmode=disable
+      REDIS__URI: redis://redis-a:6379/0
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    ports: ["18011:8001"]
+    networks: [net-a]
+  check-a2:
+    <<: *check-a
+    ports: ["18012:8001"]
+
+  # ----- the link between the proxies and every region
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    volumes:
+      - ./toxiproxy/toxiproxy.json:/config/toxiproxy.json:ro
+    ports: ["8474:8474"]
+    networks: [wan, net-b, net-c]
+    depends_on:
+      pg-primary: {condition: service_healthy}
+
+  # ----- region B
+  pg-replica-b:
+    <<: *pg
+    entrypoint: ["/replica-entrypoint.sh"]
+    environment:
+      POSTGRES_USER: licetum
+      POSTGRES_PASSWORD: licetum
+      POSTGRES_DB: licetum
+      PRIMARY_HOST: toxiproxy
+      PRIMARY_PORT: "15433"
+    volumes:
+      - ./postgres/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    ports: ["25433:5432"]
+    networks: [net-b]
+    depends_on: [toxiproxy, migrate]
+  check-b1: &check-b
+    <<: *check
+    environment:
+      <<: *env
+      DB__URI: postgres://licetum:licetum@toxiproxy:15432/licetum?sslmode=disable
+      DB__READ_URI: postgres://licetum:licetum@pg-replica-b:5432/licetum?sslmode=disable
+      REDIS__URI: redis://redis-b:6379/0
+    depends_on:
+      pg-replica-b: {condition: service_started}
+    ports: ["18021:8001"]
+    networks: [net-b]
+  check-b2:
+    <<: *check-b
+    ports: ["18022:8001"]
+  # The administration of a region that is not the primary's: its writes cross the link.
+  admin-b:
+    <<: *go
+    image: licetum-admin:mr
+    command: ["admin", "-addr", ":8000"]
+    environment:
+      <<: *env
+      DB__URI: postgres://licetum:licetum@toxiproxy:15432/licetum?sslmode=disable
+      REDIS__URI: redis://redis-b:6379/0
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    ports: ["18010:8000"]
+    networks: [net-b]
+
+  # ----- region C
+  pg-replica-c:
+    <<: *pg
+    entrypoint: ["/replica-entrypoint.sh"]
+    environment:
+      POSTGRES_USER: licetum
+      POSTGRES_PASSWORD: licetum
+      POSTGRES_DB: licetum
+      PRIMARY_HOST: toxiproxy
+      PRIMARY_PORT: "15443"
+    volumes:
+      - ./postgres/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    ports: ["25434:5432"]
+    networks: [net-c]
+    depends_on: [toxiproxy, migrate]
+  check-c1: &check-c
+    <<: *check
+    environment:
+      <<: *env
+      DB__URI: postgres://licetum:licetum@toxiproxy:15442/licetum?sslmode=disable
+      DB__READ_URI: postgres://licetum:licetum@pg-replica-c:5432/licetum?sslmode=disable
+      REDIS__URI: redis://redis-c:6379/0
+    depends_on:
+      pg-replica-c: {condition: service_started}
+    ports: ["18031:8001"]
+    networks: [net-c]
+  check-c2:
+    <<: *check-c
+    ports: ["18032:8001"]
+
+networks:
+  net-a: {}
+  net-b: {}
+  net-c: {}
+  wan: {}

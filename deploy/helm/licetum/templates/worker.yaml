@@ -1,0 +1,80 @@
+{{- if .Values.worker.enabled }}
+{{- $component := dict "root" . "component" "worker" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "licetum.fullname" . }}-worker
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "licetum.selectorLabels" $component | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "licetum.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "licetum.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ include "licetum.terminationGrace" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- include "licetum.placement" $component | nindent 6 }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "licetum.imageCore" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["worker", "-addr", ":{{ .Values.worker.port }}"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.worker.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "licetum.fullname" . }}-config
+          env:
+            {{- include "licetum.secretEnv" (dict "root" . "key" "DB__URI") | nindent 12 }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "REDIS__URI") | nindent 12 }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "AUTH__STATE_SECRET") | nindent 12 }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "PLATFORM__CLIENT_SECRET") | nindent 12 }}
+            {{- if .Values.worker.regionAware }}
+            - name: WORKER__REGION
+              value: {{ required "region is required when worker.regionAware is set" .Values.region | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+{{- end }}

@@ -61,10 +61,10 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 	err := a.mutate(ctx, func(q db.Querier) (change, error) {
 		// The probe only proves the source works; the resources reach the cache through the synchronization.
 		s, err := engine.ScanSynchronizer(q.QueryRow(ctx, `
-			INSERT INTO synchronizer (type_resource_id, kind, config)
-			VALUES ($1, $2::synchronizer_kind, $3::jsonb)
+			INSERT INTO synchronizer (type_resource_id, kind, config, regions)
+			VALUES ($1, $2::synchronizer_kind, $3::jsonb, $4::text[])
 			RETURNING `+engine.SynchronizerColumns,
-			typeResourceID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()),
+			typeResourceID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()), regionsOrEmpty(in.Regions),
 		))
 		if db.IsUniqueViolation(err) {
 			// Two creations racing for the same type: the second loses.
@@ -129,10 +129,10 @@ func (a *App) UpdateSynchronizer(ctx context.Context, serviceID, typeResourceID,
 			return change{}, err
 		}
 		s, err := engine.ScanSynchronizer(q.QueryRow(ctx, `
-			UPDATE synchronizer SET kind = $2::synchronizer_kind, config = $3::jsonb
+			UPDATE synchronizer SET kind = $2::synchronizer_kind, config = $3::jsonb, regions = $4::text[]
 			WHERE id = $1
 			RETURNING `+engine.SynchronizerColumns,
-			synchronizerID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()),
+			synchronizerID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()), regionsFor(in.Regions, old.Regions),
 		))
 		if err != nil {
 			return change{}, err
@@ -168,4 +168,20 @@ func (a *App) DeleteSynchronizer(ctx context.Context, serviceID, typeResourceID,
 		return uuid.Nil, err
 	}
 	return synchronizerID, nil
+}
+
+// regionsOrEmpty is the regions of a new synchronizer: absent means from anywhere.
+func regionsOrEmpty(regions []string) []string {
+	if regions == nil {
+		return []string{}
+	}
+	return regions
+}
+
+// regionsFor is the regions an update stores: absent keeps the current ones, an empty list clears them.
+func regionsFor(regions, current []string) []string {
+	if regions == nil {
+		return regionsOrEmpty(current)
+	}
+	return regions
 }

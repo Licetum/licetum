@@ -66,7 +66,7 @@ func (a *App) resourcesWhere(ctx context.Context, typeID uuid.UUID, conds []mode
 	for _, clause := range containmentClauses(conds, &args) {
 		where += " AND " + clause
 	}
-	rows, err := a.DB.Query(ctx, `SELECT id, type_resource_id, external_id, name, meta FROM resource_cache WHERE `+where, args...)
+	rows, err := a.reader(ctx).Query(ctx, `SELECT id, type_resource_id, external_id, name, meta FROM resource_cache WHERE `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (a *App) accessGroupLevels(ctx context.Context, typeIDs []uuid.UUID) (map[u
 	if len(typeIDs) == 0 {
 		return out, nil
 	}
-	rows, err := a.DB.Query(ctx,
+	rows, err := a.reader(ctx).Query(ctx,
 		`SELECT type_resource_id, name, levels FROM access_group WHERE type_resource_id = ANY($1)`, typeIDs)
 	if err != nil {
 		return nil, err

@@ -196,7 +196,7 @@ func (g *TypeGraph) signature(id uuid.UUID) string {
 
 // LoadTypeGraph reads the whole type graph (all services, live and deleted types).
 func (a *App) LoadTypeGraph(ctx context.Context) (*TypeGraph, error) {
-	return loadTypeGraph(ctx, a.DB)
+	return loadTypeGraph(ctx, a.reader(ctx))
 }
 
 // loadTypeGraph reads the type graph through q (the pool, or a transaction).

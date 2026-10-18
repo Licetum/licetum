@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/licetum/licetum/core/config"
@@ -51,6 +52,36 @@ func Migrate(ctx context.Context) error {
 		return err
 	}
 	return db.RunMigrate(ctx, cfg)
+}
+
+// Failover raises every revision of the policy by a jump (-jump, default db.DefaultFailoverJump), in one transaction, against the
+// primary the process connects to. Run it once after a replica has been promoted, before the traffic is sent to it (see
+// docs/deployment.md): the regions then see revisions above everything they used, and drop what they kept under older ones.
+func Failover(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("failover", flag.ExitOnError)
+	jump := fs.Int64("jump", db.DefaultFailoverJump, "how much to add to every revision")
+	_ = fs.Parse(args)
+	cfg, err := LoadConfig(false)
+	if err != nil {
+		return err
+	}
+	pool, err := db.Connect(ctx, cfg.DB)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	var revisions map[string]int64
+	if err := db.InTx(ctx, pool, func(tx pgx.Tx) (err error) {
+		revisions, err = db.BumpAllRevisions(ctx, tx, *jump)
+		return err
+	}); err != nil {
+		return err
+	}
+	for scope, revision := range revisions {
+		slog.InfoContext(ctx, "revision raised", "scope", scope, "revision", revision)
+	}
+	slog.InfoContext(ctx, "failover done: the regions replace their views and their cached answers within REVISION__POLL_INTERVAL", "jump", *jump)
+	return nil
 }
 
 // Serve runs an HTTP application until the context ends. name is the application's name in the logs, defaultAddr its
@@ -96,6 +127,19 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	app.Logs = logs
 	app.Role = roleOf(name)
 	warnDeprecated()
+	if app.Role == engine.RoleCheck && cfg.DB.ReadURI != "" && cfg.DB.ReadURI != cfg.DB.URI {
+		// The check API reads the policy from the read replica of its region; everything else, and every read that must be
+		// current, goes to the primary (see engine.App.ReadDB).
+		readCfg := cfg.DB
+		readCfg.URI = cfg.DB.ReadURI
+		readPool, err := db.Connect(ctx, readCfg)
+		if err != nil {
+			return fmt.Errorf("connect to DB__READ_URI: %w", err)
+		}
+		defer readPool.Close()
+		app.UseReadReplica(readPool)
+		slog.InfoContext(ctx, "reading the policy from a read replica", "max_lag", cfg.DB.MaxReplicaLag, "action", cfg.DB.LagAction)
+	}
 	if app.Role == engine.RoleAdmin {
 		// The admin API refreshes a single resource inline; it does so on the synchronization pool, not on the request pool.
 		syncPool, err := connectSyncPool(ctx, cfg)
@@ -113,6 +157,7 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	watchCtx, stopWatching := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopWatching()
 	go app.WatchRevision(watchCtx)
+	go app.WatchReplica(watchCtx)
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -197,10 +242,14 @@ func warnDeprecated() {
 // worker and the admin API) and the pool of the DBOS client (SYNC__DBOS_POOL_SIZE, outside the others, when the
 // synchronization runs on DBOS). The connections of all the replicas add up against max_connections of the server, or
 // against default_pool_size of PgBouncer.
-func connectionBudget(cfg *config.Config, withSyncPool bool) (total int, parts []any) {
+func connectionBudget(cfg *config.Config, withSyncPool, withReadPool bool) (total int, parts []any) {
 	request := cfg.DB.MaxConns()
 	total = request
 	parts = []any{"request_pool", request}
+	if withReadPool {
+		// The pool of the read replica (DB__READ_URI) has the size of the request pool, on the replica's own server.
+		parts = append(parts, "read_pool_on_replica", request)
+	}
 	if withSyncPool {
 		syncPool := max(cfg.DB.SyncPoolSize, 1)
 		total += syncPool
@@ -220,7 +269,7 @@ func connectionBudget(cfg *config.Config, withSyncPool bool) (total int, parts [
 // logConnectionBudget tells the operator how many connections the process may take, and warns when PostgreSQL would not
 // give even one process that many: many replicas with the default pool settings exhaust max_connections.
 func logConnectionBudget(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, app string, withSyncPool bool) {
-	total, parts := connectionBudget(cfg, withSyncPool)
+	total, parts := connectionBudget(cfg, withSyncPool, app == "check" && cfg.DB.ReadURI != "" && cfg.DB.ReadURI != cfg.DB.URI)
 	slog.InfoContext(ctx, "database connections: the most this process may hold, to be multiplied by the replicas against "+
 		"max_connections of PostgreSQL (or default_pool_size of PgBouncer)", append([]any{"app", app, "total", total}, parts...)...)
 	if cfg.DB.PgBouncer {

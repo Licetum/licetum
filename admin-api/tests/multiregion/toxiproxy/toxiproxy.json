@@ -1,0 +1,6 @@
+[
+  {"name": "primary-b", "listen": "0.0.0.0:15432", "upstream": "pg-primary:5432", "enabled": true},
+  {"name": "replication-b", "listen": "0.0.0.0:15433", "upstream": "pg-primary:5432", "enabled": true},
+  {"name": "primary-c", "listen": "0.0.0.0:15442", "upstream": "pg-primary:5432", "enabled": true},
+  {"name": "replication-c", "listen": "0.0.0.0:15443", "upstream": "pg-primary:5432", "enabled": true}
+]

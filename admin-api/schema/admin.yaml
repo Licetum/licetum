@@ -2976,6 +2976,15 @@ components:
           description: Synchronizer id
           format: uuid
           type: string
+        regions:
+          description: Regions the source can be reached from; empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type
+          examples:
+            - - eu
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         type_resource_id:
           description: Resource type id
           format: uuid
@@ -2984,6 +2993,7 @@ components:
         - id
         - type_resource_id
         - config
+        - regions
       type: object
     SynchronizerConfig:
       additionalProperties: true
@@ -3052,6 +3062,15 @@ components:
           examples:
             - b1
           type: string
+        regions:
+          description: Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type. Absent on an update keeps them
+          examples:
+            - - eu
+          items:
+            type: string
+          type:
+            - array
+            - "null"
       required:
         - config
         - probe_resource_id

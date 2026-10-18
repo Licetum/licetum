@@ -218,6 +218,10 @@ func (a *App) claimJob(ctx context.Context, owner string) (*syncJob, error) {
 		WITH next AS (
 			SELECT id FROM sync_job
 			WHERE attempts < $3 AND (state = 'queued' OR (state = 'running' AND lease_until < now()))
+			  AND ($4 = '' OR NOT EXISTS (
+			        SELECT 1 FROM synchronizer s
+			        WHERE s.type_resource_id = ANY(sync_job.type_ids) AND s.deleted_at IS NULL
+			          AND cardinality(s.regions) > 0 AND NOT ($4 = ANY(s.regions))))
 			ORDER BY id
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1)
@@ -226,7 +230,7 @@ func (a *App) claimJob(ctx context.Context, owner string) (*syncJob, error) {
 		    lease_until = now() + make_interval(secs => $2), started_at = now(), attempts = j.attempts + 1
 		FROM next WHERE j.id = next.id
 		RETURNING j.id, j.type_ids, j.fresh, j.source, j.lease_token, j.attempts`,
-		owner, a.leaseDuration().Seconds(), maxJobClaims).
+		owner, a.leaseDuration().Seconds(), maxJobClaims, a.workerRegion()).
 		Scan(&j.ID, &j.TypeIDs, &j.Fresh, &j.Source, &j.Token, &j.Attempts)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -806,3 +810,11 @@ func (a *App) importLegacyState(ctx context.Context) {
 
 // legacyHashPrefix is where the previous release kept the hash of the last synchronization of a type.
 const legacyHashPrefix = "authz:resource_sync:hash:"
+
+// workerRegion is the region of this worker (WORKER__REGION): it claims only the jobs whose source can be reached from there.
+func (a *App) workerRegion() string {
+	if a.Cfg == nil {
+		return ""
+	}
+	return a.Cfg.Sync.WorkerRegion
+}

@@ -77,7 +77,7 @@ lists accept a JSON array or a comma-separated string.
 
 | Prefix | Variables |
 |---|---|
-| `DB__` | `DB__URI` (required), pool settings (`DB__POOL_SIZE` default 10, `DB__MAX_OVERFLOW` default 20, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO`; behind PgBouncer: `DB__PGBOUNCER` (simple protocol, nothing prepared) and `DB__MIGRATE_URI` (where `licetum migrate` connects, PostgreSQL itself) — see [Resilience and operations](#resilience-and-operations) |
+| `DB__` | `DB__URI` (required), `DB__READ_URI` (read replica of a check process), `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL` — see [Read replica](#read-replica-db__read_uri), pool settings (`DB__POOL_SIZE` default 10, `DB__MAX_OVERFLOW` default 20, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO`; behind PgBouncer: `DB__PGBOUNCER` (simple protocol, nothing prepared) and `DB__MIGRATE_URI` (where `licetum migrate` connects, PostgreSQL itself) — see [Resilience and operations](#resilience-and-operations) |
 | `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the check API's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
 | `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
 | `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `at_least_as_fresh` waits for its revision before the answer is computed from the data) |
@@ -192,6 +192,25 @@ pool is too small (acquires that waited) or too large for the server.
 `licetum migrate` holds a session-level advisory lock for its whole run, which transaction pooling cannot carry: give it
 `DB__MIGRATE_URI` pointing at PostgreSQL itself. DBOS prepares its statements: use PgBouncer 1.21 or newer with
 `max_prepared_statements` set, or point `SYNC__DBOS_URI` at PostgreSQL directly, or use `SYNC__ENGINE=postgres`.
+
+### Read replica (`DB__READ_URI`)
+
+A `check` process can read the policy from a read replica of PostgreSQL, normally the one of its own region, so that a request never
+crosses a region. Set `DB__READ_URI` (asynchronous streaming replica; the primary stays `DB__URI`). The snapshot of the policy, the
+revision it follows, the type graph and the closure are read from the replica; the revision a process acts on is therefore the one of
+the data it has. Everything that writes (the admin API, the worker, the revision bump) uses the primary, and so does every read that
+must be current: `consistency=higher`, and `at_least_as_fresh=R` when the replica has not reached `R` within `REVISION__WAIT_MAX`
+(such an answer is computed from the primary and not kept under the replica's revision). Use a client that passes `X-Authz-Revision`
+of its write as `at_least_as_fresh` when it must see the write at once; otherwise a write is seen within the replication lag plus
+`REVISION__POLL_INTERVAL`.
+
+The process measures the lag every `DB__LAG_INTERVAL` (1 s): the larger of what the replica reports (`pg_last_xact_replay_timestamp`,
+zero when it has replayed everything it received) and how long its revision has been behind the primary's. It is
+`licetum_replica_lag_seconds` (also `licetum_replica_revision_lag` and `licetum_replica_lagging`). Above `DB__MAX_REPLICA_LAG`
+(10 s) `DB__LAG_ACTION` decides: `unready` (default) makes `/readyz` fail with the reason `replica_lag`, so that the balancer sends
+the traffic to another region, and the process recovers by itself; `primary` moves the reads to the primary until the replica has
+caught up. `POLICY__MAX_STALENESS` applies to the replica too: a replica more behind than that, with the reads on the replica, fails
+closed (503 `policy_unavailable`). The pool of the replica is the `read` pool in `licetum_db_pool_*`; size it like the request pool.
 
 ### Migrations
 

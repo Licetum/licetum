@@ -1,0 +1,18 @@
+# A cell (values-cell.yaml on top of the defaults): its own PostgreSQL and Redis, and a policy that lets the pods reach only those.
+region: cn
+secrets:
+  dbUri: postgres://licetum:licetum@10.30.0.5:5432/licetum
+  redisUri: redis://10.30.1.5:6379/0
+  authStateSecret: ci-only-state-secret
+  platformClientSecret: ci-only-client-secret
+platform:
+  url: https://admin.cn.example.com
+  icon: https://admin.cn.example.com/favicon.ico
+  authorizationUrl: https://idp.cn.example.com/auth
+  tokenUrl: https://idp.cn.example.com/token
+  jwksUrl: https://idp.cn.example.com/keys
+  issuer: https://idp.cn.example.com
+  clientId: licetum
+networkPolicy:
+  dbCidrs: [10.30.0.0/24]
+  redisCidrs: [10.30.1.0/24]
