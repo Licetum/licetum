@@ -304,41 +304,49 @@ func TestSyncWaitingForTheWorkerHoldsNoComputeSlot(t *testing.T) {
 	}
 }
 
-// Concurrent requests that ask for a job which is already queued do not wedge the DBOS client of the process. A DBOS enqueue
+// Concurrent requests that ask for jobs which are already queued do not wedge the DBOS client of the process. A DBOS enqueue
 // holds a connection of the client's pool in its transaction and, when the job is a duplicate, takes a second one to find the
 // job that holds the deduplication id, with no deadline, while the listener of the client keeps one connection for good: as
 // many concurrent duplicate enqueues as the pool had connections left each held one and waited for another forever (TestF2_2
-// hung so for 39 minutes, 20 concurrent admin writes enqueueing the six platform types each). The process now runs at most
-// (pool - 1) / 2 enqueues at once (engine.enqueueSlot).
+// hung so for 39 minutes, 20 concurrent admin writes enqueueing the six platform types each). The concurrent requests for one
+// job share one enqueue, and the process runs at most (pool - 1) / 2 enqueues of different jobs at once (engine.enqueueSlot).
 func TestSyncConcurrentDuplicateEnqueuesDoNotExhaustTheDBOSPool(t *testing.T) {
 	if syncEngine() != "dbos" {
 		t.Skip("the DBOS client only")
 	}
 	e := setup(t)
-	f := e.syncFixture("enqueues", newSource(t, branches("b1")...)) // its admin requests made the worker create the DBOS tables
-	e.stopWorker()                                                     // the job stays queued: every later enqueue is a duplicate
+	const types = 4
+	fixtures := make([]*syncFixture, types)
+	typeIDs := make([]uuid.UUID, types)
+	for i := range fixtures {
+		// The admin requests of the first one made the worker create the DBOS tables.
+		fixtures[i] = e.syncFixture(fmt.Sprintf("enqueues-%d", i), newSource(t, branches("b1")...))
+		typeIDs[i] = uuid.MustParse(fixtures[i].typ)
+	}
+	e.stopWorker()                                                          // the jobs stay queued: every later enqueue is a duplicate
 	r := e.checkReplica(func(c *config.Config) { c.Sync.DBOSPoolSize = 3 }) // the listener's connection and two more
-	typ := uuid.MustParse(f.typ)
-	// The first request creates the DBOS client of the process (the requests meanwhile answer without it) and queues the job.
+	// The first requests create the DBOS client of the process (the requests meanwhile answer without it) and queue the jobs.
 	deadline := time.Now().Add(10 * time.Second)
-	for e.jobCount(f.typ, "queued") == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("the job was not queued")
+	for _, f := range fixtures {
+		for e.jobCount(f.typ, "queued") == 0 {
+			if time.Now().After(deadline) {
+				t.Fatalf("the job of the type %s was not queued", f.typ)
+			}
+			if _, err := r.app.Coordinator().Ensure(context.Background(), typeIDs, engine.SyncOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		if _, err := r.app.Coordinator().Ensure(context.Background(), []uuid.UUID{typ}, engine.SyncOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(100 * time.Millisecond)
 	}
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		var wg sync.WaitGroup
-		for range 16 {
+		for i := range 16 {
 			wg.Go(func() {
 				// No wait: the request only asks for the job (and answers from the data that exists).
-				if _, err := r.app.Coordinator().Ensure(context.Background(), []uuid.UUID{typ}, engine.SyncOptions{}); err != nil {
+				if _, err := r.app.Coordinator().Ensure(context.Background(), typeIDs[i%types:i%types+1], engine.SyncOptions{}); err != nil {
 					t.Errorf("ensure: %v", err)
 				}
 			})
@@ -348,10 +356,12 @@ func TestSyncConcurrentDuplicateEnqueuesDoNotExhaustTheDBOSPool(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(20 * time.Second):
-		t.Fatal("16 concurrent requests for a queued job did not get through the enqueue in 20 s: the DBOS pool of 3 is wedged")
+		t.Fatalf("16 concurrent requests for %d queued jobs did not get through the enqueue in 20 s: the DBOS pool of 3 is wedged", types)
 	}
-	if got := e.jobCount(f.typ, "queued"); got != 1 {
-		t.Fatalf("%d queued jobs for the type, want the one they share", got)
+	for _, f := range fixtures {
+		if got := e.jobCount(f.typ, "queued"); got != 1 {
+			t.Fatalf("%d queued jobs for the type %s, want the one they share", got, f.typ)
+		}
 	}
 }
 

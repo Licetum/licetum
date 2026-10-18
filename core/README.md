@@ -273,6 +273,11 @@ What the spike found, and what the engine does about it:
   nothing (`licetum_sync_lease_lost_total`), and the cancel of a takeover waits for a commit in flight.
 - The DBOS client holds a connection per waiting `GetResult`, and its pool has 20: the waiters of one workflow share a single
   poller per process, and `pool_max_conns` is set to 20 unless the URI says otherwise.
+- The deduplication id is free again once a workflow ends: a request that read the state of a type before a job brought it up
+  to date, and asks after the job ended (its client was still connecting, an enqueue slot was busy), would start a second job.
+  A request that waits for a job names it after the version of the `sync_state` row it read (`<deduplication id>@<xmin>`,
+  `@none` without a row), so the requests that read the same state share the job also once it has ended; every job writes the
+  state of the types it was due for. The concurrent requests of a process for the same workflow share one enqueue.
 - Through a link with a round trip of 150 ms an enqueue takes about 4 round trips (0.6 s) and the whole call about 1.4 s more than
   on a local network: put the workers and the check processes in the region of the database.
 - PgBouncer in transaction mode was not tried: DBOS listens for notifications and needs session connections. Use direct

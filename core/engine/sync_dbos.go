@@ -15,6 +15,7 @@ import (
 	"github.com/dbos-inc/dbos-transact-golang/dbos"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/licetum/licetum/core/db"
 )
@@ -66,7 +67,22 @@ type dbosState struct {
 	// enqueueSlots bounds the enqueues the process runs at once (see enqueueSlot).
 	enqueueSlots     chan struct{}
 	enqueueSlotsOnce sync.Once
+	// enqueues makes the concurrent requests of the process for one job share one enqueue (see dbosBackend.enqueue).
+	enqueues singleflight.Group
 }
+
+// jobName names the workflow that a request waits for after it read version v of the state of a type (the xmin of its
+// sync_state row, "none" without a row): the requests that read the same state share it, whether it is queued, running or
+// has ended. The deduplication id alone holds only while a job is queued or running: a request that read the state before
+// a job brought the type up to date and asks after the job ended (its DBOS client was connecting, an enqueue slot was busy,
+// or it was merely slower) would start a second job for data that is current already; under the name it finds the job that
+// ended, and its outcome. Every job writes the state of the types it was due for, so the state read after a job has another
+// name.
+func jobName(dedupKey, version string) string { return dedupKey + "@" + version }
+
+// enqueueWait bounds how long an enqueue that the requests of the process share waits for a slot: the request that started
+// it may be gone, the others still wait for it.
+const enqueueWait = 30 * time.Second
 
 // enqueueSlot takes one of the slots of the DBOS enqueues of the process, waiting while ctx lasts; release gives it back.
 //
@@ -75,7 +91,8 @@ type dbosState struct {
 // deadline; and the listener of the notifications keeps one connection of the same pool for good. As many duplicate enqueues
 // at once as the pool has connections left would each hold one and wait for another forever, and with them every request
 // of the process that needs a synchronization. The process runs at most (pool - 1) / 2 enqueues at once: each of them finds
-// its second connection.
+// its second connection. (The concurrent requests for one job share a single enqueue, see dbosBackend.enqueue: the enqueues
+// at once are of different jobs, and the slots bound those.)
 func (a *App) enqueueSlot(ctx context.Context) (release func(), err error) {
 	s := &a.dbos
 	s.enqueueSlotsOnce.Do(func() {
@@ -190,7 +207,9 @@ func (a *App) newDBOSClient(ctx context.Context) (dbos.Client, error) {
 	})
 }
 
-func (b dbosBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string) (map[uuid.UUID]string, error) {
+// enqueue queues the workflow of each type, named after the state the caller read when seen has it (see jobName). The
+// concurrent requests of the process for the same workflow share one enqueue: one transaction and one slot.
+func (b dbosBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string, seen map[uuid.UUID]string) (map[uuid.UUID]string, error) {
 	client, err := b.a.dbosClient(ctx)
 	if err != nil {
 		return nil, err
@@ -201,26 +220,49 @@ func (b dbosBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh boo
 	var firstErr error
 	for _, id := range typeIDs {
 		wg.Go(func() {
-			release, err := b.a.enqueueSlot(ctx)
-			if err != nil {
-				mu.Lock()
-				defer mu.Unlock()
-				firstErr = errors.Join(firstErr, err)
-				return
-			}
-			h, err := dbos.Enqueue[dbosSyncOut](client, dbosQueue, dbosWorkflow,
-				dbosSyncIn{TypeID: id.String(), Fresh: fresh, Source: source},
-				dbos.WithEnqueueDeduplicationID(dedupKey([]uuid.UUID{id}, fresh)),
+			key := dedupKey([]uuid.UUID{id}, fresh)
+			opts := []dbos.EnqueueOption{
+				dbos.WithEnqueueDeduplicationID(key),
 				dbos.WithEnqueueDeduplicationPolicy(dbos.DeduplicationPolicyReturnExisting),
-				dbos.WithEnqueueAttributes(map[string]any{"type": id.String(), "fresh": fresh}))
-			release()
+				dbos.WithEnqueueAttributes(map[string]any{"type": id.String(), "fresh": fresh}),
+			}
+			flight := key
+			if v, ok := seen[id]; ok && !fresh {
+				flight = jobName(key, v)
+				opts = append(opts, dbos.WithEnqueueWorkflowID(flight))
+			}
+			ch := b.a.dbos.enqueues.DoChan(flight, func() (any, error) {
+				// The enqueue is shared: it goes on for the others when the request that started it is gone.
+				fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), enqueueWait)
+				defer cancel()
+				release, err := b.a.enqueueSlot(fctx)
+				if err != nil {
+					return "", err
+				}
+				defer release()
+				h, err := dbos.Enqueue[dbosSyncOut](client, dbosQueue, dbosWorkflow,
+					dbosSyncIn{TypeID: id.String(), Fresh: fresh, Source: source}, opts...)
+				if err != nil {
+					return "", err
+				}
+				return h.GetWorkflowID(), nil
+			})
+			var ref string
+			var err error
+			select {
+			case r := <-ch:
+				ref, _ = r.Val.(string)
+				err = r.Err
+			case <-ctx.Done():
+				err = ctx.Err()
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				firstErr = errors.Join(firstErr, err)
 				return
 			}
-			refs[id] = h.GetWorkflowID()
+			refs[id] = ref
 		})
 	}
 	wg.Wait()
