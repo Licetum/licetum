@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 const delay = 150 * time.Millisecond
 
 // setup starts one replica behind the proxies with a policy, and warms its caches. A request of a warm replica needs
-// neither PostgreSQL nor Redis (F1), so the tests that prove a fault takes effect ask with consistency=higher
+// neither PostgreSQL nor Redis (F1), so the tests that prove a fault takes effect ask for the freshest answer
 // (harness.Replica.Fresh), which reads both.
 func setup(t *testing.T) (*harness.Cluster, *harness.Replica, *harness.Policy, string) {
 	t.Helper()
@@ -51,12 +51,12 @@ func setup(t *testing.T) (*harness.Cluster, *harness.Replica, *harness.Policy, s
 	p := c.SeedPolicy("org", 0)
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 	return c, r, p, alice
 }
 
 // stranger returns the token of a person nothing is cached for, in this process or in Redis: its request verifies the
-// token and computes the answer, so it reads Redis (a request of a warm replica, or a consistency=higher one, may not).
+// token and computes the answer, so it reads Redis (a request of a warm replica, or a fresh one, may not).
 func stranger(c *harness.Cluster, n *int) string {
 	*n++
 	return c.UserToken(fmt.Sprintf("stranger-%d", *n))
@@ -140,7 +140,7 @@ func TestF0_4_CuttingRedisIsSeenByTheReplica(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.RedisFault.Cut()
 	// Redis is a cache for the reads: the answer is computed from the data, and every Redis call fails. With a token verified
-	// in memory and consistency=higher, the only Redis call is the write of the answer, in the background after the response.
+	// in memory and a fresh answer, the only Redis call is the write of the answer, in the background after the response.
 	r.Fresh(c, p.Slug, alice)
 	deadline := time.Now().Add(10 * time.Second)
 	for !redisErrors(r.Metrics(c)) {
@@ -176,7 +176,8 @@ func TestF0_4_BlackHoleOnRedisMakesTheRequestHang(t *testing.T) {
 	c, r, p, alice := setup(t)
 	var n int
 	c.RedisFault.BlackHole()
-	_, _, err := r.TryGet(c, "/service/"+p.Slug+"/permission", stranger(c, &n), time.Second)
+	unknown := stranger(c, &n)
+	_, _, err := r.Try(c, harness.Branches(p.Slug, unknown), unknown, time.Second)
 	if err == nil {
 		t.Fatal("the request was answered although Redis swallows the traffic")
 	}
@@ -197,7 +198,7 @@ func TestF0_4_BlackHoleOnRedisMakesTheRequestHang(t *testing.T) {
 func TestF0_4_BlackHoleOnPostgresMakesTheRequestHang(t *testing.T) {
 	c, r, p, alice := setup(t)
 	c.PostgresFault.BlackHole()
-	_, _, err := r.TryGet(c, "/service/"+p.Slug+"/permission?consistency=higher", alice, time.Second)
+	_, _, err := r.Try(c, harness.Branches(p.Slug, alice), alice, time.Second, harness.Higher())
 	if err == nil {
 		t.Fatal("the request was answered although PostgreSQL swallows the traffic")
 	}

@@ -66,7 +66,7 @@ func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
 	waitForKeys(t, c, "authz:permission:*", "authz:token:*")
 
 	for _, r := range []*harness.Replica{first, second} {
-		r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+		r.Warm(c, c.PermissionRequest(p.Slug, alice), alice) // the request that is measured next
 		beforeMetrics := r.Metrics(c)
 		hit := r.Permission(c, p.Slug, alice)
 		if hit.Status != http.StatusOK {

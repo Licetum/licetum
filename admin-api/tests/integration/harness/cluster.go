@@ -7,7 +7,6 @@
 package harness
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,6 +36,7 @@ import (
 	"github.com/licetum/licetum/core/redisx"
 	"github.com/licetum/licetum/core/server"
 	support "github.com/licetum/licetum/core/testsupport"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // Cluster is one environment: the shared state, the fakes, the admin API and the check replicas.
@@ -65,7 +65,7 @@ type Cluster struct {
 
 	// LastRevision is the revision (X-Authz-Revision) of the last write made through AdminDo or Must. The replicas
 	// follow the revision with a delay of up to REVISION__POLL_INTERVAL; Replica.Permission asks for at least this one, so
-	// that it sees the writes of the test, as a client that passes at_least_as_fresh does.
+	// that it sees the writes of the test, as a client that passes at_least_as_fresh does (authzenreq.AtLeast).
 	LastRevision atomic.Int64
 
 	proxied      bool
@@ -298,7 +298,8 @@ func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
 	t.Cleanup(stopWatching)
 
 	r := &Replica{Index: index, App: app, Pool: pool, Redis: rdb}
-	handler := server.NewCheckHandler(app)
+	// Levers: a test sets the freshness of a request with a header (Higher), not with a parameter of the API.
+	handler := Levers(server.NewCheckHandler(app))
 	// The Trace of a request is created here, so the test can read what the request cost; the server keeps it.
 	r.Server = serve(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		ctx, trace := engine.WithTrace(req.Context())
@@ -354,7 +355,7 @@ func (c *Cluster) UserToken(name string) string {
 // AdminDo sends a request to the admin API as the platform administrator and returns the status and the body.
 func (c *Cluster) AdminDo(method, path string, body any) (int, []byte) {
 	c.T.Helper()
-	status, raw, header := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "")
+	status, raw, header := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "", nil)
 	if rev, err := strconv.ParseInt(header.Get("X-Authz-Revision"), 10, 64); err == nil && rev > c.LastRevision.Load() {
 		c.LastRevision.Store(rev)
 	}
@@ -364,7 +365,7 @@ func (c *Cluster) AdminDo(method, path string, body any) (int, []byte) {
 // AdminWrite is AdminDo that also returns the revision the write took (X-Authz-Revision; 0 when the request wrote nothing).
 func (c *Cluster) AdminWrite(method, path string, body any) (status int, raw []byte, revision int64) {
 	c.T.Helper()
-	status, raw, header := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "")
+	status, raw, header := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "", nil)
 	revision, _ = strconv.ParseInt(header.Get("X-Authz-Revision"), 10, 64)
 	if revision > c.LastRevision.Load() {
 		c.LastRevision.Store(revision)
@@ -390,32 +391,21 @@ func (c *Cluster) Must(method, path string, body any) map[string]any {
 	return out
 }
 
-// do sends a request; requestID, when not empty, names it for the Trace lookup. A failure to get an answer fails the test.
-func (c *Cluster) do(method, target, token string, body any, requestID string) (int, []byte, http.Header) {
+// do sends a request; requestID, when not empty, names it for the Trace lookup, and header adds headers. A failure to get an
+// answer fails the test.
+func (c *Cluster) do(method, target, token string, body any, requestID string, header http.Header) (int, []byte, http.Header) {
 	c.T.Helper()
-	status, raw, header, err := c.send(c.client, method, target, token, body, requestID)
+	status, raw, answered, err := c.send(c.client, method, target, token, body, requestID, header)
 	if err != nil {
 		c.T.Fatalf("%s %s: %v", method, target, err)
 	}
-	return status, raw, header
+	return status, raw, answered
 }
 
-func (c *Cluster) send(client *http.Client, method, target, token string, body any, requestID string) (int, []byte, http.Header, error) {
-	var reader io.Reader
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
-			return 0, nil, nil, err
-		}
-		reader = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequestWithContext(context.Background(), method, target, reader)
+func (c *Cluster) send(client *http.Client, method, target, token string, body any, requestID string, header http.Header) (int, []byte, http.Header, error) {
+	req, err := newRequest(context.Background(), method, target, token, body, header)
 	if err != nil {
 		return 0, nil, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	if requestID != "" {
 		req.Header.Set("X-Request-ID", requestID)
@@ -452,54 +442,93 @@ func (r *Result) JSON(t testing.TB) map[string]any {
 	return out
 }
 
+// IDs are the ids of the resources that the answer to a search of resources lists (see Branches), in the order the API gives
+// them. An answer that is not one, an error status included, fails the test.
+func (r *Result) IDs(t testing.TB) []string {
+	t.Helper()
+	ids, _, err := authzenreq.ResourceIDs(r.Status, r.Body)
+	if err != nil {
+		t.Fatalf("decode the answer: %v", err)
+	}
+	return ids
+}
+
+// Decision is the decision of the answer to the evaluation of one question. An answer that is not a decision fails the test,
+// an evaluation that could not be decided (the API answers false with context.error) included: it is not a denial.
+func (r *Result) Decision(t testing.TB) bool {
+	t.Helper()
+	allowed, err := authzenreq.Allowed(r.Status, r.Body)
+	if err != nil {
+		t.Fatalf("decode the answer: %v", err)
+	}
+	return allowed
+}
+
+// Sees is whether the answer to a search of resources (see Branches) lists at least one: the person has the access it asked
+// for. An answer that is not a 200, or that cannot be read, sees nothing, so a test that waits for a grant to appear or to go
+// tells that from a refusal by the status.
+func (r *Result) Sees() bool {
+	ids, _, err := authzenreq.ResourceIDs(r.Status, r.Body)
+	return err == nil && len(ids) > 0
+}
+
 // Do sends a request to the replica with the token (empty: none) and returns the answer with the Trace of the request.
 func (r *Replica) Do(c *Cluster, method, path, token string, body any) *Result {
 	c.T.Helper()
+	return r.request(c, method, path, token, body, nil)
+}
+
+// Send sends an AuthZEN request (see authzenreq) to the replica with the token (empty: none), under the levers, and returns the
+// answer with the Trace of the request.
+func (r *Replica) Send(c *Cluster, req authzenreq.Request, token string, levers ...Lever) *Result {
+	c.T.Helper()
+	return r.request(c, req.Method, req.Path, token, req.Body, questionHeader(levers))
+}
+
+func (r *Replica) request(c *Cluster, method, path, token string, body any, header http.Header) *Result {
+	c.T.Helper()
 	id := "harness-" + strconv.Itoa(r.Index) + "-" + strconv.FormatInt(r.seq.Add(1), 10)
-	status, raw, header := c.do(method, r.Server.URL+path, token, body, id)
-	res := &Result{Status: status, Body: raw, Header: header}
+	status, raw, answered := c.do(method, r.Server.URL+path, token, body, id, header)
+	res := &Result{Status: status, Body: raw, Header: answered}
 	if v, ok := r.traces.LoadAndDelete(id); ok {
 		res.Trace = v.(*engine.Trace)
 	}
 	return res
 }
 
-// TryPermission is Permission for a replica that may not answer: the client gives up after timeout and the error says
-// so (a black-holed dependency makes the replica wait for it). The Trace is not returned: the request may still run.
-func (r *Replica) TryPermission(c *Cluster, serviceRef, token string, timeout time.Duration) (status int, body []byte, err error) {
-	c.T.Helper()
-	return r.TryGet(c, "/service/"+serviceRef+"/permission", token, timeout)
-}
-
-// TryGet is TryPermission for any path of the replica.
-func (r *Replica) TryGet(c *Cluster, path, token string, timeout time.Duration) (status int, body []byte, err error) {
+// Try is Send for a replica that may not answer: the client gives up after timeout and the error says so (a black-holed
+// dependency makes the replica wait for it). The Trace is not returned: the request may still run.
+func (r *Replica) Try(c *Cluster, req authzenreq.Request, token string, timeout time.Duration, levers ...Lever) (status int, body []byte, err error) {
 	c.T.Helper()
 	client := &http.Client{Timeout: timeout}
-	status, body, _, err = c.send(client, http.MethodGet, r.Server.URL+path, token, nil, "")
+	status, body, _, err = c.send(client, req.Method, r.Server.URL+req.Path, token, req.Body, "", questionHeader(levers))
 	return status, body, err
 }
 
-// Fresh asks GET /service/{ref}/permission with consistency=higher: the policy and the sources are read again, so the
-// request needs PostgreSQL and Redis even when everything is cached.
-func (r *Replica) Fresh(c *Cluster, serviceRef, token string) *Result {
+// TryPermission is Try of the request that Permission sends, without asking for a revision.
+func (r *Replica) TryPermission(c *Cluster, serviceRef, token string, timeout time.Duration) (status int, body []byte, err error) {
 	c.T.Helper()
-	return r.Do(c, http.MethodGet, "/service/"+serviceRef+"/permission?consistency=higher", token, nil)
+	return r.Try(c, Branches(serviceRef, token), token, timeout)
 }
 
-// Permission asks GET /service/{ref}/permission.
+// Fresh asks what Permission asks under the lever Higher: the policy and the sources are read again, so the request needs
+// PostgreSQL and Redis even when everything is cached.
+func (r *Replica) Fresh(c *Cluster, serviceRef, token string) *Result {
+	c.T.Helper()
+	return r.Send(c, Branches(serviceRef, token), token, Higher())
+}
+
+// Permission asks the service for the branches the holder of the token may read, for an answer that reflects the last write
+// made through AdminDo or Must (PermissionRequest).
 func (r *Replica) Permission(c *Cluster, serviceRef, token string) *Result {
 	c.T.Helper()
-	path := "/service/" + serviceRef + "/permission"
-	if rev := c.LastRevision.Load(); rev > 0 {
-		path += "?at_least_as_fresh=" + strconv.FormatInt(rev, 10)
-	}
-	return r.Do(c, http.MethodGet, path, token, nil)
+	return r.Send(c, c.PermissionRequest(serviceRef, token), token)
 }
 
 // Metrics is the text of GET /metrics of the replica.
 func (r *Replica) Metrics(c *Cluster) string {
 	c.T.Helper()
-	_, raw, _ := c.do(http.MethodGet, r.Server.URL+"/metrics", "", nil, "")
+	_, raw, _ := c.do(http.MethodGet, r.Server.URL+"/metrics", "", nil, "", nil)
 	return string(raw)
 }
 
@@ -524,14 +553,14 @@ func (c *Cluster) WaitForSyncIdle() {
 // Warm sends the request until the replica is in a steady state for it: the answer and the token are cached and the
 // background work of the earlier requests (writing the cache, refreshing a source, the batch of known subjects) has ended, which is when two
 // requests in a row cost the same. It returns the last of them. The cost of a request is meaningful only then.
-func (r *Replica) Warm(c *Cluster, method, path, token string) *Result {
+func (r *Replica) Warm(c *Cluster, req authzenreq.Request, token string) *Result {
 	c.T.Helper()
 	var last *Result
 	same := 0
 	for i := 0; i < 40; i++ {
-		res := r.Do(c, method, path, token, nil)
+		res := r.Send(c, req, token)
 		if res.Status != http.StatusOK {
-			c.T.Fatalf("warm %s %s: %d %s", method, path, res.Status, res.Body)
+			c.T.Fatalf("warm %s %s: %d %s", req.Method, req.Path, res.Status, res.Body)
 		}
 		if last != nil && last.Trace.DBQueries() == res.Trace.DBQueries() && last.Trace.RedisRoundTrips() == res.Trace.RedisRoundTrips() {
 			same++
@@ -545,11 +574,11 @@ func (r *Replica) Warm(c *Cluster, method, path, token string) *Result {
 			// batch does not fall into the request a test measures next.
 			r.App.FlushSubjects(context.Background())
 			time.Sleep(100 * time.Millisecond) // let the background work of the last request end
-			return r.Do(c, method, path, token, nil)
+			return r.Send(c, req, token)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	c.T.Fatalf("%s %s did not settle: the last request cost db=%d redis=%d", method, path, last.Trace.DBQueries(), last.Trace.RedisRoundTrips())
+	c.T.Fatalf("%s %s did not settle: the last request cost db=%d redis=%d", req.Method, req.Path, last.Trace.DBQueries(), last.Trace.RedisRoundTrips())
 	return nil
 }
 

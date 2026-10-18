@@ -153,7 +153,6 @@ func TestF5_1_RedisIsNotPartOfReadiness(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithFaultProxies(), harness.WithHotRedis(50*time.Millisecond))
 	p := c.SeedPolicy("org", 0)
 	r := c.Replicas[0]
-	path := "/service/" + p.Slug + "/permission"
 
 	degraded := func() float64 {
 		return harness.MetricValue(r.Metrics(c), `licetum_degraded{component="redis"}`)
@@ -165,7 +164,8 @@ func TestF5_1_RedisIsNotPartOfReadiness(t *testing.T) {
 	c.RedisFault.Cut()
 	// Requests for subjects the replica has not seen need Redis (the token cache), fail to reach it, and trip the fast-fail.
 	eventually(t, 10*time.Second, "licetum_degraded{component=\"redis\"} is 1 with Redis cut", func() bool {
-		r.Do(c, http.MethodGet, path, c.UserToken("user-"+time.Now().Format("150405.000000")), nil)
+		token := c.UserToken("user-" + time.Now().Format("150405.000000"))
+		r.Send(c, harness.Branches(p.Slug, token), token)
 		return degraded() == 1
 	})
 	if res := readyz(c, r); res.Status != http.StatusOK {
@@ -174,7 +174,8 @@ func TestF5_1_RedisIsNotPartOfReadiness(t *testing.T) {
 
 	c.RedisFault.Reset()
 	eventually(t, 15*time.Second, "licetum_degraded{component=\"redis\"} is 0 once Redis is back", func() bool {
-		r.Do(c, http.MethodGet, path, c.UserToken("back-"+time.Now().Format("150405.000000")), nil)
+		token := c.UserToken("back-" + time.Now().Format("150405.000000"))
+		r.Send(c, harness.Branches(p.Slug, token), token)
 		return degraded() == 0
 	})
 }
@@ -203,8 +204,12 @@ func TestF5_3_ADrainingReplicaIsNotReadyButServes(t *testing.T) {
 		t.Fatalf("a request while draining: %d %s, want it served", res.Status, res.Body)
 	}
 
-	// The response asks the client to open its next connection elsewhere.
-	resp, err := http.Get(r.Server.URL + "/service/" + p.Slug + "/permission")
+	// The response asks the client to open its next connection elsewhere (to any request: this one has no token).
+	req, err := harness.HTTPRequest(context.Background(), r.Server.URL, harness.Branches(p.Slug, ""), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +232,7 @@ func TestF5_8_RequestsAboveTheLimitAreRefusedAtOnce(t *testing.T) {
 
 	const limit, senders = 2, 8
 	r.App.Cfg.HTTP.MaxInflight = limit
-	// consistency=higher asks the sources again, and the source answers slowly: the requests stay in flight.
+	// A fresh request asks the sources again, and the source answers slowly: the requests stay in flight.
 	c.Source.SetDelay(1500 * time.Millisecond)
 
 	var wg sync.WaitGroup
@@ -319,7 +324,6 @@ func TestF5_9_APoolNeverExceedsItsSizeAndTheMetricsSayWhenItIsTooSmall(t *testin
 		cfg.Compute.Concurrency = 16 // more computations than connections: they wait for the pool
 	}))
 	p := c.SeedPolicy("org", 0)
-	path := "/service/" + p.Slug + "/permission?consistency=higher"
 	users := make([]string, 24)
 	for i := range users {
 		users[i] = c.UserToken("pool-user-" + string(rune('a'+i)))
@@ -338,7 +342,7 @@ func TestF5_9_APoolNeverExceedsItsSizeAndTheMetricsSayWhenItIsTooSmall(t *testin
 						return
 					default:
 					}
-					r.Do(c, http.MethodGet, path, users[i], nil)
+					r.Fresh(c, p.Slug, users[i])
 				}
 			}()
 		}
@@ -382,8 +386,8 @@ func TestF5_6_AnAnswerKeptWithoutPostgreSQLEndsAtTheNextValidityBoundary(t *test
 	c := startReplicas(t, 1, harness.WithFaultProxies())
 	p := c.SeedPolicy("org", 0)
 	r := c.Replicas[0]
-	path := "/service/" + p.Slug + "/permission"
-	r.Warm(c, http.MethodGet, path, c.UserToken("alice")) // the types are synchronized
+	alice := c.UserToken("alice")
+	r.Warm(c, harness.Branches(p.Slug, alice), alice) // the types are synchronized
 
 	// The rules change at a whole second (the format of the times is RFC 3339 to the second), far enough ahead for the
 	// answers to be asked for and PostgreSQL to be cut.
@@ -428,10 +432,13 @@ func TestF5_6_AnAnswerKeptWithoutPostgreSQLEndsAtTheNextValidityBoundary(t *test
 	for _, name := range people {
 		tokens[name] = c.UserToken(name)
 	}
+	ask := func(name string) (int, []byte, error) {
+		return r.Try(c, harness.Branches(p.Slug, tokens[name]), tokens[name], 3*time.Second)
+	}
 	for time.Now().Before(boundary.Add(3 * time.Second)) {
 		for _, name := range people {
 			start := time.Now()
-			status, body, err := r.TryGet(c, path, tokens[name], 3*time.Second)
+			status, body, err := ask(name)
 			if err != nil {
 				t.Fatalf("%s at %v: %v", name, start.Sub(boundary), err)
 			}
@@ -469,7 +476,7 @@ func TestF5_6_AnAnswerKeptWithoutPostgreSQLEndsAtTheNextValidityBoundary(t *test
 	want := map[string]string{"bob": before["carol"], "carol": before["bob"], "dave": before["carol"]}
 	for _, name := range people {
 		eventually(t, 20*time.Second, name+" is answered again, as the rules stand now", func() bool {
-			status, body, err := r.TryGet(c, path, tokens[name], 3*time.Second)
+			status, body, err := ask(name)
 			return err == nil && status == http.StatusOK && string(body) == want[name]
 		})
 	}

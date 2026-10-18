@@ -33,13 +33,10 @@ func lagConfig(maxLag time.Duration, action string, staleness time.Duration) har
 	})
 }
 
-// asUser asks the permission as a person without asking for a revision: what the replica shows.
+// asUser asks what a person may read without asking for a revision: what the replica shows.
 func asUser(c *harness.Cluster, r *harness.Replica, slug, user string) *harness.Result {
-	return r.Do(c, http.MethodGet, "/service/"+slug+"/permission", c.UserToken(user), nil)
-}
-
-func hasAccess(res *harness.Result) bool {
-	return res.Status == http.StatusOK && strings.Contains(string(res.Body), `"read"`)
+	token := c.UserToken(user)
+	return r.Send(c, harness.Branches(slug, token), token)
 }
 
 // F6-3: with at_least_as_fresh the region answers correctly at once, though its replica lags: it waits for the replica, then
@@ -59,7 +56,7 @@ func TestF6_3_AStrongReadIsCurrentWhileTheReplicaLags(t *testing.T) {
 		if c.ReplicaRevision() >= c.Revision() {
 			t.Fatal("the replica is not lagging: the test proves nothing")
 		}
-		if res := r.Permission(c, p.Slug, c.UserToken(user)); !hasAccess(res) {
+		if res := r.Permission(c, p.Slug, c.UserToken(user)); !res.Sees() {
 			wrong++
 			t.Errorf("iteration %d: a strong read after the write did not see it: %d %s", i, res.Status, res.Body)
 		}
@@ -69,7 +66,7 @@ func TestF6_3_AStrongReadIsCurrentWhileTheReplicaLags(t *testing.T) {
 	}
 
 	// A request that does not ask for the revision is answered from the replica, which has not replayed the write.
-	if hasAccess(asUser(c, r, p.Slug, "nobody-wrote-this")) {
+	if asUser(c, r, p.Slug, "nobody-wrote-this").Sees() {
 		t.Fatal("a person without a rule has access")
 	}
 	c.ResumeReplay()
@@ -79,7 +76,7 @@ func TestF6_3_AStrongReadIsCurrentWhileTheReplicaLags(t *testing.T) {
 	if status, raw, _ := c.AdminWrite(http.MethodPost, "/assignment_rule", ruleBody(p, last, nil)); status != http.StatusOK {
 		t.Fatalf("write: %d %s", status, raw)
 	}
-	eventually(t, 15*time.Second, "a plain request to see the write", func() bool { return hasAccess(asUser(c, r, p.Slug, last)) })
+	eventually(t, 15*time.Second, "a plain request to see the write", func() bool { return asUser(c, r, p.Slug, last).Sees() })
 }
 
 // F6-4 (unready): the lag above DB__MAX_REPLICA_LAG makes the replica not ready within 15 s, and it recovers by itself.
@@ -123,14 +120,14 @@ func TestF6_4_LagMovesTheReadsToThePrimary(t *testing.T) {
 	if status, raw, _ := c.AdminWrite(http.MethodPost, "/assignment_rule", ruleBody(p, "erin", nil)); status != http.StatusOK {
 		t.Fatalf("write: %d %s", status, raw)
 	}
-	eventually(t, 15*time.Second, "a plain request to see the write through the primary", func() bool { return hasAccess(asUser(c, r, p.Slug, "erin")) })
+	eventually(t, 15*time.Second, "a plain request to see the write through the primary", func() bool { return asUser(c, r, p.Slug, "erin").Sees() })
 	if res := r.Do(c, http.MethodGet, "/readyz", "", nil); res.Status != http.StatusOK {
 		t.Errorf("with the reads on the primary the replica stays ready: %d %s", res.Status, res.Body)
 	}
 
 	c.ResumeReplay()
 	eventually(t, 15*time.Second, "the lag to end", func() bool { return strings.Contains(r.Metrics(c), "licetum_replica_lagging 0") })
-	if !hasAccess(asUser(c, r, p.Slug, "erin")) {
+	if !asUser(c, r, p.Slug, "erin").Sees() {
 		t.Error("the answer changed when the reads went back to the replica")
 	}
 }
@@ -154,7 +151,7 @@ func TestF6_5_AReplicaBehindTheStalenessLimitFailsClosed(t *testing.T) {
 		t.Fatalf("within the limit: %d %s", res.Status, res.Body)
 	}
 	eventually(t, 15*time.Second, "503 policy_unavailable", func() bool {
-		res := r.Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice, nil)
+		res := r.Send(c, harness.Branches(p.Slug, alice), alice)
 		return res.Status == http.StatusServiceUnavailable && strings.Contains(string(res.Body), "policy_unavailable")
 	})
 
@@ -181,14 +178,14 @@ func TestF6_1_AWarmRequestFarFromThePrimaryIsFast(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 
 	c.PostgresFault.Latency(150*time.Millisecond, 0)
 	measure := func(n int) time.Duration {
 		d := make([]time.Duration, 0, n)
 		for range n {
 			start := time.Now()
-			res := r.Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice, nil)
+			res := r.Send(c, harness.Branches(p.Slug, alice), alice)
 			if res.Status != http.StatusOK {
 				t.Fatalf("status %d %s", res.Status, res.Body)
 			}
@@ -219,7 +216,7 @@ func TestF6_2_ARevocationReachesTheRegionWithinTheSLO(t *testing.T) {
 		if status, raw, _ := c.AdminWrite(http.MethodPost, "/assignment_rule", ruleBody(p, user, nil)); status != http.StatusOK {
 			t.Fatalf("allow: %d %s", status, raw)
 		}
-		eventually(t, 15*time.Second, "the grant to reach the region", func() bool { return hasAccess(asUser(c, r, p.Slug, user)) })
+		eventually(t, 15*time.Second, "the grant to reach the region", func() bool { return asUser(c, r, p.Slug, user).Sees() })
 		deny := ruleBody(p, user, map[string]any{"effect": "deny"})
 		status, raw, _ := c.AdminWrite(http.MethodPost, "/assignment_rule", deny)
 		if status != http.StatusOK {
@@ -227,7 +224,7 @@ func TestF6_2_ARevocationReachesTheRegionWithinTheSLO(t *testing.T) {
 		}
 		start := time.Now()
 		deadline := start.Add(30 * time.Second)
-		for hasAccess(r.Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", token, nil)) {
+		for r.Send(c, harness.Branches(p.Slug, token), token).Sees() {
 			if time.Now().After(deadline) {
 				t.Fatalf("revocation %d was not enforced within 30 s", i)
 			}
@@ -249,12 +246,12 @@ func TestF6_5_ALinkCutFailsClosedAfterTheLimitAndRecoversWithTheRevocation(t *te
 	p := c.SeedPolicy("org", 0)
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
-	path := "/service/" + p.Slug + "/permission"
+	asked := harness.Branches(p.Slug, alice)
 	// What the region answers after the cut is what it has cached: the answer must be cached under the view the region will hold.
 	// An answer asked with at_least_as_fresh is not kept when the view had not reached the revision yet, and a synchronization
 	// that ends after it moves the data revision past it: the plain request is repeated until it costs nothing.
-	eventually(t, 15*time.Second, "the region to see the policy", func() bool { return hasAccess(asUser(c, r, p.Slug, "alice")) })
-	if res := r.Warm(c, http.MethodGet, path, alice); !hasAccess(res) {
+	eventually(t, 15*time.Second, "the region to see the policy", func() bool { return asUser(c, r, p.Slug, "alice").Sees() })
+	if res := r.Warm(c, asked, alice); !res.Sees() {
 		t.Fatalf("before the cut: %d %s", res.Status, res.Body)
 	}
 
@@ -268,7 +265,7 @@ func TestF6_5_ALinkCutFailsClosedAfterTheLimitAndRecoversWithTheRevocation(t *te
 	var answered, refused int
 	var firstRefusal time.Duration
 	for time.Since(cutAt) < 6*time.Second {
-		res := r.Do(c, http.MethodGet, path, alice, nil)
+		res := r.Send(c, asked, alice)
 		switch {
 		case res.Status == http.StatusOK:
 			if refused > 0 {
@@ -296,8 +293,8 @@ func TestF6_5_ALinkCutFailsClosedAfterTheLimitAndRecoversWithTheRevocation(t *te
 	c.ReplicaFault.Reset()
 	back := time.Now()
 	eventually(t, 15*time.Second, "the revocation to be enforced", func() bool {
-		res := r.Do(c, http.MethodGet, path, alice, nil)
-		return res.Status == http.StatusOK && !hasAccess(res)
+		res := r.Send(c, asked, alice)
+		return res.Status == http.StatusOK && !res.Sees()
 	})
 	if took := time.Since(back); took > 5*time.Second {
 		t.Errorf("the revocation was enforced %v after the link returned, want within 5 s", took)
@@ -330,8 +327,8 @@ func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing
 	}
 	// Both regions enforce the denial and keep the answer under the revision of the denial.
 	for _, r := range c.Replicas {
-		r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", token)
-		if res := r.Permission(c, p.Slug, token); hasAccess(res) {
+		r.Warm(c, harness.Branches(p.Slug, token), token)
+		if res := r.Permission(c, p.Slug, token); res.Sees() {
 			t.Fatalf("the denial is not enforced: %s", res.Body)
 		}
 	}
@@ -357,7 +354,7 @@ func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing
 	for _, r := range c.Replicas {
 		eventually(t, 15*time.Second, fmt.Sprintf("replica %d to read the reused revision", r.Index), func() bool { return r.App.PolicyRevision() == deniedAt })
 	}
-	served := hasAccess(c.Replicas[0].Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", token, nil))
+	served := c.Replicas[0].Send(c, harness.Branches(p.Slug, token), token).Sees()
 	t.Logf("without the failover the region serves the answer cached under the reused revision: stale=%v", !served)
 
 	// licetum failover.
@@ -369,7 +366,7 @@ func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing
 			return r.App.PolicyRevision() >= db.DefaultFailoverJump
 		})
 		// Right after the failover the answer is the data of the new primary, whatever was cached under the old revisions.
-		if res := r.Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", token, nil); !hasAccess(res) {
+		if res := r.Send(c, harness.Branches(p.Slug, token), token); !res.Sees() {
 			t.Errorf("replica %d after the failover: %d %s", r.Index, res.Status, res.Body)
 		}
 	}

@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -24,23 +23,27 @@ import (
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 type request struct {
-	name, method, path string
-	body               any
+	name string
+	req  authzenreq.Request
 }
 
-// requestsOf are the check API requests of a service that read a policy and an answer.
-func requestsOf(p *harness.Policy) []request {
-	check := map[string]any{"checks": []map[string]any{
-		{"type": "branch", "resource_id": "b1", "action": "read"}, {"type": "branch", "action": "read"},
-	}, "explain": true}
+// requestsOf are the requests of the check API of a service, from the subject, that read a policy and an answer: the resources
+// of a type, by the slug of the service and by its id, a page of them, an evaluation and a batch of evaluations with their
+// explanation.
+func requestsOf(p *harness.Policy, subject string) []request {
+	questions := []authzenreq.Question{
+		{Resource: authzenreq.On("branch", "b1"), Action: "read"}, {Resource: authzenreq.Whole("branch"), Action: "read"},
+	}
 	return []request{
-		{"permission by slug", http.MethodGet, "/service/" + p.Slug + "/permission", nil},
-		{"permission by id", http.MethodGet, "/service/" + p.ServiceID + "/permission", nil},
-		{"permission, one type", http.MethodGet, "/service/" + p.Slug + "/permission?type=branch&access=read", nil},
-		{"check", http.MethodPost, "/service/" + p.Slug + "/check", check},
+		{"resources by slug", authzenreq.SearchResource(p.Slug, subject, "branch", "read")},
+		{"resources by id", authzenreq.SearchResource(p.ServiceID, subject, "branch", "read")},
+		{"a page of resources", authzenreq.SearchResource(p.Slug, subject, "branch", "read", authzenreq.Page(2, ""))},
+		{"evaluation", authzenreq.Evaluation(p.Slug, subject, authzenreq.On("branch", "b1"), "read", authzenreq.Explain())},
+		{"evaluations", authzenreq.Evaluations(p.Slug, subject, questions, authzenreq.Explain())},
 	}
 }
 
@@ -51,7 +54,7 @@ func settle(t *testing.T, c *harness.Cluster, r *harness.Replica, q request, tok
 	var last *harness.Result
 	same := 0
 	for range 40 {
-		res := r.Do(c, q.method, q.path, token, q.body)
+		res := r.Send(c, q.req, token)
 		if res.Status != http.StatusOK {
 			t.Fatalf("%s: %d %s", q.name, res.Status, res.Body)
 		}
@@ -66,7 +69,7 @@ func settle(t *testing.T, c *harness.Cluster, r *harness.Replica, q request, tok
 		}
 		time.Sleep(60 * time.Millisecond)
 	}
-	return r.Do(c, q.method, q.path, token, q.body)
+	return r.Send(c, q.req, token)
 }
 
 // F1-1: a request whose token and answer are cached sends no query to PostgreSQL (and none to Redis).
@@ -75,7 +78,7 @@ func TestF1_1_AWarmRequestSendsNoQueryToPostgreSQL(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	alice := c.UserToken("alice")
 	for _, r := range c.Replicas {
-		for _, q := range requestsOf(p) {
+		for _, q := range requestsOf(p, "alice") {
 			res := settle(t, c, r, q, alice)
 			if got := res.Trace.DBQueries(); got != 0 {
 				t.Errorf("replica %d, %s: %d queries to PostgreSQL (%v), want 0", r.Index, q.name, got, res.Trace.DBQueryOps())
@@ -93,10 +96,10 @@ func TestF1_2_ARequestAnsweredFromRedisMakesOneRoundTrip(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	alice := c.UserToken("alice")
 	for _, r := range c.Replicas {
-		for _, q := range requestsOf(p) {
+		for _, q := range requestsOf(p, "alice") {
 			settle(t, c, r, q, alice)
 			r.App.ClearAnswerMemoryCache()
-			res := r.Do(c, q.method, q.path, alice, q.body)
+			res := r.Send(c, q.req, alice)
 			if res.Status != http.StatusOK {
 				t.Fatalf("%s: %d %s", q.name, res.Status, res.Body)
 			}
@@ -107,7 +110,7 @@ func TestF1_2_ARequestAnsweredFromRedisMakesOneRoundTrip(t *testing.T) {
 				t.Errorf("replica %d, %s: %d round trips to Redis (%v), want 1", r.Index, q.name, got, res.Trace.RedisOps())
 			}
 			// The answer from Redis is kept in memory: the next request does not go to Redis.
-			if again := r.Do(c, q.method, q.path, alice, q.body); again.Trace.RedisRoundTrips() != 0 || again.Trace.DBQueries() != 0 {
+			if again := r.Send(c, q.req, alice); again.Trace.RedisRoundTrips() != 0 || again.Trace.DBQueries() != 0 {
 				t.Errorf("replica %d, %s: the answer was not kept in memory: db=%d redis=%d", r.Index, q.name, again.Trace.DBQueries(), again.Trace.RedisRoundTrips())
 			}
 		}
@@ -151,7 +154,7 @@ func missCost(t *testing.T, n int) (queries int, ops map[string]int) {
 	})
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 
 	insertRules(t, c, p.Branch, n)
 	rev, err := db.BumpRevision(context.Background(), c.Pool, db.ScopeRules)
@@ -160,7 +163,7 @@ func missCost(t *testing.T, n int) (queries int, ops map[string]int) {
 	}
 	// The replica reads the new revision, and with it the policy (the snapshot is built here, not in the request to measure).
 	started := time.Now()
-	if res := r.Do(c, http.MethodGet, "/service/"+p.Slug+"/permission?at_least_as_fresh="+strconv.FormatInt(rev, 10), alice, nil); res.Status != http.StatusOK {
+	if res := r.Send(c, harness.Branches(p.Slug, alice, authzenreq.AtLeast(rev)), alice); res.Status != http.StatusOK {
 		t.Fatalf("alice: %d %s", res.Status, res.Body)
 	}
 	t.Logf("%d rules: the snapshot was ready after %v", n, time.Since(started))
@@ -236,7 +239,7 @@ func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) 
 			p := c.SeedPolicy("org", 0)
 			alice := c.UserToken("alice")
 			for _, r := range c.Replicas {
-				r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+				r.Warm(c, harness.Branches(p.Slug, alice), alice)
 			}
 			tc.do(c, p)
 			wrote := time.Now()
@@ -248,7 +251,7 @@ func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) 
 					defer wg.Done()
 					// Plain requests, the way a client sends them: no at_least_as_fresh.
 					took, ok := waitFor(3*time.Second, func() bool {
-						return r.Do(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice, nil).Status == http.StatusNotFound
+						return r.Send(c, harness.Branches(p.Slug, alice), alice).Status == http.StatusNotFound
 					})
 					if !ok {
 						t.Errorf("replica %d still answers for the old slug after %v", r.Index, took)
@@ -402,12 +405,12 @@ func TestF1_ThePolicyThatDoesNotFitIsReadWithQueries(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithConfig(func(cfg *config.Config) { cfg.Snapshot.MaxBytes = 2_000 }))
 	p := c.SeedPolicy("org", 0)
 	r := c.Replicas[0]
-	res := r.Permission(c, p.Slug, c.UserToken("alice"))
+	alice := c.UserToken("alice")
+	res := r.Permission(c, p.Slug, alice)
 	if res.Status != http.StatusOK {
 		t.Fatalf("alice: %d %s", res.Status, res.Body)
 	}
-	branches, _ := res.JSON(t)["branch"].(map[string]any)
-	if resources, _ := branches["resources"].([]any); len(resources) != 3 {
+	if ids := res.IDs(t); len(ids) != 3 {
 		t.Fatalf("alice should see the three branches: %s", res.Body)
 	}
 	if r.App.PolicySnapshotLoaded() {
@@ -417,7 +420,7 @@ func TestF1_ThePolicyThatDoesNotFitIsReadWithQueries(t *testing.T) {
 		t.Fatal("licetum_snapshot_fallback_total did not count the fallback")
 	}
 	// A request that is answered from memory still costs nothing; one that is not reads the policy with queries.
-	warm := r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", c.UserToken("alice"))
+	warm := r.Warm(c, harness.Branches(p.Slug, alice), alice)
 	if warm.Trace.DBQueries() != 2 { // the slug and the service: without a snapshot they are looked up
 		t.Errorf("a warm request without a snapshot made %d queries (%v), want the 2 lookups of the service", warm.Trace.DBQueries(), warm.Trace.DBQueryOps())
 	}
@@ -429,7 +432,7 @@ func TestF1_TheSnapshotCanBeTurnedOff(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
-	warm := r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", alice)
+	warm := r.Warm(c, harness.Branches(p.Slug, alice), alice)
 	if r.App.PolicySnapshotLoaded() {
 		t.Fatal("a snapshot was built although it is turned off")
 	}

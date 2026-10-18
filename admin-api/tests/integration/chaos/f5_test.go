@@ -189,14 +189,13 @@ func redisOutage(t *testing.T, c *harness.Cluster, r *harness.Replica, p *harnes
 	t.Helper()
 	const users = 30
 	rps := 600 / loadDivisor
-	path := "/service/" + p.Slug + "/permission"
 	logs := newLogCounter()
 	logs.install(t)
 
 	// The tokens, the key set and the answers are in memory when the fault begins.
 	want := map[string]string{}
 	for _, token := range tokens[:users] {
-		res := r.Do(c, http.MethodGet, path, token, nil)
+		res := r.Send(c, harness.Branches(p.Slug, token), token)
 		if res.Status != http.StatusOK {
 			t.Fatalf("warm request: %d %s", res.Status, res.Body)
 		}
@@ -210,11 +209,12 @@ func redisOutage(t *testing.T, c *harness.Cluster, r *harness.Replica, p *harnes
 	var cold atomic.Int64
 	do := func(i int) (int, error) {
 		if i%coldEvery == coldEvery-1 {
-			status, _, err := r.TryGet(c, path, c.UserToken("u"+strconv.FormatInt(1000+cold.Add(1), 10)), 5*time.Second)
+			stranger := c.UserToken("u" + strconv.FormatInt(1000+cold.Add(1), 10))
+			status, _, err := r.Try(c, harness.Branches(p.Slug, stranger), stranger, 5*time.Second)
 			return status, err
 		}
 		token := tokens[i%users]
-		status, body, err := r.TryGet(c, path, token, 5*time.Second)
+		status, body, err := r.Try(c, harness.Branches(p.Slug, token), token, 5*time.Second)
 		if err == nil && status == http.StatusOK && string(body) != want[token] {
 			return 0, fmt.Errorf("the answer changed:\n%s\nwant\n%s", body, want[token])
 		}
@@ -318,7 +318,7 @@ func TestF5_2_RedisGoneForAMinuteUnderLoad(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	tokens := everyone(t, c, p, 30)
 	r := c.Replicas[0]
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", tokens[0])
+	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
 
 	redisOutage(t, c, r, p, tokens, outageLength(60*time.Second), c.RedisFault.Cut, c.RedisFault.Reset)
 }
@@ -329,7 +329,7 @@ func TestF5_2_RedisBlackHoledUnderLoad(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	tokens := everyone(t, c, p, 30)
 	r := c.Replicas[0]
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", tokens[0])
+	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
 
 	redisOutage(t, c, r, p, tokens, outageLength(60*time.Second)/2, c.RedisFault.BlackHole, c.RedisFault.Reset)
 }
@@ -353,7 +353,7 @@ func TestF5_5_ReadOnlyRedisUnderLoad(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	tokens := everyone(t, c, p, 30)
 	r := c.Replicas[0]
-	r.Warm(c, http.MethodGet, "/service/"+p.Slug+"/permission", tokens[0])
+	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
 
 	redisOutage(t, c, r, p, tokens, outageLength(60*time.Second)/3,
 		func() {
@@ -388,9 +388,9 @@ func TestF5_6_PostgreSQLGoneTheReplicaAnswersFromItsCopyThenFailsClosed(t *testi
 	p := c.SeedPolicy("org", 0)
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
-	path := "/service/" + p.Slug + "/permission"
-	r.Warm(c, http.MethodGet, path, alice)
-	want := string(r.Do(c, http.MethodGet, path, alice, nil).Body)
+	asked := harness.Branches(p.Slug, alice)
+	r.Warm(c, asked, alice)
+	want := string(r.Send(c, asked, alice).Body)
 	logs := newLogCounter()
 	logs.install(t)
 
@@ -405,7 +405,7 @@ func TestF5_6_PostgreSQLGoneTheReplicaAnswersFromItsCopyThenFailsClosed(t *testi
 	var timeline []seen
 	for time.Since(cutAt) < staleness+4*time.Second {
 		start := time.Now()
-		status, body, err := r.TryGet(c, path, alice, 3*time.Second)
+		status, body, err := r.Try(c, asked, alice, 3*time.Second)
 		if err != nil {
 			t.Fatalf("at %v: %v", time.Since(cutAt), err)
 		}
@@ -458,7 +458,7 @@ func TestF5_6_PostgreSQLGoneTheReplicaAnswersFromItsCopyThenFailsClosed(t *testi
 	c.PostgresFault.Reset()
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		status, body, err := r.TryGet(c, path, alice, 3*time.Second)
+		status, body, err := r.Try(c, asked, alice, 3*time.Second)
 		if err == nil && status == http.StatusOK && string(body) == want {
 			break
 		}
@@ -478,9 +478,9 @@ func TestF5_6_WithoutALimitTheReplicaKeepsAnsweringFromItsCopy(t *testing.T) {
 	p := c.SeedPolicy("org", 0)
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
-	path := "/service/" + p.Slug + "/permission"
-	r.Warm(c, http.MethodGet, path, alice)
-	want := string(r.Do(c, http.MethodGet, path, alice, nil).Body)
+	asked := harness.Branches(p.Slug, alice)
+	r.Warm(c, asked, alice)
+	want := string(r.Send(c, asked, alice).Body)
 
 	c.PostgresFault.Cut()
 	// F5-6: thirty seconds, well beyond the 2 s after which a view is no longer trusted unread, and the 10 s of a cached
@@ -489,7 +489,7 @@ func TestF5_6_WithoutALimitTheReplicaKeepsAnsweringFromItsCopy(t *testing.T) {
 	until := time.Now().Add(outage)
 	n := 0
 	for time.Now().Before(until) {
-		status, body, err := r.TryGet(c, path, alice, 3*time.Second)
+		status, body, err := r.Try(c, asked, alice, 3*time.Second)
 		if err != nil || status != http.StatusOK || string(body) != want {
 			t.Fatalf("after %d answers, with PostgreSQL gone: status %d, %v, %s", n, status, err, body)
 		}
@@ -523,13 +523,12 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 	c := harness.StartReplicas(t, infra, replicas, harness.WithHotRedis(hotTimeout))
 	p := c.SeedPolicy("org", 0)
 	tokens := everyone(t, c, p, 30)
-	path := "/service/" + p.Slug + "/permission"
 	for _, r := range c.Replicas {
-		r.Warm(c, http.MethodGet, path, tokens[0])
+		r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
 	}
 	for _, token := range tokens { // warm the answers on every replica: what is measured is the restart
 		for _, r := range c.Replicas {
-			r.Do(c, http.MethodGet, path, token, nil)
+			r.Send(c, harness.Branches(p.Slug, token), token)
 		}
 	}
 
@@ -600,8 +599,11 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 		}
 		sent.Add(1)
 		target := up[i%len(up)]
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, target+path, nil)
-		req.Header.Set("Authorization", "Bearer "+tokens[i%30])
+		token := tokens[i%30]
+		req, err := harness.HTTPRequest(context.Background(), target, harness.Branches(p.Slug, token), token)
+		if err != nil {
+			return 0, err
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			resets.Add(1)
@@ -627,9 +629,9 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 	for i := range replicas {
 		old := c.Replicas[i]
 		replacement := c.AddReplica()
-		replacement.Warm(c, http.MethodGet, path, tokens[0])
+		replacement.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
 		for _, token := range tokens {
-			replacement.Do(c, http.MethodGet, path, token, nil)
+			replacement.Send(c, harness.Branches(p.Slug, token), token)
 		}
 		mu.Lock()
 		urls = append(urls, replacement.Server.URL)

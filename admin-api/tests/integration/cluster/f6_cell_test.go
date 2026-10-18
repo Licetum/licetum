@@ -22,6 +22,7 @@ import (
 	"time"
 
 	support "github.com/licetum/licetum/core/testsupport"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // decoy listens where a neighbouring cell's PostgreSQL or Redis would, and counts who knocks.
@@ -183,9 +184,9 @@ func TestF6_10_ACellOpensNoConnectionOutsideItself(t *testing.T) {
 	for i := 0; time.Now().Before(deadline); i++ {
 		user := fmt.Sprintf("cell-user-%d", i%5)
 		for _, r := range c.Replicas {
-			r.Permission(c, p.Slug, c.UserToken(user))
-			r.Do(c, http.MethodPost, "/service/"+p.Slug+"/check", c.UserToken(user),
-				map[string]any{"checks": []map[string]any{{"type": "branch", "resource_id": "b1", "action": "read"}}})
+			token := c.UserToken(user)
+			r.Permission(c, p.Slug, token)
+			r.Send(c, authzenreq.Evaluation(p.Slug, user, authzenreq.On("branch", "b1"), "read"), token)
 		}
 		if i%3 == 0 {
 			c.AdminWrite(http.MethodPost, "/assignment_rule", ruleBody(p, user, nil))
