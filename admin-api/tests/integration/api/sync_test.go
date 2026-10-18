@@ -7,6 +7,7 @@ package api_test
 // and HTTP server, as separate pods would be.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 	"github.com/licetum/licetum/core/redisx"
 	"github.com/licetum/licetum/core/server"
 	support "github.com/licetum/licetum/core/testsupport"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // source is an HTTP source of resources whose answers the test controls.
@@ -76,11 +78,11 @@ func branches(ids ...string) []map[string]any {
 	return out
 }
 
-// syncFixture is a service with one synchronized type, readable by alice.
+// syncFixture is a service with one synchronized type, readable by alice. The check API knows the service by its slug.
 type syncFixture struct {
-	service, typ string
-	src          *source
-	alice        string
+	service, slug, typ string
+	src                *source
+	alice              string
 }
 
 func (e *env) syncFixture(name string, src *source) *syncFixture {
@@ -94,7 +96,7 @@ func (e *env) syncFixture(name string, src *source) *syncFixture {
 	e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": typ, "access": []string{"read"}, "subject": "alice"})
 	// The probe of the synchronizer asked the source once; the tests count the calls of the synchronization.
 	src.calls.Store(0)
-	return &syncFixture{service: org, typ: typ, src: src, alice: e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub"})}
+	return &syncFixture{service: org, slug: name, typ: typ, src: src, alice: e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub"})}
 }
 
 // replica is another process on the same database: a check API (or a worker) with its own pools.
@@ -150,12 +152,20 @@ func (e *env) worker(tune func(*config.Config), hooks engine.SyncHooks) (*engine
 	return app, startWorker(e.t, app)
 }
 
-func (r *replica) permission(t *testing.T, f *syncFixture, query string) (int, string, http.Header) {
+// permission asks the replica, as alice, which branches of the fixture's service she may read (the resource search of branch
+// and read), and returns the status, the body and the headers of the answer.
+func (r *replica) permission(t *testing.T, f *syncFixture, opts ...authzenreq.Option) (int, string, http.Header) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, r.url+"/service/"+f.service+"/permission"+query, nil)
+	search := authzenreq.SearchResource(f.slug, authzenreq.SubjectOf(f.alice), "branch", "read", opts...)
+	payload, err := json.Marshal(search.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
+	req, err := http.NewRequest(search.Method, r.url+search.Path, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+f.alice)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -197,13 +207,13 @@ func (e *env) makeDue(typ string) {
 }
 
 // burst sends n requests at once, spread over the replicas.
-func burst(t *testing.T, replicas []*replica, f *syncFixture, query string, n int) []string {
+func burst(t *testing.T, replicas []*replica, f *syncFixture, n int, opts ...authzenreq.Option) []string {
 	t.Helper()
 	out := make([]string, n)
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			status, body, _ := replicas[i%len(replicas)].permission(t, f, query)
+			status, body, _ := replicas[i%len(replicas)].permission(t, f, opts...)
 			if status != http.StatusOK {
 				t.Errorf("permission: %d %s", status, body)
 			}
@@ -229,7 +239,7 @@ func TestSyncOneSourceCallForAConcurrentFirstRequest(t *testing.T) {
 	src.delay.Store(int64(150 * time.Millisecond))
 	f := e.syncFixture("first", src)
 
-	for _, body := range burst(t, replicas(e, 5, nil), f, "", 100) {
+	for _, body := range burst(t, replicas(e, 5, nil), f, 100) {
 		if !strings.Contains(body, `"b3"`) {
 			t.Fatalf("an answer lacks the resources: %s", body)
 		}
@@ -250,12 +260,12 @@ func TestSyncFreshRequestsShareTheSourceCall(t *testing.T) {
 	e.stopWorker()
 	_, _ = e.worker(func(c *config.Config) { c.Sync.FreshMinInterval = time.Second }, engine.SyncHooks{})
 	rs := replicas(e, 5, nil)
-	burst(t, rs, f, "", 1)
+	burst(t, rs, f, 1)
 	src.calls.Store(0)
 
 	src.delay.Store(int64(100 * time.Millisecond))
 	started := time.Now()
-	burst(t, rs, f, "?consistency=higher", 50)
+	burst(t, rs, f, 50, authzenreq.Fresh())
 	elapsed := time.Since(started)
 	limit := int32(1 + (elapsed / time.Second) + 1)
 	if got := src.calls.Load(); got > limit {
@@ -276,7 +286,7 @@ func TestSyncWaitingForTheWorkerHoldsNoComputeSlot(t *testing.T) {
 	e.stopWorker()
 	_, _ = e.worker(func(c *config.Config) { c.Sync.FreshMinInterval = time.Second }, engine.SyncHooks{})
 	r := e.checkReplica(func(c *config.Config) { c.Compute.Concurrency = 1 })
-	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
+	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
 		t.Fatalf("first synchronization: %d %s", status, body)
 	}
 
@@ -291,7 +301,7 @@ func TestSyncWaitingForTheWorkerHoldsNoComputeSlot(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, token := range tokens {
 		wg.Go(func() {
-			status, body, _ := r.permission(t, &syncFixture{service: f.service, alice: token}, "?consistency=higher")
+			status, body, _ := r.permission(t, &syncFixture{service: f.service, slug: f.slug, alice: token}, authzenreq.Fresh())
 			if status != http.StatusOK || !strings.Contains(body, `"b2"`) {
 				t.Errorf("fresh permission: %d %s", status, body)
 			}
@@ -372,19 +382,19 @@ func TestSyncFailingSourceIsAskedOncePerBackoff(t *testing.T) {
 	src := newSource(t, branches("b1", "b2")...)
 	f := e.syncFixture("failing", src)
 	rs := replicas(e, 4, nil)
-	burst(t, rs, f, "", 4) // synchronized
+	burst(t, rs, f, 4) // synchronized
 
 	src.fail.Store(true)
 	src.calls.Store(0)
 	e.makeDue(f.typ)
-	for _, body := range burst(t, rs, f, "", 60) {
+	for _, body := range burst(t, rs, f, 60) {
 		if !strings.Contains(body, `"b2"`) {
 			t.Fatalf("an answer does not come from the existing data: %s", body)
 		}
 	}
 	// Let the refresh job run, then ask again many times inside the backoff window.
 	time.Sleep(500 * time.Millisecond)
-	burst(t, rs, f, "", 60)
+	burst(t, rs, f, 60)
 	time.Sleep(300 * time.Millisecond)
 	if got := src.calls.Load(); got != 1 {
 		t.Fatalf("the failing source was asked %d times inside one backoff window, want 1", got)
@@ -409,11 +419,11 @@ func TestSyncWithoutWorkersTheCheckKeepsAnswering(t *testing.T) {
 	f := e.syncFixture("noworker", src)
 	e.stopWorker()
 	r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = 400 * time.Millisecond })
-	r.permission(t, &syncFixture{service: f.service, alice: f.alice}, "") // warm the token cache
+	r.permission(t, &syncFixture{service: f.service, slug: f.slug, alice: f.alice}) // warm the token cache
 
 	// consistency=higher skips the result cache, so the pending answer is computed (and marked) by this very request.
 	started := time.Now()
-	status, body, header := r.permission(t, f, "?consistency=higher")
+	status, body, header := r.permission(t, f, authzenreq.Fresh())
 	if took := time.Since(started); status != http.StatusOK || took > 400*time.Millisecond+250*time.Millisecond {
 		t.Fatalf("status %d after %v: %s", status, took, body)
 	}
@@ -432,13 +442,13 @@ func TestSyncWithoutWorkersTheCheckKeepsAnswering(t *testing.T) {
 		_, stop := e.worker(nil, engine.SyncHooks{})
 		return stop
 	}()
-	if _, body, _ := r.permission(t, f, "?consistency=higher"); !strings.Contains(body, `"b2"`) {
+	if _, body, _ := r.permission(t, f, authzenreq.Fresh()); !strings.Contains(body, `"b2"`) {
 		t.Fatalf("the worker did not synchronize: %s", body)
 	}
 	stop()
 	e.makeDue(f.typ)
 	for range 3 {
-		if _, body, _ := r.permission(t, f, ""); !strings.Contains(body, `"b2"`) {
+		if _, body, _ := r.permission(t, f); !strings.Contains(body, `"b2"`) {
 			t.Fatalf("an answer does not come from the existing data: %s", body)
 		}
 		time.Sleep(1100 * time.Millisecond)
@@ -492,7 +502,7 @@ func TestSyncLateExecutorIsFenced(t *testing.T) {
 		},
 	})
 	r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = 200 * time.Millisecond })
-	r.permission(t, f, "") // asks for the job; times out (pending) while the late executor holds it
+	r.permission(t, f) // asks for the job; times out (pending) while the late executor holds it
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -591,11 +601,11 @@ func TestSyncComponentsDoNotBlockEachOther(t *testing.T) {
 	}
 	r := e.checkReplica(func(c *config.Config) { c.Sync.RequestWait = 10 * time.Second })
 	var wg sync.WaitGroup
-	wg.Go(func() { r.permission(t, slow, "") })
+	wg.Go(func() { r.permission(t, slow) })
 	time.Sleep(300 * time.Millisecond)
 
 	started := time.Now()
-	if _, body, _ := r.permission(t, quick, ""); !strings.Contains(body, `"q1"`) {
+	if _, body, _ := r.permission(t, quick); !strings.Contains(body, `"q1"`) {
 		t.Fatalf("the unrelated type was not synchronized: %s", body)
 	}
 	if took := time.Since(started); took > 2*time.Second {
@@ -649,11 +659,11 @@ func TestSyncCheckRoleCannotWriteTheGraph(t *testing.T) {
 	r := &replica{app: restricted, url: srv.URL}
 
 	// The first request asks for the synchronization; the worker (the owner) applies it; the restricted role only reads.
-	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
+	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
 		t.Fatalf("%d %s", status, body)
 	}
 	e.makeDue(f.typ)
-	if status, body, _ := r.permission(t, f, ""); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
+	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
 		t.Fatalf("%d %s", status, body)
 	}
 	if _, err := restricted.DB.Exec(ctx, `DELETE FROM resource_cache`); err == nil {
@@ -696,12 +706,12 @@ func TestSyncAdminWriteDoesNotAskOtherSources(t *testing.T) {
 	src := newSource(t, branches("b1", "b2")...)
 	f := e.syncFixture("other", src)
 	r := e.checkReplica(nil)
-	r.permission(t, f, "")
+	r.permission(t, f)
 	src.calls.Store(0)
 
 	for i := range 5 {
 		e.must("POST", "/service", servicePayload(e, fmt.Sprintf("writer-%d", i)))
-		r.permission(t, f, "")
+		r.permission(t, f)
 	}
 	time.Sleep(time.Second)
 	if got := src.calls.Load(); got != 0 {
@@ -715,7 +725,7 @@ func TestSyncRepeatedSynchronizationChangesNothing(t *testing.T) {
 	src := newSource(t, branches("b1", "b2", "b3")...)
 	f := e.syncFixture("idempotent", src)
 	r := e.checkReplica(nil)
-	r.permission(t, f, "")
+	r.permission(t, f)
 
 	snapshot := func() string {
 		var s string
@@ -739,7 +749,7 @@ func TestSyncRepeatedSynchronizationChangesNothing(t *testing.T) {
 	before, beforeVersions := snapshot(), versions()
 	for range 3 {
 		e.makeDue(f.typ)
-		r.permission(t, f, "?consistency=higher")
+		r.permission(t, f, authzenreq.Fresh())
 	}
 	if got := snapshot(); got != before {
 		t.Fatal("the database changed after repeated synchronizations of an unchanged source")
@@ -755,14 +765,14 @@ func TestSyncRedisFlushStartsNothing(t *testing.T) {
 	src := newSource(t, branches("b1", "b2")...)
 	f := e.syncFixture("flush", src)
 	r := e.checkReplica(nil)
-	r.permission(t, f, "")
+	r.permission(t, f)
 	jobs, calls := e.jobCount(f.typ, "done"), src.calls.Load()
 
 	if err := e.app.Redis.FlushAll(context.Background()).Err(); err != nil {
 		t.Fatal(err)
 	}
 	for range 5 {
-		if _, body, _ := r.permission(t, f, ""); !strings.Contains(body, `"b2"`) {
+		if _, body, _ := r.permission(t, f); !strings.Contains(body, `"b2"`) {
 			t.Fatalf("%s", body)
 		}
 	}
@@ -781,7 +791,7 @@ func TestSyncStateOfThePreviousReleaseIsImported(t *testing.T) {
 	src := newSource(t, branches("b1", "b2")...)
 	f := e.syncFixture("legacy", src)
 	r := e.checkReplica(nil)
-	r.permission(t, f, "")
+	r.permission(t, f)
 
 	var data, graph string
 	if err := e.pool.QueryRow(context.Background(), `SELECT data_hash, graph_sig FROM sync_state WHERE type_resource_id = $1`, f.typ).Scan(&data, &graph); err != nil {
@@ -802,7 +812,7 @@ func TestSyncStateOfThePreviousReleaseIsImported(t *testing.T) {
 	_, _ = e.worker(nil, engine.SyncHooks{}) // the start imports the state
 	time.Sleep(300 * time.Millisecond)
 	for range 3 {
-		if _, body, _ := r.permission(t, f, ""); !strings.Contains(body, `"b2"`) {
+		if _, body, _ := r.permission(t, f); !strings.Contains(body, `"b2"`) {
 			t.Fatalf("%s", body)
 		}
 	}

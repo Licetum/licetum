@@ -101,9 +101,13 @@ func (w *leverWorld) routes() []leverRoute {
 		"action":   map[string]any{"name": "read"},
 	}
 	return []leverRoute{
+		// legacy:2c the route of the previous release stays until P2-23 removes it.
 		{"permission", w.alice, raw(http.MethodGet, service+"/permission", nil)},
+		// legacy:2c the route of the previous release stays until P2-23 removes it.
 		{"check", w.alice, raw(http.MethodPost, service+"/check", map[string]any{"checks": checks})},
+		// legacy:2c the route of the previous release stays until P2-23 removes it.
 		{"on_behalf check", w.client, raw(http.MethodPost, service+"/on_behalf/check", map[string]any{"subject": "dave", "checks": checks})},
+		// legacy:2c the route of the previous release stays until P2-23 removes it.
 		{"on_behalf permission", w.client, raw(http.MethodPost, service+"/on_behalf/permission", map[string]any{"subject": "dave", "type": "branch", "access": "read"})},
 		{"evaluation", w.alice, authzen(func(o ...authzenreq.Option) authzenreq.Request {
 			return authzenreq.Evaluation(w.org, alice, b1, "read", o...)
@@ -125,6 +129,28 @@ func (w *leverWorld) routes() []leverRoute {
 		{"search subject", w.client, authzen(func(o ...authzenreq.Option) authzenreq.Request {
 			return authzenreq.SearchSubject(w.org, b1, "read", o...)
 		})},
+	}
+}
+
+// The legacy check route answers 422 for a context name the rules cannot read (core/server/check.go documents it). The
+// AuthZEN evaluation answers 400 for the same name, the specification has no 422 (conditions_test.go asserts that). The
+// legal name in the same body is answered, so the refusal is the name's and not the body's.
+func TestLegacyCheckAnswers422ForAContextNameWithASpace(t *testing.T) {
+	w := newLeverWorld(t)
+	checks := []map[string]any{{"type": "branch", "resource_id": "B1", "action": "read"}}
+	path := "/service/" + w.org + "/check"
+
+	// legacy:2c the route of the previous release stays until P2-23 removes it.
+	status, body := w.send(w.check.URL, authzenreq.Request{Method: http.MethodPost, Path: path,
+		Body: map[string]any{"checks": checks, "context": map[string]any{"ip": "10.0.0.7"}}}, w.alice)
+	if status != http.StatusOK {
+		t.Fatalf("the legacy check with a legal context name: %d %s", status, body)
+	}
+	// legacy:2c the route of the previous release stays until P2-23 removes it.
+	status, body = w.send(w.check.URL, authzenreq.Request{Method: http.MethodPost, Path: path,
+		Body: map[string]any{"checks": checks, "context": map[string]any{"bad name": 1}}}, w.alice)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("the legacy check with a context name with a space: want 422, got %d %s", status, body)
 	}
 }
 

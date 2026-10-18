@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 const hierarchySubject = "user-1"
@@ -313,17 +314,24 @@ func TestIntegrationTypeModes(t *testing.T) {
 		t.Fatalf("cashier must only see item: %+v", cashier)
 	}
 
-	// The check API returns the typed shape. The result cache is keyed by subject, not by claims, so
-	// reset it after the cashier computation above.
+	// The check API tells the two modes apart. The result cache is keyed by subject, not by claims, so reset it after the
+	// cashier computation above. A type with resources lists them, each with its levels; a type without resources lists
+	// none, and has its levels as a whole.
 	w.externalChange(context.Background())
 	token := w.token(jwt.MapClaims{"preferred_username": hierarchySubject, "position": "manager"})
-	status, perm := w.env.permission(w.appSvc, token)
-	if status != http.StatusOK {
-		t.Fatalf("check API: %d %v", status, perm)
+	expectJSON(t, "item", w.listedLevels("app", token, "item", "read", "write"),
+		`[{"id":"I1","name":"Item 1","access":["read"]}]`)
+	for _, action := range []string{"read", "write"} {
+		if status, ids := w.search("app", token, "advanced_mode", action); status != http.StatusOK || len(ids) != 0 {
+			t.Fatalf("a type without a synchronizer lists no resources, got %d %v for %s", status, ids, action)
+		}
 	}
-	expectJSON(t, "check API", perm, `{
-		"item": {"type":"sync","resources":[{"id":"I1","name":"Item 1","access":["read"]}]},
-		"advanced_mode": {"type":"not_sync","access":["read","write"]}}`)
+	status, body := w.ask(authzenreq.SearchAction("app", hierarchySubject, authzenreq.Whole("advanced_mode")), token)
+	levels, _, err := authzenreq.Actions(status, body)
+	if err != nil {
+		t.Fatalf("levels of the type as a whole: %v", err)
+	}
+	expectJSON(t, "advanced_mode", levels, `["read","write"]`)
 
 	// A specific resource can only be targeted on a type with a synchronizer.
 	status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{

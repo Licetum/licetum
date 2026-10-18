@@ -5,6 +5,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // A role is a set of permissions: its items reach a subject through the assignment rule that grants the role.
@@ -180,26 +182,26 @@ func TestSynchronizerCacheTTLKeepsTheSourceListInRedis(t *testing.T) {
 	e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": branch, "access": []string{"read"}, "subject": "alice"})
 
 	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub"})
-	ask := func(path string) {
+	ask := func(opts ...authzenreq.Option) {
 		t.Helper()
-		status, raw := e.do(http.MethodGet, e.check.URL+path, nil, "Authorization", "Bearer "+alice)
-		if status != http.StatusOK || !strings.Contains(string(raw), `"b2"`) {
-			t.Fatalf("permission %s: %d %s", path, status, raw)
+		status, ids := e.search("cache-org", alice, "branch", "read", opts...)
+		if status != http.StatusOK || !slices.Contains(ids, "b2") {
+			t.Fatalf("search: %d %v", status, ids)
 		}
 	}
 
-	ask("/service/" + org + "/permission")
+	ask()
 	if got := listCalls.Load(); got != 1 {
 		t.Fatalf("the first synchronization asks the source %d times, want 1", got)
 	}
 	// Another admin write ends the throttle of the synchronization: it runs again, but the list is in Redis.
 	e.must("POST", "/service", servicePayload(e, "unrelated"))
-	ask("/service/" + org + "/permission")
+	ask()
 	if got := listCalls.Load(); got != 1 {
 		t.Fatalf("a synchronization within cache_ttl asked the source again: %d calls", got)
 	}
 	// consistency=higher never answers from the cached list.
-	ask("/service/" + org + "/permission?consistency=higher")
+	ask(authzenreq.Fresh())
 	if got := listCalls.Load(); got != 2 {
 		t.Fatalf("consistency=higher must ask the source: %d calls, want 2", got)
 	}
