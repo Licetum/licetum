@@ -107,6 +107,7 @@ func TestContract_LOAD01_TheLoadTestGivesNoWrongAnswer(t *testing.T) {
 	if m.Valid {
 		t.Fatal("a window with wrong answers is valid")
 	}
+	judgeAsStep(t, m)
 
 	undecided := oracleOf(func(bool) string {
 		return `{"decision":false,"context":{"error":{"status":500,"message":"the source did not answer"}}}`
@@ -118,5 +119,17 @@ func TestContract_LOAD01_TheLoadTestGivesNoWrongAnswer(t *testing.T) {
 	m.judgeMeasurement()
 	if m.Valid {
 		t.Fatal("a window whose oracle verified nothing is valid")
+	}
+	judgeAsStep(t, m)
+}
+
+// judgeAsStep judges an invalid window as a ramp step whose other figures are within every objective, so that the step
+// fails for the window alone: a window that is not valid does not pass as a step, whatever its rate, errors and p99.
+func judgeAsStep(t *testing.T, m Measurement) {
+	t.Helper()
+	m.RateAsked, m.AchievedRPS = 50, 50
+	m.judgeStep(0.01, 100*time.Millisecond)
+	if m.passes() || len(m.FailReasons) != 1 || m.FailReasons[0] != "the window is not valid" {
+		t.Fatalf("an invalid window judged as a ramp step: passes %v, reasons %v", m.passes(), m.FailReasons)
 	}
 }
