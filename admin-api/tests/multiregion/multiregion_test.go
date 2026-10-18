@@ -62,8 +62,7 @@ func TestF6_2_ADenyRuleOfRegionAIsEnforcedInRegionBWithinTheSLO(t *testing.T) {
 		mustAdmin(t, regionA.admin, "POST", "/assignment_rule", rule(user, map[string]any{"effect": "deny"}))
 		start := time.Now()
 		eventually(t, 30*time.Second, "the denial to reach region B", func() bool {
-			a := permission(regionB.checks[0], user, 0)
-			return a.status == http.StatusOK && !a.hasAccess()
+			return permission(regionB.checks[0], user, 0).denies()
 		})
 		took = append(took, time.Since(start))
 	}
@@ -131,8 +130,7 @@ func TestF6_5_ACutLinkFailsRegionBClosedAfterTheLimitAndItCatchesUp(t *testing.T
 	cutLink(t, regionB, false)
 	start := time.Now()
 	eventually(t, 5*time.Second+30*time.Second, "the denial made during the cut to be enforced", func() bool {
-		a := permission(base, person, 0)
-		return a.status == http.StatusOK && !a.hasAccess()
+		return permission(base, person, 0).denies()
 	})
 	if took := time.Since(start); took > 5*time.Second {
 		t.Errorf("the revocation took %v after the link returned, want within the SLO of 5 s", took)

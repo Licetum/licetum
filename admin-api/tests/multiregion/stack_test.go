@@ -15,13 +15,13 @@ import (
 	"os/exec"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	support "github.com/licetum/licetum/core/testsupport"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 type region struct {
@@ -253,17 +253,26 @@ type answer struct {
 	took   time.Duration
 }
 
+// hasAccess is whether the answer is the decision that the person may read the branches.
 func (a answer) hasAccess() bool {
-	return a.status == http.StatusOK && strings.Contains(a.body, `"read"`)
+	allowed, err := authzenreq.Allowed(a.status, []byte(a.body))
+	return err == nil && allowed
 }
 
-// permission asks a check replica; atLeast, when positive, is the revision the answer must reflect.
+// denies is whether the answer is the decision that the person may not: an answer that is not a decision (a refusal, an error)
+// is not a denial.
+func (a answer) denies() bool {
+	allowed, err := authzenreq.Allowed(a.status, []byte(a.body))
+	return err == nil && !allowed
+}
+
+// permission asks a check replica whether the person may read the branches (the type as a whole: the rules of the seed give it
+// by type); atLeast, when positive, is the revision the answer must reflect.
 func permission(base, user string, atLeast int64) answer {
-	u := base + "/service/" + policy.slug + "/permission"
-	if atLeast > 0 {
-		u += "?at_least_as_fresh=" + strconv.FormatInt(atLeast, 10)
-	}
-	req, _ := http.NewRequest(http.MethodGet, u, nil)
+	question := authzenreq.Evaluation(policy.slug, user, authzenreq.Whole("branch"), "read", authzenreq.AtLeast(atLeast))
+	payload, _ := json.Marshal(question.Body)
+	req, _ := http.NewRequest(question.Method, base+question.Path, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token(user))
 	start := time.Now()
 	resp, err := httpClient.Do(req)
