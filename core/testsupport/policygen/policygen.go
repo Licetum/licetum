@@ -13,6 +13,10 @@
 //   - 15-40 resources with one or more parents (two of the same type now and then), resources whose source reports no
 //     parent, parents that do not exist (unresolved links, at least one of them above other resources), duplicate and
 //     missing names, and attributes (strings and lists) that resource_where and resource_from_claim read;
+//   - now and then a type that had a synchronizer when the resources were first synchronized and the policy written, and
+//     lost it since (Fixture.Before): the rows it reported stay in the local copy, resources of the types below it still
+//     name them as parents (links to a parent that is not there), and rules, role items and claim lookups still name its
+//     resources and its type, which a rule on a type with no synchronizer could not;
 //   - access groups, groups whose members are subjects, predicates over the claims, the request context and the clock
 //     (every operator), everybody, other groups (nested a few levels deep, never in a cycle), with disabled memberships
 //     and validity windows around the fixture's now;
@@ -33,7 +37,7 @@
 // (admin-api/tests/integration/contracts) can load it: an allow rule never applies on a missing attribute (on_missing
 // apply is for denials), '*' is only in inline denials, a condition on the clock is never a regex or in_cidr, the values
 // of ne, regex and the numeric operators are strings, a resource names parents only of the parent types that have a
-// synchronizer, and the windows end after they start.
+// synchronizer (or had one when the resources were first synchronized), and the windows end after they start.
 package policygen
 
 import (
@@ -154,10 +158,13 @@ type gen struct {
 
 	typeNames []string            // the types in the order of the fixture: parents first
 	sync      map[string]bool     // the types with a synchronizer
+	gone      map[string]bool     // the types that had one at the first synchronization and have none now (see Fixture.Before)
 	service   map[string]string   // type -> its service
 	children  map[string][]string // type -> its child types, in the order of the fixture
 	ids       map[string][]string // sync type -> the ids of its resources
 	names     map[string][]string // sync type -> the names of its resources
+	goneIDs   map[string][]string // gone type -> the ids of the rows it reported before its synchronizer was deleted
+	goneNames map[string][]string // gone type -> the names of those rows
 	missing   map[string][]string // type -> the ids its resources name as parents that no resource has
 	agroups   map[string][]string // type -> the names of its access groups
 	groups    []string
@@ -169,14 +176,17 @@ type gen struct {
 func Generate(seed int64) *policyfix.Fixture {
 	g := &gen{
 		// The bits of the seed, a negative one included: any int64 names one fixture.
-		rng:      rand.New(rand.NewPCG(uint64(seed), uint64(seed)^0x9e3779b97f4a7c15)), //nolint:gosec // a fixture of a test: no secret depends on it
-		sync:     map[string]bool{},
-		service:  map[string]string{},
-		children: map[string][]string{},
-		ids:      map[string][]string{},
-		names:    map[string][]string{},
-		missing:  map[string][]string{},
-		agroups:  map[string][]string{},
+		rng:       rand.New(rand.NewPCG(uint64(seed), uint64(seed)^0x9e3779b97f4a7c15)), //nolint:gosec // a fixture of a test: no secret depends on it
+		sync:      map[string]bool{},
+		gone:      map[string]bool{},
+		service:   map[string]string{},
+		children:  map[string][]string{},
+		ids:       map[string][]string{},
+		names:     map[string][]string{},
+		goneIDs:   map[string][]string{},
+		goneNames: map[string][]string{},
+		missing:   map[string][]string{},
+		agroups:   map[string][]string{},
 	}
 	// The fixture's now moves over a week, so that the conditions on the hour and the weekday are true for some seeds and
 	// false for others.
@@ -319,6 +329,24 @@ func (g *gen) typesAndServices() {
 		g.service[types[i].Name] = types[i].Service
 	}
 	g.f.Types = types
+	g.goneTypes()
+}
+
+// goneTypes makes some of the types without a synchronizer types that had one when the resources were first synchronized
+// and the policy written: Before names them with their synchronizer, and resources (see resources).
+func (g *gen) goneTypes() {
+	for i := range g.f.Types {
+		t := g.f.Types[i]
+		if t.Sync || !g.chance(55) {
+			continue
+		}
+		g.gone[t.Name] = true
+		if g.f.Before == nil {
+			g.f.Before = &policyfix.Before{}
+		}
+		t.Sync = true
+		g.f.Before.Types = append(g.f.Before.Types, t)
+	}
 }
 
 // parentIndexes picks n distinct parents of type i among the types before it, the one just before it most often, so that
@@ -399,7 +427,8 @@ func (g *gen) implies() map[string][]string {
 	return map[string][]string{"write": {"read"}, "approve": {"write"}}
 }
 
-// syncParents returns the parent types of a type that have a synchronizer: the only ones a resource can name as parents.
+// syncParents returns the parent types of a type that have a synchronizer: the only ones a resource can name as parents,
+// besides those that had one (see linkedParents).
 func (g *gen) syncParents(typ string) []string {
 	t, _ := g.f.TypeByName(typ)
 	var out []string
@@ -411,8 +440,30 @@ func (g *gen) syncParents(typ string) []string {
 	return out
 }
 
-// syncBelow returns the types with a synchronizer strictly below a type, in the order of the fixture.
-func (g *gen) syncBelow(typ string) []string {
+// linkedParents returns the parent types of a type whose resources a resource of it can name: the types with a
+// synchronizer, and the ones that had one when the resources were first synchronized (their rows were reported then, and the
+// link to one is unresolved now).
+func (g *gen) linkedParents(typ string) []string {
+	t, _ := g.f.TypeByName(typ)
+	var out []string
+	for _, p := range t.Parents {
+		if g.sync[p.Type] || g.gone[p.Type] {
+			out = append(out, p.Type)
+		}
+	}
+	return out
+}
+
+// idsOf returns the ids of the resources a type has, or, for a type that lost its synchronizer, of the rows it left.
+func (g *gen) idsOf(typ string) []string {
+	if g.gone[typ] {
+		return g.goneIDs[typ]
+	}
+	return g.ids[typ]
+}
+
+// below returns the types strictly below a type.
+func (g *gen) below(typ string) map[string]bool {
 	below := map[string]bool{}
 	queue := []string{typ}
 	for len(queue) > 0 {
@@ -425,12 +476,51 @@ func (g *gen) syncBelow(typ string) []string {
 			}
 		}
 	}
+	return below
+}
+
+// syncBelow returns the types with a synchronizer strictly below a type, in the order of the fixture.
+func (g *gen) syncBelow(typ string) []string {
+	below := g.below(typ)
 	var out []string
 	for _, name := range g.typeNames {
 		if below[name] && g.sync[name] {
 			out = append(out, name)
 		}
 	}
+	return out
+}
+
+// goneBelowOrAt returns the types that lost their synchronizer, a type itself and the types below it, in the order of the
+// fixture.
+func (g *gen) goneBelowOrAt(typ string) []string {
+	below := g.below(typ)
+	below[typ] = true
+	var out []string
+	for _, name := range g.typeNames {
+		if below[name] && g.gone[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// syncBelowAGone returns the types with a synchronizer below a type that lie below a type that lost its synchronizer, itself
+// below the type: a claim looked up in one climbs up to the type through the rows that are not there.
+func (g *gen) syncBelowAGone(typ string) []string {
+	var out []string
+	below := g.below(typ)
+	for _, name := range g.typeNames {
+		if !below[name] || !g.gone[name] {
+			continue
+		}
+		for lower := range g.below(name) {
+			if g.sync[lower] && !slices.Contains(out, lower) {
+				out = append(out, lower)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b string) int { return slices.Index(g.typeNames, a) - slices.Index(g.typeNames, b) })
 	return out
 }
 
@@ -473,8 +563,15 @@ func (g *gen) resources() {
 		count[pick(g, weighted)]++
 	}
 
-	for _, typ := range syncTypes {
-		parents := g.syncParents(typ)
+	for i := range g.f.Types {
+		typ := g.f.Types[i].Name
+		if g.gone[typ] {
+			g.goneRows(typ)
+		}
+		if !g.sync[typ] {
+			continue
+		}
+		parents := g.linkedParents(typ)
 		for j := 1; j <= count[typ]; j++ {
 			r := policyfix.Resource{Type: typ, ID: prefix(typ) + strconv.Itoa(j)}
 			switch x := g.rng.IntN(100); {
@@ -495,6 +592,20 @@ func (g *gen) resources() {
 	g.unresolvedAbove()
 }
 
+// goneRows writes the rows a type reported before its synchronizer was deleted: one to three, with parents among the
+// resources of the parent types that have a synchronizer, or had one, and attributes. They are in Before, not in the
+// fixture's resources: the fixture's state has no resource of the type.
+func (g *gen) goneRows(typ string) {
+	for j := 1; j <= g.between(1, 3); j++ {
+		r := policyfix.Resource{Type: typ, ID: prefix(typ) + strconv.Itoa(j), Name: title(typ) + " " + strconv.Itoa(j)}
+		r.Parents = g.resourceParents(g.linkedParents(typ))
+		r.Meta = g.meta()
+		g.goneIDs[typ] = append(g.goneIDs[typ], r.ID)
+		g.goneNames[typ] = append(g.goneNames[typ], r.NameOf())
+		g.f.Before.Resources = append(g.f.Before.Resources, r)
+	}
+}
+
 // resourceParents picks the parents of a resource among the resources of its parent types (written before it): one per
 // parent type most of the time, sometimes none, two of the same type now and then, and now and then one that no
 // resource is (an unresolved link).
@@ -512,7 +623,7 @@ func (g *gen) resourceParents(parentTypes []string) []policyfix.ResourceParent {
 			out = append(out, policyfix.ResourceParent{Type: pt, ID: g.newMissing(pt)})
 			continue
 		}
-		ids := g.ids[pt]
+		ids := g.idsOf(pt)
 		first := pick(g, ids)
 		out = append(out, policyfix.ResourceParent{Type: pt, ID: first})
 		if len(ids) > 1 && g.chance(7) {
@@ -759,10 +870,11 @@ func (g *gen) rule(i int) policyfix.Rule {
 
 // target returns what a rule or a role item covers: the whole of a type (always for a type without a synchronizer), or,
 // on a type with one, a resource (now and then one that does not exist), the resource found from a claim, or the
-// resources whose attributes match.
+// resources whose attributes match. A type that lost its synchronizer after the policy was written is covered like one
+// that has it: the rule was written then, and the admin API keeps it, dead, when the synchronizer is gone.
 func (g *gen) target() policyfix.Target {
 	t := policyfix.Target{Type: pick(g, g.typeNames)}
-	if !g.sync[t.Type] {
+	if !g.sync[t.Type] && (!g.gone[t.Type] || !g.chance(75)) {
 		return t
 	}
 	switch x := g.rng.IntN(100); {
@@ -786,20 +898,27 @@ func (g *gen) resourceID(typ string) string {
 		}
 		return prefix(typ) + "99"
 	}
-	return pick(g, g.ids[typ])
+	return pick(g, g.idsOf(typ))
 }
 
 // fromClaim returns a resource_from_claim on a type: the claim is looked up among the resources of the type itself (the
-// owner pattern), of a type below it (the rule climbs up), or of any type, by name (match_by given or left out), id or
-// an attribute. The cases carry claims that match some resources and claims that match none (see gen.claims).
+// owner pattern), of a type below it (the rule climbs up), of a type that lost its synchronizer, or of any type, by name
+// (match_by given or left out), id or an attribute. The cases carry claims that match some resources and claims that match none (see gen.claims).
 func (g *gen) fromClaim(typ string) *policyfix.FromClaim {
 	fc := &policyfix.FromClaim{LookupType: typ}
 	switch x := g.rng.IntN(100); {
-	case x < 50:
+	case x < 16 && len(g.goneBelowOrAt(typ)) > 0:
+		// The claim is looked up among the rows of a type that lost its synchronizer: the rule's own type, or a type below it
+		// (the climb then starts from rows that are not there).
+		fc.LookupType = pick(g, g.goneBelowOrAt(typ))
+	case x < 36 && len(g.syncBelowAGone(typ)) > 0:
+		// The climb from a matched resource to the rule's type passes a type that lost its synchronizer.
+		fc.LookupType = pick(g, g.syncBelowAGone(typ))
+	case x < 60:
 		if below := g.syncBelow(typ); len(below) > 0 {
 			fc.LookupType = pick(g, below)
 		}
-	case x < 58:
+	case x < 68:
 		fc.LookupType = pick(g, g.typeNames)
 	}
 	switch x := g.rng.IntN(100); {
@@ -1035,7 +1154,27 @@ func (g *gen) claims(subject string) map[string]any {
 			c["home_id"] = "nowhere"
 		}
 	}
+	// And now and then the name or the id of a row that a type left when it lost its synchronizer.
+	if gone := g.goneTypesWithRows(); len(gone) > 0 && g.chance(40) {
+		t := pick(g, gone)
+		if g.chance(60) {
+			c["home"] = pick(g, g.goneNames[t])
+		} else {
+			c["home_id"] = pick(g, g.goneIDs[t])
+		}
+	}
 	return c
+}
+
+// goneTypesWithRows returns the types that lost their synchronizer, in the order of the fixture.
+func (g *gen) goneTypesWithRows() []string {
+	var out []string
+	for _, name := range g.typeNames {
+		if g.gone[name] {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // syncTypeWithResources returns a type that has resources.
@@ -1113,10 +1252,14 @@ func (g *gen) questions(service string) []policyfix.Question {
 			if len(g.missing[q.Type]) > 0 && g.chance(50) {
 				q.Resource = pick(g, g.missing[q.Type])
 			}
+			// A row that the type left when it lost its synchronizer is not there to be asked about either.
+			if g.gone[q.Type] && g.chance(60) {
+				q.Resource = pick(g, g.goneIDs[q.Type])
+			}
 		case x < 98 && len(others) > 0:
 			q.Type = pick(g, others)
-			if len(g.ids[q.Type]) > 0 && g.chance(60) {
-				q.Resource = pick(g, g.ids[q.Type])
+			if len(g.idsOf(q.Type)) > 0 && g.chance(60) {
+				q.Resource = pick(g, g.idsOf(q.Type))
 			}
 		default:
 			q.Type = "nowhere"
