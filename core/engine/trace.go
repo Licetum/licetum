@@ -111,7 +111,8 @@ func (t *Trace) setSyncPending() {
 }
 
 // SyncPending says the answer was made without the data of some type: its synchronization had not finished in time. The
-// check API reports it in the X-Authz-Sync header.
+// check API reports it in the X-Authz-Sync header. A test that needs to know whether an answer is complete reads it here
+// (the Trace is created by the test, see WithTrace) and not from the header, which is not part of the surface to come.
 func (t *Trace) SyncPending() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
