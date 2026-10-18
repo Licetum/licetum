@@ -118,7 +118,7 @@ contracts:
     status: planned
   - id: ST02
     statement: The descendants of an anchor by type, page by page, equal a range scan of PostgreSQL.
-    oracle: PostgreSQL closure
+    oracle: PostgreSQL closure without the anchor itself (descendant_v has no self rows, ADR 0002)
     level: pg
     phase: P5
     status: planned
@@ -147,14 +147,26 @@ contracts:
     phase: P5
     status: planned
   - id: ST07
-    statement: Every CQL row is written with the timestamp derived from its position; a statement without an explicit timestamp is refused by the write helper.
-    oracle: WRITETIME of the rows
+    statement: Every CQL row is written with the timestamp derived from its position; a statement without an explicit timestamp is refused by the write helper, and the helper never binds NULL (it would write a cell tombstone) but leaves an absent value unset.
+    oracle: WRITETIME of the rows and the values the helper binds
     level: cql
     phase: P6
     status: planned
   - id: ST08
-    statement: The newest version of a key is never deleted by the MVCC garbage collection; table options match the schema.
+    statement: The newest version of a key is never deleted by the MVCC garbage collection; a late re-insert of a collected version with its original timestamp stays invisible while the range tombstone exists, and reads at P >= v1 are unchanged after the tombstone is purged; table options match the schema.
     oracle: the versions written
+    level: cql
+    phase: P6
+    status: planned
+  - id: ST09
+    statement: The CQL schema and the statements of the CQL adapter use no lightweight transaction, materialized view, secondary index or tablets-only option, and the schema and the store tests pass on Apache Cassandra 5 and on ScyllaDB; the default store runs on every pull request, the second one nightly.
+    oracle: the store tests and the schema snapshot of each store
+    level: cql
+    phase: P6
+    status: planned
+  - id: ST10
+    statement: The applier refuses to write a version older than the GC horizon of its key, and the PDP refuses a read position older than the GC horizon.
+    oracle: writes and read positions injected below the horizon the test derives from the applied positions and MVCC__RETENTION
     level: cql
     phase: P6
     status: planned
@@ -213,6 +225,12 @@ contracts:
     oracle: the log
     level: pg
     phase: P6
+    status: planned
+  - id: PUB05
+    statement: Every log_chunk.body is at most 1 MiB of zstd and holds whole records.
+    oracle: the records encoded, decoded again chunk by chunk
+    level: unit
+    phase: P3
     status: planned
   - id: APP01
     statement: The applier never moves past a missing or mismatching entry; late, duplicate or reordered headers and chunks never produce a torn application; a missing chunk is read from another data center.
