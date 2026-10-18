@@ -23,18 +23,23 @@ func NewCheckHandler(app *engine.App) http.Handler {
 	return h
 }
 
-// ConsistencyParam is the freshness a caller asks for.
 // ServiceRefPath names the service by its id or by its slug (see engine.App.ServiceIDByRef).
 type ServiceRefPath struct {
 	ServiceRef string `path:"service_id" doc:"Service id or slug"`
 }
 
+// ConsistencyParam is the freshness a caller asks for.
 type ConsistencyParam struct {
 	Consistency    string `query:"consistency" enum:"minimize_latency,higher" default:"minimize_latency" doc:"minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"`
 	AtLeastAsFresh int64  `query:"at_least_as_fresh" required:"false" minimum:"0" doc:"The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"`
 }
 
-func (c ConsistencyParam) value() engine.Consistency {
+// valueIn is the freshness of the request. The one the context carries (engine.WithConsistency: set by the process that
+// serves the request, never by its caller) wins; without it the query parameter decides, minimize_latency by default.
+func (c ConsistencyParam) valueIn(ctx context.Context) engine.Consistency {
+	if v, ok := engine.ConsistencyIn(ctx); ok {
+		return v
+	}
 	if c.Consistency == string(engine.HigherConsistency) {
 		return engine.HigherConsistency
 	}
@@ -179,7 +184,7 @@ Errors: 401 — the token is missing, invalid or expired; 424 — the service JW
 			if err != nil {
 				return nil, err
 			}
-			out, err := app.PermissionPage(ctx, serviceID, subject, env, in.value(), in.filter())
+			out, err := app.PermissionPage(ctx, serviceID, subject, env, in.valueIn(ctx), in.filter())
 			if err != nil {
 				return nil, err
 			}
@@ -225,11 +230,11 @@ Errors: 401 — the token is missing, invalid or expired; 424 — the service JW
 				return nil, err
 			}
 			env := app.NewEnv(claims, in.Body.Context)
-			results, err := app.CheckAccess(ctx, serviceID, subject, env, in.Body.Checks, in.Body.Explain, in.value())
+			results, err := app.CheckAccess(ctx, serviceID, subject, env, in.Body.Checks, in.Body.Explain, in.valueIn(ctx))
 			if err != nil {
 				return nil, err
 			}
-			app.LogDecisions(ctx, serviceID, subject, in.Body.Checks, results, in.value())
+			app.LogDecisions(ctx, serviceID, subject, in.Body.Checks, results, in.valueIn(ctx))
 			return OK(model.CheckResponse{Results: results})
 		})
 
@@ -279,7 +284,7 @@ or the claims are not acceptable; 424 — the service JWKS is unavailable.`
 			}
 			SetOnBehalfOf(ctx, in.Body.Subject)
 			env := app.NewEnv(claims, in.Body.Context)
-			results, err := app.CheckAccess(ctx, serviceID, in.Body.Subject, env, in.Body.Checks, in.Body.Explain, in.value())
+			results, err := app.CheckAccess(ctx, serviceID, in.Body.Subject, env, in.Body.Checks, in.Body.Explain, in.valueIn(ctx))
 			if err != nil {
 				return nil, err
 			}
@@ -295,7 +300,7 @@ or the claims are not acceptable; 424 — the service JWKS is unavailable.`
 			}); err != nil {
 				return nil, err
 			}
-			app.LogDecisions(ctx, serviceID, in.Body.Subject, in.Body.Checks, results, in.value())
+			app.LogDecisions(ctx, serviceID, in.Body.Subject, in.Body.Checks, results, in.valueIn(ctx))
 			return OK(model.CheckResponse{Results: results})
 		})
 
@@ -333,7 +338,7 @@ or the claims are not acceptable; 424 — the service JWKS is unavailable.`
 			SetOnBehalfOf(ctx, in.Body.Subject)
 			env := app.NewEnv(claims, in.Body.Context)
 			filter := engine.PermissionFilter{Type: in.Body.Type, Access: in.Body.Access, Limit: in.Body.Limit, After: in.Body.After}
-			out, err := app.PermissionPage(ctx, serviceID, in.Body.Subject, env, in.value(), filter)
+			out, err := app.PermissionPage(ctx, serviceID, in.Body.Subject, env, in.valueIn(ctx), filter)
 			if err != nil {
 				return nil, err
 			}

@@ -1,0 +1,24 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/search/resource?consistency=higher",
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "resource": {
+      "type": "branch"
+    },
+    "subject": {
+      "id": "bob",
+      "properties": {
+        "department": "sales",
+        "groups": [
+          "a",
+          "b"
+        ],
+        "preferred_username": "bob"
+      },
+      "type": "user"
+    }
+  }
+}

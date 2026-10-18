@@ -1,0 +1,20 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/evaluation?at_least_as_fresh=12&consistency=higher",
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "context": {
+      "ip": "10.0.0.7"
+    },
+    "resource": {
+      "id": "b1",
+      "type": "branch"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

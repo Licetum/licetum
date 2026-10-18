@@ -719,7 +719,7 @@ A request that is not valid is a 400, a missing or invalid token a 401, a subjec
 		if err != nil {
 			return nil, err
 		}
-		evals, err := caller.evaluate(ctx, in.value(), []model.AuthzenEvaluationRequest{in.Body}, model.AuthzenEvaluationsRequest{})
+		evals, err := caller.evaluate(ctx, in.valueIn(ctx), []model.AuthzenEvaluationRequest{in.Body}, model.AuthzenEvaluationsRequest{})
 		if err != nil {
 			return nil, err
 		}
@@ -759,7 +759,7 @@ A request that is not valid is a 400, a missing or invalid token a 401, a subjec
 		body := in.Body
 		if len(body.Evaluations) == 0 {
 			single := model.AuthzenEvaluationRequest{Subject: body.Subject, Resource: body.Resource, Action: body.Action, Context: body.Context}
-			evals, err := caller.evaluate(ctx, in.value(), []model.AuthzenEvaluationRequest{single}, model.AuthzenEvaluationsRequest{})
+			evals, err := caller.evaluate(ctx, in.valueIn(ctx), []model.AuthzenEvaluationRequest{single}, model.AuthzenEvaluationsRequest{})
 			if err != nil {
 				return nil, err
 			}
@@ -771,7 +771,7 @@ A request that is not valid is a 400, a missing or invalid token a 401, a subjec
 			}
 			return OK(model.AuthzenEvaluationsResponse{Decision: &evals[0].resp.Decision, Context: evals[0].resp.Context})
 		}
-		evals, err := caller.evaluate(ctx, in.value(), body.Evaluations, body)
+		evals, err := caller.evaluate(ctx, in.valueIn(ctx), body.Evaluations, body)
 		if err != nil {
 			return nil, err
 		}
@@ -814,7 +814,7 @@ there are more results; send it back as page.token with the same request. The re
 		if err != nil {
 			return nil, err
 		}
-		out, err := caller.searchResources(ctx, in.value(), in.Body)
+		out, err := caller.searchResources(ctx, in.valueIn(ctx), in.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -848,7 +848,7 @@ there are more results; send it back as page.token with the same request. The re
 		if err != nil {
 			return nil, err
 		}
-		out, err := caller.searchActions(ctx, in.value(), in.Body)
+		out, err := caller.searchActions(ctx, in.valueIn(ctx), in.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -882,7 +882,7 @@ there are more results; send it back as page.token with the same request. The re
 		if err != nil {
 			return nil, err
 		}
-		out, err := caller.searchSubjects(ctx, in.value(), in.Body)
+		out, err := caller.searchSubjects(ctx, in.valueIn(ctx), in.Body)
 		if err != nil {
 			return nil, err
 		}
