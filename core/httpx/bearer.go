@@ -1,4 +1,4 @@
-package server
+package httpx
 
 import (
 	"github.com/danielgtaylor/huma/v2"

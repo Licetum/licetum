@@ -11,6 +11,7 @@ import (
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
 )
@@ -128,8 +129,8 @@ func NewCheckAPI(app *engine.App) (http.Handler, huma.API) {
 		{Name: "System", Description: "Service endpoints."},
 	}
 	return NewServer(app, "Licetum — check", tags, func(api huma.API) {
-		AddBearerScheme(api, "Access token issued by the IdP of the service whose permissions are being checked.")
-		security := []map[string][]string{{BearerScheme: {}}}
+		httpx.AddBearerScheme(api, "Access token issued by the IdP of the service whose permissions are being checked.")
+		security := []map[string][]string{{httpx.BearerScheme: {}}}
 		authErrors := []int{http.StatusUnauthorized, http.StatusFailedDependency}
 
 		Register(api, huma.Operation{

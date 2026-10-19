@@ -25,6 +25,7 @@ import (
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/logx"
 )
@@ -484,5 +485,5 @@ The result is reused for a second. Use it as the readiness probe and ` + "`/heal
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, apperr.NotFound(i18n.RouteNotFound).Localize(i18n.FromContext(r.Context())))
 	})
-	return withAdmission(app, logAndRecover(app, withGzip(withCORS(app.Cfg.Cors, stripTrailingSlash(withLang(mux)))))), api
+	return withAdmission(app, logAndRecover(app, httpx.WithGzip(withCORS(app.Cfg.Cors, stripTrailingSlash(withLang(mux)))))), api
 }

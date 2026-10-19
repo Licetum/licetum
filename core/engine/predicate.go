@@ -15,10 +15,6 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// Claims are the claims of a verified JWT. Numbers are json.Number (decoded with UseNumber), so
-// comparing "5" == claim gives the same result as in the Python version.
-type Claims map[string]any
-
 // Env is what a decision reads about one request besides the subject: the claims of its token, the attributes the
 // request carries (its context) and the time of the decision. Conditions read them by their source (see
 // model.PredicateCondition).

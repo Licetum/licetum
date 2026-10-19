@@ -17,7 +17,7 @@ import (
 
 // The OpenAPI document is authored in English (operation summaries/descriptions in this
 // package, field docs in struct tags of internal/model). locales/<lang>.json maps each English
-// string to its translation; TestDocsTranslationsComplete fails when a string has no translation
+// string to its translation; TestContract_API02_DocsTranslationsComplete fails when a string has no translation
 // or a translation is no longer used.
 
 //go:embed locales/*.json

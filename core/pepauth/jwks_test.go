@@ -1,4 +1,4 @@
-package engine
+package pepauth
 
 import (
 	"crypto/rand"
@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
-
-	"github.com/licetum/licetum/core/config"
 )
 
 // jwksServer serves a key set whose keys the test changes, and counts the requests.
@@ -57,15 +55,15 @@ func (s *jwksServer) setKids(kids ...string) {
 	s.kids = kids
 }
 
-func jwksApp(cfg config.Auth) *App {
-	return &App{Cfg: &config.Config{Auth: cfg}, HTTP: &http.Client{}, metrics: newMetrics()}
+func jwksKeySets(ttl, minRefresh time.Duration) *KeySets {
+	return &KeySets{HTTP: &http.Client{}, TTL: ttl, MinRefresh: minRefresh}
 }
 
 func TestJWKSIsFetchedOncePerTTLForManyTokens(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
-	a := jwksApp(config.Auth{JWKSTTL: time.Hour})
+	a := jwksKeySets(time.Hour, 0)
 	for range 1000 {
-		key, err := a.jwksKeyFor(t.Context(), srv.URL, "k1", true)
+		key, err := a.KeyFor(t.Context(), srv.URL, "k1", true)
 		if err != nil || key == nil {
 			t.Fatalf("key = %v, err = %v", key, err)
 		}
@@ -77,12 +75,12 @@ func TestJWKSIsFetchedOncePerTTLForManyTokens(t *testing.T) {
 
 func TestJWKSExpiresAfterTheTTL(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
-	a := jwksApp(config.Auth{JWKSTTL: 50 * time.Millisecond, JWKSMinRefresh: time.Hour})
-	if _, err := a.jwksKeyFor(t.Context(), srv.URL, "k1", true); err != nil {
+	a := jwksKeySets(50*time.Millisecond, time.Hour)
+	if _, err := a.KeyFor(t.Context(), srv.URL, "k1", true); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(80 * time.Millisecond)
-	if _, err := a.jwksKeyFor(t.Context(), srv.URL, "k1", true); err != nil {
+	if _, err := a.KeyFor(t.Context(), srv.URL, "k1", true); err != nil {
 		t.Fatal(err)
 	}
 	if got := srv.requests.Load(); got != 2 {
@@ -92,13 +90,13 @@ func TestJWKSExpiresAfterTheTTL(t *testing.T) {
 
 func TestJWKSUnknownKeyRefetchesAtMostOncePerInterval(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
-	a := jwksApp(config.Auth{JWKSTTL: time.Hour, JWKSMinRefresh: 200 * time.Millisecond})
-	if _, err := a.jwksKeyFor(t.Context(), srv.URL, "k1", true); err != nil {
+	a := jwksKeySets(time.Hour, 200*time.Millisecond)
+	if _, err := a.KeyFor(t.Context(), srv.URL, "k1", true); err != nil {
 		t.Fatal(err)
 	}
 	// A flood of tokens with random key ids: the fetch just made is the one for this interval.
 	for i := range 1000 {
-		key, err := a.jwksKeyFor(t.Context(), srv.URL, "random-"+string(rune('a'+i%26))+string(rune('a'+i/26%26)), true)
+		key, err := a.KeyFor(t.Context(), srv.URL, "random-"+string(rune('a'+i%26))+string(rune('a'+i/26%26)), true)
 		if err != nil || key != nil {
 			t.Fatalf("an unknown key: %v, %v", key, err)
 		}
@@ -111,7 +109,7 @@ func TestJWKSUnknownKeyRefetchesAtMostOncePerInterval(t *testing.T) {
 	time.Sleep(250 * time.Millisecond)
 	srv.setKids("k1", "k2")
 	for range 10 {
-		key, err := a.jwksKeyFor(t.Context(), srv.URL, "k2", true)
+		key, err := a.KeyFor(t.Context(), srv.URL, "k2", true)
 		if err != nil || key == nil {
 			t.Fatalf("the rotated key: %v, %v", key, err)
 		}
@@ -130,13 +128,13 @@ func TestJWKSConcurrentFetchesOfOneURLAreShared(t *testing.T) {
 	}))
 	t.Cleanup(slow.Close)
 
-	a := jwksApp(config.Auth{JWKSTTL: time.Hour})
+	a := jwksKeySets(time.Hour, 0)
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if key, err := a.jwksKeyFor(t.Context(), slow.URL, "k1", true); err != nil || key == nil {
+			if key, err := a.KeyFor(t.Context(), slow.URL, "k1", true); err != nil || key == nil {
 				t.Errorf("key = %v, err = %v", key, err)
 			}
 		}()
@@ -152,9 +150,9 @@ func TestJWKSConcurrentFetchesOfOneURLAreShared(t *testing.T) {
 func TestJWKSTransportFailureIsNotAnInvalidToken(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
 	srv.status = http.StatusInternalServerError
-	a := jwksApp(config.Auth{})
-	_, err := a.jwksKeyFor(t.Context(), srv.URL, "k1", true)
-	var unavailable errJWKSUnavailable
+	a := jwksKeySets(10*time.Minute, 30*time.Second)
+	_, err := a.KeyFor(t.Context(), srv.URL, "k1", true)
+	var unavailable Unavailable
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("err = %v, want a JWKS failure (it counts toward the breaker)", err)
 	}
@@ -162,13 +160,13 @@ func TestJWKSTransportFailureIsNotAnInvalidToken(t *testing.T) {
 	srv.mu.Lock()
 	srv.status = 0
 	srv.mu.Unlock()
-	if key, err := a.jwksKeyFor(t.Context(), srv.URL, "k1", true); err != nil || key == nil {
+	if key, err := a.KeyFor(t.Context(), srv.URL, "k1", true); err != nil || key == nil {
 		t.Fatalf("after the provider recovered: %v, %v", key, err)
 	}
 }
 
 func TestJWKSKeyWithoutKidMatchesTokenWithoutKid(t *testing.T) {
-	set := &keySet{keys: []*jwksKey{{kid: "a", hasKid: true}, {hasKid: false}}}
+	set := &keySet{keys: []*Key{{kid: "a", hasKid: true}, {hasKid: false}}}
 	if set.find(nil, false) != set.keys[1] {
 		t.Error("a token without a key id takes the first key without one")
 	}

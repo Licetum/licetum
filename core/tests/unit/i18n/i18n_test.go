@@ -13,7 +13,7 @@ var verbRe = regexp.MustCompile(`%[-+# 0]*[0-9]*(?:\.[0-9]+)?[a-zA-Z%]`)
 
 // Every key must be translated into every supported language, with the same format verbs
 // in the same order — otherwise fmt would render %!v(MISSING) or swap arguments.
-func TestCatalogComplete(t *testing.T) {
+func TestContract_API02_CatalogComplete(t *testing.T) {
 	for _, key := range i18n.Keys() {
 		text, _ := i18n.Lookup(key)
 		want := verbRe.FindAllString(text[i18n.Default], -1)

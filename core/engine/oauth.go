@@ -14,7 +14,6 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/pepauth"
 	"github.com/licetum/licetum/core/redisx"
 )
 
@@ -34,7 +34,6 @@ const (
 	DefaultTokenCacheTTL = 300 * time.Second
 	pkceKeyPrefix        = "authz:pkce:"
 	pkceTTL              = 600 * time.Second
-	jwksTimeout          = 5 * time.Second
 	tokenExchangeTimeout = 10 * time.Second
 )
 
@@ -450,41 +449,6 @@ func (a *App) keepTokenInMemory(key string, claims Claims, now time.Time) {
 	a.tokensL1.Add(key, maps.Clone(claims), ttl, now)
 }
 
-func decodeClaims(raw []byte) (Claims, error) {
-	var claims Claims
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	err := dec.Decode(&claims)
-	return claims, err
-}
-
-func claimInt(v any) (int64, bool) {
-	switch x := v.(type) {
-	case json.Number:
-		if i, err := x.Int64(); err == nil {
-			return i, true
-		}
-		if f, err := x.Float64(); err == nil {
-			return int64(f), true
-		}
-	case float64:
-		return int64(x), true
-	case string:
-		// Some IdPs send numbers as strings (pydantic accepted them too).
-		if i, err := strconv.ParseInt(x, 10, 64); err == nil {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
-// errJWKSUnavailable is a failure that counts toward the circuit breaker (unlike an
-// invalid token).
-type errJWKSUnavailable struct{ err *apperr.Error }
-
-func (e errJWKSUnavailable) Error() string { return e.err.Error() }
-func (e errJWKSUnavailable) Unwrap() error { return e.err }
-
 func (a *App) verifyTokenLive(ctx context.Context, svc *model.Service, token, tokenHash string) (Claims, error) {
 	if svc.JwksURL == nil || *svc.JwksURL == "" {
 		return nil, apperr.FailedDependency(i18n.JWKSNotConfigured, svc.ID)
@@ -498,10 +462,10 @@ func (a *App) verifyTokenLive(ctx context.Context, svc *model.Service, token, to
 		return a.fetchAndVerify(context.WithoutCancel(ctx), svc, token)
 	})
 	if err != nil {
-		var unavailable errJWKSUnavailable
+		var unavailable pepauth.Unavailable
 		if errors.As(err, &unavailable) {
 			redisx.RecordFailure(ctx, a.Redis, breakerKey)
-			return nil, unavailable.err
+			return nil, unavailable.Unwrap()
 		}
 		return nil, err
 	}
@@ -517,14 +481,14 @@ func (a *App) fetchAndVerify(ctx context.Context, svc *model.Service, token stri
 	}
 	kid, hasKid := unverified.Header["kid"]
 
-	key, err := a.jwksKeyFor(ctx, *svc.JwksURL, kid, hasKid)
+	key, err := a.keySets().KeyFor(ctx, *svc.JwksURL, kid, hasKid)
 	if err != nil {
 		return nil, err
 	}
 	if key == nil {
 		return nil, apperr.InvalidToken(i18n.TokenKidNotFound)
 	}
-	jwk, err := key.parsed()
+	jwk, err := key.Parsed()
 	if err != nil {
 		return nil, err
 	}
