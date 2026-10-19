@@ -1,7 +1,6 @@
 package pepauth
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -12,7 +11,7 @@ import (
 )
 
 // An API key of a PEP is "lct_" + 16 lowercase hex characters (the key id, which is public) + "_" + the 43 base64url
-// characters of a 32-byte secret, without padding. Only the key id and the keyed SHA-256 (HMAC) of the secret are stored; the secret is
+// characters of a 32-byte secret, without padding. Only the key id and the SHA-256 of the secret are stored; the secret is
 // shown once, when the key is made, and is never logged.
 const (
 	apiKeyPrefix    = "lct_"
@@ -62,17 +61,12 @@ func ParseAPIKey(s string) (keyID, random string, err error) {
 	return keyID, random, nil
 }
 
-// hashKey is the key of the MAC that makes the stored hash of an API key. It is not a secret: it separates this hash from any other
-// use of SHA-256, so that the stored value is useless as anything but the check of an API key of this format.
-var hashKey = []byte("licetum.pep.api-key.v1")
-
-// HashSecret is the hash that is stored for the random part of an API key: its HMAC-SHA-256 under hashKey. A fast hash is the right
-// one here: the input is 32 bytes from a cryptographic random source, so there is nothing to guess and nothing to gain from a slow,
-// salted hash; those are for passwords that people choose.
+// HashSecret is the hash that is stored for the random part of an API key: its SHA-256. A fast hash is the right one here: the
+// input is 32 bytes from a cryptographic random source, so there is nothing to guess and nothing to gain from a slow, salted hash;
+// those are for passwords that people choose.
 func HashSecret(random string) []byte {
-	mac := hmac.New(sha256.New, hashKey)
-	mac.Write([]byte(random))
-	return mac.Sum(nil)
+	sum := sha256.Sum256([]byte(random))
+	return sum[:]
 }
 
 // CompareSecret reports whether the secret is the one the stored hash was made of. The comparison takes the same time
