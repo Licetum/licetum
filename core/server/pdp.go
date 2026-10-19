@@ -7,6 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/model"
@@ -20,13 +21,12 @@ type pdpEngine interface {
 	GetServiceForCheck(ctx context.Context, serviceID uuid.UUID) (*model.Service, error)
 	VerifyToken(ctx context.Context, svc *model.Service, token string) (engine.Claims, error)
 	AuthenticatePEP(ctx context.Context, credential, serviceRef, operation string) (*engine.PEPCaller, error)
-	NoteSubject(subject string, claims engine.Claims)
 	NewEnv(claims engine.Claims, context map[string]any) engine.Env
 	CheckAccess(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, requests []model.CheckRequest, explain bool, consistency engine.Consistency) ([]model.CheckResult, error)
 	LogDecisions(ctx context.Context, serviceID uuid.UUID, subject string, checks []model.CheckRequest, results []model.CheckResult, consistency engine.Consistency)
 	GetPermission(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, consistency engine.Consistency) (engine.PermissionResult, error)
 	SearchResources(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, q engine.ResourceSearch, consistency engine.Consistency) (engine.ResourcePage, error)
-	LoadKnownSubjectsAfter(ctx context.Context, after string, limit int) ([]engine.KnownSubject, error)
+	DirectoryAfter(ctx context.Context, serviceID uuid.UUID, subjectType string, after *db.DirectoryKey, limit int) ([]db.DirectoryEntry, error)
 	RecordDelegatedCall(ctx context.Context, serviceID uuid.UUID, call engine.DelegatedCall) error
 }
 

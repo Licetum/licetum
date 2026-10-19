@@ -250,7 +250,7 @@ there are more results; send it back as page.token with the same request. The re
 		Method:       http.MethodPost,
 		Path:         "/service/{service_id}/access/v1/search/subject",
 		Summary:      "AuthZEN subject search",
-		Description:  "Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a client application the service trusts may ask. The subjects are the known ones — the people whose tokens Licetum has verified, kept while SUBJECTS__ENABLED is on — so a person who was never seen is not listed; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given)." + searchNote + note,
+		Description:  "Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a PEP client with the search_subject operation, or a client application the service trusts, may ask. The subjects are the people in the subject directory of the service — what its application sent — decided with their stored properties, so a person who is not in the directory is never listed and an empty directory gives an empty result; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given)." + searchNote + note,
 		Tags:         []string{authzenTag},
 		Security:     security,
 		Errors:       errs,

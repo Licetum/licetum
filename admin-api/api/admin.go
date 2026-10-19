@@ -60,7 +60,6 @@ func NewAdminAPI(app *service.App) (http.Handler, huma.API) {
 		h.registerOperations(api)
 		h.registerBatch(api)
 		h.registerPolicy(api)
-		h.registerSubjects(api)
 		h.registerPEP(api)
 		h.registerDirectory(api)
 	})

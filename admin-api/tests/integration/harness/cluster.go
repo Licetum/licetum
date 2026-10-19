@@ -150,9 +150,8 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	c.Cfg = &config.Config{
 		DB: config.Database{URI: dbURI, PoolSize: 5, PgBouncer: iso.PgBouncer, MigrateURI: iso.MigrateURI},
 		// The DBOS tables of the cluster live in a schema of their own, dropped with it.
-		Sync:     config.Sync{DBOSSchema: "dbos_" + iso.Name},
-		Auth:     config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
-		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
+		Sync: config.Sync{DBOSSchema: "dbos_" + iso.Name},
+		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Platform: config.Platform{
 			Name: "Licetum", URL: c.IdP.AppURL(), Icon: c.IdP.IconURL(),
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username", AdminClaimValues: []string{"admin"},
@@ -588,9 +587,6 @@ func (r *Replica) Warm(c *Cluster, req authzenreq.Request, token string) *Result
 		last = res
 		if same >= 2 {
 			c.WaitForSyncIdle()
-			// The subjects the requests noted are written in batches once a second: write them now, so that the
-			// batch does not fall into the request a test measures next.
-			r.App.FlushSubjects(context.Background())
 			time.Sleep(100 * time.Millisecond) // let the background work of the last request end
 			return r.Send(c, req, token)
 		}

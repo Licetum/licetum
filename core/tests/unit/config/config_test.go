@@ -81,23 +81,13 @@ func TestLoadReportsBadValues(t *testing.T) {
 	}
 }
 
-func TestKnownSubjectsAreOffUnlessAskedFor(t *testing.T) {
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Subjects.Enabled || cfg.Subjects.RetentionDays != 90 {
-		t.Errorf("defaults: %+v", cfg.Subjects)
-	}
-
+// The registry of known subjects is gone: its settings are named by the warning of the deprecated ones.
+func TestTheSettingsOfTheRetiredSubjectRegistryAreDeprecated(t *testing.T) {
 	t.Setenv("SUBJECTS__ENABLED", "true")
 	t.Setenv("SUBJECTS__RETENTION_DAYS", "0")
-	cfg, err = config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.Subjects.Enabled || cfg.Subjects.RetentionDays != 0 {
-		t.Errorf("set: %+v", cfg.Subjects)
+	got := config.DeprecatedSettings()
+	if !slices.Contains(got, "SUBJECTS__ENABLED") || !slices.Contains(got, "SUBJECTS__RETENTION_DAYS") {
+		t.Errorf("DeprecatedSettings = %v", got)
 	}
 }
 

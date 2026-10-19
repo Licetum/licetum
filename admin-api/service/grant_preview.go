@@ -207,7 +207,7 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 		return nil, err
 	}
 	out.People = model.GrantPeople{
-		Enabled: info.Enabled, Total: people[0].total, Sample: people[0].sample, Registry: info.Registry, Limited: info.Limited,
+		Total: people[0].total, Sample: people[0].sample, Registry: info.Registry, Limited: info.Limited,
 	}
 
 	if err := a.grantMeets(ctx, g, &rule, insts, wholeTypes, covered, anchors, names, out); err != nil {

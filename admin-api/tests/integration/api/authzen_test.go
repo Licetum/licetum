@@ -14,6 +14,10 @@ import (
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/licetum/licetum/core/db"
+	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 func (w *world) authzen(path string, body any, claims jwt.MapClaims) (int, map[string]any) {
@@ -205,25 +209,19 @@ func TestAuthzenSearches(t *testing.T) {
 		t.Fatalf("actions on B4: %v", got)
 	}
 
-	// Subjects: only a trusted client may ask, and only the known people are listed.
+	// Subjects: only a trusted client may ask, and only the people of the directory of the service are listed.
 	status, _ = w.authzen("search/subject", map[string]any{"subject": map[string]any{"type": "user"},
 		"resource": map[string]any{"type": "branch", "id": "B1"}, "action": map[string]any{"name": "read"}}, self)
 	if status != http.StatusForbidden {
 		t.Fatalf("subject search by a client that is not trusted: %d", status)
 	}
 	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend"}})
-	if s, _ := w.env.permission(w.org, w.token(jwt.MapClaims{"preferred_username": "dave", "name": "Dave", "sub": "dave"})); s != http.StatusOK {
-		t.Fatalf("permission as dave: %d", s)
-	}
-	waitFor(t, "dave in the registry", func() bool {
-		s, raw := w.do("GET", w.admin.URL+"/subject?search=dave", nil)
-		return s == http.StatusOK && decodeMap(t, raw)["total"] == float64(1)
-	})
+	w.sendPeople(w.org, person("dave", "Dave", nil))
 	w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": "dave", "access": []string{"read"}})
 	trusted := jwt.MapClaims{"azp": "docs-backend", "sub": "svc-docs-backend"}
 	status, out = w.authzen("search/subject", map[string]any{"subject": map[string]any{"type": "user"},
 		"resource": map[string]any{"type": "branch", "id": "B1"}, "action": map[string]any{"name": "read"}}, trusted)
-	// The holder of the first tokens may be listed too (user-1 reads B1 through D1, and was seen); nobody else is.
+	// user-1 reads B1 through D1 but is not in the directory, so only dave is listed.
 	found := map[string]map[string]any{}
 	results, _ := out["results"].([]any)
 	for _, r := range results {
@@ -231,7 +229,7 @@ func TestAuthzenSearches(t *testing.T) {
 		found[entry["id"].(string)] = entry
 	}
 	dave, ok := found["dave"]
-	if status != http.StatusOK || !ok || len(found) > 2 || dave["type"] != "user" || dave["properties"].(map[string]any)["name"] != "Dave" {
+	if status != http.StatusOK || !ok || len(found) != 1 || dave["type"] != "user" || dave["properties"].(map[string]any)["name"] != "Dave" {
 		t.Fatalf("subject search: %d %v", status, out)
 	}
 	if _, stranger := found["svc-docs-backend"]; stranger {
@@ -291,67 +289,95 @@ func TestAuthzenMetadata(t *testing.T) {
 	requireAuthzenError(t, status, header, raw, http.StatusNotFound, "service_not_found")
 }
 
-func TestAuthzenSubjectSearchPagesWithoutSkippingOrRepeating(t *testing.T) {
+// TestContract_DIR01_SubjectSearchListsTheAllowedEntriesOfTheDirectoryOfTheService: the people of the directory of the service, of
+// the requested type, who may do the action are listed, by id, in pages that neither skip nor repeat; an empty directory gives an
+// empty result, a person who is not in it is never found, and the entries of another service or type never appear.
+func TestContract_DIR01_SubjectSearchListsTheAllowedEntriesOfTheDirectoryOfTheService(t *testing.T) {
 	w := newWorld(t)
-	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend"}})
-	people := []string{"p1", "p2", "p3", "p4", "p5"}
-	for _, p := range append([]string{"outsider"}, people...) {
-		if s, _ := w.env.permission(w.org, w.token(jwt.MapClaims{"preferred_username": p, "sub": p})); s != http.StatusOK {
-			t.Fatalf("permission as %s: %d", p, s)
-		}
-		if p != "outsider" {
-			w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": p, "access": []string{"read"}})
-		}
-	}
-	// The registry is written in batches (once a second); write what is waiting now.
-	w.app.FlushSubjects(context.Background())
-	waitFor(t, "the people in the registry", func() bool {
-		s, raw := w.do("GET", w.admin.URL+"/subject", nil)
-		return s == http.StatusOK && decodeMap(t, raw)["total"].(float64) >= 6
-	})
+	client := w.pepClient(w.org, "directory-reader", db.PEPKindAPIKey, engine.PEPSearchSubject)
+	key, _ := w.pepKey(client)
+	appClient := w.pepClient(w.appSvc, "directory-reader", db.PEPKindAPIKey, engine.PEPSearchSubject)
+	appKey, _ := w.pepKey(appClient)
 
-	trusted := jwt.MapClaims{"azp": "docs-backend", "sub": "svc-docs-backend"}
-	request := func(token any) map[string]any {
-		page := map[string]any{"limit": 2}
-		if token != nil {
-			page["token"] = token
+	search := func(ref, credential string, opts ...authzenreq.Option) (int, []string, string) {
+		w.t.Helper()
+		status, raw := w.ask(authzenreq.SearchSubject(ref, authzenreq.On("branch", "B1"), "read", opts...), credential)
+		if status != http.StatusOK {
+			return status, nil, ""
 		}
-		return map[string]any{"subject": map[string]any{"type": "user"}, "resource": map[string]any{"type": "branch", "id": "B1"},
-			"action": map[string]any{"name": "read"}, "page": page}
+		ids, next, err := authzenreq.SubjectIDs(status, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return status, ids, next
 	}
+
+	// An empty directory gives an empty result, not an error, whoever has rules.
+	for _, p := range []string{"p3", "p1", "p5", "p2", "p4", "ghost"} {
+		w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": p, "access": []string{"read"}})
+	}
+	if status, ids, next := search("org", key); status != http.StatusOK || len(ids) != 0 || next != "" {
+		t.Fatalf("an empty directory: %d %v %q", status, ids, next)
+	}
+
+	// The directory: five people with a rule, one without, one of another type with a rule, one with a rule in the other
+	// service only. "ghost" has a rule and is not in the directory.
+	w.sendPeople(w.org,
+		person("p3", "Person 3", nil), person("p1", "Person 1", nil), person("p5", "", nil), person("p2", "Person 2", nil),
+		person("p4", "Person 4", nil), person("outsider", "Outsider", nil),
+		map[string]any{"type": "service", "id": "p9", "name": "A service with a rule"},
+	)
+	w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": "p9", "access": []string{"read"}})
+	w.sendPeople(w.appSvc, person("p6", "Person of app", nil))
+	w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": "p6", "access": []string{"read"}})
+
+	// Every page, two at a time: the people with access, once, in the order of their ids.
 	var got []string
-	var token any
+	var next string
 	for pages := 0; ; pages++ {
 		if pages > 10 {
 			t.Fatalf("the pages never end: %v", got)
 		}
-		status, out := w.authzen("search/subject", request(token), trusted)
+		opts := []authzenreq.Option{authzenreq.Page(2, next)}
+		status, ids, token := search("org", key, opts...)
 		if status != http.StatusOK {
-			t.Fatalf("page %d: %d %v", pages, status, out)
+			t.Fatalf("page %d: %d", pages, status)
 		}
-		page := out["page"].(map[string]any)
-		if _, known := page["total"]; known {
-			t.Fatalf("the subject search does not know the total: %v", page)
-		}
-		for _, r := range out["results"].([]any) {
-			got = append(got, r.(map[string]any)["id"].(string))
-		}
-		if page["next_token"] == "" {
+		got = append(got, ids...)
+		if token == "" {
 			break
 		}
-		token = page["next_token"]
+		next = token
 	}
-	if strings.Join(got, ",") != strings.Join(people, ",") {
-		t.Fatalf("every person with access once, in the order of their identifiers: %v", got)
+	if strings.Join(got, ",") != "p1,p2,p3,p4,p5" {
+		t.Fatalf("the people with access, once, by id: %v (not the one without a rule, the one of another type, the one who is only in the rules, nor the person of the other service)", got)
+	}
+	// The names are the stored ones, and a person sent without a name has none.
+	status, raw := w.ask(authzenreq.SearchSubject("org", authzenreq.On("branch", "B1"), "read", authzenreq.Page(5, "")), key)
+	if status != http.StatusOK || !strings.Contains(string(raw), `"name":"Person 3"`) {
+		t.Fatalf("the display name is missing: %d %s", status, raw)
+	}
+	if strings.Contains(string(raw), "Outsider") || strings.Contains(string(raw), "Person of app") {
+		t.Fatalf("an entry that is not allowed, or of another service, is listed: %s", raw)
 	}
 
-	// The caller is a subject like any other, a trusted client included: rules may grant a service account access by its claims.
-	waitFor(t, "the trusted client in the registry", func() bool {
-		return w.must("GET", "/subject?search=svc-docs-backend", nil)["total"] == float64(1)
-	})
-	if slices.Contains(got, "svc-docs-backend") {
-		t.Fatalf("the client has no access to B1: %v", got)
+	// The other service sees its own directory only.
+	if status, ids, _ := search("app", appKey); status != http.StatusOK || len(ids) != 0 {
+		t.Fatalf("app: %d %v (p6's rule is on a branch of org; the item type of app has none)", status, ids)
 	}
+	w.grant(map[string]any{"type_resource_id": w.item, "resource_id": "I1", "subject": "p6", "access": []string{"read"}})
+	status, raw = w.ask(authzenreq.SearchSubject("app", authzenreq.On("item", "I1"), "read"), appKey)
+	if ids, _, err := authzenreq.SubjectIDs(status, raw); err != nil || strings.Join(ids, ",") != "p6" {
+		t.Fatalf("app lists %v (%v), want p6 only", ids, err)
+	}
+
+	// A token that is not the one of the page's request is refused.
+	_, _, token := search("org", key, authzenreq.Page(2, ""))
+	if token == "" {
+		t.Fatal("a first page of two has a next token")
+	}
+	status, header, body := w.askWithHeader(authzenreq.SearchSubject("org", authzenreq.On("branch", "B2"), "read", authzenreq.Page(2, token)), key)
+	requireAuthzenError(t, status, header, body, http.StatusBadRequest, "authzen_page_invalid")
 }
 
 // searchResourcePages pages the resource search of the type and the action for the claims until the token is empty. It returns

@@ -320,10 +320,6 @@ components:
     AuthzenSubjectSearchResponse:
       additionalProperties: false
       properties:
-        context:
-          additionalProperties: {}
-          description: Extra information; subjects_registry is disabled while the registry of known subjects is off
-          type: object
         page:
           $ref: "#/components/schemas/AuthzenPageResponse"
           description: Paging of the results
@@ -1331,7 +1327,7 @@ paths:
   /service/{service_id}/access/v1/search/subject:
     post:
       description: |-
-        Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a client application the service trusts may ask. The subjects are the known ones — the people whose tokens Licetum has verified, kept while SUBJECTS__ENABLED is on — so a person who was never seen is not listed; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given).
+        Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a PEP client with the search_subject operation, or a client application the service trusts, may ask. The subjects are the people in the subject directory of the service — what its application sent — decided with their stored properties, so a person who is not in the directory is never listed and an empty directory gives an empty result; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given).
 
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.

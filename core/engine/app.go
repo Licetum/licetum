@@ -71,8 +71,6 @@ type App struct {
 	// auditSink is the buffer of the async audit mode (see audit); auditOnce starts it on first use.
 	auditOnce sync.Once
 	auditSink atomic.Pointer[auditSink]
-	// subjects is the buffer of the subjects waiting to be written to the registry (see NoteSubject).
-	subjects subjectBuffer
 	// bg runs the background work (cache writes, refreshes) on a bounded pool, started on first use; Close waits for it.
 	bg     *backgroundPool
 	bgOnce sync.Once
@@ -186,7 +184,6 @@ func (a *App) Close() {
 	if sink := a.auditSink.Load(); sink != nil {
 		sink.close()
 	}
-	a.subjects.close()
 	if !a.background().close(closeWait) {
 		slog.Warn("background work did not finish before the shutdown", "wait", closeWait)
 	}

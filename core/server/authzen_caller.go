@@ -59,9 +59,6 @@ func newAuthzenCaller(ctx context.Context, app pdpEngine, cfg *config.Config, se
 	}
 	SetRequestUser(ctx, subject)
 	c := &authzenCaller{app: app, cfg: cfg, serviceID: serviceID, svc: svc, subject: subject, claims: claims, tally: map[string]*delegatedTally{}}
-	// The caller is a subject like any other, a trusted client application included: rules may grant a service account
-	// access by the attributes of its claims, so it belongs to the registry as well.
-	app.NoteSubject(subject, claims)
 	return c, nil
 }
 

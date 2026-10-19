@@ -297,11 +297,10 @@
       "conflicts_other": "有 {{count}} 条拒绝或例外与此访问权限相交",
       "dynamic": "资源由提问者的声明找到，因此有多少取决于具体的人。",
       "failed": "无法计算影响。您仍然可以授予该访问权限。",
-      "noPeople_other": "已知的 {{count}} 个人中没有人符合",
+      "noPeople_other": "目录中的 {{count}} 个人中没有人符合",
       "partial_other": "（另有 {{count}} 条访问权限未计入）",
-      "people_other": "涉及 {{count}} 个已知的人",
-      "registryEmpty": "尚未见到任何人，因此无法说明会涉及谁。人员在登录服务后才会出现。",
-      "registryOff": "人员注册表已关闭，因此无法说明会涉及谁。可通过 SUBJECTS__ENABLED 开启。",
+      "people_other": "涉及目录中的 {{count}} 个人",
+      "registryEmpty": "服务的目录为空，因此无法说明会涉及谁。应用会把其人员发送到主体目录。",
       "resources_other": "涵盖 {{count}} 个资源",
       "title": "这将产生的效果"
     },
@@ -714,6 +713,8 @@
       "rules": "直接访问权限"
     },
     "create": "创建组",
+    "directoryEmpty": "此服务的目录为空：只列出规则和历史中提到的人。应用通过 PUT /service/{id}/subjects 发送其人员。",
+    "directoryOf": "服务的目录",
     "empty": {
       "hint": "组按某种特征把人员联合起来；授予组的访问权限会被其所有成员获得。",
       "tag": "空",
@@ -726,7 +727,6 @@
     "noMatch": "没有找到",
     "noPeople": "还没有人被提到",
     "noPeopleHint": "请直接打开某个人：/people/用户名。",
-    "registryOff": "人员注册表已关闭：只列出规则和历史中提到的人。用 SUBJECTS__ENABLED 开启它，即可看到所有登录的人及其姓名和组。",
     "search": "按名称或组成搜索…",
     "searchPeople": "按用户名查找人员…",
     "tab": {
@@ -742,7 +742,7 @@
     "how": "原因",
     "howNamed": "在组成中被点名",
     "inGroups": "组：",
-    "lastSeen": "最近一次出现：{{at}}",
+    "lastSent": "应用最近一次发送：{{at}}",
     "noDirect": "没有直接访问权限。",
     "noGroups": "没有任何成员资格点名此人。",
     "noGroupsHint": "按条件定义的组（department = sales）取决于令牌，而不是关于此人的记录。",
@@ -1204,9 +1204,8 @@
     "none": "没有规则授予对此的访问权限。除了通过声明查找资源的规则，没有人拥有它。",
     "note": "这是规则列表；拒绝可能被例外解除。要知道某个人实际得到什么，请使用检查。",
     "open": "打开",
-    "registryEmpty": "尚未见到任何人，因此不显示人员；只显示规则。",
-    "registryOff": "人员注册表已关闭，因此不显示人员；只显示规则。可通过 SUBJECTS__ENABLED 开启。",
-    "registry_other": "人员取自 {{count}} 个已知主体。",
+    "registryEmpty": "规则所属服务的目录为空，因此不显示人员；只显示规则。应用会把其人员发送到所属服务的主体目录。",
+    "registry_other": "人员取自目录中的 {{count}} 个人。",
     "role": "角色“{{name}}”",
     "title": "谁能访问",
     "via": {

@@ -21,7 +21,6 @@ x-go: &go
 
 x-env: &env
   AUTH__STATE_SECRET: multiregion-state-secret
-  SUBJECTS__ENABLED: "true"
   SHUTDOWN__DRAIN: 1s
   SHUTDOWN__TIMEOUT: 10s
   SYNC__ENGINE: postgres

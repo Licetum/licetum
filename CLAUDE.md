@@ -452,12 +452,15 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   service (P4) the routes are governed by the platform policy `group_member` (whole type). The key of a scan is (type, id) bytewise
   (`DirectoryAfter`, index `ix_subject_directory_scan`). Tests: `directory_test.go` in `admin-api/tests/integration/api` (DIR02, DIR04) and
   in `core/tests/integration/db`.
-- **KnownSubject** (`known_subject`, `service/subjects.go`, `SUBJECTS__ENABLED` default OFF (the dev Compose stack sets it on), `SUBJECTS__RETENTION_DAYS` default 90):
-  the subjects of verified tokens (the PDP's `authenticateCaller` and the admin API's `Authenticate` call
-  `App.NoteSubject`, at most once per ten minutes per subject and process, written in the background) with the display name and
-  only the claims the policy reads (`requestAttributes`). It lets the UI say which groups a person is in (`identityOf` over the
-  live memberships and the stored claims) and whom a rule reaches (`peopleReached`). `/subject` (list, one, forget) is governed by
-  the `group_member` policy. Without a registry nothing here is guessed.
+  **The registry of known subjects is gone.** `known_subject` (global, filled by every verified token, `SUBJECTS__ENABLED`/`SUBJECTS__RETENTION_DAYS`,
+  `NoteSubject`, `/subject`) was removed in favour of the directory: nothing writes the table any more, and `RunRetention` drops what the previous
+  release left in it after a fixed 90 days (no setting; the table goes with the schema of P3). The directory feeds the AuthZEN subject search
+  (below), the people a rule reaches (`peopleReached`, `service/access_lookup.go`) and the person page. `peopleReached` tries each rule on the
+  people of the directories of **the services of the rule's types** (the type it targets, the type its claim is looked up in, the types of the
+  items of the role it grants; `servicesOfRules`), decided with the stored properties as claims: a service with an empty directory has no people, the
+  directory of another service is not counted, a person of two of a rule's services is counted once (DIR03); at most `engine.EvaluationLimit`
+  (5000) people are tried (`limited`). The administrators of the platform are no longer noted when they sign in: they appear in the rules and
+  memberships that name them, or in the directory of the platform service if somebody sends them there.
 
 ### Self-service: access policies for Licetum itself
 
@@ -691,12 +694,12 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   still carry a `next_token`; a caller to whom no rule allows anything gets a finished empty page without a scan. Known limit: the scan reads the
   keys of the type, not only the resources the rules reach (ADR 7.6 reads the descendants of the anchors; that arrives with the read-model port
   in P5), so a caller with few grants on a very large type pays up to the budget per page; the result has no `total` (`properties.name` is the name; a `not_sync` type has none); action search lists the levels on a resource (or on the type as a whole:
-  the candidates are the levels the person has on some resource of the type, each decided by `CheckAccess`); subject search (trusted clients only)
-  decides the known subjects of the registry (`SUBJECTS__ENABLED`) with their stored claims, in the order of their identifiers
-  (`LoadKnownSubjectsAfter`, keyset): batches of 100 from the cursor until the page is full or 1000 subjects were gone through, the page token is the
-  last subject covered (no `page.total`), so no page skips or repeats a person; the decisions are the cached `CheckAccess` ones. The token of a
-  trusted client is noted in the registry like any other (rules may grant a service account access by its claims), by the AuthZEN and the
-  delegated endpoints alike.
+  the candidates are the levels the person has on some resource of the type, each decided by `CheckAccess`); subject search (a PEP client with
+  `search_subject`, or a trusted client) decides the people of the **directory of the service** of the asked `subject.type` (`DirectoryAfter`,
+  keyset by type and id, bytewise) with their stored properties as claims: batches of 100 from the cursor until the page is full or 1000 people
+  were gone through, the page token is the last person covered (`type:id`, no `page.total`), so no page skips or repeats a person; the decisions are
+  the cached `CheckAccess` ones. A person who is not in the directory is never found, an empty directory gives an empty result (DIR01); the result
+  carries the stored display name as `properties.name`.
 - **PEP clients** (`engine/pep.go`, `engine/pep_auth.go`, `server/authzen_auth.go`, `server/pep_limits.go`, `pepauth/`, migration `00006`; ADR 0001, 7.10): the
   callers of the AuthZEN routes. The directory (`pep_issuer`, `pep_client`, `pep_credential`) is read as a whole by `App.PEPDirectory` and follows the
   `pep` scope of `revision_state`; a write to it bumps that scope only (no decision reads the directory, so no answer key moves) and calls

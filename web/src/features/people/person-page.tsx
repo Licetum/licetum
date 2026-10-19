@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next';
 import { useRunBatch } from '@/api/admin/batch/batch';
 import type { SimulatePermission200 } from '@/api/admin/model';
 import { simulatePermission } from '@/api/admin/simulation/simulation';
-import { useGetSubject } from '@/api/admin/subject/subject';
+import { useGetDirectoryEntry } from '@/api/admin/subject/subject';
 import { EmptyBlock, errorDetail, ErrorBlock, LoadingBlock, PageHeader } from '@/components/kit';
 import { usePreferences } from '@/components/providers';
 import { formatDateTime } from '@/domain/format';
@@ -74,24 +74,31 @@ export function PersonPage({ username }: { username: string }) {
   const refresh = useRefreshAll();
   const undoNotice = useUndoNotice();
 
-  // What the registry knows of the person: the name, the attributes the policy reads, the groups they are in.
-  const known = useGetSubject(username, {
-    query: {
-      enabled: access.whole('group_member', 'read'),
-      retry: false,
-      select: (r) => (r.status === 200 ? r.data : null),
-    },
-  });
-
   const [tab, setTab] = useQueryState('tab', 'effective');
   const [serviceSlug, setServiceSlug] = useQueryState('service');
   const [attrs, setAttrs] = useState<Pair[]>([]);
   const [revoking, setRevoking] = useState(false);
 
-  // The attributes the person's tokens carried start the "what if" form, so that the effective access is the real one.
+  const clientServices = (services.data ?? []).filter((s) => s.slug !== 'licetum');
+  const named = clientServices.find((s) =>
+    (rules.data ?? []).some((r) => r.service_id === s.id && r.subject === username),
+  );
+  const service = clientServices.find((s) => s.slug === serviceSlug) ?? named ?? clientServices[0];
+
+  // What the directory of the service holds of the person: the name, the properties as the application sent them, the groups
+  // they are in as of those properties. A person the application never sent is not there (404): the rules still name them.
+  const known = useGetDirectoryEntry(service?.id ?? '', 'user', username, {
+    query: {
+      enabled: !!service && access.whole('group_member', 'read'),
+      retry: false,
+      select: (r) => (r.status === 200 ? r.data : null),
+    },
+  });
+
+  // The properties the application sent for the person start the "what if" form, so that the effective access is the real one.
   const [seeded, setSeeded] = useState(false);
   useEffect(() => {
-    const claimsOfPerson = known.data?.claims;
+    const claimsOfPerson = known.data?.properties;
     if (seeded || !claimsOfPerson) return;
     setSeeded(true);
     const pairs = Object.entries(claimsOfPerson).map(([key, value]) => ({
@@ -101,12 +108,6 @@ export function PersonPage({ username }: { username: string }) {
     }));
     if (pairs.length > 0) setAttrs(pairs);
   }, [known.data, seeded]);
-
-  const clientServices = (services.data ?? []).filter((s) => s.slug !== 'licetum');
-  const named = clientServices.find((s) =>
-    (rules.data ?? []).some((r) => r.service_id === s.id && r.subject === username),
-  );
-  const service = clientServices.find((s) => s.slug === serviceSlug) ?? named ?? clientServices[0];
 
   const claims = useMemo(
     () => ({
@@ -221,7 +222,7 @@ export function PersonPage({ username }: { username: string }) {
         subtitle={
           known.data ? (
             <span>
-              {t('person.lastSeen', { at: formatDateTime(known.data.last_seen, lang) })}
+              {t('person.lastSent', { at: formatDateTime(known.data.sent_at, lang) })}
               {known.data.groups.length > 0 && (
                 <>
                   {' · '}

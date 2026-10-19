@@ -10,8 +10,6 @@ x-env-app: &env-app
   DB__URI: "${DB__URI:-postgresql://authz:authz@postgres:5432/authz_db}"
   AUTH__STATE_SECRET: "${AUTH__STATE_SECRET:-dev-only-insecure-state-secret-change-me}"
   REDIS__URI: "${REDIS__URI:-redis://redis:6379/0}"
-  # The registry of known subjects is off unless asked for; the development stack asks, so the people screens have data.
-  SUBJECTS__ENABLED: "${SUBJECTS__ENABLED:-true}"
   # air restarts the apps on every change: no drain on shutdown in development (the default of 10 s is for a balancer).
   SHUTDOWN__DRAIN: "${SHUTDOWN__DRAIN:-0}"
   # The address clients reach the PDP at: the AuthZEN discovery document is built from it.

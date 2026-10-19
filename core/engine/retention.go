@@ -12,11 +12,13 @@ import (
 )
 
 const (
-	// retentionEvery is how often the retention of the audit and of the known subjects is applied.
+	// retentionEvery is how often the retention of the audit, of the left-over known subjects and of the directories is applied.
 	retentionEvery = time.Hour
 	// retentionChunk bounds the rows one DELETE removes, to keep its locks short.
 	retentionChunk = 10_000
 	retentionKey   = "authz:retention:lock"
+	// knownSubjectKeepDays is how long a row of the retired registry of known subjects is kept.
+	knownSubjectKeepDays = 90
 )
 
 // WatchRetention applies the retention every retentionEvery until ctx ends. A Redis lock held for a little less than the
@@ -44,7 +46,7 @@ func (a *App) runRetentionGuarded(ctx context.Context) {
 	a.RunRetention(ctx)
 }
 
-// RunRetention removes the delegated-call records and the known subjects older than their retention, and the directory entries
+// RunRetention removes the delegated-call records, the rows left in the retired registry of known subjects, and the directory entries
 // that were not sent within the retention period of their service, chunk by chunk until nothing is left.
 func (a *App) RunRetention(ctx context.Context) {
 	if days := a.Cfg.Delegation.AuditRetentionDays; days > 0 {
@@ -52,12 +54,11 @@ func (a *App) RunRetention(ctx context.Context) {
 			DELETE FROM delegated_call WHERE ctid IN (
 				SELECT ctid FROM delegated_call WHERE at < now() - make_interval(days => $1) LIMIT $2)`, days)
 	}
-	// Not conditioned on SUBJECTS__ENABLED: the worker may run without the settings of the processes that write the rows.
-	if days := a.Cfg.Subjects.RetentionDays; days > 0 {
-		a.pruneInChunks(ctx, "known_subject", `
-			DELETE FROM known_subject WHERE ctid IN (
-				SELECT ctid FROM known_subject WHERE last_seen < now() - make_interval(days => $1) LIMIT $2)`, days)
-	}
+	// The registry of known subjects is gone (the subject directory replaced it) and nothing writes its table any more; what the
+	// previous release left in it is dropped after the period it was kept for. The table itself goes with the schema of P3.
+	a.pruneInChunks(ctx, "known_subject", `
+		DELETE FROM known_subject WHERE ctid IN (
+			SELECT ctid FROM known_subject WHERE last_seen < now() - make_interval(days => $1) LIMIT $2)`, knownSubjectKeepDays)
 	a.pruneDirectory(ctx)
 }
 

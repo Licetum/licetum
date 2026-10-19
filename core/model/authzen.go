@@ -168,7 +168,6 @@ type AuthzenActionSearchRequest struct {
 // AuthzenSubjectSearchResponse lists the subjects that are allowed.
 type AuthzenSubjectSearchResponse struct {
 	Page    *AuthzenPageResponse `json:"page,omitempty" doc:"Paging of the results"`
-	Context map[string]any       `json:"context,omitempty" doc:"Extra information; subjects_registry is disabled while the registry of known subjects is off"`
 	Results []AuthzenSubject     `json:"results" nullable:"false" doc:"The subjects that may do the action on the resource"`
 }
 

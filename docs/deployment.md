@@ -54,7 +54,8 @@ The public port serves no probe and no metric. The chart's probes, its Service p
 | the copy of the policy a pod decides from | per pod, in memory | built from the replica, renewed every `REVISION__POLL_INTERVAL` |
 | the resource graph (`resource_cache`, the closure) | global, one primary | written by the worker only |
 | answers, tokens, source lists | per region, in Redis and in memory | disposable |
-| the audit of delegated calls, known subjects | global | written to the primary (async mode buffers them) |
+| the audit of delegated calls | global | written to the primary (async mode buffers them) |
+| the subject directory | global | written to the primary, by the admin API |
 | the change log | global | written in the transaction of the change |
 
 ## Settings of a region

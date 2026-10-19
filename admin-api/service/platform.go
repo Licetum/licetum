@@ -76,7 +76,6 @@ func (a *App) Authenticate(ctx context.Context, authorization string) (*Access, 
 		return nil, err
 	}
 
-	a.NoteSubject(subject, claims)
 	data, err := a.GetPermissionData(ctx, model.PlatformServiceID, subject, engine.NewEnv(claims, nil), engine.MinimizeLatency)
 	if err != nil {
 		return nil, err

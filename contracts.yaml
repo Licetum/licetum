@@ -737,7 +737,7 @@ contracts:
     oracle: the evaluation endpoint asked for each directory entry in turn; the entries written
     level: pg
     phase: P2
-    status: planned
+    status: active
   - id: DIR02
     statement: A directory write changes only the rows whose content differs; an unchanged batch writes no row and takes no revision, and the time an entry was last sent is kept apart from the entry. The same id in two services is two independent entries.
     oracle: the rows (xmin, updated_at) and revision_state before and after each write
@@ -749,7 +749,7 @@ contracts:
     oracle: hand-written sets of people from the fixture of DEC13 (who has access)
     level: pg
     phase: P2
-    status: planned
+    status: active
   - id: DIR04
     statement: Retention removes, in chunks, the directory entries not sent within the retention period of their service; an entry sent again survives, a service with no retention period keeps everything, and other services are untouched.
     oracle: the rows written and the times they were sent

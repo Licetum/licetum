@@ -90,8 +90,6 @@ func (f *fakePDP) VerifyToken(_ context.Context, _ *model.Service, token string)
 	return engine.Claims{"preferred_username": fakeCaller}, nil
 }
 
-func (f *fakePDP) NoteSubject(string, engine.Claims) {}
-
 func (f *fakePDP) NewEnv(claims engine.Claims, attrs map[string]any) engine.Env {
 	return engine.NewEnv(claims, attrs)
 }
@@ -142,7 +140,7 @@ func (f *fakePDP) SearchResources(_ context.Context, _ uuid.UUID, _ string, _ en
 	return page, nil
 }
 
-func (f *fakePDP) LoadKnownSubjectsAfter(context.Context, string, int) ([]engine.KnownSubject, error) {
+func (f *fakePDP) DirectoryAfter(context.Context, uuid.UUID, string, *db.DirectoryKey, int) ([]db.DirectoryEntry, error) {
 	return nil, nil
 }
 

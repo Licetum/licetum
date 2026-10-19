@@ -212,14 +212,6 @@ type Sync struct {
 	Concurrency int
 }
 
-// Subjects tunes the registry of known subjects (see service.NoteSubject).
-type Subjects struct {
-	// Enabled turns the registry on: the subjects of verified tokens are remembered with the claims the policy reads.
-	Enabled bool
-	// RetentionDays is how long a subject that is not seen again is kept; 0 keeps them for good.
-	RetentionDays int
-}
-
 // Delegation tunes the audit of the calls made on behalf of a person (see service.RecordDelegatedCall).
 type Delegation struct {
 	// AuditRetentionDays is how long a record is kept; 0 keeps them for good.
@@ -304,7 +296,6 @@ type Config struct {
 	Platform   Platform
 	AdminAuth  AdminAuth
 	Sync       Sync
-	Subjects   Subjects
 	Delegation Delegation
 	HTTP       HTTP
 	Cache      Cache
@@ -410,10 +401,6 @@ func Load() (*Config, error) {
 			DemandWindow:     e.seconds("SYNC__DEMAND_WINDOW", 600),
 			FreshMinInterval: e.seconds("SYNC__FRESH_MIN_INTERVAL", 1),
 			Concurrency:      e.int("SYNC__CONCURRENCY", 0),
-		},
-		Subjects: Subjects{
-			Enabled:       e.bool("SUBJECTS__ENABLED", false),
-			RetentionDays: e.int("SUBJECTS__RETENTION_DAYS", 90),
 		},
 		Delegation: Delegation{
 			AuditRetentionDays: e.int("DELEGATION__AUDIT_RETENTION_DAYS", 365),
@@ -522,6 +509,8 @@ func DeprecatedSettings() []string {
 		// The OAuth client of the self-service: administrators sign in through ADMIN_AUTH__* now.
 		"PLATFORM__AUTHORIZATION_URL", "PLATFORM__TOKEN_URL", "PLATFORM__JWKS_URL", "PLATFORM__ISSUER", "PLATFORM__CLIENT_ID",
 		"PLATFORM__CLIENT_SECRET",
+		// The registry of known subjects gave way to the subject directory of each service.
+		"SUBJECTS__ENABLED", "SUBJECTS__RETENTION_DAYS",
 	} {
 		if _, ok := lookup(name); ok {
 			out = append(out, name)

@@ -231,9 +231,9 @@ func TestActionsAndSubjectIDs(t *testing.T) {
 		t.Fatalf("%v %q %v", ids, next, err)
 	}
 
-	// With the registry of known subjects off the answer says so and holds nobody.
-	off := marshal(t, model.AuthzenSubjectSearchResponse{Results: []model.AuthzenSubject{}, Context: map[string]any{"subjects_registry": "disabled"}})
-	if ids, _, err = authzenreq.SubjectIDs(http.StatusOK, off); err != nil || len(ids) != 0 {
+	// An empty directory gives an empty result.
+	empty := marshal(t, model.AuthzenSubjectSearchResponse{Results: []model.AuthzenSubject{}})
+	if ids, _, err = authzenreq.SubjectIDs(http.StatusOK, empty); err != nil || len(ids) != 0 {
 		t.Fatalf("%v %v", ids, err)
 	}
 }

@@ -28,12 +28,12 @@ components:
             - string
             - "null"
         people:
-          description: Known subjects the rule applies to (up to 20)
+          description: People of the directory the rule applies to (up to 20)
           items:
             $ref: "#/components/schemas/KnownPerson"
           type: array
         people_total:
-          description: How many known subjects the rule applies to
+          description: How many people of the directory the rule applies to
           format: int64
           type: integer
         role:
@@ -164,18 +164,14 @@ components:
     AccessPeople:
       additionalProperties: false
       properties:
-        enabled:
-          description: Whether the registry of known subjects is on (SUBJECTS__ENABLED); when it is off nothing is said about people
-          type: boolean
         limited:
-          description: The registry is larger than what was tried
+          description: The directories are larger than what was tried
           type: boolean
         registry:
-          description: Known subjects the rules were tried on (SUBJECTS__ENABLED); 0 — the registry is empty or off, nothing is said about people
+          description: People of the directories of the rules' services that the rules were tried on; 0 — those directories are empty, nothing is said about people
           format: int64
           type: integer
       required:
-        - enabled
         - registry
         - limited
       type: object
@@ -1217,14 +1213,11 @@ components:
     GrantPeople:
       additionalProperties: false
       properties:
-        enabled:
-          description: Whether the registry of known subjects is on (SUBJECTS__ENABLED); when it is off nothing is said about people
-          type: boolean
         limited:
-          description: The registry is larger than what was tried
+          description: The directories are larger than what was tried
           type: boolean
         registry:
-          description: Known subjects the rule was tried on; 0 — the registry is empty or off, nothing is said about people
+          description: People of the directories of the rule's services that the rule was tried on; 0 — those directories are empty, nothing is said about people
           format: int64
           type: integer
         sample:
@@ -1233,11 +1226,10 @@ components:
             $ref: "#/components/schemas/KnownPerson"
           type: array
         total:
-          description: How many known subjects
+          description: How many people of the directory
           format: int64
           type: integer
       required:
-        - enabled
         - total
         - sample
         - registry
@@ -1430,7 +1422,7 @@ components:
       additionalProperties: false
       properties:
         name:
-          description: The display name, when the token had one
+          description: The display name, when the application sent one
           type:
             - string
             - "null"
@@ -1440,106 +1432,6 @@ components:
       required:
         - subject
         - name
-      type: object
-    KnownSubject:
-      additionalProperties: false
-      properties:
-        first_seen:
-          description: When a token of the subject was first verified
-          format: date-time
-          type: string
-        last_seen:
-          description: When a token of the subject was last verified (noted at most every ten minutes)
-          format: date-time
-          type: string
-        name:
-          description: The display name from the token (name, or given and family name); null when the token had none
-          type:
-            - string
-            - "null"
-        seen_count:
-          description: How many times it was noted
-          format: int64
-          type: integer
-        subject:
-          description: The subject as the rules name it (preferred_username, or sub)
-          examples:
-            - alice
-          type: string
-      required:
-        - subject
-        - name
-        - first_seen
-        - last_seen
-        - seen_count
-      type: object
-    KnownSubjectDetail:
-      additionalProperties: false
-      properties:
-        claims:
-          additionalProperties: {}
-          description: "The claims kept for the subject: only those the policy reads (strings or lists of strings)"
-          type: object
-        first_seen:
-          description: When a token of the subject was first verified
-          format: date-time
-          type: string
-        groups:
-          description: The groups the subject is in now, nested groups included, as of the claims above
-          items:
-            $ref: "#/components/schemas/SubjectGroup"
-          type: array
-        last_seen:
-          description: When a token of the subject was last verified (noted at most every ten minutes)
-          format: date-time
-          type: string
-        name:
-          description: The display name from the token (name, or given and family name); null when the token had none
-          type:
-            - string
-            - "null"
-        seen_count:
-          description: How many times it was noted
-          format: int64
-          type: integer
-        subject:
-          description: The subject as the rules name it (preferred_username, or sub)
-          examples:
-            - alice
-          type: string
-      required:
-        - claims
-        - groups
-        - subject
-        - name
-        - first_seen
-        - last_seen
-        - seen_count
-      type: object
-    KnownSubjectList:
-      additionalProperties: false
-      properties:
-        enabled:
-          description: Whether the registry is on (SUBJECTS__ENABLED); when it is off the list stays as it was and does not grow
-          type: boolean
-        items:
-          description: The page, the most recently seen first
-          items:
-            $ref: "#/components/schemas/KnownSubject"
-          type: array
-        retention_days:
-          description: Days a subject that is not seen again is kept (SUBJECTS__RETENTION_DAYS); 0 — for good
-          format: int64
-          type: integer
-        total:
-          description: How many subjects match
-          format: int64
-          type: integer
-      required:
-        - enabled
-        - retention_days
-        - total
-        - items
       type: object
     LintFinding:
       additionalProperties: false
@@ -10395,249 +10287,6 @@ paths:
       summary: Replace the log settings
       tags:
         - Log settings
-  /subject:
-    get:
-      description: The subjects Licetum has seen in verified tokens (SUBJECTS__ENABLED), the most recently seen first. search matches the subject and the display name.
-      operationId: list_subjects
-      parameters:
-        - description: Part of the subject or of the name
-          explode: false
-          in: query
-          name: search
-          schema:
-            description: Part of the subject or of the name
-            maxLength: 200
-            type: string
-        - description: Page size
-          explode: false
-          in: query
-          name: limit
-          schema:
-            default: 50
-            description: Page size
-            format: int64
-            maximum: 200
-            minimum: 1
-            type: integer
-        - description: How many to skip
-          explode: false
-          in: query
-          name: offset
-          schema:
-            default: 0
-            description: How many to skip
-            format: int64
-            minimum: 0
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/KnownSubjectList"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Service Unavailable
-      security:
-        - bearer: []
-      summary: Known subjects
-      tags:
-        - Subject
-  /subject/{subject}:
-    delete:
-      description: Removes the subject from the registry. It is noted again the next time one of its tokens is verified.
-      operationId: forget_subject
-      parameters:
-        - description: The subject as the rules name it (preferred_username, or sub)
-          in: path
-          name: subject
-          required: true
-          schema:
-            description: The subject as the rules name it (preferred_username, or sub)
-            examples:
-              - alice
-            minLength: 1
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Service Unavailable
-      security:
-        - bearer: []
-      summary: Forget a subject
-      tags:
-        - Subject
-    get:
-      description: The subject with the claims kept for it (only those the policy reads) and the groups it is in as of those claims.
-      operationId: get_subject
-      parameters:
-        - description: The subject as the rules name it (preferred_username, or sub)
-          in: path
-          name: subject
-          required: true
-          schema:
-            description: The subject as the rules name it (preferred_username, or sub)
-            examples:
-              - alice
-            minLength: 1
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/KnownSubjectDetail"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Service Unavailable
-      security:
-        - bearer: []
-      summary: A known subject
-      tags:
-        - Subject
   /type_resource:
     get:
       description: "For picking a parent across services: a type's parent may belong to another service."

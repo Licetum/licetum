@@ -129,8 +129,6 @@ func setup(t *testing.T) *env {
 		Cors: config.Cors{AllowOrigins: []string{"http://localhost:5173"}},
 		// Tests that ask for higher consistency in a loop must not be spaced out to one source call per second.
 		Sync: config.Sync{FreshMinInterval: time.Millisecond, Engine: syncEngine(), DBOSSchema: "dbos_" + iso.Name},
-		// The registry of known subjects is on, as by default.
-		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
 			Name: "Licetum", URL: m + "/app", Icon: m + "/icon.png",
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username",

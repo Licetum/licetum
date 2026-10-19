@@ -127,37 +127,6 @@ func TestF4_2_AsyncAuditCountsWhatItDrops(t *testing.T) {
 	}
 }
 
-func TestF4_3_KnownSubjectChangesOncePerIntervalAcrossReplicas(t *testing.T) {
-	w := newWorld(t)
-	// round notes the subject once on each of five fresh replicas (a process queues a subject once per interval itself).
-	round := func() {
-		for i := 0; i < 5; i++ {
-			r := w.replica(func(*config.Config) {})
-			r.NoteSubject("alice", engine.Claims{"preferred_username": "alice", "name": "Alice"})
-			r.FlushSubjects(context.Background())
-		}
-	}
-	seen := func() int {
-		var n int
-		if err := w.pool.QueryRow(context.Background(), `SELECT seen_count FROM known_subject WHERE subject = 'alice'`).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		return n
-	}
-	round()
-	if got := seen(); got != 1 {
-		t.Fatalf("5 replicas within the interval: seen_count = %d, want 1", got)
-	}
-	// The interval passes: one change cluster-wide, not one per replica.
-	if _, err := w.pool.Exec(context.Background(), `UPDATE known_subject SET last_seen = now() - interval '11 minutes'`); err != nil {
-		t.Fatal(err)
-	}
-	round()
-	if got := seen(); got != 2 {
-		t.Fatalf("after the interval seen_count = %d, want 2", got)
-	}
-}
-
 func TestF4_4_RetentionRemovesOldRecordsInChunks(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
@@ -176,13 +145,15 @@ func TestF4_4_RetentionRemovesOldRecordsInChunks(t *testing.T) {
 	}
 }
 
-func TestF4_4_RetentionPrunesSubjectsWhateverTheWorkerRegistrySetting(t *testing.T) {
+// The registry of known subjects is retired: nothing writes its table, and what the previous release left in it is dropped after
+// 90 days, with no setting.
+func TestF4_4_RetentionDropsWhatIsLeftOfTheRetiredRegistryAfterNinetyDays(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
 	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject, last_seen) VALUES ('old', now() - interval '200 days'), ('fresh', now())`); err != nil {
 		t.Fatal(err)
 	}
-	app := w.replica(func(c *config.Config) { c.Subjects.Enabled = false; c.Subjects.RetentionDays = 90 })
+	app := w.replica(func(c *config.Config) {})
 	app.RunRetention(ctx)
 	if got := w.countRows(`SELECT count(*) FROM known_subject WHERE subject IN ('old', 'fresh')`); got != 1 {
 		t.Fatalf("%d subjects left, want only the fresh one", got)

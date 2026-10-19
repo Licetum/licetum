@@ -91,12 +91,15 @@ go run ./cmd/licetum-admin restore-admin -user alice    # alice becomes an admin
 
 It needs the database variables. The seed never does this on purpose.
 
-## Known subjects
+## The subject directory
 
-The subjects of verified tokens can be remembered (the name, and only the claims the policies read), so the interface can
-tell which groups a person is in and whom a rule reaches. It is off by default: `SUBJECTS__ENABLED=true` turns it on (the
-development stack does). `SUBJECTS__RETENTION_DAYS` (default `90`; `0` keeps them forever) removes the subjects that are not
-seen again. `GET /subject` lists them and `DELETE /subject/{subject}` forgets one.
+The people of a service, as its application sends them: `PUT /service/{id}/subjects` takes up to 1000 people per call (`type`,
+`id`, `name`, `properties`), an unchanged entry is left untouched and a write takes no revision. The directory lets the
+interface tell which groups a person is in and whom a rule reaches (the people of the directories of the services of the rule's
+types), and answers the AuthZEN subject search. `GET /service/{id}/subjects` lists it (`type`, `search`, `limit`, `offset`),
+`GET` and `DELETE /service/{id}/subjects/{type}/{id}` read and remove one person, and `GET`/`PUT /service/{id}/subjects/settings`
+read and set `retention_days` (none by default: an entry is kept until it is deleted; the worker removes the entries not sent
+again within it). Until the roles of the service arrive the routes need read or write on the whole `group_member` policy.
 
 ## Policy tools
 

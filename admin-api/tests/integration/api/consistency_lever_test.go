@@ -8,7 +8,6 @@ package api_test
 // (core/server: ConsistencyParam.valueIn) both ways, and compare what the engine does.
 
 import (
-	"context"
 	"net/http"
 	"slices"
 	"testing"
@@ -160,12 +159,9 @@ func TestLegacyCheckAnswers422ForAContextNameWithASpace(t *testing.T) {
 // wins over the query.
 func TestTheConsistencyLeverOfTheContextActsAsTheQueryParameter(t *testing.T) {
 	w := newLeverWorld(t)
-	ctx := context.Background()
-	// Dave is a known subject, so that the subject search has somebody to decide.
+	// Dave is in the directory of the service, so that the subject search has somebody to decide.
 	w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": "dave", "access": []string{"read"}})
-	if s, _ := w.env.permission(w.org, w.token(jwt.MapClaims{"preferred_username": "dave", "name": "Dave", "sub": "dave"})); s != http.StatusOK {
-		t.Fatalf("permission as dave: %d", s)
-	}
+	w.sendPeople(w.org, person("dave", "Dave", nil))
 
 	for _, r := range w.routes() {
 		t.Run(r.name, func(t *testing.T) {
@@ -181,9 +177,8 @@ func TestTheConsistencyLeverOfTheContextActsAsTheQueryParameter(t *testing.T) {
 				return bypassed{afterPermission - permission, afterCheck - check, afterSearch - search}
 			}
 
-			// The first request synchronizes what it needs and has the people it meets written to the registry.
+			// The first request synchronizes what it needs.
 			take(w.check.URL, false)
-			w.app.FlushSubjects(ctx)
 
 			if got := take(w.check.URL, false); got != (bypassed{}) {
 				t.Errorf("a request that asks for nothing skipped the caches: %+v", got)

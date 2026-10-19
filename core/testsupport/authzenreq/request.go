@@ -294,8 +294,9 @@ func SearchAction(ref, subject string, resource Resource, opts ...Option) Reques
 	return Request{Method: "POST", Path: s.path(ref, "search/action"), Body: s.with(body)}
 }
 
-// SearchSubject lists the known subjects that may do the action on the resource (POST …/access/v1/search/subject). Only a
-// client application the service trusts may ask.
+// SearchSubject lists the people of the directory of the service that may do the action on the resource (POST
+// …/access/v1/search/subject). Only a PEP client with the search_subject operation, or a client application the service trusts,
+// may ask.
 func SearchSubject(ref string, resource Resource, action string, opts ...Option) Request {
 	s := newSpec(opts)
 	s.allow("SearchSubject", featPage)

@@ -90,7 +90,6 @@ func authenticateDelegate(ctx context.Context, app *engine.App, serviceID uuid.U
 	}
 	callerSubject, _ = engine.SubjectFromClaims(claims)
 	SetRequestUser(ctx, "client:"+client)
-	app.NoteSubject(callerSubject, claims)
 	return client, callerSubject, nil
 }
 
@@ -106,7 +105,6 @@ func authenticateCaller(ctx context.Context, app *engine.App, serviceID uuid.UUI
 		return "", nil, err
 	}
 	SetRequestUser(ctx, subject)
-	app.NoteSubject(subject, claims)
 	return subject, claims, nil
 }
 

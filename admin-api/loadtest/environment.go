@@ -46,7 +46,7 @@ type Environment struct {
 }
 
 // environmentPrefixes are the settings of the product the report records (secrets are masked, see maskSetting).
-var environmentPrefixes = []string{"DB__", "REDIS__", "SYNC__", "SUBJECTS__", "DELEGATION__", "LOG__", "AUTH__", "HTTP__", "LICETUM_", "GOMAXPROCS", "GOGC", "GOMEMLIMIT"}
+var environmentPrefixes = []string{"DB__", "REDIS__", "SYNC__", "DELEGATION__", "LOG__", "AUTH__", "HTTP__", "LICETUM_", "GOMAXPROCS", "GOGC", "GOMEMLIMIT"}
 
 // collectEnvironment writes what can be read about the host, the tools and the infrastructure of the run.
 func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin string) (Environment, error) {
