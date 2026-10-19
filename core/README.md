@@ -1,6 +1,6 @@
 # Licetum core (Go)
 
-The engine of Licetum: the permission computation, the check API that client services call at request time,
+The engine of Licetum: the permission computation, the PDP that client services call at request time,
 the synchronization of resources from their sources, the database schema and the `licetum` binary. The module is
 `github.com/licetum/licetum/core`, under the MIT License (see [`LICENSE`](LICENSE)).
 
@@ -12,9 +12,9 @@ The admin API (`admin-api/`, AGPL-3.0-only) is a separate module that depends on
 
 | Command | What it does |
 |---|---|
-| `licetum check` | the permission API, `GET /service/{id}/permission` and the check endpoints (default `:8001`) |
+| `licetum pdp` | the PDP: the permission API, `GET /service/{id}/permission` and the check endpoints (default `:8001`) |
 | `licetum migrate` | applies the database migrations and seeds the platform self-service (idempotent) |
-| `licetum openapi check [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server, database or Redis |
+| `licetum openapi pdp [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server, database or Redis |
 
 ## Quick start
 
@@ -25,26 +25,26 @@ export REDIS__URI=redis://localhost:6379/0
 # the platform self-service is seeded from the PLATFORM__* variables (see Configuration)
 
 go run ./cmd/licetum migrate
-go run ./cmd/licetum check
+go run ./cmd/licetum pdp
 ```
 
-The check API has its own docs, like FastAPI: Swagger UI at `/docs` and the OpenAPI 3.1 spec at `/openapi.json`
+The PDP has its own docs, like FastAPI: Swagger UI at `/docs` and the OpenAPI 3.1 spec at `/openapi.json`
 (and `/openapi.yaml`). The spec is generated from the Go structs that handle requests (Huma v2), so it cannot drift
 from the code. Without a server:
 
 ```bash
-go run ./cmd/licetum openapi check -yaml > check.openapi.yaml   # -lang ru|zh for the translations
+go run ./cmd/licetum openapi pdp -yaml > pdp.openapi.yaml   # -lang ru|zh for the translations
 ```
 
-`schema/check.yaml` is the exported spec. `task go:schema` regenerates it and `task go:schema:check` (part of
+`schema/pdp.yaml` is the exported spec. `task go:schema` regenerates it and `task go:schema:check` (part of
 `task check`) fails when it is out of date.
 
 Logs are JSON on stdout. `LOG__LEVEL=debug` enables debug logs, and `DB__ECHO=true` adds the SQL.
-The address is set with `-addr :9000` or `HTTP__ADDR`.
+The address is set with `-addr :9000`, or with `PDP__ADDR` (the PDP) or `HTTP__ADDR` (the other processes).
 
 ## AuthZEN
 
-The check API implements the [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html)
+The PDP implements the [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html)
 for every service, under `/service/{id or slug}/access/v1/`: `evaluation`, `evaluations` (with
 `options.evaluations_semantic`), `search/subject`, `search/resource` and `search/action`. The Policy Decision Point of
 a service is `<HTTP__PUBLIC_URL>/service/{id or slug}`; its metadata is at
@@ -62,7 +62,7 @@ a service is `<HTTP__PUBLIC_URL>/service/{id or slug}`; its metadata is at
 ## Full stack
 
 `task dev` (= `docker compose up`) from the repository root starts PostgreSQL, Redis, a local Dex OIDC provider,
-the migration, the check API, the admin API and the web interface. Open `http://localhost:3000` and sign in as
+the migration, the PDP, the admin API and the web interface. Open `http://localhost:3000` and sign in as
 `admin@example.com` with password `password`. These credentials and the Dex client are for development only; set the
 `PLATFORM__*` variables in `.env` to use another identity provider.
 
@@ -77,8 +77,8 @@ lists accept a JSON array or a comma-separated string.
 
 | Prefix | Variables |
 |---|---|
-| `DB__` | `DB__URI` (required), `DB__READ_URI` (read replica of a check process), `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL` — see [Read replica](#read-replica-db__read_uri), pool settings (`DB__POOL_SIZE` default 10, `DB__MAX_OVERFLOW` default 20, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO`; behind PgBouncer: `DB__PGBOUNCER` (simple protocol, nothing prepared) and `DB__MIGRATE_URI` (where `licetum migrate` connects, PostgreSQL itself) — see [Resilience and operations](#resilience-and-operations) |
-| `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the check API's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
+| `DB__` | `DB__URI` (required), `DB__READ_URI` (read replica of a PDP), `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL` — see [Read replica](#read-replica-db__read_uri), pool settings (`DB__POOL_SIZE` default 10, `DB__MAX_OVERFLOW` default 20, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO`; behind PgBouncer: `DB__PGBOUNCER` (simple protocol, nothing prepared) and `DB__MIGRATE_URI` (where `licetum migrate` connects, PostgreSQL itself) — see [Resilience and operations](#resilience-and-operations) |
+| `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the PDP's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
 | `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
 | `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `at_least_as_fresh` waits for its revision before the answer is computed from the data) |
 | `COMPUTE__` | `COMPUTE__CONCURRENCY`: answers computed at once (default half of `DB__POOL_SIZE`); the rest of a wave of cache misses queues. A computation that waits for a synchronization job (the worker's) gives its slot back meanwhile |
@@ -90,15 +90,15 @@ lists accept a JSON array or a comma-separated string.
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | | The retention of both runs in the **worker** only (`licetum worker`): give it the same `SUBJECTS__RETENTION_DAYS` and `DELEGATION__AUDIT_RETENTION_DAYS` as the other processes, or the defaults (90 and 365 days) apply. |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person), `DELEGATION__AUDIT_MODE` (`strict`, default: the record is committed before the answer; `async`: buffered and written in batches), `DELEGATION__AUDIT_BUFFER` (async buffer size, default 100000) |
-| `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address; the address clients reach the check API at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
-| `HTTP__MAX_INFLIGHT`, `HTTP__REQUEST_TIMEOUT` | admission control: the requests served at once (default `GOMAXPROCS × 256`, a negative value removes the limit) and the deadline of a request (default `10s` for the check API, `60s` for the admin API, a negative value sets none) |
+| `PDP__ADDR`, `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address: `PDP__ADDR` for the PDP (default `:8001`), `HTTP__ADDR` for the admin API and the worker; the address clients reach the PDP at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
+| `HTTP__MAX_INFLIGHT`, `HTTP__REQUEST_TIMEOUT` | admission control: the requests served at once (default `GOMAXPROCS × 256`, a negative value removes the limit) and the deadline of a request (default `10s` for the PDP, `60s` for the admin API, a negative value sets none) |
 | `POLICY__MAX_STALENESS` | how long a process goes on answering from its copy of the policy when it cannot confirm it against PostgreSQL; beyond it requests fail closed (503 `policy_unavailable`). Default `0`: **no limit** — the process answers for as long as PostgreSQL is unreachable and does not see a revocation made meanwhile; set it where that is not acceptable |
 | `SHUTDOWN__DRAIN`, `SHUTDOWN__TIMEOUT` | on SIGTERM: how long the process is not ready but serves (default `10s`) and how long it waits for the requests in progress (default `30s`) |
 | `LOG__LEVEL` | `debug` for debug logs |
 
 ## Synchronization pipeline
 
-A request to the check API that finds its token and its answer in memory sends no query to PostgreSQL and no command to
+A request to the PDP that finds its token and its answer in memory sends no query to PostgreSQL and no command to
 Redis. The pieces, all per process:
 
 - **The policy snapshot** (`engine/snapshot.go`): the services, the type graph, the memberships, the rules, the role items
@@ -138,7 +138,7 @@ liveness-only probing), or for a PostgreSQL that is gone for less than the probe
 
 ### Degraded mode
 
-- **Redis gone, slow or read-only**: the check API skips Redis after three failures in a row (`REDIS__HOT_TIMEOUT`), keeps its
+- **Redis gone, slow or read-only**: the PDP skips Redis after three failures in a row (`REDIS__HOT_TIMEOUT`), keeps its
   tokens, key sets and answers in memory (answers are kept until they stop being current while Redis is down, not ten seconds),
   and computes what it does not find, bounded by `COMPUTE__CONCURRENCY`. Failures of Redis are logged once a second per kind,
   with the count of the records left out (`licetum_log_suppressed_total`).
@@ -195,7 +195,7 @@ pool is too small (acquires that waited) or too large for the server.
 
 ### Read replica (`DB__READ_URI`)
 
-A `check` process can read the policy from a read replica of PostgreSQL, normally the one of its own region, so that a request never
+A PDP can read the policy from a read replica of PostgreSQL, normally the one of its own region, so that a request never
 crosses a region. Set `DB__READ_URI` (asynchronous streaming replica; the primary stays `DB__URI`). The snapshot of the policy, the
 revision it follows, the type graph and the closure are read from the replica; the revision a process acts on is therefore the one of
 the data it has. Everything that writes (the admin API, the worker, the revision bump) uses the primary, and so does every read that
@@ -226,7 +226,7 @@ self-service runs under another one. A migration must work with the previous rel
 
 ## Synchronization worker
 
-The resource sources are synchronized by a separate process: `licetum worker`. The check API (`licetum check`) and the admin
+The resource sources are synchronized by a separate process: `licetum worker`. The PDP (`licetum pdp`) and the admin
 API only *ask* for a synchronization (a row in `sync_job`) and wait for it for a bounded time; they never write the resource
 graph. The state of the synchronization (`sync_state`: what was applied, when a type is due again, the backoff of a source that
 fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
@@ -249,16 +249,16 @@ fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
 - The worker puts the types that are due on a schedule (`SYNC__SCHEDULE_TICK`, 5 s) when somebody asked for them within
   `SYNC__DEMAND_WINDOW` (10 min), or always with `SYNC__KEEP_WARM`. `SYNC__CONCURRENCY` jobs run at once (default
   `DB__SYNC_POOL_SIZE`).
-- The worker holds the whole list of a type in memory while it applies it; the check and admin processes never do. Measured
+- The worker holds the whole list of a type in memory while it applies it; the PDP and admin processes never do. Measured
   (`LICETUM_SYNC_MEMORY=1 go test -tags integration -run TestSyncWorkerMemory`, a source of 1 000 000 resources with three
   fields): peak RSS of the worker 1.42 GiB, about 1.5 KB per resource. Documented limit: **2 GiB of memory for the worker per
   1 000 000 resources in its largest type** (the worker applies `SYNC__CONCURRENCY` types at once, so add up the largest types
   that can be applied together).
-- The database role of the check pods needs `SELECT` on everything, `INSERT`/`UPDATE` on `sync_job`, and no `INSERT`,
+- The database role of the PDP pods needs `SELECT` on everything, `INSERT`/`UPDATE` on `sync_job`, and no `INSERT`,
   `UPDATE` or `DELETE` on `resource_cache`, `resource_edge`, `resource_ancestor` and `sync_state`.
 
 Metrics: `licetum_sync_jobs{state}`, `licetum_sync_queue_age_seconds` (read from the database at every scrape, so it grows in
-the check and admin processes when every worker is down), `licetum_sync_job_seconds`, `licetum_sync_jobs_finished_total{state}`,
+the PDP and admin processes when every worker is down), `licetum_sync_job_seconds`, `licetum_sync_jobs_finished_total{state}`,
 `licetum_sync_lease_lost_total`, `licetum_source_calls_total{type,outcome}`.
 
 ### The DBOS engine
@@ -266,7 +266,7 @@ the check and admin processes when every worker is down), `licetum_sync_job_seco
 `SYNC__ENGINE=dbos` (the default; `postgres` selects the `sync_job` table) runs the same pipeline on [DBOS Transact](https://github.com/dbos-inc/dbos-transact-golang)
 instead of the `sync_job` table: a database-backed queue `licetum-sync`, a workflow `SyncType` per type, and the DBOS
 deduplication id ("return existing") as the shared job. The system tables are in the schema `SYNC__DBOS_SCHEMA` (default `dbos`)
-of the same database, created by the first worker; the check and admin processes talk to it through a DBOS client and answer
+of the same database, created by the first worker; the PDP and admin processes talk to it through a DBOS client and answer
 from the existing data until it is ready. Fetch and apply are one step, so a checkpoint is a few dozen bytes whatever the size
 of the type. All workers must run the same `SYNC__ENGINE`.
 
@@ -285,9 +285,9 @@ What the spike found, and what the engine does about it:
   `@none` without a row), so the requests that read the same state share the job also once it has ended; every job writes the
   state of the types it was due for. The concurrent requests of a process for the same workflow share one enqueue.
 - Through a link with a round trip of 150 ms an enqueue takes about 4 round trips (0.6 s) and the whole call about 1.4 s more than
-  on a local network: put the workers and the check processes in the region of the database.
+  on a local network: put the workers and the PDP processes in the region of the database.
 - PgBouncer in transaction mode was not tried: DBOS listens for notifications and needs session connections. Use direct
-  connections or session pooling for the check, admin and worker processes.
+  connections or session pooling for the PDP, admin and worker processes.
 
 ## Tests
 
@@ -322,7 +322,7 @@ and `LICETUM_TEST_REDIS_URI`. No containers are started then.
 ## Layout
 
 ```
-cmd/licetum/       entry point: check / migrate / openapi subcommands, graceful shutdown
+cmd/licetum/       entry point: pdp / migrate / openapi subcommands, graceful shutdown
 cli/               the shared command code: configuration, migrations, serving, the OpenAPI printer
 config/            environment variables
 logx/              structured logs, their settings can change at run time
@@ -333,8 +333,8 @@ redisx/            Redis: the permission cache version, the circuit breaker
 synchronizer/      resource source adapters (SQL and HTTP)
 model/             request and response structs and their validation (the pydantic equivalent)
 engine/            business logic: permission computation (permission.go), decisions (decision.go), synchronization
-server/            HTTP on Huma v2: the check API, documentation, localization, middleware
-schema/            the exported OpenAPI spec of the check API
+server/            HTTP on Huma v2: the PDP, documentation, localization, middleware
+schema/            the exported OpenAPI spec of the PDP
 tests/             unit and integration tests; testsupport/ starts the containers they use
 ```
 
@@ -357,7 +357,7 @@ Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/
 
 ## Notes
 
-- The check API takes a service by its id or its slug (`/service/{service_id}/...`). A slug is never a UUID, so the two
+- The PDP takes a service by its id or its slug (`/service/{service_id}/...`). A slug is never a UUID, so the two
   cannot be confused. The slug `licetum` belongs to the platform itself.
 - Invalid or expired tokens are 401 and never trip the JWKS circuit breaker. 424 means that the identity provider's
   JWKS or a synchronizer source did not answer.

@@ -50,7 +50,7 @@ type syncJob struct {
 // RunWorker runs the worker until ctx ends: it claims jobs, executes them, and puts the types that are due on a
 // schedule. It needs a role that may apply a synchronization (the worker's, or none).
 func (a *App) RunWorker(ctx context.Context) error {
-	if a.Role == RoleCheck || a.Role == RoleAdmin {
+	if a.Role == RolePDP || a.Role == RoleAdmin {
 		return fmt.Errorf("the %s role does not run synchronization jobs", a.Role)
 	}
 	owner := workerName()

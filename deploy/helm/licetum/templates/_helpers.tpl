@@ -18,7 +18,7 @@ licetum.io/region: {{ . | quote }}
 {{- end }}
 {{- end -}}
 
-{{/* selectorLabels: pass (dict "root" . "component" "check"). */}}
+{{/* selectorLabels: pass (dict "root" . "component" "pdp"). */}}
 {{- define "licetum.selectorLabels" -}}
 app.kubernetes.io/name: {{ .root.Chart.Name }}
 app.kubernetes.io/instance: {{ .root.Release.Name }}
@@ -65,7 +65,7 @@ app.kubernetes.io/component: {{ .component }}
 {{- add (mul 2 (int .Values.shutdown.drain)) (int .Values.shutdown.timeout) 10 -}}
 {{- end -}}
 
-{{/* Placement. Pass (dict "root" . "component" "check"). */}}
+{{/* Placement. Pass (dict "root" . "component" "pdp"). */}}
 {{- define "licetum.placement" -}}
 {{- if .root.Values.topologySpreadConstraints.enabled }}
 topologySpreadConstraints:

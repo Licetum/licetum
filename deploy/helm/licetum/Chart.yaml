@@ -1,6 +1,6 @@
 apiVersion: v2
 name: licetum
-description: Licetum, a centralized authorization service - the check API, the admin API, the synchronization worker and the migrations
+description: Licetum, a centralized authorization service - the PDP, the admin API, the synchronization worker and the migrations
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

@@ -2,7 +2,7 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "licetum.fullname" . }}-check
+  name: {{ include "licetum.fullname" . }}-pdp
   labels:
     {{- include "licetum.labels" . | nindent 4 }}
     {{- with .Values.serviceMonitor.labels }}
@@ -11,7 +11,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      {{- include "licetum.selectorLabels" (dict "root" . "component" "check") | nindent 6 }}
+      {{- include "licetum.selectorLabels" (dict "root" . "component" "pdp") | nindent 6 }}
   endpoints:
     - port: http
       path: /metrics

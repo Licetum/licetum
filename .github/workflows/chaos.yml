@@ -1,6 +1,6 @@
 name: Chaos
 
-# Tier C of the production-load plan: the check API with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole)
+# Tier C of the production-load plan: the PDP with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole)
 # and a read-only Redis, nightly and on demand. The tests are the ones of admin-api/tests/integration/chaos, built with the
 # `chaos` tag; the pull request jobs do not run them.
 #

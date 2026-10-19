@@ -289,7 +289,7 @@ func post(t *testing.T, h http.Handler, path, body string) (int, map[string]any)
 }
 
 func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
-	h := NewCheckHandler(engine.New(nil, nil, &config.Config{}))
+	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
 	const base = "/service/orders/access/v1/"
 	for name, c := range map[string]struct{ path, body string }{
 		"subject without type":   {"evaluation", `{"subject":{"id":"a"},"resource":{"type":"t"},"action":{"name":"r"}}`},
@@ -314,7 +314,7 @@ func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
 }
 
 func TestOtherOperationsKeepTheirValidationStatus(t *testing.T) {
-	h := NewCheckHandler(engine.New(nil, nil, &config.Config{}))
+	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
 	status, body := post(t, h, "/service/orders/check", `{"checks":[]}`)
 	if status != http.StatusUnprocessableEntity {
 		t.Fatalf("the check API keeps its 422: %d %v", status, body)
@@ -322,7 +322,7 @@ func TestOtherOperationsKeepTheirValidationStatus(t *testing.T) {
 }
 
 func TestAuthzenMetadataNeedsAPublicURL(t *testing.T) {
-	h := NewCheckHandler(engine.New(nil, nil, &config.Config{}))
+	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/authzen-configuration/service/orders", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

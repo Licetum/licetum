@@ -3,7 +3,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: release-licetum-check
+  name: release-licetum-pdp
   labels:
     helm.sh/chart: licetum-0.1.0
     app.kubernetes.io/name: licetum
@@ -16,7 +16,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: licetum
       app.kubernetes.io/instance: release
-      app.kubernetes.io/component: check
+      app.kubernetes.io/component: pdp
   policyTypes: [Ingress, Egress]
   ingress:
     - ports:
@@ -46,11 +46,11 @@ spec:
       ports:
         - {port: 443, protocol: TCP}
 ---
-# Source: licetum/templates/check.yaml
+# Source: licetum/templates/pdp.yaml
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: release-licetum-check
+  name: release-licetum-pdp
   labels:
     helm.sh/chart: licetum-0.1.0
     app.kubernetes.io/name: licetum
@@ -58,14 +58,14 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
     licetum.io/region: "eu"
-    app.kubernetes.io/component: check
+    app.kubernetes.io/component: pdp
 spec:
   maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: licetum
       app.kubernetes.io/instance: release
-      app.kubernetes.io/component: check
+      app.kubernetes.io/component: pdp
 ---
 # Source: licetum/templates/serviceaccount.yaml
 apiVersion: v1
@@ -105,11 +105,11 @@ spec:
       port: 8000
       targetPort: http
 ---
-# Source: licetum/templates/check.yaml
+# Source: licetum/templates/pdp.yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: release-licetum-check
+  name: release-licetum-pdp
   labels:
     helm.sh/chart: licetum-0.1.0
     app.kubernetes.io/name: licetum
@@ -117,13 +117,13 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
     licetum.io/region: "eu"
-    app.kubernetes.io/component: check
+    app.kubernetes.io/component: pdp
 spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: licetum
     app.kubernetes.io/instance: release
-    app.kubernetes.io/component: check
+    app.kubernetes.io/component: pdp
   ports:
     - name: http
       port: 8001
@@ -281,11 +281,11 @@ spec:
               - ALL
             readOnlyRootFilesystem: true
 ---
-# Source: licetum/templates/check.yaml
+# Source: licetum/templates/pdp.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: release-licetum-check
+  name: release-licetum-pdp
   labels:
     helm.sh/chart: licetum-0.1.0
     app.kubernetes.io/name: licetum
@@ -293,7 +293,7 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
     licetum.io/region: "eu"
-    app.kubernetes.io/component: check
+    app.kubernetes.io/component: pdp
 spec:
   strategy:
     type: RollingUpdate
@@ -304,7 +304,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: licetum
       app.kubernetes.io/instance: release
-      app.kubernetes.io/component: check
+      app.kubernetes.io/component: pdp
   template:
     metadata:
       labels:
@@ -314,7 +314,7 @@ spec:
         app.kubernetes.io/version: "0.1.0"
         app.kubernetes.io/managed-by: Helm
         licetum.io/region: "eu"
-        app.kubernetes.io/component: check
+        app.kubernetes.io/component: pdp
       annotations:
         checksum/config: a5578c62042ae8cd47afae7e7eaab06232033e85a04de588e6497e9d596d468c
     spec:
@@ -334,7 +334,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: licetum
               app.kubernetes.io/instance: release
-              app.kubernetes.io/component: check
+              app.kubernetes.io/component: pdp
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -345,12 +345,12 @@ spec:
                   matchLabels:
                     app.kubernetes.io/name: licetum
                     app.kubernetes.io/instance: release
-                    app.kubernetes.io/component: check
+                    app.kubernetes.io/component: pdp
       containers:
-        - name: check
+        - name: pdp
           image: "ghcr.io/licetum/licetum:0.1.0"
           imagePullPolicy: IfNotPresent
-          args: ["check", "-addr", ":8001"]
+          args: ["pdp", "-addr", ":8001"]
           ports:
             - name: http
               containerPort: 8001
@@ -358,6 +358,8 @@ spec:
             - configMapRef:
                 name: release-licetum-config
           env:
+            - name: PDP__ADDR
+              value: ":8001"
             - name: DB__URI
               valueFrom:
                 secretKeyRef:
@@ -465,7 +467,7 @@ spec:
             - name: ADMIN_API_PUBLIC_URL
               value: "https://admin.example.com"
             - name: CHECK_API_URL
-              value: "http://release-licetum-check:8001"
+              value: "http://release-licetum-pdp:8001"
             - name: CHECK_API_PUBLIC_URL
               value: "https://licetum.example.com"
             - name: APP_BASE_URL
@@ -615,11 +617,11 @@ spec:
               - ALL
             readOnlyRootFilesystem: true
 ---
-# Source: licetum/templates/check.yaml
+# Source: licetum/templates/pdp.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: release-licetum-check
+  name: release-licetum-pdp
   labels:
     helm.sh/chart: licetum-0.1.0
     app.kubernetes.io/name: licetum
@@ -627,12 +629,12 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
     licetum.io/region: "eu"
-    app.kubernetes.io/component: check
+    app.kubernetes.io/component: pdp
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: release-licetum-check
+    name: release-licetum-pdp
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -653,11 +655,11 @@ spec:
     scaleDown:
       stabilizationWindowSeconds: 300
 ---
-# Source: licetum/templates/check.yaml
+# Source: licetum/templates/pdp.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: release-licetum-check
+  name: release-licetum-pdp
   labels:
     helm.sh/chart: licetum-0.1.0
     app.kubernetes.io/name: licetum
@@ -665,7 +667,7 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
     app.kubernetes.io/managed-by: Helm
     licetum.io/region: "eu"
-    app.kubernetes.io/component: check
+    app.kubernetes.io/component: pdp
 spec:
   ingressClassName: nginx
   rules:
@@ -676,7 +678,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: release-licetum-check
+                name: release-licetum-pdp
                 port:
                   name: http
 ---
@@ -711,7 +713,7 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: release-licetum-check
+  name: release-licetum-pdp
   labels:
     helm.sh/chart: licetum-0.1.0
     app.kubernetes.io/name: licetum
@@ -724,7 +726,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: licetum
       app.kubernetes.io/instance: release
-      app.kubernetes.io/component: check
+      app.kubernetes.io/component: pdp
   endpoints:
     - port: http
       path: /metrics

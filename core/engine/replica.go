@@ -14,7 +14,7 @@ import (
 	"github.com/licetum/licetum/core/i18n"
 )
 
-// A check process may read the policy from a read replica (DB__READ_URI, App.ReadDB) while everything that writes, and every
+// A PDP may read the policy from a read replica (DB__READ_URI, App.ReadDB) while everything that writes, and every
 // read that must be current, goes to the primary (App.DB). The revision the process acts on is read from the replica too, so it
 // is the revision of the data the process has: a region that sees revision R in its replica has the data of R.
 //

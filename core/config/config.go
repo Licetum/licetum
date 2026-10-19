@@ -34,7 +34,7 @@ type Database struct {
 	// session-level advisory lock, which needs the same server connection for the whole run, so behind PgBouncer in
 	// transaction mode it points at PostgreSQL itself. Empty: URI.
 	MigrateURI string
-	// ReadURI is the connection string of the read replica a check process reads the policy from (the snapshot, the
+	// ReadURI is the connection string of the read replica the PDP reads the policy from (the snapshot, the
 	// revisions, the closure). Empty: URI, that is, one pool for everything. Writes, the synchronization and the reads that
 	// must be current (consistency=higher, a revision the replica has not reached) always use URI.
 	ReadURI string
@@ -214,7 +214,7 @@ type Delegation struct {
 
 type HTTP struct {
 	// Addr is the address the HTTP server listens on. Empty means the app's own default
-	// (:8000 for admin, :8001 for check).
+	// (:8000 for the admin API; the PDP has its own setting, PDP__ADDR).
 	Addr string
 	// MaxInflight is how many requests a process serves at once; a request above it is refused with 503 and Retry-After
 	// (see server.WithAdmission). Zero takes the default (GOMAXPROCS × 256), a negative value turns the limit off.
@@ -225,6 +225,13 @@ type HTTP struct {
 	// PublicURL is the address clients reach the check API at, without a trailing slash (https://licetum.example.com).
 	// The AuthZEN discovery document is built from it; without it the document is not served.
 	PublicURL string
+}
+
+// PDP tunes the regional PDP process (licetum pdp, see cli.Serve).
+type PDP struct {
+	// Addr is the address the PDP listens on (PDP__ADDR, default :8001). The -addr flag overrides it; HTTP__ADDR is the
+	// address of the admin API and is not read for the PDP.
+	Addr string
 }
 
 // Policy tunes what the check API does while it cannot confirm that its copy of the policy is current.
@@ -263,6 +270,7 @@ type Config struct {
 	Compute    Compute
 	Policy     Policy
 	Shutdown   Shutdown
+	PDP        PDP
 }
 
 // Load reads the whole environment. Required variables are checked only for the sections the
@@ -373,6 +381,7 @@ func Load() (*Config, error) {
 			MaxInflight:    e.int("HTTP__MAX_INFLIGHT", 0),
 			RequestTimeout: e.duration("HTTP__REQUEST_TIMEOUT", 0),
 		},
+		PDP: PDP{Addr: e.str("PDP__ADDR", ":8001")},
 	}
 	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
 		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))

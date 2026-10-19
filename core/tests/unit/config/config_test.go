@@ -98,6 +98,27 @@ func TestKnownSubjectsAreOffUnlessAskedFor(t *testing.T) {
 	}
 }
 
+func TestLoadPDPAddressIsItsOwn(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PDP.Addr != ":8001" {
+		t.Errorf("PDP.Addr default = %q, want :8001", cfg.PDP.Addr)
+	}
+
+	// HTTP__ADDR is the admin API's address: the PDP does not read it.
+	t.Setenv("HTTP__ADDR", ":8000")
+	t.Setenv("PDP__ADDR", "127.0.0.1:9001")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PDP.Addr != "127.0.0.1:9001" || cfg.HTTP.Addr != ":8000" {
+		t.Errorf("PDP.Addr = %q, HTTP.Addr = %q", cfg.PDP.Addr, cfg.HTTP.Addr)
+	}
+}
+
 func TestLoadPublicURL(t *testing.T) {
 	t.Setenv("HTTP__PUBLIC_URL", "https://licetum.example.com/")
 	cfg, err := config.Load()

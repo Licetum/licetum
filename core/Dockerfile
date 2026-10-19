@@ -1,5 +1,5 @@
 # Build from the repository root: docker build -f core/Dockerfile --target <stage> .
-# The check runtime of Licetum (MIT): the binary licetum serves the permission-check API and runs the migrations.
+# The runtime of Licetum (MIT): the binary licetum serves the regional PDP (licetum pdp) and runs the migrations.
 
 FROM golang:1.26-alpine AS base
 

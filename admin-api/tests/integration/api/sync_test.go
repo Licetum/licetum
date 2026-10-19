@@ -140,8 +140,8 @@ func (e *env) newApp(role engine.Role, tune func(*config.Config)) *engine.App {
 }
 
 func (e *env) checkReplica(tune func(*config.Config)) *replica {
-	app := e.newApp(engine.RoleCheck, tune)
-	srv := newTestServer(e.t, server.NewCheckHandler(app))
+	app := e.newApp(engine.RolePDP, tune)
+	srv := newTestServer(e.t, server.NewPDPHandler(app))
 	return &replica{app: app, url: srv.URL}
 }
 
@@ -621,7 +621,7 @@ func TestSyncComponentsDoNotBlockEachOther(t *testing.T) {
 }
 
 // F3-8: the check process runs under a database role that cannot write the resource graph or the sync state.
-func TestSyncCheckRoleCannotWriteTheGraph(t *testing.T) {
+func TestSyncPDPRoleCannotWriteTheGraph(t *testing.T) {
 	if os.Getenv(support.EnvPgBouncerAddr) != "" {
 		// The restricted role is session state (SET ROLE on every connection), which transaction pooling hands from one
 		// client to the next: the owner's statements would run as the restricted role.
@@ -655,7 +655,7 @@ func TestSyncCheckRoleCannotWriteTheGraph(t *testing.T) {
 	})
 
 	restricted := e.restrictedApp(role)
-	srv := newTestServer(t, server.NewCheckHandler(restricted))
+	srv := newTestServer(t, server.NewPDPHandler(restricted))
 	r := &replica{app: restricted, url: srv.URL}
 
 	// The first request asks for the synchronization; the worker (the owner) applies it; the restricted role only reads.
@@ -667,7 +667,7 @@ func TestSyncCheckRoleCannotWriteTheGraph(t *testing.T) {
 		t.Fatalf("%d %s", status, body)
 	}
 	if _, err := restricted.DB.Exec(ctx, `DELETE FROM resource_cache`); err == nil {
-		t.Fatal("the check role can delete from resource_cache")
+		t.Fatal("the pdp role can delete from resource_cache")
 	}
 }
 
@@ -695,7 +695,7 @@ func (e *env) restrictedApp(role string) *engine.App {
 	}
 	e.t.Cleanup(func() { _ = rdb.Close() })
 	app := engine.New(pool, rdb, &cfg)
-	app.Role = engine.RoleCheck
+	app.Role = engine.RolePDP
 	e.t.Cleanup(app.Close)
 	return app
 }

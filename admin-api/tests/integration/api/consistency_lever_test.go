@@ -32,7 +32,7 @@ type leverWorld struct {
 func newLeverWorld(t *testing.T) *leverWorld {
 	t.Helper()
 	w := newWorld(t)
-	lever := newTestServer(t, harness.Levers(server.NewCheckHandler(w.app.App)))
+	lever := newTestServer(t, harness.Levers(server.NewPDPHandler(w.app.App)))
 	t.Cleanup(lever.Close)
 	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1"})
 	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend"}})

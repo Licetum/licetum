@@ -111,7 +111,7 @@ jobs:
   # prepared). PgBouncer is the package of the runner's distribution (1.22 on Ubuntu 24.04, which has max_prepared_statements,
   # the DBOS client prepares its statements). Each test gets a database of its own: transaction pooling does not carry the
   # search_path of a connection. See admin-api/tests/integration/README.md.
-  # F6: the check API reading the policy from a read replica (DB__READ_URI). A primary and a streaming replica run on the
+  # F6: the PDP reading the policy from a read replica (DB__READ_URI). A primary and a streaming replica run on the
   # runner from the PostgreSQL binaries it ships (scripts/pg-replica.sh); pg_wal_replay_pause makes the replica lag.
   go-test-replica:
     name: Read replica tests
@@ -254,7 +254,7 @@ jobs:
         working-directory: web
         run: pnpm build
 
-  # The check API at the smoke volume (admin-api/loadtest): a ramp of three steps, a gate against gross regressions, not
+  # The PDP at the smoke volume (admin-api/loadtest): a ramp of three steps, a gate against gross regressions, not
   # a benchmark. A step passes on a valid window, errors within 1 %, and at least 95 % of the rate asked answered; the p99
   # of a 15-second step (about 750 requests) is not judged. The runners are shared, and the real numbers come from the
   # nightly loadtest.yml.

@@ -1,13 +1,13 @@
 // licetum is the runtime of Licetum, the part client services call on every request:
 //
-//	licetum check             — permission-check API (default :8001)
+//	licetum pdp               — the regional PDP: AuthZEN and the permission API (default :8001)
 //	licetum worker            — synchronization worker: executes the jobs that fetch the resource sources (default :8002, metrics)
 //	licetum migrate           — apply DB migrations and seed the self-service
 //	licetum failover          — raise every revision after a replica was promoted (see docs/deployment.md)
-//	licetum openapi check [-yaml] [-lang en|ru|zh] — print the OpenAPI spec (no DB or Redis needed)
+//	licetum openapi pdp [-yaml] [-lang en|ru|zh] — print the OpenAPI spec (no DB or Redis needed)
 //
-// The admin API is a separate binary (admin-api/cmd/licetum-admin). The address can be overridden with the -addr flag or
-// the HTTP__ADDR variable.
+// The admin API is a separate binary (admin-api/cmd/licetum-admin). The PDP's address can be overridden with the -addr flag
+// or the PDP__ADDR variable; the worker reads HTTP__ADDR.
 package main
 
 import (
@@ -31,11 +31,11 @@ import (
 const usage = `Usage: licetum <command> [flags]
 
 Commands:
-  check     run the permission-check API (default :8001)
+  pdp       run the regional PDP: AuthZEN and the permission API (default :8001)
   worker    run the synchronization worker (metrics on :8002)
   migrate   apply DB migrations and seed the self-service
   failover  raise every revision of the policy after a replica was promoted (docs/deployment.md)
-  openapi   print the OpenAPI spec: licetum openapi check [-yaml] [-lang en|ru|zh]
+  openapi   print the OpenAPI spec: licetum openapi pdp [-yaml] [-lang en|ru|zh]
 `
 
 func main() {
@@ -62,9 +62,9 @@ func main() {
 
 	var err error
 	switch cmd := os.Args[1]; cmd {
-	case "check":
-		err = cli.Serve(ctx, "check", os.Args[2:], ":8001", func(app *engine.App) http.Handler {
-			return server.NewCheckHandler(app)
+	case "pdp":
+		err = cli.Serve(ctx, "pdp", os.Args[2:], ":8001", func(app *engine.App) http.Handler {
+			return server.NewPDPHandler(app)
 		}, logs)
 	case "worker":
 		err = cli.Worker(ctx, os.Args[2:], ":8002", logs)
@@ -74,8 +74,8 @@ func main() {
 		err = cli.Failover(ctx, os.Args[2:])
 	case "openapi":
 		err = cli.PrintOpenAPI(os.Args[2:], map[string]func() huma.API{
-			"check": func() huma.API {
-				_, api := server.NewCheckAPI(&engine.App{Cfg: &config.Config{}})
+			"pdp": func() huma.API {
+				_, api := server.NewPDPAPI(&engine.App{Cfg: &config.Config{}})
 				return api
 			},
 		})
