@@ -91,9 +91,9 @@ func contextValueFits(v any) bool {
 }
 
 // ValidContextName reports whether a context attribute may have the name: letters, digits, '_', '-', '.' and ':',
-// up to 128 characters.
+// up to 128 characters. The name licetum is not an attribute: on an AuthZEN request it holds the settings of Licetum.
 func ValidContextName(name string) bool {
-	if name == "" || len(name) > 128 {
+	if name == "" || len(name) > 128 || name == authzenLicetumKey {
 		return false
 	}
 	for _, c := range name {

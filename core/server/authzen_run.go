@@ -75,34 +75,34 @@ func (c *authzenCaller) prepare(ctx context.Context, e *evaluation, item model.A
 	if item.Context == nil {
 		item.Context = d.Context
 	}
+	// The handlers have checked the request (model.AuthzenEvaluationsRequest.Validate), which requires these fields; the
+	// nil checks only keep the shape safe.
 	if item.Subject == nil || item.Resource == nil || item.Action == nil {
 		return apperr.BadRequest(i18n.AuthzenIncomplete)
-	}
-	// An ordered list, not a map: with several fields missing the same one is always reported.
-	for _, f := range []struct {
-		name  string
-		empty bool
-	}{{"subject.id", item.Subject.ID == ""}, {"resource.type", item.Resource.Type == ""}, {"action.name", item.Action.Name == ""}} {
-		if f.empty {
-			return apperr.BadRequest(i18n.AuthzenFieldRequired, f.name)
-		}
 	}
 	sp, aerr := c.speaker(ctx, item.Subject)
 	if aerr != nil {
 		return aerr
 	}
 	e.sp = sp
-	e.req = model.CheckRequest{Type: item.Resource.Type, Action: item.Action.Name}
-	if item.Resource.ID != "" {
-		id := item.Resource.ID
-		e.req.ResourceID = &id
-	}
-	e.explain, _ = item.Context["explain"].(bool)
-	e.attrs = authzenAttributes(item.Context)
-	if err := e.attrs.Validate(); err != nil {
+	e.req = model.CheckRequest{Type: item.Resource.Type, Action: item.Action.Name, ResourceID: resourceIDOf(item.Resource)}
+	attrs, settings, err := model.ParseAuthzenContext(item.Context)
+	if err != nil {
 		return badRequest(err)
 	}
+	e.explain = settings.Explain
+	e.attrs = attrs
 	return nil
+}
+
+// resourceIDOf is the resource id an AuthZEN resource names, nil for the type as a whole: an empty id, or the wildcard
+// model.AuthzenWholeType.
+func resourceIDOf(r *model.AuthzenResource) *string {
+	if r == nil || r.ID == "" || r.ID == model.AuthzenWholeType {
+		return nil
+	}
+	id := r.ID
+	return &id
 }
 
 // evaluate answers the items. The items that carry the same person and the same request attributes are decided in one
@@ -198,19 +198,17 @@ func applySemantic(semantic string, evals []evaluation, lang i18n.Lang) []model.
 	return out
 }
 
-// authzenAttributes returns the request attributes of an AuthZEN context: every key but explain, which is the
-// caller's request for the explanation of the decision.
-func authzenAttributes(ctx map[string]any) model.RequestContext {
-	attrs := model.RequestContext{}
-	for name, v := range ctx {
-		if name != "explain" {
-			attrs[name] = v
-		}
-	}
-	return attrs
-}
-
 // ---------- searches ----------
+
+// searchInput is what the three searches read from their requests. Each endpoint has its own request type, checked by its
+// Validate; the handler passes the fields of the checked request on in this shape.
+type searchInput struct {
+	Subject  *model.AuthzenSubject
+	Resource *model.AuthzenResource
+	Action   *model.AuthzenAction
+	Context  map[string]any
+	Page     *model.AuthzenPageRequest
+}
 
 // pageCursor is what a page token holds: where the next page starts, and a digest of the request that gave it (the
 // specification asks for an error when the request changes in the middle of a pagination).
@@ -247,7 +245,7 @@ func pageLimit(p *model.AuthzenPageRequest) int {
 
 // searchSum digests the parts of a search request that must not change between its pages. The identifier of the entity
 // searched for is ignored by the API, so it is left out.
-func searchSum(kind string, in model.AuthzenSearchRequest, limit int) string {
+func searchSum(kind string, in searchInput, limit int) string {
 	type digest struct {
 		Kind                                 string
 		SubjectType, SubjectID               string
@@ -264,8 +262,9 @@ func searchSum(kind string, in model.AuthzenSearchRequest, limit int) string {
 	}
 	if in.Resource != nil {
 		d.ResourceType = in.Resource.Type
-		if kind != "resource" {
-			d.ResourceID = in.Resource.ID
+		// The type as a whole is the same request, however it is named.
+		if id := resourceIDOf(in.Resource); id != nil && kind != "resource" {
+			d.ResourceID = *id
 		}
 	}
 	if in.Action != nil {
@@ -297,9 +296,9 @@ func pageInfo(count int, total *int, next string) *model.AuthzenPageResponse {
 
 func intPtr(n int) *int { return &n }
 
-// search is a search request, checked.
+// search is a search request, checked: the handler has validated its fields (model.Validate), and the context and the page
+// token are checked here.
 type search struct {
-	in      model.AuthzenSearchRequest
 	attrs   model.RequestContext
 	limit   int
 	after   string
@@ -307,39 +306,14 @@ type search struct {
 	subject *model.AuthzenSubject
 }
 
-// parseSearch checks a search request of the kind: "subject", "resource" or "action".
-func parseSearch(kind string, in model.AuthzenSearchRequest) (*search, *apperr.Error) {
-	s := &search{in: in, limit: pageLimit(in.Page)}
-	required := func(name string, present bool) *apperr.Error {
-		if !present {
-			return apperr.BadRequest(i18n.AuthzenFieldRequired, name)
-		}
-		return nil
-	}
-	if in.Subject == nil {
-		return nil, apperr.BadRequest(i18n.AuthzenFieldRequired, "subject")
-	}
-	if in.Resource == nil {
-		return nil, apperr.BadRequest(i18n.AuthzenFieldRequired, "resource")
-	}
-	checks := []struct {
-		name    string
-		present bool
-	}{
-		{"subject.type", in.Subject.Type != ""},
-		{"subject.id", kind == "subject" || in.Subject.ID != ""},
-		{"resource.type", in.Resource.Type != ""},
-		{"action.name", kind == "action" || (in.Action != nil && in.Action.Name != "")},
-	}
-	for _, ch := range checks {
-		if err := required(ch.name, ch.present); err != nil {
-			return nil, err
-		}
-	}
-	s.attrs = authzenAttributes(in.Context)
-	if err := s.attrs.Validate(); err != nil {
+// parseSearch reads a search request of the kind: "subject", "resource" or "action".
+func parseSearch(kind string, in searchInput) (*search, *apperr.Error) {
+	s := &search{limit: pageLimit(in.Page), subject: in.Subject}
+	attrs, _, err := model.ParseAuthzenContext(in.Context)
+	if err != nil {
 		return nil, badRequest(err)
 	}
+	s.attrs = attrs
 	s.sum = searchSum(kind, in, s.limit)
 	var token string
 	if in.Page != nil {
@@ -350,7 +324,6 @@ func parseSearch(kind string, in model.AuthzenSearchRequest) (*search, *apperr.E
 		return nil, aerr
 	}
 	s.after = after
-	s.subject = in.Subject
 	return s, nil
 }
 
@@ -359,7 +332,7 @@ func (c *authzenCaller) permissions(ctx context.Context, sp speaker, attrs model
 	return c.app.GetPermission(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), consistency)
 }
 
-func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.Consistency, in model.AuthzenSearchRequest) (*model.AuthzenResourceSearchResponse, error) {
+func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenResourceSearchResponse, error) {
 	s, aerr := parseSearch("resource", in)
 	if aerr != nil {
 		return nil, aerr
@@ -391,7 +364,7 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 	return out, nil
 }
 
-func (c *authzenCaller) searchActions(ctx context.Context, consistency engine.Consistency, in model.AuthzenSearchRequest) (*model.AuthzenActionSearchResponse, error) {
+func (c *authzenCaller) searchActions(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenActionSearchResponse, error) {
 	s, aerr := parseSearch("action", in)
 	if aerr != nil {
 		return nil, aerr
@@ -427,15 +400,16 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 	if !ok {
 		return nil, nil
 	}
+	id := resourceIDOf(res)
 	if tp.Type == model.TypeModeNotSync {
-		if res.ID != "" {
+		if id != nil {
 			return nil, nil
 		}
 		return slices.Clone(tp.Access), nil
 	}
-	if res.ID != "" {
+	if id != nil {
 		for _, r := range tp.Resources {
-			if r.ID == res.ID {
+			if r.ID == *id {
 				return slices.Clone(r.Access), nil
 			}
 		}
@@ -469,7 +443,7 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 
 // searchSubjects lists the known subjects (the registry of people seen by a verified token) that may do the action on the
 // resource. Only a client application the service trusts may ask: the answer names other people.
-func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.Consistency, in model.AuthzenSearchRequest) (*model.AuthzenSubjectSearchResponse, error) {
+func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenSubjectSearchResponse, error) {
 	s, aerr := parseSearch("subject", in)
 	if aerr != nil {
 		return nil, aerr
@@ -486,11 +460,7 @@ func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.C
 		out.Page = pageInfo(0, nil, "")
 		return out, nil
 	}
-	question := []model.CheckRequest{{Type: in.Resource.Type, Action: in.Action.Name}}
-	if in.Resource.ID != "" {
-		id := in.Resource.ID
-		question[0].ResourceID = &id
-	}
+	question := []model.CheckRequest{{Type: in.Resource.Type, Action: in.Action.Name, ResourceID: resourceIDOf(in.Resource)}}
 
 	// The registry is read in the order of the subjects, a batch at a time from the cursor, and every subject of a batch
 	// is decided (the decisions are cached like any other, so a repeated page costs little) until the page is full or

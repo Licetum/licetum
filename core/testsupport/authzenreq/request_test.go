@@ -149,16 +149,31 @@ func TestBodiesHaveTheShapeOfTheModel(t *testing.T) {
 					t.Errorf("empty options: %+v", m.Options)
 				}
 			default:
-				var m model.AuthzenSearchRequest
-				strictly(t, c.req.Body, &m)
-				if m.Subject == nil || m.Subject.Type != authzenreq.SubjectType || m.Resource == nil || m.Resource.Type == "" {
-					t.Errorf("a search needs the subject type and the resource type: %+v", m)
+				// Each search has its own request type; the subject and the resource are what the shape checks read.
+				var subject *model.AuthzenSubject
+				var resource *model.AuthzenResource
+				switch endpoint {
+				case "search/resource":
+					var m model.AuthzenResourceSearchRequest
+					strictly(t, c.req.Body, &m)
+					subject, resource = m.Subject, m.Resource
+				case "search/action":
+					var m model.AuthzenActionSearchRequest
+					strictly(t, c.req.Body, &m)
+					subject, resource = m.Subject, m.Resource
+				default:
+					var m model.AuthzenSubjectSearchRequest
+					strictly(t, c.req.Body, &m)
+					subject, resource = m.Subject, m.Resource
 				}
-				if endpoint == "search/resource" && m.Resource.ID != "" {
-					t.Errorf("the resource search ignores resource.id: %+v", m.Resource)
+				if subject == nil || subject.Type != authzenreq.SubjectType || resource == nil || resource.Type == "" {
+					t.Errorf("a search needs the subject type and the resource type: %+v %+v", subject, resource)
 				}
-				if endpoint == "search/subject" && m.Subject.ID != "" {
-					t.Errorf("the subject search is about nobody in particular: %+v", m.Subject)
+				if endpoint == "search/resource" && resource.ID != "" {
+					t.Errorf("the resource search ignores resource.id: %+v", resource)
+				}
+				if endpoint == "search/subject" && subject.ID != "" {
+					t.Errorf("the subject search is about nobody in particular: %+v", subject)
 				}
 			}
 		})

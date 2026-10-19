@@ -30,6 +30,23 @@ components:
       required:
         - name
       type: object
+    AuthzenActionSearchRequest:
+      additionalProperties: true
+      properties:
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The resource (resource.type is required; an empty resource.id, or *, is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
     AuthzenActionSearchResponse:
       additionalProperties: false
       properties:
@@ -53,17 +70,17 @@ components:
       properties:
         action:
           $ref: "#/components/schemas/AuthzenAction"
-          description: The access level asked for
+          description: The access level asked for (action.name is required)
         context:
           additionalProperties: {}
-          description: "The attributes of the request that the rules may read (conditions with source context); {\"explain\": true} adds the explanation of the decision to the response context"
+          description: "The attributes of the request that the rules may read (conditions with source context). context.licetum holds the settings of Licetum: {\"explain\": true} adds the explanation of the decision to the response context"
           type: object
         resource:
           $ref: "#/components/schemas/AuthzenResource"
-          description: What is accessed
+          description: What is accessed (resource.type and resource.id are required; * is the type as a whole)
         subject:
           $ref: "#/components/schemas/AuthzenSubject"
-          description: The person asked about
+          description: The person asked about (subject.type and subject.id are required)
       type: object
     AuthzenEvaluationResponse:
       additionalProperties: false
@@ -206,7 +223,7 @@ components:
       additionalProperties: true
       properties:
         id:
-          description: Resource id in the external system; empty — the type as a whole. Ignored by the resource search
+          description: Resource id in the external system. An evaluation requires it, and * names the type as a whole; the action search reads an empty id or * as the type as a whole; the resource search ignores it
           examples:
             - b1
           type: string
@@ -221,6 +238,26 @@ components:
           type: string
       required:
         - type
+      type: object
+    AuthzenResourceSearchRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level (action.name is required)
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The type of the resources searched for (resource.type is required; resource.id is ignored)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
       type: object
     AuthzenResourceSearchResponse:
       additionalProperties: false
@@ -240,12 +277,32 @@ components:
       required:
         - results
       type: object
-    AuthzenSearchRequest:
+    AuthzenSubject:
+      additionalProperties: true
+      properties:
+        id:
+          description: "Subject id: 1 to 256 bytes, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it. It is the subject of the bearer token (preferred_username, or sub) unless the caller is a client application the service trusts"
+          examples:
+            - alice
+          type: string
+        properties:
+          additionalProperties: {}
+          description: "The claims of a person other than the holder of the token, given by a trusted client: at most 100 claims and 16 KiB of JSON. Ignored for the holder of the token, whose claims come from the token"
+          type: object
+        type:
+          description: "Subject type (not interpreted): 1 to 64 bytes, and not group"
+          examples:
+            - user
+          type: string
+      required:
+        - type
+      type: object
+    AuthzenSubjectSearchRequest:
       additionalProperties: true
       properties:
         action:
           $ref: "#/components/schemas/AuthzenAction"
-          description: The access level; not used by the action search
+          description: The access level (action.name is required)
         context:
           additionalProperties: {}
           description: The attributes of the request that the rules may read (conditions with source context)
@@ -255,30 +312,10 @@ components:
           description: Which page of the results is asked for
         resource:
           $ref: "#/components/schemas/AuthzenResource"
-          description: The resource; for the resource search only its type is used
+          description: The resource (resource.type is required; an empty resource.id, or *, is the type as a whole)
         subject:
           $ref: "#/components/schemas/AuthzenSubject"
-          description: The subject; for the subject search only its type is used
-      type: object
-    AuthzenSubject:
-      additionalProperties: true
-      properties:
-        id:
-          description: Subject id. Required by evaluations and by the resource and action searches; omitted by the subject search, which returns it. It is the subject of the bearer token (preferred_username, or sub) unless the caller is a client application the service trusts
-          examples:
-            - alice
-          type: string
-        properties:
-          additionalProperties: {}
-          description: The claims of a person other than the holder of the token, given by a trusted client; ignored for the holder of the token, whose claims come from the token
-          type: object
-        type:
-          description: Subject type (not interpreted)
-          examples:
-            - user
-          type: string
-      required:
-        - type
+          description: "The subject: only its type is used (subject.type is required; subject.id is ignored)"
       type: object
     AuthzenSubjectSearchResponse:
       additionalProperties: false
@@ -860,11 +897,11 @@ paths:
 
         This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
         slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
-        explain are the attributes of the request that the rules may read.
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
+        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
 
         A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
       operationId: authzen_evaluation
@@ -963,11 +1000,11 @@ paths:
 
         This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
         slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
-        explain are the attributes of the request that the rules may read.
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
+        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
 
         A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
       operationId: authzen_evaluations
@@ -1069,11 +1106,11 @@ paths:
 
         This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
         slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
-        explain are the attributes of the request that the rules may read.
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
+        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
 
         A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
       operationId: authzen_search_action
@@ -1109,7 +1146,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuthzenSearchRequest"
+              $ref: "#/components/schemas/AuthzenActionSearchRequest"
         required: true
       responses:
         "200":
@@ -1175,11 +1212,11 @@ paths:
 
         This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
         slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
-        explain are the attributes of the request that the rules may read.
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
+        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
 
         A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
       operationId: authzen_search_resource
@@ -1215,7 +1252,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuthzenSearchRequest"
+              $ref: "#/components/schemas/AuthzenResourceSearchRequest"
         required: true
       responses:
         "200":
@@ -1281,11 +1318,11 @@ paths:
 
         This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
         slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
-        explain are the attributes of the request that the rules may read.
+        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
+        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
 
         A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
       operationId: authzen_search_subject
@@ -1321,7 +1358,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AuthzenSearchRequest"
+              $ref: "#/components/schemas/AuthzenSubjectSearchRequest"
         required: true
       responses:
         "200":

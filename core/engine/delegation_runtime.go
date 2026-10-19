@@ -2,23 +2,15 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
-)
-
-const (
-	delegatedSubjectMax = 256
-	delegatedClaimsMax  = 100
-	delegatedClaimsSize = 16 * 1024
 )
 
 // ClientOfClaims is the client application a token was issued to: azp (OpenID Connect), or client_id (RFC 9068).
@@ -45,29 +37,14 @@ func AuthorizeDelegate(svc *model.Service, claims Claims) (string, error) {
 }
 
 // PrepareDelegated checks the person a call names and builds the claims the decision reads: those the caller sends, with
-// preferred_username set to the subject unless the caller sent one (the rules that name a person read it).
+// preferred_username set to the subject unless the caller sent one (the rules that name a person read it). The checks are
+// those of model.PrepareSubject, which the AuthZEN requests share.
 func PrepareDelegated(subject string, raw map[string]any) (Claims, error) {
-	if subject == "" || len(subject) > delegatedSubjectMax || strings.HasPrefix(subject, model.GroupSubjectPrefix) ||
-		strings.ContainsFunc(subject, unicode.IsControl) {
-		return nil, apperr.Unprocessable(i18n.DelegationSubjectInvalid)
+	prepared, err := model.PrepareSubject("", subject, raw)
+	if err != nil {
+		return nil, err
 	}
-	if len(raw) > delegatedClaimsMax {
-		return nil, apperr.Unprocessable(i18n.DelegationClaimsInvalid)
-	}
-	if len(raw) > 0 {
-		encoded, err := json.Marshal(raw)
-		if err != nil || len(encoded) > delegatedClaimsSize {
-			return nil, apperr.Unprocessable(i18n.DelegationClaimsInvalid)
-		}
-	}
-	claims := Claims{}
-	for k, v := range raw {
-		claims[k] = v
-	}
-	if !PyTruthy(claims["preferred_username"]) {
-		claims["preferred_username"] = subject
-	}
-	return claims, nil
+	return Claims(prepared.Claims), nil
 }
 
 // DelegatedCall is what the audit keeps of a call.

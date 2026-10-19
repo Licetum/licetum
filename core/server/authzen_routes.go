@@ -30,11 +30,11 @@ func registerAuthzen(api huma.API, app *engine.App, security []map[string][]stri
 
 This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
 slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-(empty — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+(* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
 (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
 client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-subject.properties, and every such call is recorded as the calls on behalf of a person are. Context attributes other than
-explain are the attributes of the request that the rules may read.
+subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
+attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
 
 A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.`
 
@@ -53,6 +53,9 @@ A request that is not valid is a 400, a missing or invalid token a 401, a subjec
 		Authorization string `header:"Authorization" hidden:"true"`
 		Body          model.AuthzenEvaluationRequest
 	}) (*Out[model.AuthzenEvaluationResponse], error) {
+		if err := in.Body.Validate(); err != nil {
+			return nil, badRequest(err)
+		}
 		ctx = in.freshness(ctx)
 		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
 		if err != nil {
@@ -90,6 +93,9 @@ A request that is not valid is a 400, a missing or invalid token a 401, a subjec
 		Authorization string `header:"Authorization" hidden:"true"`
 		Body          model.AuthzenEvaluationsRequest
 	}) (*Out[model.AuthzenEvaluationsResponse], error) {
+		if err := in.Body.Validate(); err != nil {
+			return nil, badRequest(err)
+		}
 		ctx = in.freshness(ctx)
 		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
 		if err != nil {
@@ -146,8 +152,11 @@ there are more results; send it back as page.token with the same request. The re
 		ServiceRefPath
 		ConsistencyParam
 		Authorization string `header:"Authorization" hidden:"true"`
-		Body          model.AuthzenSearchRequest
+		Body          model.AuthzenResourceSearchRequest
 	}) (*Out[model.AuthzenResourceSearchResponse], error) {
+		if err := in.Body.Validate(); err != nil {
+			return nil, badRequest(err)
+		}
 		ctx = in.freshness(ctx)
 		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
 		if err != nil {
@@ -157,7 +166,7 @@ there are more results; send it back as page.token with the same request. The re
 		if err != nil {
 			return nil, err
 		}
-		out, err := caller.searchResources(ctx, in.valueIn(ctx), in.Body)
+		out, err := caller.searchResources(ctx, in.valueIn(ctx), searchInput{Subject: in.Body.Subject, Resource: in.Body.Resource, Action: in.Body.Action, Context: in.Body.Context, Page: in.Body.Page})
 		if err != nil {
 			return nil, err
 		}
@@ -180,8 +189,11 @@ there are more results; send it back as page.token with the same request. The re
 		ServiceRefPath
 		ConsistencyParam
 		Authorization string `header:"Authorization" hidden:"true"`
-		Body          model.AuthzenSearchRequest
+		Body          model.AuthzenActionSearchRequest
 	}) (*Out[model.AuthzenActionSearchResponse], error) {
+		if err := in.Body.Validate(); err != nil {
+			return nil, badRequest(err)
+		}
 		ctx = in.freshness(ctx)
 		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
 		if err != nil {
@@ -191,7 +203,7 @@ there are more results; send it back as page.token with the same request. The re
 		if err != nil {
 			return nil, err
 		}
-		out, err := caller.searchActions(ctx, in.valueIn(ctx), in.Body)
+		out, err := caller.searchActions(ctx, in.valueIn(ctx), searchInput{Subject: in.Body.Subject, Resource: in.Body.Resource, Context: in.Body.Context, Page: in.Body.Page})
 		if err != nil {
 			return nil, err
 		}
@@ -214,8 +226,11 @@ there are more results; send it back as page.token with the same request. The re
 		ServiceRefPath
 		ConsistencyParam
 		Authorization string `header:"Authorization" hidden:"true"`
-		Body          model.AuthzenSearchRequest
+		Body          model.AuthzenSubjectSearchRequest
 	}) (*Out[model.AuthzenSubjectSearchResponse], error) {
+		if err := in.Body.Validate(); err != nil {
+			return nil, badRequest(err)
+		}
 		ctx = in.freshness(ctx)
 		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
 		if err != nil {
@@ -225,7 +240,7 @@ there are more results; send it back as page.token with the same request. The re
 		if err != nil {
 			return nil, err
 		}
-		out, err := caller.searchSubjects(ctx, in.valueIn(ctx), in.Body)
+		out, err := caller.searchSubjects(ctx, in.valueIn(ctx), searchInput{Subject: in.Body.Subject, Resource: in.Body.Resource, Action: in.Body.Action, Context: in.Body.Context, Page: in.Body.Page})
 		if err != nil {
 			return nil, err
 		}

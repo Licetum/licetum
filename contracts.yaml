@@ -532,7 +532,7 @@ contracts:
     oracle: the specification
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ02
     statement: Defaults of /evaluations are merged and the three semantics answer as in the examples of the specification; context.licetum is read from the top-level context only.
     oracle: the examples of the specification (core/pdp/authzen/testdata/spec)
@@ -562,7 +562,7 @@ contracts:
     oracle: status and decision
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ07
     statement: X-Request-ID is returned verbatim when it is safe for a header.
     oracle: the response header
@@ -831,7 +831,7 @@ contracts:
     oracle: status codes
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: LOAD01
     statement: The load test gives no wrong answer.
     oracle: admin-api/loadtest oracle (expectedAllowed)
