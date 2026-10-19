@@ -93,6 +93,8 @@ type App struct {
 	jwksOnce sync.Once
 	// local keeps the revision of the policy and its snapshot in memory (see localView).
 	local viewState
+	// pep keeps the PEP directory of the process (see PEPDirectory).
+	pep pepState
 	// ready answers the readiness probe (see Ready); health tells which dependencies the calls are failing on lately.
 	ready  readyState
 	health struct{ postgres, redis dependencyHealth }

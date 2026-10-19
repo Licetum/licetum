@@ -59,7 +59,7 @@ func jwksKeySets(ttl, minRefresh time.Duration) *KeySets {
 	return &KeySets{HTTP: &http.Client{}, TTL: ttl, MinRefresh: minRefresh}
 }
 
-func TestJWKSIsFetchedOncePerTTLForManyTokens(t *testing.T) {
+func TestContract_PEP03_IsFetchedOncePerTTLForManyTokens(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
 	a := jwksKeySets(time.Hour, 0)
 	for range 1000 {
@@ -73,7 +73,7 @@ func TestJWKSIsFetchedOncePerTTLForManyTokens(t *testing.T) {
 	}
 }
 
-func TestJWKSExpiresAfterTheTTL(t *testing.T) {
+func TestContract_PEP03_ExpiresAfterTheTTL(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
 	a := jwksKeySets(50*time.Millisecond, time.Hour)
 	if _, err := a.KeyFor(t.Context(), srv.URL, "k1", true); err != nil {
@@ -88,7 +88,7 @@ func TestJWKSExpiresAfterTheTTL(t *testing.T) {
 	}
 }
 
-func TestJWKSUnknownKeyRefetchesAtMostOncePerInterval(t *testing.T) {
+func TestContract_PEP03_UnknownKeyRefetchesAtMostOncePerInterval(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
 	a := jwksKeySets(time.Hour, 200*time.Millisecond)
 	if _, err := a.KeyFor(t.Context(), srv.URL, "k1", true); err != nil {
@@ -119,7 +119,7 @@ func TestJWKSUnknownKeyRefetchesAtMostOncePerInterval(t *testing.T) {
 	}
 }
 
-func TestJWKSConcurrentFetchesOfOneURLAreShared(t *testing.T) {
+func TestContract_PEP03_ConcurrentFetchesOfOneURLAreShared(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
 	gate := make(chan struct{})
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +147,7 @@ func TestJWKSConcurrentFetchesOfOneURLAreShared(t *testing.T) {
 	}
 }
 
-func TestJWKSTransportFailureIsNotAnInvalidToken(t *testing.T) {
+func TestContract_PEP03_TransportFailureIsNotAnInvalidToken(t *testing.T) {
 	srv := newJWKSServer(t, "k1")
 	srv.status = http.StatusInternalServerError
 	a := jwksKeySets(10*time.Minute, 30*time.Second)
@@ -165,7 +165,7 @@ func TestJWKSTransportFailureIsNotAnInvalidToken(t *testing.T) {
 	}
 }
 
-func TestJWKSKeyWithoutKidMatchesTokenWithoutKid(t *testing.T) {
+func TestContract_PEP03_KeyWithoutKidMatchesTokenWithoutKid(t *testing.T) {
 	set := &keySet{keys: []*Key{{kid: "a", hasKid: true}, {hasKid: false}}}
 	if set.find(nil, false) != set.keys[1] {
 		t.Error("a token without a key id takes the first key without one")

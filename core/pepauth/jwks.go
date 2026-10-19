@@ -3,6 +3,7 @@ package pepauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"reflect"
@@ -89,6 +90,12 @@ type Unavailable struct{ err *apperr.Error }
 
 func (e Unavailable) Error() string { return e.err.Error() }
 func (e Unavailable) Unwrap() error { return e.err }
+
+// ErrJWKSUnavailable is matched by every Unavailable (errors.Is): the key set of an issuer could not be read, which says
+// nothing about the token that was presented.
+var ErrJWKSUnavailable = errors.New("pepauth: key set unavailable")
+
+func (e Unavailable) Is(target error) bool { return target == ErrJWKSUnavailable }
 
 // resultOf is the result of a fetch as Observe is told it: "ok" or "error".
 func resultOf(err error) string {
