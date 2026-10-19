@@ -438,6 +438,20 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   lists `@name` in its `access` (`expandAccess`). Renaming or deleting a group that a rule or an item names is refused
   (409, `blocked_by`).
 
+- **Subject directory** (`subject_directory`, `subject_directory_seen`, `subject_directory_settings`, migration `00008`; `core/db/directory.go`,
+  `admin-api/service/directory.go`, `admin-api/api/admin_directory.go`; ADR 0001, 8.8): the people of a **service**, sent on purpose by its
+  application or an editor. It replaces `known_subject` (global, filled by every token; the registry is removed in the second step of the
+  directory step). Six routes under `/service/{id}/subjects`: `PUT` (up to 1000 people, each once; `{type?, id, name?, properties?}`, the
+  properties stored as sent within 100 entries and 16 KiB), `GET` (list: `type`, `search`, `limit`, `offset`, with a total, ordered by type
+  and then bytewise by id), `GET|DELETE …/{type}/{id}` (an id with `/` goes percent-encoded; the entry comes with the groups the stored
+  properties put the person in), `GET|PUT …/settings` (`retention_days`, null: forever, the default). The id of a person is kept exactly
+  as sent and never starts with `group:`. The upsert writes only a row whose name or properties differ (`UpsertDirectory`, `IS DISTINCT
+  FROM`): an unchanged batch touches no row of `subject_directory` and takes **no revision** (no decision reads the directory); the time
+  an entry was last sent is kept apart in `subject_directory_seen` and refreshed at most hourly. The worker's retention (`RunRetention`,
+  `db.PruneDirectory`, 10 000-row chunks) deletes the entries not sent within their service's `retention_days`. Until the roles of the
+  service (P4) the routes are governed by the platform policy `group_member` (whole type). The key of a scan is (type, id) bytewise
+  (`DirectoryAfter`, index `ix_subject_directory_scan`). Tests: `directory_test.go` in `admin-api/tests/integration/api` (DIR02, DIR04) and
+  in `core/tests/integration/db`.
 - **KnownSubject** (`known_subject`, `service/subjects.go`, `SUBJECTS__ENABLED` default OFF (the dev Compose stack sets it on), `SUBJECTS__RETENTION_DAYS` default 90):
   the subjects of verified tokens (the PDP's `authenticateCaller` and the admin API's `Authenticate` call
   `App.NoteSubject`, at most once per ten minutes per subject and process, written in the background) with the display name and

@@ -122,6 +122,8 @@ const (
 	DelegationSubjectInvalid     Key = "delegation_subject_invalid"
 	DelegationClaimsInvalid      Key = "delegation_claims_invalid"
 	SubjectNotFound              Key = "subject_not_found"
+	DirectoryEntryNotFound       Key = "directory_entry_not_found"
+	DirectoryEntryRepeated       Key = "directory_entry_repeated"
 	PolicyScenarioNotFound       Key = "policy_scenario_not_found"
 	PolicyScenarioNameTaken      Key = "policy_scenario_name_taken"
 	SynchronizerNoSource         Key = "synchronizer_no_source"
@@ -654,6 +656,16 @@ var catalog = map[Key]Text{
 		EN: "The service already has a scenario named %q",
 		RU: "У сервиса уже есть сценарий с названием %q",
 		ZH: "该服务已有名为 %q 的场景",
+	},
+	DirectoryEntryNotFound: {
+		EN: "%s %s is not in the directory of the service",
+		RU: "%s %s нет в справочнике сервиса",
+		ZH: "服务的目录中没有 %s %s",
+	},
+	DirectoryEntryRepeated: {
+		EN: "The same subject is sent twice in one request: %s %s",
+		RU: "Один и тот же субъект передан в запросе дважды: %s %s",
+		ZH: "同一请求中重复发送了同一主体：%s %s",
 	},
 	SubjectNotFound: {
 		EN: "Subject %s is not in the registry",

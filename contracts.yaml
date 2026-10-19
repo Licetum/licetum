@@ -743,7 +743,7 @@ contracts:
     oracle: the rows (xmin, updated_at) and revision_state before and after each write
     level: pg
     phase: P2
-    status: planned
+    status: active
   - id: DIR03
     statement: The people a rule reaches (who-has-access, preview, the person page) are the entries of the directories of the services of the rule's types, decided with their stored properties; a service with an empty directory has no people, and the directory of another service is not counted.
     oracle: hand-written sets of people from the fixture of DEC13 (who has access)
@@ -755,7 +755,7 @@ contracts:
     oracle: the rows written and the times they were sent
     level: pg
     phase: P2
-    status: planned
+    status: active
 
   # ---------- OPS / API / LOAD / WEB ----------
   - id: OPS01

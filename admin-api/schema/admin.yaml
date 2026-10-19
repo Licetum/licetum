@@ -934,6 +934,170 @@ components:
         - unresolved_parent
         - missing_attribute
       type: object
+    DirectoryEntry:
+      additionalProperties: false
+      properties:
+        id:
+          description: The id of the subject
+          type: string
+        name:
+          description: The name to show; empty when none was sent
+          type: string
+        properties:
+          additionalProperties: {}
+          description: The properties of the subject, as they were sent
+          type: object
+        sent_at:
+          description: "When the entry was last sent (refreshed at most hourly): what the retention counts from"
+          format: date-time
+          type: string
+        type:
+          description: The type of the subject
+          type: string
+        updated_at:
+          description: When the name or the properties last changed
+          format: date-time
+          type: string
+      required:
+        - type
+        - id
+        - name
+        - properties
+        - updated_at
+        - sent_at
+      type: object
+    DirectoryEntryDetail:
+      additionalProperties: false
+      properties:
+        groups:
+          description: The groups the person is in now, nested groups included, decided with the stored properties
+          items:
+            $ref: "#/components/schemas/SubjectGroup"
+          type: array
+        id:
+          description: The id of the subject
+          type: string
+        name:
+          description: The name to show; empty when none was sent
+          type: string
+        properties:
+          additionalProperties: {}
+          description: The properties of the subject, as they were sent
+          type: object
+        sent_at:
+          description: "When the entry was last sent (refreshed at most hourly): what the retention counts from"
+          format: date-time
+          type: string
+        type:
+          description: The type of the subject
+          type: string
+        updated_at:
+          description: When the name or the properties last changed
+          format: date-time
+          type: string
+      required:
+        - groups
+        - type
+        - id
+        - name
+        - properties
+        - updated_at
+        - sent_at
+      type: object
+    DirectoryEntryInput:
+      additionalProperties: true
+      properties:
+        id:
+          description: The id of the subject as the rules name it and the PEPs send it (subject.id)
+          examples:
+            - alice
+          maxLength: 512
+          minLength: 1
+          type: string
+        name:
+          description: The name to show for the subject; it is what a subject search returns as properties.name
+          examples:
+            - Alice Liddell
+          maxLength: 256
+          type: string
+        properties:
+          additionalProperties: {}
+          description: "The properties of the subject (subject.properties): the claims the rules read, stored as sent, at most 100 of them and 16 KiB in all"
+          type: object
+        type:
+          description: "The type of the subject (the subject.type of AuthZEN); absent: user"
+          examples:
+            - user
+          maxLength: 64
+          type: string
+      required:
+        - id
+      type: object
+    DirectoryList:
+      additionalProperties: false
+      properties:
+        items:
+          description: The page, by type and then by id
+          items:
+            $ref: "#/components/schemas/DirectoryEntry"
+          type: array
+        total:
+          description: How many entries match
+          format: int64
+          type: integer
+      required:
+        - total
+        - items
+      type: object
+    DirectoryPut:
+      additionalProperties: true
+      properties:
+        subjects:
+          description: The people to write, at most 1000 per call, each once. An entry that is already as sent is left untouched; the others are created or replaced as a whole
+          items:
+            $ref: "#/components/schemas/DirectoryEntryInput"
+          maxItems: 1000
+          minItems: 1
+          type:
+            - array
+            - "null"
+      required:
+        - subjects
+      type: object
+    DirectorySettings:
+      additionalProperties: true
+      properties:
+        retention_days:
+          description: "Days an entry that is not sent again is kept; null: until it is deleted"
+          format: int64
+          maximum: 36500
+          minimum: 1
+          type:
+            - integer
+            - "null"
+      required:
+        - retention_days
+      type: object
+    DirectoryWriteResult:
+      additionalProperties: false
+      properties:
+        created:
+          description: Entries that were new
+          format: int64
+          type: integer
+        unchanged:
+          description: "Entries that were already as sent: nothing was written to them, and the time they were last sent moved"
+          format: int64
+          type: integer
+        updated:
+          description: Entries whose name or properties changed
+          format: int64
+          type: integer
+      required:
+        - created
+        - updated
+        - unchanged
+      type: object
     Error:
       additionalProperties: false
       properties:
@@ -8132,6 +8296,533 @@ paths:
       summary: Simulate the permissions of a subject
       tags:
         - Simulation
+  /service/{service_id}/subjects:
+    get:
+      description: The directory of the service, by type and then by id. search matches the id and the name.
+      operationId: list_directory
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: Only people of this type
+          explode: false
+          in: query
+          name: type
+          schema:
+            description: Only people of this type
+            maxLength: 64
+            type: string
+        - description: Part of the id or of the name
+          explode: false
+          in: query
+          name: search
+          schema:
+            description: Part of the id or of the name
+            maxLength: 200
+            type: string
+        - description: Page size
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            description: Page size
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: How many to skip
+          explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            description: How many to skip
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryList"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: People of a service
+      tags:
+        - Subject
+    put:
+      description: "Writes up to 1000 people of the service, each once: the application sends the people its PEPs ask about. An entry that is already as sent is left untouched (no new version, no new updated_at; only the time it was sent moves, at most hourly); a new one is created and a changed one replaced as a whole. The properties are stored as sent. A write takes no revision."
+      operationId: put_directory
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DirectoryPut"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryWriteResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Send people to the directory
+      tags:
+        - Subject
+  /service/{service_id}/subjects/settings:
+    get:
+      operationId: get_directory_settings
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectorySettings"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Settings of the directory
+      tags:
+        - Subject
+    put:
+      description: retention_days is how long an entry that is not sent again is kept; the worker removes the others, hourly, in chunks. null keeps every entry until it is deleted (the default).
+      operationId: put_directory_settings
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DirectorySettings"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectorySettings"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Change the settings of the directory
+      tags:
+        - Subject
+  /service/{service_id}/subjects/{subject_type}/{subject_id}:
+    delete:
+      description: Removes the entry. The person is in the directory again the next time the application sends them.
+      operationId: delete_directory_entry
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: The type of the subject
+          in: path
+          name: subject_type
+          required: true
+          schema:
+            description: The type of the subject
+            examples:
+              - user
+            maxLength: 64
+            minLength: 1
+            type: string
+        - description: The id of the subject; a character such as / is sent percent-encoded
+          in: path
+          name: subject_id
+          required: true
+          schema:
+            description: The id of the subject; a character such as / is sent percent-encoded
+            examples:
+              - alice
+            maxLength: 512
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Remove a person from the directory
+      tags:
+        - Subject
+    get:
+      description: The entry with its properties and the groups the person is in now, decided with the stored properties as claims.
+      operationId: get_directory_entry
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: The type of the subject
+          in: path
+          name: subject_type
+          required: true
+          schema:
+            description: The type of the subject
+            examples:
+              - user
+            maxLength: 64
+            minLength: 1
+            type: string
+        - description: The id of the subject; a character such as / is sent percent-encoded
+          in: path
+          name: subject_id
+          required: true
+          schema:
+            description: The id of the subject; a character such as / is sent percent-encoded
+            examples:
+              - alice
+            maxLength: 512
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryEntryDetail"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: A person of the service
+      tags:
+        - Subject
   /service/{service_id}/type_resource:
     get:
       operationId: list_type_resources

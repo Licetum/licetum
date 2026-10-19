@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/licetum/licetum/core/db"
 )
 
 const (
@@ -42,8 +44,8 @@ func (a *App) runRetentionGuarded(ctx context.Context) {
 	a.RunRetention(ctx)
 }
 
-// RunRetention removes the delegated-call records and the known subjects older than their retention, chunk by chunk
-// until nothing is left.
+// RunRetention removes the delegated-call records and the known subjects older than their retention, and the directory entries
+// that were not sent within the retention period of their service, chunk by chunk until nothing is left.
 func (a *App) RunRetention(ctx context.Context) {
 	if days := a.Cfg.Delegation.AuditRetentionDays; days > 0 {
 		a.pruneInChunks(ctx, "delegated_call", `
@@ -55,6 +57,22 @@ func (a *App) RunRetention(ctx context.Context) {
 		a.pruneInChunks(ctx, "known_subject", `
 			DELETE FROM known_subject WHERE ctid IN (
 				SELECT ctid FROM known_subject WHERE last_seen < now() - make_interval(days => $1) LIMIT $2)`, days)
+	}
+	a.pruneDirectory(ctx)
+}
+
+// pruneDirectory deletes the entries of the subject directories that were not sent within the retention period of their
+// service (a service without one keeps everything), a chunk at a time.
+func (a *App) pruneDirectory(ctx context.Context) {
+	for ctx.Err() == nil {
+		n, err := db.PruneDirectory(ctx, a.DB, retentionChunk)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to apply the retention", "table", "subject_directory", "error", err)
+			return
+		}
+		if n < retentionChunk {
+			return
+		}
 	}
 }
 
