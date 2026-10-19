@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/licetum/licetum/core/apperr"
+	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
@@ -262,7 +263,9 @@ func decodeCursor(token, sum string) (string, *apperr.Error) {
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	var cur pageCursor
-	if err != nil || json.Unmarshal(raw, &cur) != nil || cur.Sum != sum {
+	// The key goes to the database as text, which cannot hold a NUL byte (JSON decoding already turns invalid UTF-8 into valid text):
+	// it would be an error there, not a refusal here.
+	if err != nil || json.Unmarshal(raw, &cur) != nil || cur.Sum != sum || strings.ContainsRune(cur.After, 0) {
 		return "", apperr.BadRequest(i18n.AuthzenPageInvalid)
 	}
 	return cur.After, nil
@@ -335,6 +338,7 @@ type search struct {
 	attrs   model.RequestContext
 	limit   int
 	after   string
+	started bool // the request carries a page token: the page starts after the key, which may be the empty string
 	sum     string
 	subject *model.AuthzenSubject
 }
@@ -357,6 +361,7 @@ func parseSearch(kind string, in searchInput) (*search, *apperr.Error) {
 		return nil, aerr
 	}
 	s.after = after
+	s.started = token != ""
 	return s, nil
 }
 
@@ -365,6 +370,11 @@ func (c *authzenCaller) permissions(ctx context.Context, sp speaker, attrs model
 	return c.app.GetPermission(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), consistency)
 }
 
+// searchResources answers the resource search: one page of the resources of the asked type that the speaker may do the action
+// with, in bytewise order of their ids. The engine reads the candidates of the type by a keyset scan and decides them (see
+// engine.SearchResources); the cursor is the key the page covers up to, so that no result is repeated across pages. A page
+// the scan budget stopped is shorter than its limit and still carries a next_token. There is no total: it would need the
+// whole result.
 func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenResourceSearchResponse, error) {
 	s, aerr := parseSearch("resource", in)
 	if aerr != nil {
@@ -374,24 +384,25 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 	if aerr != nil {
 		return nil, aerr
 	}
-	result, err := c.permissions(ctx, sp, s.attrs, consistency)
+	budget := c.cfg.PDP.SearchScanBudget
+	if budget < 1 {
+		budget = config.DefaultSearchScanBudget
+	}
+	query := engine.ResourceSearch{Type: in.Resource.Type, Action: in.Action.Name, Limit: s.limit, Budget: budget}
+	if s.started {
+		query.After = &s.after
+	}
+	page, err := c.app.SearchResources(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, s.attrs), query, consistency)
 	if err != nil {
 		return nil, err
 	}
-	var all []model.ResourceAccess
-	// A type without resources (a permission such as a feature flag) has nothing to list; an unknown type has no answer.
-	if tp, ok := result[in.Resource.Type]; ok && tp.Type != model.TypeModeNotSync {
-		for _, r := range tp.Resources {
-			if slices.Contains(r.Access, in.Action.Name) {
-				all = append(all, r)
-			}
-		}
+	next := ""
+	if !page.Done {
+		next = encodeCursor(page.Last, s.sum)
 	}
-	slices.SortFunc(all, func(a, b model.ResourceAccess) int { return strings.Compare(a.ID, b.ID) })
-	page, next := pageOf(all, func(r model.ResourceAccess) string { return r.ID }, s.after, s.limit, s.sum)
-	out := &model.AuthzenResourceSearchResponse{Page: pageInfo(len(page), intPtr(len(all)), next), Results: make([]model.AuthzenResource, len(page))}
-	for i, r := range page {
-		out.Results[i] = model.AuthzenResource{Type: in.Resource.Type, ID: r.ID, Properties: map[string]any{"name": r.Name}}
+	out := &model.AuthzenResourceSearchResponse{Page: pageInfo(len(page.Hits), nil, next), Results: make([]model.AuthzenResource, len(page.Hits))}
+	for i, h := range page.Hits {
+		out.Results[i] = model.AuthzenResource{Type: in.Resource.Type, ID: h.ID, Properties: map[string]any{"name": h.Name}}
 	}
 	c.note(sp, 0, 0)
 	return out, nil

@@ -339,3 +339,28 @@ func TestLoadRefusesSettingsThatCannotWork(t *testing.T) {
 		})
 	}
 }
+
+// PDP__SEARCH_SCAN_BUDGET bounds the candidates one resource search reads (AZ13); zero or less would make every page empty.
+func TestLoadPDPSearchScanBudget(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PDP.SearchScanBudget != 10000 {
+		t.Errorf("default = %d, want 10000", cfg.PDP.SearchScanBudget)
+	}
+	t.Setenv("PDP__SEARCH_SCAN_BUDGET", "250")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PDP.SearchScanBudget != 250 {
+		t.Errorf("SearchScanBudget = %d, want 250", cfg.PDP.SearchScanBudget)
+	}
+	for _, bad := range []string{"0", "-1"} {
+		t.Setenv("PDP__SEARCH_SCAN_BUDGET", bad)
+		if _, err := config.Load(); err == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+}

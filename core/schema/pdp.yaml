@@ -212,7 +212,7 @@ components:
           description: Pass it as page.token to read the next page; empty on the last page
           type: string
         total:
-          description: The number of results of the whole search at the time of the request; absent when the search does not know it (the subject search)
+          description: The number of results of the whole search at the time of the request; absent when the search does not know it (the resource and the subject searches)
           format: int64
           type: integer
       required:
@@ -1149,7 +1149,7 @@ paths:
   /service/{service_id}/access/v1/search/resource:
     post:
       description: |-
-        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. A type without resources has none to list.
+        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. A type without resources has none to list. A page can be shorter than page.limit, even empty, and still carry page.next_token, because one request reads a bounded number of resources: keep asking until page.next_token is empty.
 
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.

@@ -44,6 +44,19 @@ var (
 type fakePDP struct {
 	grants map[[4]string]bool
 	asked  int
+
+	// The resource search: the pages SearchResources answers with, in order (a finished empty page when they run out), and the
+	// calls it received.
+	searchPages []engine.ResourcePage
+	searches    []fakeSearch
+}
+
+// fakeSearch is one call of SearchResources: what the handler asked of the engine.
+type fakeSearch struct {
+	typeName, action string
+	after            string
+	started          bool // the request carried a page token (After is not nil)
+	limit, budget    int
 }
 
 func newFakePDP(grants ...[4]string) *fakePDP {
@@ -108,6 +121,20 @@ func (f *fakePDP) LogDecisions(context.Context, uuid.UUID, string, []model.Check
 
 func (f *fakePDP) GetPermission(context.Context, uuid.UUID, string, engine.Env, engine.Consistency) (engine.PermissionResult, error) {
 	return engine.PermissionResult{}, nil
+}
+
+func (f *fakePDP) SearchResources(_ context.Context, _ uuid.UUID, _ string, _ engine.Env, q engine.ResourceSearch, _ engine.Consistency) (engine.ResourcePage, error) {
+	call := fakeSearch{typeName: q.Type, action: q.Action, limit: q.Limit, budget: q.Budget}
+	if q.After != nil {
+		call.after, call.started = *q.After, true
+	}
+	f.searches = append(f.searches, call)
+	if len(f.searchPages) == 0 {
+		return engine.ResourcePage{Done: true}, nil
+	}
+	page := f.searchPages[0]
+	f.searchPages = f.searchPages[1:]
+	return page, nil
 }
 
 func (f *fakePDP) LoadKnownSubjectsAfter(context.Context, string, int) ([]engine.KnownSubject, error) {

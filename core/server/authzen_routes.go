@@ -169,7 +169,7 @@ there are more results; send it back as page.token with the same request. The re
 		Method:       http.MethodPost,
 		Path:         "/service/{service_id}/access/v1/search/resource",
 		Summary:      "AuthZEN resource search",
-		Description:  "Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. A type without resources has none to list." + searchNote + note,
+		Description:  "Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. A type without resources has none to list. A page can be shorter than page.limit, even empty, and still carry page.next_token, because one request reads a bounded number of resources: keep asking until page.next_token is empty." + searchNote + note,
 		Tags:         []string{authzenTag},
 		Security:     security,
 		Errors:       errs,

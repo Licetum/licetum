@@ -245,7 +245,7 @@ the web interface sends extra form fields. Path-param structs that are embedded 
 or Huma won't see their fields.
 
 Settings: `config.Load()` reads env vars with the same prefixes as before (`DB__`, `AUTH__`,
-`REDIS__`, `CORS__`, `PLATFORM__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR` and `PDP__OPS_ADDR`); names are case-insensitive, lists accept a
+`REDIS__`, `CORS__`, `PLATFORM__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE` and `PDP__SEARCH_SCAN_BUDGET`); names are case-insensitive, lists accept a
 JSON array or CSV. `DB__URI` may keep the SQLAlchemy `+asyncpg` suffix (`db.NormalizeDSN`).
 `PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback.
 
@@ -654,8 +654,14 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   and the claims come from the token; any other subject needs a client the service trusts (`trusted_clients`, as for the calls on behalf of a
   person; else 403 `authzen_subject_mismatch`), which gives the person's claims in `subject.properties` (`PrepareDelegated`); such calls are audited
   in `delegated_call` (evaluations and subject search as `check`, resource and action searches as `permission`). `context.explain` puts the explanation
-  into `context.reason_admin`; the other context keys are the request attributes. Resource search lists the resources of the type with the action
-  (sorted by id, `properties.name` is the name; a `not_sync` type has none); action search lists the levels on a resource (or on the type as a whole:
+  into `context.reason_admin`; the other context keys are the request attributes. Resource search (`engine.SearchResources`) reads the candidates of the type from `resource_cache` by a keyset scan in bytewise order
+  (`ORDER BY external_id COLLATE "C"`, the index `ix_resource_cache_type_external_c` of migration `00007`) and decides them in batches of 500 under
+  one `prepare` of the rules; a page is cached like a check answer (`authz:search:t1:…`, `licetum_search_cache_total`), so a repeated page costs no
+  query. The page token holds the last key covered (the empty string is a key too: `ResourceSearch.After` is a pointer) and a digest of the
+  request; at most `PDP__SEARCH_SCAN_BUDGET` (10 000) candidates are read per request, so a page can be shorter than its limit, even empty, and
+  still carry a `next_token`; a caller to whom no rule allows anything gets a finished empty page without a scan. Known limit: the scan reads the
+  keys of the type, not only the resources the rules reach (ADR 7.6 reads the descendants of the anchors; that arrives with the read-model port
+  in P5), so a caller with few grants on a very large type pays up to the budget per page; the result has no `total` (`properties.name` is the name; a `not_sync` type has none); action search lists the levels on a resource (or on the type as a whole:
   the candidates are the levels the person has on some resource of the type, each decided by `CheckAccess`); subject search (trusted clients only)
   decides the known subjects of the registry (`SUBJECTS__ENABLED`) with their stored claims, in the order of their identifiers
   (`LoadKnownSubjectsAfter`, keyset): batches of 100 from the cursor until the page is full or 1000 subjects were gone through, the page token is the

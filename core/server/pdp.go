@@ -24,6 +24,7 @@ type pdpEngine interface {
 	CheckAccess(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, requests []model.CheckRequest, explain bool, consistency engine.Consistency) ([]model.CheckResult, error)
 	LogDecisions(ctx context.Context, serviceID uuid.UUID, subject string, checks []model.CheckRequest, results []model.CheckResult, consistency engine.Consistency)
 	GetPermission(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, consistency engine.Consistency) (engine.PermissionResult, error)
+	SearchResources(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, q engine.ResourceSearch, consistency engine.Consistency) (engine.ResourcePage, error)
 	LoadKnownSubjectsAfter(ctx context.Context, after string, limit int) ([]engine.KnownSubject, error)
 	RecordDelegatedCall(ctx context.Context, serviceID uuid.UUID, call engine.DelegatedCall) error
 }

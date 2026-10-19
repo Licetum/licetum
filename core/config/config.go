@@ -224,6 +224,9 @@ type HTTP struct {
 	RequestTimeout time.Duration
 }
 
+// DefaultSearchScanBudget is the default of PDP__SEARCH_SCAN_BUDGET, and what a Config that was not loaded (a zero value) means.
+const DefaultSearchScanBudget = 10000
+
 // PDP tunes the regional PDP process (licetum pdp, see cli.Serve).
 type PDP struct {
 	// Addr is the address the PDP listens on (PDP__ADDR, default :8001). The -addr flag overrides it; HTTP__ADDR is the
@@ -238,6 +241,9 @@ type PDP struct {
 	PublicURL string
 	// Audience is the audience a client token must carry when its issuer lists none (PDP__AUDIENCE, default PDP__PUBLIC_URL).
 	Audience string
+	// SearchScanBudget is how many candidate resources one request of the resource search reads (PDP__SEARCH_SCAN_BUDGET, default
+	// 10000). A page that the budget stops is shorter than its limit, even empty, and still carries a next_token.
+	SearchScanBudget int
 }
 
 // Policy tunes what the check API does while it cannot confirm that its copy of the policy is current.
@@ -387,10 +393,11 @@ func Load() (*Config, error) {
 			RequestTimeout: e.duration("HTTP__REQUEST_TIMEOUT", 0),
 		},
 		PDP: PDP{
-			Addr:      e.str("PDP__ADDR", ":8001"),
-			OpsAddr:   e.address("PDP__OPS_ADDR", ":9090"),
-			PublicURL: strings.TrimRight(e.str("PDP__PUBLIC_URL", ""), "/"),
-			Audience:  e.str("PDP__AUDIENCE", ""),
+			Addr:             e.str("PDP__ADDR", ":8001"),
+			OpsAddr:          e.address("PDP__OPS_ADDR", ":9090"),
+			PublicURL:        strings.TrimRight(e.str("PDP__PUBLIC_URL", ""), "/"),
+			Audience:         e.str("PDP__AUDIENCE", ""),
+			SearchScanBudget: e.int("PDP__SEARCH_SCAN_BUDGET", DefaultSearchScanBudget),
 		},
 	}
 	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
@@ -422,6 +429,9 @@ func Load() (*Config, error) {
 		if err := checkPublicURL(u); err != nil {
 			e.errs = append(e.errs, err)
 		}
+	}
+	if cfg.PDP.SearchScanBudget < 1 {
+		e.errs = append(e.errs, fmt.Errorf("PDP__SEARCH_SCAN_BUDGET must be positive, got %d", cfg.PDP.SearchScanBudget))
 	}
 	if r := cfg.Sync.WorkerRegion; r != "" && !regionName.MatchString(r) {
 		e.errs = append(e.errs, fmt.Errorf("WORKER__REGION must be lowercase letters, digits and hyphens (at most 32 characters), got %q", r))

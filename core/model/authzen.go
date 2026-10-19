@@ -130,7 +130,7 @@ type AuthzenPageRequest struct {
 type AuthzenPageResponse struct {
 	NextToken string `json:"next_token" doc:"Pass it as page.token to read the next page; empty on the last page"`
 	Count     int    `json:"count" doc:"The number of results on this page"`
-	Total     *int   `json:"total,omitempty" required:"false" doc:"The number of results of the whole search at the time of the request; absent when the search does not know it (the subject search)"`
+	Total     *int   `json:"total,omitempty" required:"false" doc:"The number of results of the whole search at the time of the request; absent when the search does not know it (the resource and the subject searches)"`
 }
 
 // AuthzenSubjectSearchRequest asks for the subjects that may do the action on the resource. Only the type of the subject is

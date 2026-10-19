@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -169,8 +170,8 @@ func TestAuthzenSearches(t *testing.T) {
 		t.Fatalf("first page: %v", first)
 	}
 	page := first["page"].(map[string]any)
-	if page["total"] != float64(3) || page["count"] != float64(2) || page["next_token"] == "" {
-		t.Fatalf("page: %v", page)
+	if _, hasTotal := page["total"]; hasTotal || page["count"] != float64(2) || page["next_token"] == "" {
+		t.Fatalf("page: %v (a resource search gives no total)", page)
 	}
 	if first["results"].([]any)[0].(map[string]any)["properties"].(map[string]any)["name"] != "Branch 1" {
 		t.Fatalf("the name of the resource: %v", first)
@@ -350,5 +351,132 @@ func TestAuthzenSubjectSearchPagesWithoutSkippingOrRepeating(t *testing.T) {
 	})
 	if slices.Contains(got, "svc-docs-backend") {
 		t.Fatalf("the client has no access to B1: %v", got)
+	}
+}
+
+// searchResourcePages pages the resource search of the type and the action for the claims until the token is empty. It returns
+// the ids in the order of the pages, and the number of pages that had no result yet carried a token (the scan budget stopped
+// them).
+func (w *world) searchResourcePages(resourceType, action string, limit int, claims jwt.MapClaims) (ids []string, pages, emptyWithToken int) {
+	w.t.Helper()
+	subject := hierarchySubject
+	if name, ok := claims["preferred_username"].(string); ok {
+		subject = name
+	}
+	token := ""
+	for pages < 200 {
+		page := map[string]any{"limit": limit}
+		if token != "" {
+			page["token"] = token
+		}
+		status, out := w.authzen("search/resource", map[string]any{
+			"subject":  map[string]any{"type": "user", "id": subject},
+			"resource": map[string]any{"type": resourceType},
+			"action":   map[string]any{"name": action},
+			"page":     page,
+		}, claims)
+		if status != http.StatusOK {
+			w.t.Fatalf("resource search: %d %v", status, out)
+		}
+		pages++
+		results := out["results"].([]any)
+		for _, r := range results {
+			ids = append(ids, r.(map[string]any)["id"].(string))
+		}
+		token, _ = out["page"].(map[string]any)["next_token"].(string)
+		if len(results) == 0 && token != "" {
+			emptyWithToken++
+		}
+		if token == "" {
+			return ids, pages, emptyWithToken
+		}
+	}
+	w.t.Fatal("the resource search did not end within 200 pages")
+	return nil, 0, 0
+}
+
+// TestContract_AZ04_ResourceSearchPagesInBytewiseOrder: the pages of the resource search follow the bytewise order of the ids whatever
+// the collation of the database is, and no result is repeated or skipped: ids that differ in case, punctuation, digits and
+// non-ASCII letters are paged by four. (An empty id is a key of the cursor too, which the unit tests of the handler check; the
+// answer cannot show a resource without an id.)
+func TestContract_AZ04_ResourceSearchPagesInBytewiseOrder(t *testing.T) {
+	w := newWorld(t)
+	var collated bool
+	if err := w.pool.QueryRow(context.Background(), `SELECT 'a' < 'B'`).Scan(&collated); err == nil && !collated {
+		t.Log("the default collation of this database is bytewise: here the order of the pages cannot tell COLLATE \"C\" from the default")
+	}
+	extra := []string{"b", "B", "a_1", "a-1", "a1", "A1", "a.1", "10", "9", "é", "É", "Z", "z"}
+	for _, id := range extra {
+		w.source("branch", id, "Name "+id, "R1")
+	}
+	w.rule("division", "D1", nil)
+	self := jwt.MapClaims{"preferred_username": hierarchySubject}
+
+	want := append([]string{"B1", "B2", "B3"}, extra...)
+	sort.Strings(want)
+	got, pages, _ := w.searchResourcePages("branch", "read", 4, self)
+	if !slices.Equal(got, want) {
+		t.Fatalf("the pages give\n%v\nwant, in bytewise order,\n%v", got, want)
+	}
+	if pages < 4 {
+		t.Errorf("%d resources by four are at least 4 pages, got %d", len(want), pages)
+	}
+}
+
+// The resource search gives what the permission map of the service gives: the resources of the type with the level, after the
+// denials and the exceptions of the rules, in bytewise order (the engine decides each candidate with the rules of the caller).
+func TestAuthzenResourceSearchMatchesThePermissionMap(t *testing.T) {
+	w := newWorld(t)
+	w.rule("division", "D1", nil)
+	w.rule("rrs", "R1", deny("read"))
+	w.rule("branch", "B2", exception("read"))
+	self := jwt.MapClaims{"preferred_username": hierarchySubject}
+
+	var want []string
+	for _, r := range w.permission(w.org, nil)["branch"].Resources {
+		if slices.Contains(r.Access, "read") {
+			want = append(want, r.ID)
+		}
+	}
+	sort.Strings(want)
+	if len(want) == 0 {
+		t.Fatal("the policy lets the caller read some branch: the comparison would prove nothing")
+	}
+	got, _, _ := w.searchResourcePages("branch", "read", 2, self)
+	if !slices.Equal(got, want) {
+		t.Fatalf("search = %v, permission map = %v", got, want)
+	}
+}
+
+// TestContract_AZ13_ResourceSearchStopsAtTheScanBudget: one request reads at most PDP__SEARCH_SCAN_BUDGET candidates. A page that the
+// budget stops is shorter than its limit, even empty, and still carries a next_token that continues after the last candidate
+// read; the pages together give the result.
+func TestContract_AZ13_ResourceSearchStopsAtTheScanBudget(t *testing.T) {
+	w := newWorld(t)
+	w.rule("branch", "B3", nil)
+	w.cfg.PDP.SearchScanBudget = 2
+	self := jwt.MapClaims{"preferred_username": hierarchySubject}
+
+	got, pages, emptyWithToken := w.searchResourcePages("branch", "read", 10, self)
+	if strings.Join(got, ",") != "B3" {
+		t.Fatalf("the pages give %v, want [B3]", got)
+	}
+	// B1 and B2 are read and refused first: the first page is empty and still has a token.
+	if emptyWithToken == 0 || pages < 2 {
+		t.Errorf("%d pages, %d empty ones with a token: the budget of 2 candidates must cut the scan of 4 branches", pages, emptyWithToken)
+	}
+}
+
+// A caller to whom no rule gives anything gets a finished empty page: the type is not scanned for nothing. A caller with only
+// denials is the same.
+func TestAuthzenResourceSearchWithoutAGrantIsEmptyAndFinished(t *testing.T) {
+	w := newWorld(t)
+	w.rule("division", "D1", nil)
+	w.rule("branch", "B1", map[string]any{"subject": "mallory", "effect": "deny", "access": []string{"read"}})
+	for _, name := range []string{"stranger", "mallory"} {
+		got, pages, _ := w.searchResourcePages("branch", "read", 10, jwt.MapClaims{"preferred_username": name})
+		if len(got) != 0 || pages != 1 {
+			t.Errorf("%s: the pages give %v in %d pages, want one empty page with the token \"\"", name, got, pages)
+		}
 	}
 }
