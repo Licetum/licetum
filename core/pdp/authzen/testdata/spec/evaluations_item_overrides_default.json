@@ -1,0 +1,17 @@
+{
+  "name": "an evaluation that names its own action keeps it, and the others keep the default",
+  "source": "AuthZEN 1.0, Access Evaluations API: an evaluation's own fields replace the defaults",
+  "checked_against_text": false,
+  "endpoint": "evaluations",
+  "grants": [["alice@acmecorp.com", "can_read", "todo", "1"], ["alice@acmecorp.com", "can_update", "todo", "1"]],
+  "request": {
+    "subject": {"type": "user", "id": "alice@acmecorp.com"},
+    "action": {"name": "can_read"},
+    "evaluations": [
+      {"resource": {"type": "todo", "id": "1"}},
+      {"action": {"name": "can_update"}, "resource": {"type": "todo", "id": "1"}},
+      {"resource": {"type": "todo", "id": "2"}}
+    ]
+  },
+  "decisions": [true, true, false]
+}

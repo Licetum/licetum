@@ -3,6 +3,7 @@
   "path": "/service/orders/access/v1/search/action?at_least_as_fresh=9",
   "body": {
     "resource": {
+      "id": "*",
       "type": "flag"
     },
     "subject": {

@@ -6,7 +6,9 @@
       "name": "read"
     },
     "context": {
-      "explain": true
+      "licetum": {
+        "explain": true
+      }
     },
     "resource": {
       "id": "b1",

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,51 +62,32 @@ func TestDecodeCursorRefusesAChangedRequest(t *testing.T) {
 	}
 }
 
-func searchRequest() model.AuthzenSearchRequest {
-	return model.AuthzenSearchRequest{
+func searchRequest() searchInput {
+	return searchInput{
 		Subject:  &model.AuthzenSubject{Type: "user", ID: "alice"},
 		Resource: &model.AuthzenResource{Type: "branch", ID: "b1"},
 		Action:   &model.AuthzenAction{Name: "read"},
 	}
 }
 
-func TestParseSearchRequiredFields(t *testing.T) {
-	type mutate func(*model.AuthzenSearchRequest)
-	cases := []struct {
-		name string
-		kind string
-		edit mutate
-		want string // the field named in the error; empty — accepted
-	}{
-		{"all there", "resource", func(*model.AuthzenSearchRequest) {}, ""},
-		{"no subject", "resource", func(r *model.AuthzenSearchRequest) { r.Subject = nil }, "subject"},
-		{"no resource", "resource", func(r *model.AuthzenSearchRequest) { r.Resource = nil }, "resource"},
-		{"no subject id", "resource", func(r *model.AuthzenSearchRequest) { r.Subject.ID = "" }, "subject.id"},
-		{"subject search needs no subject id", "subject", func(r *model.AuthzenSearchRequest) { r.Subject.ID = "" }, ""},
-		{"no resource type", "subject", func(r *model.AuthzenSearchRequest) { r.Resource.Type = "" }, "resource.type"},
-		{"no action", "resource", func(r *model.AuthzenSearchRequest) { r.Action = nil }, "action.name"},
-		{"no action for subjects", "subject", func(r *model.AuthzenSearchRequest) { r.Action = nil }, "action.name"},
-		{"action search has no action", "action", func(r *model.AuthzenSearchRequest) { r.Action = nil }, ""},
-		{"bad context name", "resource", func(r *model.AuthzenSearchRequest) { r.Context = map[string]any{"a b": 1} }, "context"},
+// The required fields of each endpoint are checked by the request types (model's Validate, TestContract_AZ01_*). A search
+// reads its context and its page token: a context out of its bounds is a 400, and a nested value is ignored.
+func TestParseSearchReadsTheContextAndThePage(t *testing.T) {
+	in := searchRequest()
+	if s, err := parseSearch("resource", in); err != nil || s == nil {
+		t.Fatalf("a checked request must be accepted: %v", err)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			in := searchRequest()
-			c.edit(&in)
-			s, err := parseSearch(c.kind, in)
-			if c.want == "" {
-				if err != nil || s == nil {
-					t.Fatalf("must be accepted: %v", err)
-				}
-				return
-			}
-			if err == nil || err.Status != http.StatusBadRequest {
-				t.Fatalf("must be a 400, got %v", err)
-			}
-			if c.want != "context" && !strings.Contains(err.Localize(i18n.EN).Detail, c.want) {
-				t.Fatalf("the error must name %q: %q", c.want, err.Localize(i18n.EN).Detail)
-			}
-		})
+	in.Context = map[string]any{"tags": make([]any, 65)}
+	if _, err := parseSearch("resource", in); err == nil || err.Status != http.StatusBadRequest {
+		t.Fatalf("a list of 65 items must be a 400, got %v", err)
+	}
+	in.Context = map[string]any{"ip": map[string]any{"x": "1"}}
+	if _, err := parseSearch("resource", in); err != nil {
+		t.Fatalf("a nested value is ignored, not refused: %v", err)
+	}
+	in.Page = &model.AuthzenPageRequest{Token: "not-a-token"}
+	if _, err := parseSearch("resource", in); err == nil || err.Status != http.StatusBadRequest {
+		t.Fatalf("a page token that is not valid must be a 400, got %v", err)
 	}
 }
 
@@ -235,13 +215,29 @@ func TestApplySemanticErrorsAreDenials(t *testing.T) {
 	}
 }
 
-func TestAuthzenAttributesDropsExplain(t *testing.T) {
-	attrs := authzenAttributes(map[string]any{"explain": true, "ip": "10.0.0.1"})
-	if len(attrs) != 1 || attrs["ip"] != "10.0.0.1" {
-		t.Errorf("%+v", attrs)
+// The settings of Licetum (context.licetum) are not attributes; any other key is, explain included.
+func TestParseSearchKeepsTheSettingsOutOfTheAttributes(t *testing.T) {
+	in := searchRequest()
+	in.Context = map[string]any{"licetum": map[string]any{"explain": true}, "ip": "10.0.0.1", "explain": true}
+	s, err := parseSearch("resource", in)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if attrs := authzenAttributes(nil); attrs == nil || len(attrs) != 0 {
-		t.Errorf("no context is an empty set of attributes, not nil: %#v", attrs)
+	if len(s.attrs) != 2 || s.attrs["ip"] != "10.0.0.1" || s.attrs["explain"] != true {
+		t.Errorf("attributes: %+v", s.attrs)
+	}
+}
+
+// A type is named by an empty resource id or by the wildcard; any other id is a resource.
+func TestResourceIDOfNamesTheTypeAsAWhole(t *testing.T) {
+	for id, whole := range map[string]bool{"": true, model.AuthzenWholeType: true, "b1": false} {
+		got := resourceIDOf(&model.AuthzenResource{Type: "branch", ID: id})
+		if (got == nil) != whole || (got != nil && *got != id) {
+			t.Errorf("resourceIDOf(%q) = %v, whole type %v", id, got, whole)
+		}
+	}
+	if resourceIDOf(nil) != nil {
+		t.Error("no resource names the type as a whole")
 	}
 }
 
@@ -277,37 +273,45 @@ func TestAuthzenMetadata(t *testing.T) {
 
 // ---------- over HTTP, without a database: what fails before the service is looked up ----------
 
-func post(t *testing.T, h http.Handler, path, body string) (int, map[string]any) {
+// post sends a POST without credentials, and returns the status, the body and the code of the error (its
+// Licetum-Error-Code header).
+func post(t *testing.T, h http.Handler, path, body string) (int, string, string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	var out map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	return rec.Code, out
+	return rec.Code, rec.Body.String(), rec.Header().Get("Licetum-Error-Code")
 }
 
+// Each invalid request is a 400 in the error shape, with the code of what was wrong: the schema (validation_failed), or the
+// request types' checks of the endpoint (the code of the catalog key).
 func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
 	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
 	const base = "/service/orders/access/v1/"
-	for name, c := range map[string]struct{ path, body string }{
-		"subject without type":   {"evaluation", `{"subject":{"id":"a"},"resource":{"type":"t"},"action":{"name":"r"}}`},
-		"resource without type":  {"evaluation", `{"subject":{"type":"user","id":"a"},"resource":{"id":"1"},"action":{"name":"r"}}`},
-		"action without name":    {"evaluation", `{"subject":{"type":"user","id":"a"},"resource":{"type":"t"},"action":{}}`},
-		"subject id of a number": {"evaluation", `{"subject":{"type":"user","id":5},"resource":{"type":"t"},"action":{"name":"r"}}`},
-		"unknown semantic":       {"evaluations", `{"options":{"evaluations_semantic":"first"},"evaluations":[{}]}`},
-		"too many evaluations":   {"evaluations", `{"evaluations":[` + strings.Repeat(`{},`, 100) + `{}]}`},
-		"page limit negative":    {"search/resource", `{"page":{"limit":-1}}`},
-		"search subject of text": {"search/action", `{"subject":"alice"}`},
+	for name, c := range map[string]struct{ path, body, code string }{
+		"subject without type":         {"evaluation", `{"subject":{"id":"a"},"resource":{"type":"t"},"action":{"name":"r"}}`, "validation_failed"},
+		"resource without type":        {"evaluation", `{"subject":{"type":"user","id":"a"},"resource":{"id":"1"},"action":{"name":"r"}}`, "validation_failed"},
+		"action without name":          {"evaluation", `{"subject":{"type":"user","id":"a"},"resource":{"type":"t"},"action":{}}`, "validation_failed"},
+		"subject id of a number":       {"evaluation", `{"subject":{"type":"user","id":5},"resource":{"type":"t"},"action":{"name":"r"}}`, "validation_failed"},
+		"unknown semantic":             {"evaluations", `{"options":{"evaluations_semantic":"first"},"evaluations":[{}]}`, "validation_failed"},
+		"too many evaluations":         {"evaluations", `{"evaluations":[` + strings.Repeat(`{},`, 100) + `{}]}`, "validation_failed"},
+		"page limit negative":          {"search/resource", `{"page":{"limit":-1}}`, "validation_failed"},
+		"search subject of text":       {"search/action", `{"subject":"alice"}`, "validation_failed"},
+		"resource without an id":       {"evaluation", `{"subject":{"type":"user","id":"a"},"resource":{"type":"t"},"action":{"name":"r"}}`, "authzen_field_required"},
+		"batch evaluation incomplete":  {"evaluations", `{"subject":{"type":"user","id":"a"},"evaluations":[{"resource":{"type":"t","id":"1"},"action":{"name":"r"}},{"resource":{"type":"t","id":"2"}}]}`, "authzen_field_required"},
+		"subject type group":           {"evaluation", `{"subject":{"type":"group","id":"a"},"resource":{"type":"t","id":"1"},"action":{"name":"r"}}`, "authzen_subject_type_invalid"},
+		"subject id of a group":        {"evaluation", `{"subject":{"type":"user","id":"group:a"},"resource":{"type":"t","id":"1"},"action":{"name":"r"}}`, "delegation_subject_invalid"},
+		"licetum is not an object":     {"evaluation", `{"subject":{"type":"user","id":"a"},"resource":{"type":"t","id":"1"},"action":{"name":"r"},"context":{"licetum":"yes"}}`, "authzen_licetum_invalid"},
+		"resource search needs action": {"search/resource", `{"subject":{"type":"user","id":"a"},"resource":{"type":"t"}}`, "authzen_field_required"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			status, body := post(t, h, base+c.path, c.body)
+			status, body, code := post(t, h, base+c.path, c.body)
 			if status != http.StatusBadRequest {
-				t.Fatalf("status %d, want 400: %v", status, body)
+				t.Fatalf("status %d, want 400: %s", status, body)
 			}
-			if extra, _ := body["extra"].(map[string]any); extra["code"] != "validation_failed" {
-				t.Fatalf("the usual error shape: %v", body)
+			if code != c.code {
+				t.Fatalf("code %q, want %s: %s", code, c.code, body)
 			}
 		})
 	}
@@ -315,7 +319,7 @@ func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
 
 func TestOtherOperationsKeepTheirValidationStatus(t *testing.T) {
 	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
-	status, body := post(t, h, "/service/orders/check", `{"checks":[]}`)
+	status, body, _ := post(t, h, "/service/orders/check", `{"checks":[]}`)
 	if status != http.StatusUnprocessableEntity {
 		t.Fatalf("the check API keeps its 422: %d %v", status, body)
 	}
@@ -326,7 +330,7 @@ func TestAuthzenMetadataNeedsAPublicURL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/authzen-configuration/service/orders", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "authzen_metadata_disabled") {
+	if rec.Code != http.StatusNotFound || rec.Header().Get("Licetum-Error-Code") != "authzen_metadata_disabled" {
 		t.Fatalf("without HTTP__PUBLIC_URL there is no document: %d %s", rec.Code, rec.Body)
 	}
 }

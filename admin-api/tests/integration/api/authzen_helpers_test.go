@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -33,10 +34,17 @@ func (w *world) ref(serviceID string) string {
 // ask sends a request that authzenreq built to the check API as the holder of the token (no token: no Authorization).
 func (e *env) ask(r authzenreq.Request, token string, headers ...string) (int, []byte) {
 	e.t.Helper()
+	status, _, raw := e.askWithHeader(r, token, headers...)
+	return status, raw
+}
+
+// askWithHeader is ask with the headers of the answer, for the tests that assert an AuthZEN error (requireAuthzenError).
+func (e *env) askWithHeader(r authzenreq.Request, token string, headers ...string) (int, http.Header, []byte) {
+	e.t.Helper()
 	if token != "" {
 		headers = append([]string{"Authorization", "Bearer " + token}, headers...)
 	}
-	return e.do(r.Method, e.check.URL+r.Path, r.Body, headers...)
+	return e.doWithHeader(r.Method, e.check.URL+r.Path, r.Body, headers...)
 }
 
 // found is a resource that a search lists: its id and its name.
@@ -94,16 +102,54 @@ func (e *env) search(ref, token, resourceType, action string, opts ...authzenreq
 }
 
 // permission asks the check API, as the holder of the token, which branches of the service they may read: the resource
-// search of branch and read. It returns the status and the answer as it came, for the tests that only need to know that
-// the API answers for the service (by its slug or id) and the token, or that it has seen the person.
+// search of branch and read. It returns the status and the answer (an error as authzenAnswer reads it), for the tests that
+// only need to know that the API answers for the service (by its slug or id) and the token, or that it has seen the person.
 func (e *env) permission(serviceRef, token string) (int, map[string]any) {
 	e.t.Helper()
-	status, raw := e.ask(authzenreq.SearchResource(serviceRef, authzenreq.SubjectOf(token), "branch", "read"), token)
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		e.t.Fatalf("decode the search response: %v (%s)", err, raw)
+	status, header, raw := e.permissionRaw(serviceRef, token)
+	return status, authzenAnswer(e.t, status, header, raw)
+}
+
+// permissionRaw is permission with the headers and the body of the answer as they came.
+func (e *env) permissionRaw(serviceRef, token string) (int, http.Header, []byte) {
+	e.t.Helper()
+	// A token that names nobody (a garbage one) gets a placeholder subject: a request must name a subject to be well formed,
+	// and the check of the token then refuses it.
+	subject := authzenreq.SubjectOf(token)
+	if subject == "" {
+		subject = "nobody"
 	}
-	return status, out
+	return e.askWithHeader(authzenreq.SearchResource(serviceRef, subject, "branch", "read"), token)
+}
+
+// authzenAnswer is the answer of an AuthZEN request as a map. A success is its JSON object. An error is a JSON string, the
+// message, and its code is in the Licetum-Error-Code header: the map reads it as {"detail", "extra": {"code"}}, as the
+// errors of the admin API read, so that the callers that look at the code keep working.
+func authzenAnswer(t *testing.T, status int, header http.Header, raw []byte) map[string]any {
+	t.Helper()
+	if status >= http.StatusBadRequest {
+		var message string
+		if json.Unmarshal(raw, &message) == nil {
+			return map[string]any{"detail": message, "extra": map[string]any{"code": header.Get("Licetum-Error-Code")}}
+		}
+	}
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	return decodeMap(t, raw)
+}
+
+// requireAuthzenError fails the test unless the answer is the error wantStatus with the code wantCode: the body is the
+// message as a JSON string, and the code is in the Licetum-Error-Code header.
+func requireAuthzenError(t *testing.T, status int, header http.Header, raw []byte, wantStatus int, wantCode string) {
+	t.Helper()
+	var message string
+	if err := json.Unmarshal(raw, &message); err != nil {
+		t.Fatalf("an AuthZEN error is its message as a JSON string: %v (%s)", err, raw)
+	}
+	if code := header.Get("Licetum-Error-Code"); status != wantStatus || code != wantCode {
+		t.Fatalf("error = %d/%q, want %d/%q (%s)", status, code, wantStatus, wantCode, raw)
+	}
 }
 
 // visible lists the ids of the resources of the type that the person with the claims may read, asked with

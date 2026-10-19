@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
 )
@@ -22,8 +22,8 @@ type ServiceRefPath struct {
 
 // ConsistencyParam is the freshness a caller asks for.
 type ConsistencyParam struct {
-	Consistency    string `query:"consistency" enum:"minimize_latency,higher" default:"minimize_latency" doc:"minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"`
-	AtLeastAsFresh int64  `query:"at_least_as_fresh" required:"false" minimum:"0" doc:"The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"`
+	Consistency    string `query:"consistency" hidden:"true" enum:"minimize_latency,higher" default:"minimize_latency" doc:"minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"`
+	AtLeastAsFresh int64  `query:"at_least_as_fresh" hidden:"true" required:"false" minimum:"0" doc:"The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"`
 }
 
 // valueIn is the freshness of the request. The one the context carries (engine.WithConsistency: set by the process that
@@ -57,11 +57,11 @@ func (q PermissionQuery) filter() engine.PermissionFilter {
 }
 
 // verifiedCaller verifies the bearer token against the service and returns the service with the token's claims.
-func verifiedCaller(ctx context.Context, app *engine.App, serviceID uuid.UUID, authorization string) (*model.Service, engine.Claims, error) {
+func verifiedCaller(ctx context.Context, app pdpEngine, serviceID uuid.UUID, authorization string) (*model.Service, engine.Claims, error) {
 	if authorization == "" {
 		return nil, nil, apperr.Unauthorized(i18n.AuthHeaderRequired)
 	}
-	token, isBearer := strings.CutPrefix(authorization, "Bearer ")
+	token, isBearer := httpx.BearerToken(authorization)
 	if !isBearer {
 		return nil, nil, apperr.BadRequest(i18n.AuthHeaderRequired)
 	}

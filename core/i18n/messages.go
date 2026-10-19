@@ -175,6 +175,8 @@ const (
 	AuthzenFieldRequired      Key = "authzen_field_required"
 	AuthzenPageInvalid        Key = "authzen_page_invalid"
 	AuthzenMetadataDisabled   Key = "authzen_metadata_disabled"
+	AuthzenSubjectTypeInvalid Key = "authzen_subject_type_invalid"
+	AuthzenLicetumInvalid     Key = "authzen_licetum_invalid"
 
 	// PEP directory: the issuers, the clients of the services and their API keys
 	PEPKeyLimit      Key = "pep_key_limit"
@@ -925,6 +927,16 @@ var catalog = map[Key]Text{
 		EN: "The AuthZEN discovery document is not available: HTTP__PUBLIC_URL is not set",
 		RU: "Документ обнаружения AuthZEN недоступен: не задан HTTP__PUBLIC_URL",
 		ZH: "AuthZEN 发现文档不可用：未设置 HTTP__PUBLIC_URL",
+	},
+	AuthzenSubjectTypeInvalid: {
+		EN: "subject.type must be 1 to 64 bytes, and not group",
+		RU: "subject.type должен занимать от 1 до 64 байт и не быть group",
+		ZH: "subject.type 必须为 1 到 64 个字节，且不能是 group",
+	},
+	AuthzenLicetumInvalid: {
+		EN: "The licetum settings of the context must be an object with min_revision (a revision, as a string of digits) and explain (a boolean), and no other field",
+		RU: "Настройки licetum в контексте должны быть объектом с полями min_revision (версия, строкой из цифр) и explain (логическое значение) и без других полей",
+		ZH: "上下文中的 licetum 设置必须是对象，只能包含 min_revision（由数字组成的字符串形式的版本号）和 explain（布尔值）",
 	},
 	PEPKeyLimit: {
 		EN: "The PEP client has reached its limit of %d active API keys: revoke one first",

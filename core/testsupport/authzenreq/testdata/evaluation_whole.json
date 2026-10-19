@@ -6,6 +6,7 @@
       "name": "enabled"
     },
     "resource": {
+      "id": "*",
       "type": "flag"
     },
     "subject": {

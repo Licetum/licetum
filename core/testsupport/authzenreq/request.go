@@ -24,6 +24,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/licetum/licetum/core/model"
 )
 
 // SubjectType is the type of the subjects the builders write.
@@ -42,7 +44,7 @@ type Request struct {
 }
 
 // Resource is what an evaluation or a search is about: a type of the service and, for one resource, its id in the
-// external system. An empty ID is the type as a whole.
+// external system. An empty ID is the type as a whole, which the API spells * (model.AuthzenWholeType).
 type Resource struct {
 	Type string
 	ID   string
@@ -54,12 +56,13 @@ func On(resourceType, id string) Resource { return Resource{Type: resourceType, 
 // Whole is the type as a whole: the capability of a type without resources, or the rules that cover all of its resources.
 func Whole(resourceType string) Resource { return Resource{Type: resourceType} }
 
+// wire is the resource as the API reads it. The id is always sent: an evaluation requires it, and the type as a whole is *.
 func (r Resource) wire() map[string]any {
-	out := map[string]any{"type": r.Type}
-	if r.ID != "" {
-		out["id"] = r.ID
+	id := r.ID
+	if id == "" {
+		id = model.AuthzenWholeType
 	}
-	return out
+	return map[string]any{"type": r.Type, "id": id}
 }
 
 // Question is one evaluation of a batch: the resource and the action. The person and the context are the batch's.
@@ -148,7 +151,7 @@ func WithContext(attrs map[string]any) Option {
 	}
 }
 
-// Explain asks an evaluation to explain its decision: context.explain, answered in context.reason_admin.
+// Explain asks an evaluation to explain its decision: context.licetum.explain, answered in context.reason_admin.
 func Explain() Option {
 	return func(s *spec) { s.explain, s.used = true, s.used|featExplain }
 }
@@ -194,7 +197,8 @@ func (s *spec) context() map[string]any {
 		out[k] = v
 	}
 	if s.explain {
-		out["explain"] = true
+		// The settings of Licetum are the top-level key licetum of the context: an attribute of that name gives way to them.
+		out["licetum"] = map[string]any{"explain": true}
 	}
 	if len(out) == 0 {
 		return nil

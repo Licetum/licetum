@@ -160,6 +160,11 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		}
 		return c.value, nil
 	}
+	// The revision the answer is read at is the one the PDP reports (Licetum-Revision), even when the answer is computed from the
+	// data below: it then reflects at least this revision.
+	if t := TraceFrom(ctx); t != nil {
+		t.noteReadRevision(state.version)
+	}
 
 	// With a read replica a consistency=higher answer is computed from the primary, whose data may be newer than the revision the
 	// replica showed: it is not kept under that revision.

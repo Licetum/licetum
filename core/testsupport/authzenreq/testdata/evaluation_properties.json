@@ -6,7 +6,10 @@
       "name": "read"
     },
     "context": {
-      "explain": true,
+      "explain": false,
+      "licetum": {
+        "explain": true
+      },
       "role": "auditor"
     },
     "resource": {

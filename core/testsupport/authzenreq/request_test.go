@@ -134,6 +134,9 @@ func TestBodiesHaveTheShapeOfTheModel(t *testing.T) {
 				if m.Subject == nil || m.Subject.Type != authzenreq.SubjectType || m.Subject.ID == "" || m.Resource == nil || m.Resource.Type == "" || m.Action == nil || m.Action.Name == "" {
 					t.Errorf("an evaluation must be complete: %+v", m)
 				}
+				if m.Resource != nil && m.Resource.ID == "" {
+					t.Errorf("an evaluation requires resource.id, * for the type as a whole: %+v", m.Resource)
+				}
 			case "evaluations":
 				var m model.AuthzenEvaluationsRequest
 				strictly(t, c.req.Body, &m)
@@ -144,26 +147,48 @@ func TestBodiesHaveTheShapeOfTheModel(t *testing.T) {
 					if e.Resource == nil || e.Action == nil || e.Subject != nil || e.Context != nil {
 						t.Errorf("evaluation %d must carry the resource and the action, and nothing the batch already says: %+v", i, e)
 					}
+					if e.Resource != nil && e.Resource.ID == "" {
+						t.Errorf("evaluation %d requires resource.id, * for the type as a whole: %+v", i, e.Resource)
+					}
 				}
 				if m.Options != nil && m.Options.EvaluationsSemantic == "" {
 					t.Errorf("empty options: %+v", m.Options)
 				}
 			default:
-				var m model.AuthzenSearchRequest
-				strictly(t, c.req.Body, &m)
-				if m.Subject == nil || m.Subject.Type != authzenreq.SubjectType || m.Resource == nil || m.Resource.Type == "" {
-					t.Errorf("a search needs the subject type and the resource type: %+v", m)
+				// Each search has its own request type; the subject and the resource are what the shape checks read.
+				var subject *model.AuthzenSubject
+				var resource *model.AuthzenResource
+				switch endpoint {
+				case "search/resource":
+					var m model.AuthzenResourceSearchRequest
+					strictly(t, c.req.Body, &m)
+					subject, resource = m.Subject, m.Resource
+				case "search/action":
+					var m model.AuthzenActionSearchRequest
+					strictly(t, c.req.Body, &m)
+					subject, resource = m.Subject, m.Resource
+				default:
+					var m model.AuthzenSubjectSearchRequest
+					strictly(t, c.req.Body, &m)
+					subject, resource = m.Subject, m.Resource
 				}
-				if endpoint == "search/resource" && m.Resource.ID != "" {
-					t.Errorf("the resource search ignores resource.id: %+v", m.Resource)
+				if subject == nil || subject.Type != authzenreq.SubjectType || resource == nil || resource.Type == "" {
+					t.Errorf("a search needs the subject type and the resource type: %+v %+v", subject, resource)
 				}
-				if endpoint == "search/subject" && m.Subject.ID != "" {
-					t.Errorf("the subject search is about nobody in particular: %+v", m.Subject)
+				if endpoint == "search/resource" && resource.ID != "" {
+					t.Errorf("the resource search ignores resource.id: %+v", resource)
+				}
+				if endpoint == "search/subject" && subject.ID != "" {
+					t.Errorf("the subject search is about nobody in particular: %+v", subject)
 				}
 			}
 		})
 	}
 }
+
+// hiddenFreshnessParams are the query parameters of the legacy freshness levers. The PDP still reads them, but the schema does not
+// document them any more (ConsistencyParam is hidden, plan A7).
+var hiddenFreshnessParams = map[string]bool{"consistency": true, "at_least_as_fresh": true}
 
 // The committed schema of the PDP is the oracle of the routes and of the names of the freshness parameters.
 func TestRoutesAndQueriesExistInTheSchema(t *testing.T) {
@@ -210,7 +235,9 @@ func TestRoutesAndQueriesExistInTheSchema(t *testing.T) {
 						t.Errorf("?%s=%s is not an integer", name, values[0])
 					}
 				}
-				if !found {
+				// The freshness parameters are accepted and hidden from the schema until P2-23 deletes them (plan A7): a
+				// hidden parameter must still be a parameter the server reads, which the server tests cover.
+				if !found && !hiddenFreshnessParams[name] {
 					t.Errorf("the operation has no query parameter %q", name)
 				}
 			}
@@ -338,12 +365,26 @@ func TestOptionsAreCopiedAndMerged(t *testing.T) {
 	}
 }
 
-// Explain has the last word on the name explain, which is the caller's request and no attribute of the rules.
-func TestExplainOverridesAnAttributeOfThatName(t *testing.T) {
+// Explain is the Licetum setting of the top-level key licetum of the context. An attribute named explain is an attribute like
+// any other, and an attribute named licetum gives way to the setting.
+func TestExplainIsTheLicetumSettingOfTheContext(t *testing.T) {
 	r := authzenreq.Evaluation("orders", "alice", authzenreq.Whole("flag"), "enabled",
-		authzenreq.WithContext(map[string]any{"explain": false}), authzenreq.Explain())
-	if got := normalized(t, r.Body); !strings.Contains(got, `"context":{"explain":true}`) {
+		authzenreq.WithContext(map[string]any{"explain": false, "licetum": "x"}), authzenreq.Explain())
+	if got := normalized(t, r.Body); !strings.Contains(got, `"context":{"explain":false,"licetum":{"explain":true}}`) {
 		t.Errorf("%s", got)
+	}
+}
+
+// The type as a whole is * on the wire, and so is a resource without an id: an evaluation requires the id.
+func TestTheTypeAsAWholeIsSentAsAnAsterisk(t *testing.T) {
+	for _, r := range []authzenreq.Resource{authzenreq.Whole("flag"), {Type: "flag"}} {
+		req := authzenreq.Evaluation("orders", "alice", r, "enabled")
+		if got := normalized(t, req.Body); !strings.Contains(got, `"resource":{"id":"*","type":"flag"}`) {
+			t.Errorf("%+v: %s", r, got)
+		}
+	}
+	if got := normalized(t, authzenreq.SearchAction("orders", "alice", authzenreq.Whole("flag")).Body); !strings.Contains(got, `"resource":{"id":"*","type":"flag"}`) {
+		t.Errorf("the action search of the type as a whole: %s", got)
 	}
 }
 
