@@ -61,7 +61,19 @@ func (a *App) invalidateView() { a.local.epoch.Add(1) }
 // when there is one, otherwise it is read from the database. A state that is not ok means the revisions could not be read.
 func (a *App) cacheState(ctx context.Context) cacheState {
 	if !a.localEnabled() {
-		return a.readCacheState(ctx)
+		// Every reading is a statement: a request reads the revisions once, however many layers ask (the authentication of
+		// a PEP, the lookup of the answer, the decision).
+		trace := TraceFrom(ctx)
+		if trace != nil {
+			if held, ok := trace.heldState(); ok {
+				return held
+			}
+		}
+		state := a.readCacheState(ctx)
+		if trace != nil && state.ok {
+			trace.holdState(state)
+		}
+		return state
 	}
 	v := a.currentView(ctx)
 	if v == nil {

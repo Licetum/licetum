@@ -36,7 +36,7 @@ The backend is written in Go (`backend/`), one binary with subcommands:
   types in use fresh on a schedule. Metrics on :8002. The PDP and admin processes never apply a synchronization.
 - `licetum migrate` — apply DB migrations and seed the platform self-service.
 - `licetum restore-admin [-user name]...` — the way back in when nobody can manage the platform: puts the admin group, its
-  memberships (`PLATFORM__ADMIN_CLAIM_VALUES` and each `-user`), the admin rules of every policy back in force and switches off
+  memberships (`PLATFORM__ADMIN_CLAIM_VALUES` and each `-user`, matched by the claim of `ADMIN_AUTH__SUBJECT_CLAIM`), the admin rules of every policy back in force and switches off
   the denials that cover a policy (`db.RestoreAdminAccess`, `internal/db/restore.go`). The seed never does this on purpose.
 - `licetum openapi pdp [-yaml] [-lang en|ru|zh]` — print the PDP's OpenAPI spec without a server (the admin API's is `licetum-admin openapi admin`).
 
@@ -245,9 +245,11 @@ the web interface sends extra form fields. Path-param structs that are embedded 
 or Huma won't see their fields.
 
 Settings: `config.Load()` reads env vars with the same prefixes as before (`DB__`, `AUTH__`,
-`REDIS__`, `CORS__`, `PLATFORM__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `PDP__SEARCH_SCAN_BUDGET`, `PEP__RATE_LIMIT` and `PEP__RATE_BURST`); names are case-insensitive, lists accept a
+`REDIS__`, `CORS__`, `PLATFORM__`, `ADMIN_AUTH__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `PDP__SEARCH_SCAN_BUDGET`, `PEP__RATE_LIMIT` and `PEP__RATE_BURST`); names are case-insensitive, lists accept a
 JSON array or CSV. `DB__URI` may keep the SQLAlchemy `+asyncpg` suffix (`db.NormalizeDSN`).
-`PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback.
+`PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback. The OAuth client of the
+self-service (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISSUER`, `__CLIENT_ID`, `__CLIENT_SECRET`) is gone (they are in
+`config.DeprecatedSettings`): administrators authenticate through `ADMIN_AUTH__*`, see "Administrator sign-in" below.
 
 Errors: return `*apperr.Error` from the service layer, created from an i18n catalog key
 (`apperr.NotFound(i18n.ServiceNotFound, id)`, `apperr.BlockedBy(list, i18n.RoleDeleteBlocked, id)`,
@@ -446,7 +448,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
 ### Self-service: access policies for Licetum itself
 
 The admin API is protected by the same permission mechanism as any client service. `licetum migrate`
-(`db.SeedPlatform`) registers Licetum as a Service within itself (`PLATFORM__*`, deterministic uuid5
+(`db.SeedPlatform`, when `ADMIN_AUTH__*` is configured) registers Licetum as a Service within itself (`PLATFORM__*`, deterministic uuid5
 ids in `internal/model/platform.go`) and creates resource types that act as policies
 (`model.PlatformTypes`): `service`, `type_resource` (+ its synchronizers and resource list), `group`,
 `group_member`, `role` (+ its permission items: access to them is access to the role itself) and
@@ -467,6 +469,19 @@ item is refused (409 `last_admin_access`) when it leaves no rule in force that a
 somebody (a group needs a live member; a predicate or a nested group counts as non-empty), while somebody could before. It runs
 in the write's transaction, and once at the end of a batch (so a batch may replace the admin access); a platform that is already
 locked is not blocked further. A denial rule is not looked at: `licetum restore-admin` is the way out.
+
+**Administrator sign-in** (ADR 0001, 8.12; `core/config` `AdminAuth`, `engine/admin_auth.go`, `admin-api/service/platform.go::Authenticate`, `web/src/lib/oidc.ts`):
+administrators authenticate at one static OpenID Connect provider, `ADMIN_AUTH__ISSUER` / `__AUDIENCE` (required) / `__JWKS_URL` /
+`__SUBJECT_CLAIM` (default `preferred_username`, then `sub`). The admin API verifies the bearer token with a `pepauth.Verifier` (the
+key sets of the PEP issuers share its code): `iss` exact, `aud` must contain the audience, `exp` required, `nbf`, an asymmetric `alg`;
+a missing or bad token is a 401 (`WWW-Authenticate`, `invalid_token` for a token), keys that cannot be read a 424, no `ADMIN_AUTH__*`
+a 503 `admin_auth_not_configured` (the `admin` command refuses to start without them; half of the three is a config error). The
+permissions still come from the platform policies below. The seed and `restore-admin` need only `ADMIN_AUTH__*` (the service row has no OAuth
+client: its OAuth columns stay NULL); `restore-admin -user` matches the subject claim. The web interface is the OIDC client (code flow with
+PKCE; `OIDC_*`): `/auth/login` seals the state, nonce and PKCE verifier into the cookie `licetum_flow` (ten minutes, path `/auth`),
+`/auth/callback` checks it, exchanges the code at the token endpoint and writes the session cookie, the tokens are renewed at the token
+endpoint; nothing is kept on a server. Tests: `TestContract_ADM01_*` (`admin-api/tests/integration/api/admin_auth_test.go`),
+`TestContract_ADM13_*` (`core/tests/integration/db/admin_auth_test.go`), `TestContract_WEB01_*` (`web/tests/oidc.test.ts`).
 
 Enforcement: `internal/api/auth.go`. An operation declares its policy with
 `withPolicy(op, requireAny|requireWholeType|requireResource(type, action, pathParam))`; the Huma middleware
@@ -731,13 +746,15 @@ client secrets and tokens.
 The interface: Next.js 16 (App Router) + Ant Design 6 + TanStack Query, in `web/`. `web/README.md` is the full
 description; in short:
 
-- Sign-in runs on the server (`src/app/auth/*`): the tokens live in an encrypted httpOnly session cookie, never in the page's
-  JavaScript. The browser reaches the admin API only through `src/app/api/admin/[...path]/route.ts`, which adds and renews
-  the token. `CORS__ALLOW_ORIGINS` of the admin API must contain the app's origin (the sign-in redirect is checked against it).
+- Sign-in runs on the server (`src/app/auth/*`), and the web interface is the OpenID Connect client (`OIDC_*`: code flow with PKCE, a
+  state and a nonce, `src/lib/oidc.ts`): the tokens live in an encrypted httpOnly session cookie, never in the page's JavaScript, and
+  what a sign-in under way remembers lives in a second short-lived encrypted cookie. The browser reaches the admin API only through
+  `src/app/api/admin/[...path]/route.ts`, which adds the token and renews it at the identity provider's token endpoint. The admin API
+  needs no CORS setting for it; the redirect URI to register at the provider is `${APP_BASE_URL}/auth/callback`.
 - The API client is generated by orval from `backend/schema/admin.yaml` into `web/src/api` (not committed): `pnpm orval` /
   `task web:orval` / `task generate`. After an API change run `task backend:schema`, then regenerate.
 - `task web:lint` (format, orval, tsc, locale check, knip), `task web:test` (`pnpm test`, Jest in `web/tests`: the domain helpers,
-  the grant form model, the schemas, the session cookie, and components rendered with mocked data), `pnpm build`. There is no
+  the grant form model, the schemas, the session cookie, the OIDC sign-in, and components rendered with mocked data), `pnpm build`. There is no
   e2e suite against a running stack: the interface is tested on mocks by decision of the owner.
 - Data that crosses a border is parsed, not cast: `src/lib/schemas.ts` (zod) holds the shape of the token answers, the discovery
   document, what the callback page posts and what a person uploads; `src/lib/env.ts` checks the settings the same way. `tsc` runs with

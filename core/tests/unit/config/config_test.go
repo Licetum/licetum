@@ -30,8 +30,11 @@ func TestLoadListsAndDefaults(t *testing.T) {
 	if cfg.Auth.StateTTL != time.Minute || !cfg.DB.Echo || cfg.DB.PoolSize != 10 {
 		t.Errorf("wrong values: %+v", cfg)
 	}
-	if cfg.Platform.IsConfigured() {
-		t.Error("platform without OAuth2 must not be considered configured")
+	if cfg.AdminAuth.IsConfigured() {
+		t.Error("administrator sign-in without ADMIN_AUTH__* must not be considered configured")
+	}
+	if cfg.AdminAuth.SubjectClaim != "preferred_username" {
+		t.Errorf("the default subject claim is %q", cfg.AdminAuth.SubjectClaim)
 	}
 	if cfg.Platform.AdminClaim != "preferred_username" || cfg.Platform.AdminGroupName != "Platform administrator" ||
 		cfg.Platform.AdminClaimValues != nil {
@@ -362,5 +365,69 @@ func TestLoadPDPSearchScanBudget(t *testing.T) {
 		if _, err := config.Load(); err == nil {
 			t.Errorf("%q must be refused", bad)
 		}
+	}
+}
+
+func TestLoadAdminAuth(t *testing.T) {
+	t.Setenv("ADMIN_AUTH__ISSUER", "https://idp.example.com/realms/main")
+	t.Setenv("ADMIN_AUTH__AUDIENCE", "licetum-admin")
+	t.Setenv("ADMIN_AUTH__JWKS_URL", "https://idp.example.com/realms/main/certs")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.AdminAuth
+	if !a.IsConfigured() || a.Issuer != "https://idp.example.com/realms/main" || a.Audience != "licetum-admin" ||
+		a.SubjectClaim != "preferred_username" {
+		t.Errorf("wrong admin auth: %+v", a)
+	}
+	if err := cfg.RequireAdminAuth(); err != nil {
+		t.Errorf("RequireAdminAuth: %v", err)
+	}
+	// The claim that names the administrators is the default of the claim the admin group is matched by.
+	t.Setenv("ADMIN_AUTH__SUBJECT_CLAIM", "email")
+	if cfg, err = config.Load(); err != nil || cfg.AdminAuth.SubjectClaim != "email" || cfg.Platform.AdminClaim != "email" {
+		t.Errorf("subject claim %q, admin claim %q, %v", cfg.AdminAuth.SubjectClaim, cfg.Platform.AdminClaim, err)
+	}
+	t.Setenv("PLATFORM__ADMIN_CLAIM", "groups")
+	if cfg, err = config.Load(); err != nil || cfg.Platform.AdminClaim != "groups" {
+		t.Errorf("PLATFORM__ADMIN_CLAIM must win: %q, %v", cfg.Platform.AdminClaim, err)
+	}
+}
+
+// Half of the settings is a mistake that would show as a 503 at the first sign-in: it is refused at the start. None of them is
+// allowed (the PDP and the worker need no administrators), but the admin API requires them.
+func TestLoadAdminAuthRefusesAPartialConfiguration(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RequireAdminAuth() == nil {
+		t.Error("the admin API must require ADMIN_AUTH__*")
+	}
+	for name, env := range map[string]map[string]string{
+		"only the issuer":        {"ADMIN_AUTH__ISSUER": "https://idp"},
+		"no audience":            {"ADMIN_AUTH__ISSUER": "https://idp", "ADMIN_AUTH__JWKS_URL": "https://idp/keys"},
+		"a jwks_url that is not": {"ADMIN_AUTH__ISSUER": "https://idp", "ADMIN_AUTH__AUDIENCE": "a", "ADMIN_AUTH__JWKS_URL": "keys"},
+	} {
+		for k, v := range env {
+			t.Setenv(k, v)
+		}
+		if _, err := config.Load(); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+		for k := range env {
+			t.Setenv(k, "")
+		}
+	}
+}
+
+// The OAuth client of the self-service is gone; a deployment that still sets it is told.
+func TestDeprecatedSettingsNameTheOAuthClientOfTheSelfService(t *testing.T) {
+	t.Setenv("PLATFORM__CLIENT_SECRET", "s")
+	t.Setenv("PLATFORM__ISSUER", "https://idp")
+	got := config.DeprecatedSettings()
+	if !slices.Contains(got, "PLATFORM__CLIENT_SECRET") || !slices.Contains(got, "PLATFORM__ISSUER") {
+		t.Errorf("DeprecatedSettings = %v", got)
 	}
 }

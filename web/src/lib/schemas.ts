@@ -2,34 +2,39 @@ import { z } from 'zod';
 
 /*
  * Everything that crosses a border this application does not control is parsed here instead of cast: the answers of the
- * admin API's token endpoints, the discovery document of an identity provider, what the browser posts back and what a
+ * token endpoint of the identity provider, the discovery document of an identity provider, what the browser posts back and what a
  * person uploads or finds in their local storage. A value that does not fit is rejected where it enters.
  */
 
 const numeric = z.union([z.number(), z.string()]);
 
-/** What the backend returns at sign-in and refresh (RFC 6749 §5.1), reduced to what a session keeps. */
+/** What the token endpoint of the identity provider returns (RFC 6749 §5.1), reduced to what a session keeps. */
 export const tokenAnswerSchema = z.object({
-  access_token: z.string().min(1),
+  // The admin API verifies a JWT: anything else would only fail there, one request later.
+  access_token: z.string().refine((token) => token.split('.').length === 3, 'not a JWT'),
+  token_type: z.string().optional(),
   expires_in: numeric.optional(),
   refresh_token: z.string().optional(),
   refresh_expires_in: numeric.optional(),
+  id_token: z.string().optional(),
 });
 export type TokenAnswer = z.infer<typeof tokenAnswerSchema>;
 
-/** The tokens the callback page posts to open a session: the access token must at least look like a JWT. */
-export const sessionHandoffSchema = tokenAnswerSchema.extend({
-  access_token: z.string().refine((token) => token.split('.').length === 3, 'not a JWT'),
-});
+/** An error answer of the token endpoint (RFC 6749 §5.2). */
+export const tokenErrorSchema = z.object({ error: z.string() });
 
-/** `GET /platform` as far as the sign-in needs it. */
-export const platformAnswerSchema = z.object({ service_id: z.uuid() });
+/** The sealed state of a sign-in that is under way, kept in a short-lived cookie (see lib/oidc.ts). */
+export const flowSchema = z.object({
+  state: z.string().min(16),
+  nonce: z.string().min(16),
+  verifier: z.string().min(43).max(128),
+  returnTo: z.string(),
+  /** When the sign-in stops being accepted, ms since the epoch. */
+  exp: z.number(),
+});
 
 /** The claims of a JWT, for display. */
 export const jwtClaimsSchema = z.record(z.string(), z.unknown());
-
-/** The answer of `/auth/session`. */
-export const sessionHandoffAnswerSchema = z.object({ returnTo: z.string() });
 
 /** `?issuer=` of `/api/discover`: an http(s) address. */
 export const discoverQuerySchema = z.object({

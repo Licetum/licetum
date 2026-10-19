@@ -69,7 +69,6 @@ spec:
             {{- include "licetum.secretEnv" (dict "root" . "key" "DB__READ_URI" "optional" true) | nindent 12 }}
             {{- include "licetum.secretEnv" (dict "root" . "key" "REDIS__URI") | nindent 12 }}
             {{- include "licetum.secretEnv" (dict "root" . "key" "AUTH__STATE_SECRET") | nindent 12 }}
-            {{- include "licetum.secretEnv" (dict "root" . "key" "PLATFORM__CLIENT_SECRET") | nindent 12 }}
             {{- with .Values.pdp.maxInflight }}
             - name: HTTP__MAX_INFLIGHT
               value: {{ . | quote }}

@@ -34,12 +34,9 @@ x-env: &env
   PLATFORM__NAME: Licetum
   PLATFORM__URL: ${MR_IDP_URL}/app
   PLATFORM__ICON: ${MR_IDP_URL}/icon.png
-  PLATFORM__AUTHORIZATION_URL: ${MR_IDP_URL}/realm/auth
-  PLATFORM__TOKEN_URL: ${MR_IDP_URL}/realm/token
-  PLATFORM__JWKS_URL: ${MR_IDP_URL}/jwks
-  PLATFORM__ISSUER: ${MR_IDP_URL}/realm
-  PLATFORM__CLIENT_ID: licetum
-  PLATFORM__CLIENT_SECRET: multiregion
+  ADMIN_AUTH__ISSUER: ${MR_IDP_URL}/realm
+  ADMIN_AUTH__AUDIENCE: licetum-admin
+  ADMIN_AUTH__JWKS_URL: ${MR_IDP_URL}/jwks
   PLATFORM__ADMIN_GROUP_NAME: Platform administrator
   PLATFORM__ADMIN_CLAIM: preferred_username
   PLATFORM__ADMIN_CLAIM_VALUES: '["admin"]'

@@ -39,6 +39,9 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
+// AdminAudience is the audience (ADMIN_AUTH__AUDIENCE) the admin API of a Cluster requires of the tokens of administrators.
+const AdminAudience = "licetum-admin"
+
 // Cluster is one environment: the shared state, the fakes, the admin API and the check replicas.
 type Cluster struct {
 	T      testing.TB
@@ -152,10 +155,11 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
 			Name: "Licetum", URL: c.IdP.AppURL(), Icon: c.IdP.IconURL(),
-			AuthorizationURL: c.IdP.AuthorizationURL(), TokenURL: c.IdP.TokenURL(), JwksURL: c.IdP.JWKSURL(),
-			Issuer: c.IdP.Issuer(), ClientID: "licetum", ClientSecret: "s",
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username", AdminClaimValues: []string{"admin"},
 		},
+		// Administrators sign in at the fake identity provider; its tokens for the admin API carry AdminAudience.
+		AdminAuth: config.AdminAuth{Issuer: c.IdP.Issuer(), Audience: AdminAudience, JWKSURL: c.IdP.JWKSURL(),
+			SubjectClaim: "preferred_username"},
 	}
 	for _, f := range c.configure {
 		f(c.Cfg)
@@ -194,7 +198,7 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	t.Cleanup(c.Admin.Close)
 	c.startWorker()
 	c.AdminServer = serve(t, api.NewAdminHandler(c.Admin))
-	c.AdminToken = c.IdP.Token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
+	c.AdminToken = c.IdP.SignToken(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"}, support.Audience(AdminAudience))
 
 	replicaDB, replicaRedis := c.Cfg.DB.URI, infra.RedisURI
 	if c.proxied {

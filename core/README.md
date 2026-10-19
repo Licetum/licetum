@@ -22,7 +22,8 @@ The admin API (`admin-api/`, AGPL-3.0-only) is a separate module that depends on
 cd core
 export DB__URI=postgresql://authz:authz@localhost:5432/authz_db   # a +asyncpg suffix is accepted too
 export REDIS__URI=redis://localhost:6379/0
-# the platform self-service is seeded from the PLATFORM__* variables (see Configuration)
+# the platform self-service is seeded when ADMIN_AUTH__* is set (administrators sign in at that OIDC provider, see Configuration)
+export ADMIN_AUTH__ISSUER=http://localhost:5556/dex ADMIN_AUTH__AUDIENCE=licetum-local ADMIN_AUTH__JWKS_URL=http://localhost:5556/dex/keys
 
 go run ./cmd/licetum migrate
 go run ./cmd/licetum pdp
@@ -65,7 +66,8 @@ a service is `<PDP__PUBLIC_URL>/service/<slug>`; its metadata is at
 `task dev` (= `docker compose up`) from the repository root starts PostgreSQL, Redis, a local Dex OIDC provider,
 the migration, the PDP, the admin API and the web interface. Open `http://localhost:3000` and sign in as
 `admin@example.com` with password `password`. These credentials and the Dex client are for development only; set the
-`PLATFORM__*` variables in `.env` to use another identity provider.
+`ADMIN_AUTH__*` variables of the admin API and the `OIDC_*` variables of the web interface in `.env` to use another identity
+provider.
 
 The Compose service uses the `dev` target of [`Dockerfile`](Dockerfile): the sources are mounted and
 [air](https://github.com/air-verse/air) rebuilds the binary on every change. The `runtime` target is the production
@@ -86,7 +88,8 @@ lists accept a JSON array or a comma-separated string.
 | `AUTH__` | `AUTH__STATE_SECRET`, `AUTH__STATE_TTL`; the token and key caches: `AUTH__TOKEN_L1_SIZE` (verified tokens kept in memory, default 50 000), `AUTH__JWKS_TTL` (default `10m`), `AUTH__JWKS_MIN_REFRESH` (default `30s`: an unknown key id refetches the key set at most this often), `AUTH__INVALID_TOKEN_TTL` (default `10s`) |
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
-| `PLATFORM__` | the self-service: its OAuth2 client (`PLATFORM__CLIENT_ID`, `PLATFORM__CLIENT_SECRET`, the authorization, token and JWKS URLs, the issuer) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`) |
+| `ADMIN_AUTH__` | how administrators authenticate to the admin API: one OpenID Connect provider. `ADMIN_AUTH__ISSUER` (the `iss` of the tokens, compared exactly), `ADMIN_AUTH__AUDIENCE` (required: a value the `aud` of every token must contain), `ADMIN_AUTH__JWKS_URL` (where its keys are read) and `ADMIN_AUTH__SUBJECT_CLAIM` (the claim that names the administrator, default `preferred_username`, then `sub`). The admin API refuses to start without the first three; the seed of the self-service and `restore-admin` need only these. The web interface is the OIDC client of the provider (`OIDC_*`, see `web/README.md`) |
+| `PLATFORM__` | the self-service: its name, URL and icon (`PLATFORM__NAME`, `PLATFORM__URL`, `PLATFORM__ICON`) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, default `ADMIN_AUTH__SUBJECT_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`). The OAuth client it used to carry (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISSUER`, `__CLIENT_ID`, `__CLIENT_SECRET`) is gone: they are ignored, and logged at start-up when still set |
 | `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__ENGINE` (`dbos`, the default, or `postgres`), `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, at least 3, outside `DB__POOL_SIZE`; the process runs at most (size - 1) / 2 enqueues at once, since a duplicate enqueue takes two connections and the listener keeps one), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | | The retention of both runs in the **worker** only (`licetum worker`): give it the same `SUBJECTS__RETENTION_DAYS` and `DELEGATION__AUDIT_RETENTION_DAYS` as the other processes, or the defaults (90 and 365 days) apply. |

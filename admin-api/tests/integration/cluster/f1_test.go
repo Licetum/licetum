@@ -439,7 +439,7 @@ func TestF1_TheSnapshotCanBeTurnedOff(t *testing.T) {
 	// Without the snapshot the slug and the service are looked up, and the revisions are read; the token and the answer
 	// are still kept in memory.
 	if warm.Trace.DBQueries() != 3 || warm.Trace.RedisRoundTrips() != 0 {
-		t.Errorf("without the snapshot a warm request made db=%d redis=%d (%v), want 3 and 0", warm.Trace.DBQueries(),
-			warm.Trace.RedisRoundTrips(), warm.Trace.RedisOps())
+		t.Errorf("without the snapshot a warm request made db=%d redis=%d (%v, %v), want 3 and 0", warm.Trace.DBQueries(),
+			warm.Trace.RedisRoundTrips(), warm.Trace.RedisOps(), warm.Trace.DBQueryOps())
 	}
 }

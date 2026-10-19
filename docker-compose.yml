@@ -17,20 +17,18 @@ x-env-app: &env-app
   # The address clients reach the PDP at: the AuthZEN discovery document is built from it.
   PDP__PUBLIC_URL: "${PDP__PUBLIC_URL:-http://localhost:8001}"
   CORS__ALLOW_ORIGINS: '${CORS__ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
+  # Administrators sign in at an OpenID Connect provider (ADMIN_AUTH__*, the local Dex by default): the admin API verifies their
+  # bearer tokens against its keys, and the web interface is the OIDC client (OIDC_* of the web service below). The audience is the
+  # client id of the web interface, which Dex puts into the aud of its tokens. Override the variables in .env to use another IdP.
+  ADMIN_AUTH__ISSUER: "${ADMIN_AUTH__ISSUER:-http://localhost:5556/dex}"
+  ADMIN_AUTH__AUDIENCE: "${ADMIN_AUTH__AUDIENCE:-licetum-local}"
+  # The keys are read from the Compose network name: the APIs call them from their containers.
+  ADMIN_AUTH__JWKS_URL: "${ADMIN_AUTH__JWKS_URL:-http://dex:5556/dex/keys}"
   # Self-service: Licetum registers itself as a Service, and the admin API is protected by its
-  # policies (see core/db/migrate.go, SeedPlatform). The defaults below use the local
-  # Dex service; override the PLATFORM__* variables in .env to use another OAuth2 client/IdP.
+  # policies (see core/db/migrate.go, SeedPlatform).
   PLATFORM__NAME: "${PLATFORM__NAME:-Licetum}"
   PLATFORM__URL: "${PLATFORM__URL:-http://localhost:8002}"
   PLATFORM__ICON: "${PLATFORM__ICON:-http://localhost:8002/favicon.ico}"
-  # Local Dex defaults. The token and JWKS endpoints use the Compose network name because the
-  # the APIs call them from their containers; authorization and issuer URLs are browser-facing.
-  PLATFORM__AUTHORIZATION_URL: "${PLATFORM__AUTHORIZATION_URL:-http://localhost:5556/dex/auth}"
-  PLATFORM__TOKEN_URL: "${PLATFORM__TOKEN_URL:-http://dex:5556/dex/token}"
-  PLATFORM__JWKS_URL: "${PLATFORM__JWKS_URL:-http://dex:5556/dex/keys}"
-  PLATFORM__ISSUER: "${PLATFORM__ISSUER:-http://localhost:5556/dex}"
-  PLATFORM__CLIENT_ID: "${PLATFORM__CLIENT_ID:-licetum-local}"
-  PLATFORM__CLIENT_SECRET: "${PLATFORM__CLIENT_SECRET:-licetum-local-secret}"
   # Platform administrators: the role is seeded together with the self-service; everyone whose
   # ADMIN_CLAIM claim takes one of ADMIN_CLAIM_VALUES (a JSON list or CSV) becomes a member. Without
   # values the role stays empty — nobody can manage Licetum, the admin API is closed by the policies.
@@ -135,13 +133,18 @@ services:
   web:
     container_name: licetum_web
     environment:
-      # The server of the UI calls the APIs over the Compose network; the browser is sent to the public address of the
-      # admin API to sign in (the redirect URI registered at the identity provider is built from it).
+      # The server of the UI calls the APIs over the Compose network.
       ADMIN_API_URL: "http://admin:8000"
-      ADMIN_API_PUBLIC_URL: "${ADMIN_API_PUBLIC_URL:-http://localhost:8002}"
       CHECK_API_URL: "http://pdp:8001"
       CHECK_API_PUBLIC_URL: "${CHECK_API_PUBLIC_URL:-http://localhost:8001}"
       APP_BASE_URL: "${APP_BASE_URL:-http://localhost:3000}"
+      # The web interface is the OpenID Connect client of the administrator sign-in. The authorization endpoint is where the
+      # browser is sent; the token endpoint is called by this server over the Compose network. The redirect URI registered
+      # at Dex is ${APP_BASE_URL}/auth/callback (infra/dex/config.yaml).
+      OIDC_AUTHORIZATION_URL: "${OIDC_AUTHORIZATION_URL:-http://localhost:5556/dex/auth}"
+      OIDC_TOKEN_URL: "${OIDC_TOKEN_URL:-http://dex:5556/dex/token}"
+      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-licetum-local}"
+      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-licetum-local-secret}"
       SESSION_SECRET: "${SESSION_SECRET:-dev-only-insecure-session-secret-change-me-0123456789}"
     volumes:
       - ./web/:/app/:rw,z
@@ -160,6 +163,7 @@ services:
     depends_on:
       - admin
       - pdp
+      - dex
 
 volumes:
   go-build-cache:

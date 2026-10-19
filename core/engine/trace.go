@@ -21,6 +21,28 @@ type Trace struct {
 	// What the request cost: statements sent to PostgreSQL and round trips to Redis, in total and by kind.
 	dbQueries, redisTrips int
 	dbOps, redisOps       map[string]int
+	// state is the revisions the request read, kept for the rest of the request by a process that has no policy view in memory
+	// (see App.cacheState): there every reading is a statement, and the authentication of a PEP, the lookup of the answer and
+	// the decision would each send one.
+	state *cacheState
+}
+
+// heldState is the revisions the request has already read, when it has.
+func (t *Trace) heldState() (cacheState, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.state == nil {
+		return cacheState{}, false
+	}
+	return *t.state, true
+}
+
+// holdState keeps the revisions for the rest of the request. A write of the request drops them (setRevision): what it reads next
+// has to be read again.
+func (t *Trace) holdState(s cacheState) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.state = &s
 }
 
 type traceKey struct{}
@@ -68,6 +90,7 @@ func (t *Trace) setRevision(v int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.revision = v
+	t.state = nil
 }
 
 // ReadRevision is the revision of the policy the answers of the request were read at: the lowest one of them, 0 when the

@@ -10,15 +10,13 @@ secrets:
   dbUri: postgres://licetum:licetum@postgres:5432/licetum?sslmode=disable
   redisUri: redis://redis:6379/0
   authStateSecret: kind-only-state-secret
-  platformClientSecret: kind-only-client-secret
 platform:
   url: http://admin.invalid
   icon: http://admin.invalid/favicon.ico
-  authorizationUrl: http://idp.invalid/auth
-  tokenUrl: http://idp.invalid/token
-  jwksUrl: http://idp.invalid/keys
+adminAuth:
   issuer: http://idp.invalid
-  clientId: licetum
+  audience: licetum-admin
+  jwksUrl: http://idp.invalid/keys
 shutdown:
   drain: 5
   timeout: 15

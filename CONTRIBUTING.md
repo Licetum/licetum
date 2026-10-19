@@ -34,8 +34,8 @@ This starts PostgreSQL, Redis, Dex, the Go services (`core/`, `admin-api/`) and 
 - Password: `password`
 
 The Dex client, credentials, and signing configuration are for local development only. Configure a
-real identity provider through `PLATFORM__*` variables before using Licetum outside the local
-Compose stack.
+real identity provider (`ADMIN_AUTH__*` of the admin API and `OIDC_*` of the web interface) before using Licetum outside the
+local Compose stack.
 
 ## Repository layout
 

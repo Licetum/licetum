@@ -110,6 +110,11 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 		*addr = defaultAddr
 	}
 
+	if name == "admin" {
+		if err := cfg.RequireAdminAuth(); err != nil {
+			return err
+		}
+	}
 	if name == "pdp" && cfg.PDP.PublicURL == "" {
 		return errors.New("PDP__PUBLIC_URL is required: the PEPs name the PDP by it, for example https://licetum.example.com")
 	}

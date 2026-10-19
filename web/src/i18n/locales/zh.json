@@ -103,8 +103,12 @@
     "copied": "已复制",
     "copyDetails": "复制详情给管理员",
     "error": {
-      "api_unreachable": "管理 API 没有响应。请检查它是否在运行，以及 ADMIN_API_URL 是否正确。",
-      "not_seeded": "Licetum 尚未设置：自助服务尚未创建。请运行迁移（licetum migrate）后重试。",
+      "denied": "身份提供方拒绝了此次登录。",
+      "idp_error": "身份提供方报告了错误。请重试。",
+      "idp_unreachable": "身份提供方没有响应令牌请求。请检查 OIDC_TOKEN_URL 后重试。",
+      "invalid_response": "身份提供方的响应本应用无法使用：访问令牌必须是 JWT，且 nonce 必须一致。请检查客户端设置。",
+      "not_configured": "登录尚未配置：此应用需要身份提供方的设置（OIDC_AUTHORIZATION_URL、OIDC_TOKEN_URL、OIDC_CLIENT_ID）。",
+      "state": "登录已过期，或并非在此浏览器中发起。请重新开始。",
       "unknown": "登录请求已过期或被拒绝。请重试。"
     },
     "errorHint": "如果错误反复出现，请把时间和错误代码告诉您的管理员。",

@@ -23,8 +23,8 @@ region: ""
 publicUrl: ""
 
 # The secrets. Either name a Secret that holds the keys below (existingSecret, the way to go in production) or give the values and
-# the chart creates one. DB__URI, REDIS__URI, AUTH__STATE_SECRET and PLATFORM__CLIENT_SECRET are required; DB__READ_URI,
-# DB__MIGRATE_URI and SESSION_SECRET (the web interface) are optional.
+# the chart creates one. DB__URI, REDIS__URI and AUTH__STATE_SECRET are required; DB__READ_URI, DB__MIGRATE_URI and, for the
+# web interface, SESSION_SECRET and OIDC_CLIENT_SECRET (absent for a public client) are optional.
 existingSecret: ""
 secrets:
   dbUri: ""
@@ -32,8 +32,8 @@ secrets:
   dbMigrateUri: ""
   redisUri: ""
   authStateSecret: ""
-  platformClientSecret: ""
   sessionSecret: ""
+  oidcClientSecret: ""
 
 db:
   # PgBouncer in transaction mode in front of PostgreSQL (DB__PGBOUNCER): the simple protocol, nothing prepared. Give the migrations
@@ -47,19 +47,25 @@ db:
   maxReplicaLag: 10s
   lagAction: unready
 
-# The self-service: Licetum registered within itself, and the administrators (PLATFORM__*).
+# The self-service: Licetum registered within itself, and the platform administrators (PLATFORM__*). It has no OAuth client of
+# its own: administrators sign in at the identity provider of adminAuth.
 platform:
   name: Licetum
   url: ""
   icon: ""
-  authorizationUrl: ""
-  tokenUrl: ""
-  jwksUrl: ""
-  issuer: ""
-  clientId: ""
   adminGroupName: Platform administrator
   adminClaim: preferred_username
   adminClaimValues: '["admin"]'
+
+# How administrators authenticate to the admin API (ADMIN_AUTH__*): one OpenID Connect provider. The admin API verifies their
+# bearer tokens against its keys (iss compared exactly, aud must contain the audience); the web interface is the OIDC client
+# (web.oidc). Required where the admin API runs (admin.enabled); the migration seeds the self-service only when they are set.
+adminAuth:
+  issuer: ""
+  audience: ""
+  jwksUrl: ""
+  # The claim that names the administrator; a token without it is named by its sub.
+  subjectClaim: preferred_username
 
 # How long a pod that is going away is not ready but serves (SHUTDOWN__DRAIN), and how long it waits for the requests in
 # progress (SHUTDOWN__TIMEOUT). The pods get preStop sleep = drain and terminationGracePeriodSeconds = drain + timeout + 10.
@@ -153,8 +159,15 @@ web:
   replicas: 1
   port: 3000
   appBaseUrl: ""
-  adminApiPublicUrl: ""
   checkApiPublicUrl: ""
+  # The web interface is the OpenID Connect client of the administrator sign-in (code flow with PKCE). Register
+  # {appBaseUrl}/auth/callback as the redirect URI of the client at the provider of adminAuth. authorizationUrl is where the
+  # browser is sent, tokenUrl where the web interface calls; the client secret is secrets.oidcClientSecret (none: a public client).
+  oidc:
+    authorizationUrl: ""
+    tokenUrl: ""
+    clientId: ""
+    scope: ""
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {memory: 512Mi}

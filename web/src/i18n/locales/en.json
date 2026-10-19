@@ -112,8 +112,12 @@
     "copied": "Copied",
     "copyDetails": "Copy details for the administrator",
     "error": {
-      "api_unreachable": "The admin API doesn’t answer. Check that it is running and that ADMIN_API_URL is right.",
-      "not_seeded": "Licetum isn’t set up yet: the self-service is not created. Run the migration (licetum migrate) and try again.",
+      "denied": "The identity provider refused the sign-in.",
+      "idp_error": "The identity provider reported an error. Try again.",
+      "idp_unreachable": "The identity provider didn’t answer the request for the tokens. Check OIDC_TOKEN_URL and try again.",
+      "invalid_response": "The identity provider answered with something this application can’t use: the access token must be a JWT, and the nonce must match. Check the settings of the client.",
+      "not_configured": "Sign-in isn’t configured: this application needs the settings of the identity provider (OIDC_AUTHORIZATION_URL, OIDC_TOKEN_URL, OIDC_CLIENT_ID).",
+      "state": "The sign-in expired, or it didn’t start in this browser. Start it again.",
       "unknown": "The sign-in request expired or was rejected. Try again."
     },
     "errorHint": "If the error repeats, tell your administrator the time and the error code.",

@@ -65,7 +65,8 @@ func (mainTB) Fatalf(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...);
 
 func TestMain(m *testing.M) {
 	idp = support.NewIdPForContainers(mainTB{}, "host.docker.internal")
-	adminToken = idp.Token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
+	// The admin API of the stack requires the audience of ADMIN_AUTH__AUDIENCE (compose.yml).
+	adminToken = idp.SignToken(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"}, support.Audience("licetum-admin"))
 	if !externalEnv {
 		os.Setenv("MR_IDP_URL", idp.URL())
 		os.Setenv("MR_MAX_REPLICA_LAG", "5s")

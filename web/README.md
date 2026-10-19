@@ -4,11 +4,15 @@ Next.js 16 (App Router) + Ant Design 6 + TanStack Query. The visual system is in
 
 ## How it works
 
-- **Sign-in is on the server**, in the way of the Next.js SDK of Auth0: `/auth/login` redirects to the identity provider
-  of the platform service (through the admin API, which runs the OAuth2 flow, PKCE for a public client), `/auth/callback`
-  receives the tokens in the URL fragment and posts them once to `/auth/session`, which keeps them in an **encrypted
-  httpOnly cookie** (`licetum_session.0…n`, a JWE, split into chunks). The tokens never reach the page's JavaScript.
-  The SDK of Auth0 itself is Auth0-only; this works with any OpenID Connect provider, Auth0 included.
+- **Sign-in is on the server, and this server is the OpenID Connect client** (ADR 0001, 8.12): `/auth/login` sends the browser
+  to the identity provider (authorization code flow with PKCE, S256, a state and a nonce), `/auth/callback` checks the
+  state, exchanges the code for the tokens at the token endpoint and keeps them in an **encrypted httpOnly cookie**
+  (`licetum_session.0…n`, a JWE, split into chunks). The tokens never reach the page's JavaScript. What the sign-in has to
+  remember between the redirect and the return (the state, the nonce and the PKCE verifier) lives in a second encrypted
+  cookie (`licetum_flow`, ten minutes, only sent to `/auth/*`), so no replica keeps any state of its own. The tokens are
+  renewed at the token endpoint with the refresh token. This works with any OpenID Connect provider, Auth0 included.
+  The admin API trusts the same provider (`ADMIN_AUTH__ISSUER`, `__AUDIENCE`, `__JWKS_URL`) and verifies the access token
+  on every request, so the access token this client gets must be a JWT whose `aud` contains `ADMIN_AUTH__AUDIENCE`.
 - **The browser talks to the API only through `/api/admin/*`** (`src/app/api/admin/[...path]/route.ts`): the server adds the
   bearer token, renews it with the refresh token when it is about to expire, and refuses sign-in endpoints and
   cross-origin writes. `/api/check/*` is the same for "try it with your token" and `/api/discover` reads the OIDC discovery
@@ -33,21 +37,25 @@ src/components/     providers, kit (page header, tags, empty/error blocks), bran
 src/lib/            session, env, access, undo notice, URL state
 src/i18n/           ru, en and zh dictionaries (en is the source); scripts/check-locales.mjs checks them
 src/theme/          the visual system as an Ant Design theme
-tests/              Jest tests: domain helpers, grant form model, schemas, session cookie; tests/ui renders components
+tests/              Jest tests: domain helpers, grant form model, schemas, session cookie, the OIDC sign-in
+                    (oidc.test.ts); tests/ui renders components
                     with mocked data (no browser, no running stack)
 ```
 
 ## Run
 
 ```
-cp .env.example .env.local        # ADMIN_API_URL, ADMIN_API_PUBLIC_URL, APP_BASE_URL, SESSION_SECRET
+cp .env.example .env.local        # ADMIN_API_URL, APP_BASE_URL, OIDC_*, SESSION_SECRET
 pnpm install && pnpm orval
 pnpm dev                          # http://localhost:3000
 ```
 
 Or with the whole stack: `docker compose up` (from the repository root) serves this app on `:3000`.
-The admin API must list the app's origin in `CORS__ALLOW_ORIGINS` (the sign-in redirect is checked against it), and the
-identity provider must know the redirect URI of the admin API (`{admin API}/service/{platform id}/oauth/callback`).
+The identity provider must know the redirect URI of this app, `{APP_BASE_URL}/auth/callback`, for the client `OIDC_CLIENT_ID`
+(the Compose stack registers it at Dex, `infra/dex/config.yaml`). `OIDC_AUTHORIZATION_URL` is where the browser is sent,
+`OIDC_TOKEN_URL` is where this server calls (the two may differ: a Compose network name), `OIDC_CLIENT_SECRET` is left
+out for a public client, and `OIDC_SCOPE` defaults to `openid profile email offline_access` (`offline_access` asks for the
+refresh token that keeps the session going). The admin API needs no CORS setting: the browser talks only to this app.
 
 ## Checks
 

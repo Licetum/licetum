@@ -122,29 +122,48 @@ type Cors struct {
 }
 
 // Platform is the self-service config: Licetum registers itself as a Service to grant permissions
-// for managing itself through the same mechanism as for any other service.
-// If the OAuth2 fields are empty, seeding is skipped (see db.SeedPlatform). Together with the
-// service an admin group is seeded: everyone whose AdminClaim claim takes one of AdminClaimValues
-// becomes a member, and the group gets read+write on every platform resource type
-// (model.PlatformTypes).
+// for managing itself through the same mechanism as for any other service. The seed runs when ADMIN_AUTH__* is
+// configured (see AdminAuth and db.SeedPlatform). Together with the service an admin group is seeded: everyone whose
+// AdminClaim claim takes one of AdminClaimValues becomes a member, and the group gets read+write on every platform
+// resource type (model.PlatformTypes).
+//
+// The service no longer carries an OAuth2 client of its own: administrators sign in at the identity provider of
+// ADMIN_AUTH__*, with the web interface as the client. The OAuth half of the old PLATFORM__* settings (the URLs of the
+// provider, the issuer, the client id and secret) is gone; see DeprecatedSettings.
 type Platform struct {
 	Name             string
 	URL              string
 	Icon             string
-	AuthorizationURL string
-	TokenURL         string
-	JwksURL          string
-	Issuer           string
-	ClientID         string
-	ClientSecret     string
 	AdminGroupName   string
 	AdminClaim       string
 	AdminClaimValues []string
 }
 
-func (p Platform) IsConfigured() bool {
-	return p.AuthorizationURL != "" && p.TokenURL != "" && p.JwksURL != "" &&
-		p.Issuer != "" && p.ClientID != "" && p.ClientSecret != ""
+// DefaultSubjectClaim is the claim that names an administrator when ADMIN_AUTH__SUBJECT_CLAIM is not set. A token without
+// it is named by its sub.
+const DefaultSubjectClaim = "preferred_username"
+
+// AdminAuth is how administrators authenticate to the admin API (ADR 0001, 8.12): one static OIDC issuer. The admin API
+// verifies the bearer token against the keys of the issuer: iss is compared exactly, aud must contain Audience, exp and nbf
+// are checked, and the signature algorithm must be an asymmetric one the verifier allows. The web interface is the OIDC client
+// of the issuer (OIDC_* in web/README.md); the admin API never talks to the issuer except to read its keys.
+type AdminAuth struct {
+	// Issuer is the iss of the tokens, compared exactly (ADMIN_AUTH__ISSUER).
+	Issuer string
+	// Audience is a value the aud of every token must contain (ADMIN_AUTH__AUDIENCE). It is required: a token issued for
+	// another application is never an administrator's.
+	Audience string
+	// JWKSURL is where the keys of the issuer are read (ADMIN_AUTH__JWKS_URL).
+	JWKSURL string
+	// SubjectClaim is the claim that names the administrator (ADMIN_AUTH__SUBJECT_CLAIM, default preferred_username); a token
+	// without it is named by its sub.
+	SubjectClaim string
+}
+
+// IsConfigured reports whether administrators can authenticate: the issuer, the audience and the keys are known. The seed of
+// the self-service and restore-admin need it; without it the admin API answers 503.
+func (a AdminAuth) IsConfigured() bool {
+	return a.Issuer != "" && a.Audience != "" && a.JWKSURL != ""
 }
 
 // Sync tunes resource synchronization (see service.ensureSynced and synchronizer.Adapter).
@@ -283,6 +302,7 @@ type Config struct {
 	Redis      Redis
 	Cors       Cors
 	Platform   Platform
+	AdminAuth  AdminAuth
 	Sync       Sync
 	Subjects   Subjects
 	Delegation Delegation
@@ -360,19 +380,19 @@ func Load() (*Config, error) {
 			AllowHeaders:     e.list("CORS__ALLOW_HEADERS", []string{"*"}),
 		},
 		Platform: Platform{
-			Name:             e.str("PLATFORM__NAME", "Licetum"),
-			URL:              e.str("PLATFORM__URL", "http://localhost:8000"),
-			Icon:             e.str("PLATFORM__ICON", "http://localhost:8000/favicon.ico"),
-			AuthorizationURL: e.str("PLATFORM__AUTHORIZATION_URL", ""),
-			TokenURL:         e.str("PLATFORM__TOKEN_URL", ""),
-			JwksURL:          e.str("PLATFORM__JWKS_URL", ""),
-			Issuer:           e.str("PLATFORM__ISSUER", ""),
-			ClientID:         e.str("PLATFORM__CLIENT_ID", ""),
-			ClientSecret:     e.str("PLATFORM__CLIENT_SECRET", ""),
+			Name: e.str("PLATFORM__NAME", "Licetum"),
+			URL:  e.str("PLATFORM__URL", "http://localhost:8000"),
+			Icon: e.str("PLATFORM__ICON", "http://localhost:8000/favicon.ico"),
 			// PLATFORM__ADMIN_ROLE_NAME is the name the variable had before the groups split: still honoured.
 			AdminGroupName:   e.str("PLATFORM__ADMIN_GROUP_NAME", e.str("PLATFORM__ADMIN_ROLE_NAME", "Platform administrator")),
-			AdminClaim:       e.str("PLATFORM__ADMIN_CLAIM", "preferred_username"),
+			AdminClaim:       e.str("PLATFORM__ADMIN_CLAIM", e.str("ADMIN_AUTH__SUBJECT_CLAIM", DefaultSubjectClaim)),
 			AdminClaimValues: e.list("PLATFORM__ADMIN_CLAIM_VALUES", nil),
+		},
+		AdminAuth: AdminAuth{
+			Issuer:       e.str("ADMIN_AUTH__ISSUER", ""),
+			Audience:     e.str("ADMIN_AUTH__AUDIENCE", ""),
+			JWKSURL:      e.str("ADMIN_AUTH__JWKS_URL", ""),
+			SubjectClaim: e.str("ADMIN_AUTH__SUBJECT_CLAIM", DefaultSubjectClaim),
 		},
 		Sync: Sync{
 			FetchTTL:         e.seconds("SYNC__FETCH_TTL", 10),
@@ -444,6 +464,17 @@ func Load() (*Config, error) {
 			e.errs = append(e.errs, err)
 		}
 	}
+	if a := cfg.AdminAuth; a.Issuer != "" || a.Audience != "" || a.JWKSURL != "" {
+		// A half of the settings is a mistake that would otherwise show as 503 at the first sign-in.
+		if !a.IsConfigured() {
+			e.errs = append(e.errs, errors.New("ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL must be set together"))
+		} else if u, err := url.Parse(a.JWKSURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			e.errs = append(e.errs, fmt.Errorf("ADMIN_AUTH__JWKS_URL must be an http or https URL, got %q", a.JWKSURL))
+		}
+	}
+	if cfg.AdminAuth.SubjectClaim == "" {
+		cfg.AdminAuth.SubjectClaim = DefaultSubjectClaim
+	}
 	if cfg.PEP.RateLimit < 0 || cfg.PEP.Burst < 0 {
 		e.errs = append(e.errs, fmt.Errorf("PEP__RATE_LIMIT and PEP__RATE_BURST must not be negative (0 turns the limit off), got %d and %d",
 			cfg.PEP.RateLimit, cfg.PEP.Burst))
@@ -481,16 +512,31 @@ func (c *Config) RequireRedis() error {
 }
 
 // DeprecatedSettings names the settings that are set but no longer have an effect: the Redis lock of the synchronization
-// was replaced by the job table (SYNC__LEASE), and HTTP__PUBLIC_URL became PDP__PUBLIC_URL. The processes log a warning
-// when one of them is still set, so that a deployment notices it.
+// was replaced by the job table (SYNC__LEASE), HTTP__PUBLIC_URL became PDP__PUBLIC_URL, and the OAuth client of the
+// self-service (PLATFORM__AUTHORIZATION_URL and the rest) gave way to ADMIN_AUTH__*. The processes log a warning when one
+// of them is still set, so that a deployment notices it.
 func DeprecatedSettings() []string {
 	var out []string
-	for _, name := range []string{"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "HTTP__PUBLIC_URL"} {
+	for _, name := range []string{
+		"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "HTTP__PUBLIC_URL",
+		// The OAuth client of the self-service: administrators sign in through ADMIN_AUTH__* now.
+		"PLATFORM__AUTHORIZATION_URL", "PLATFORM__TOKEN_URL", "PLATFORM__JWKS_URL", "PLATFORM__ISSUER", "PLATFORM__CLIENT_ID",
+		"PLATFORM__CLIENT_SECRET",
+	} {
 		if _, ok := lookup(name); ok {
 			out = append(out, name)
 		}
 	}
 	return out
+}
+
+// RequireAdminAuth checks that administrators can authenticate: the admin API refuses to start without ADMIN_AUTH__*, since
+// every request would be answered 503.
+func (c *Config) RequireAdminAuth() error {
+	if !c.AdminAuth.IsConfigured() {
+		return errors.New("ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL are required: administrators sign in at that identity provider")
+	}
+	return nil
 }
 
 func (c *Config) RequireAuth() error {

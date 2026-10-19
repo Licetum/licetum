@@ -654,7 +654,7 @@ contracts:
     oracle: status codes
     level: pg
     phase: P2
-    status: planned
+    status: active
   - id: ADM02
     statement: The isolation matrix (every route × platform and service roles of A, B and a group) holds; lists contain only the caller's scope; a route without a policy fails the build.
     oracle: the route table and the role matrix
@@ -726,7 +726,7 @@ contracts:
     oracle: status codes
     level: pg
     phase: P2
-    status: planned
+    status: active
 
   # ---------- DIR: the subject directory (ADR 0001, 8.8) ----------
   # The directory replaces known_subject in P2. DIR02 and DIR04 become active with the first pull request of the directory step
@@ -849,7 +849,7 @@ contracts:
     oracle: unit tests of the BFF
     level: web
     phase: P2
-    status: planned
+    status: active
   - id: WEB02
     statement: The interface shows only what the caller's capabilities in the service allow.
     oracle: rendered components with mocked capabilities

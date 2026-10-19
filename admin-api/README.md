@@ -38,8 +38,12 @@ fails when it is out of date.
 
 ## Access control: the platform policies
 
-The admin API is protected by the same permission mechanism as any client service. `licetum migrate` registers Licetum
-as a service within itself (`PLATFORM__*`) and seeds its access policies: resource types of that service
+The admin API is protected by the same permission mechanism as any client service. Administrators sign in at the OpenID
+Connect provider of `ADMIN_AUTH__*` (`ADMIN_AUTH__ISSUER`, `ADMIN_AUTH__AUDIENCE`, `ADMIN_AUTH__JWKS_URL`, `ADMIN_AUTH__SUBJECT_CLAIM`):
+the admin API verifies the bearer token against its keys (`iss` exact, `aud` must contain the audience, `exp` and `nbf`, an
+asymmetric algorithm) and a missing or bad token is a 401 with `WWW-Authenticate`; what the administrator may do then comes
+from the policies below. The web interface is the OIDC client of the same provider. `licetum migrate` registers Licetum
+as a service within itself (`PLATFORM__*`, once `ADMIN_AUTH__*` is set) and seeds its access policies: resource types of that service
 (`core/model/platform.go`):
 
 | Policy | Covers |
@@ -54,7 +58,7 @@ as a service within itself (`PLATFORM__*`) and seeds its access policies: resour
 Each policy has a synchronizer (kind `sql`) that reads its own table of this instance. Without it a type has no resources
 and therefore no whole-type access. The seed also creates the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, default
 `Platform administrator`; the former `PLATFORM__ADMIN_ROLE_NAME` is still read when the new name is not set). Its members
-are everyone whose `PLATFORM__ADMIN_CLAIM` claim (default `preferred_username`) takes one of
+are everyone whose `PLATFORM__ADMIN_CLAIM` claim (default `ADMIN_AUTH__SUBJECT_CLAIM`, itself `preferred_username`) takes one of
 `PLATFORM__ADMIN_CLAIM_VALUES` (a JSON list or a comma-separated string), and it has rules granting read and write on every
 policy as a whole. Without values the group is empty and nobody can manage the platform.
 
@@ -82,7 +86,7 @@ A denial rule, or an edit made directly in the database, can still lock everyone
 admin group, its memberships and the admin rules back, and switches off the denials that cover a policy:
 
 ```bash
-go run ./cmd/licetum-admin restore-admin -user alice    # alice becomes an administrator too; PLATFORM__ADMIN_CLAIM_VALUES are restored
+go run ./cmd/licetum-admin restore-admin -user alice    # alice becomes an administrator too (matched by ADMIN_AUTH__SUBJECT_CLAIM); PLATFORM__ADMIN_CLAIM_VALUES are restored
 ```
 
 It needs the database variables. The seed never does this on purpose.

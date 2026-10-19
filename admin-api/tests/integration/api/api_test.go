@@ -133,11 +133,12 @@ func setup(t *testing.T) *env {
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
 			Name: "Licetum", URL: m + "/app", Icon: m + "/icon.png",
-			AuthorizationURL: m + "/realm/auth", TokenURL: m + "/realm/token", JwksURL: m + "/jwks",
-			Issuer: m + "/realm", ClientID: "licetum", ClientSecret: "s",
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username",
 			AdminClaimValues: []string{"admin"},
 		},
+		// Administrators sign in at the mock identity provider: its tokens for the admin API carry testAdminAudience.
+		AdminAuth: config.AdminAuth{Issuer: m + "/realm", Audience: testAdminAudience, JWKSURL: m + "/jwks",
+			SubjectClaim: "preferred_username"},
 	}
 	if err := db.RunMigrate(ctx, cfg); err != nil {
 		t.Fatal(err)
@@ -267,9 +268,17 @@ func (e *env) mockHandler() http.Handler {
 	return mux
 }
 
+// testAdminAudience is the audience (ADMIN_AUTH__AUDIENCE) the admin API of the tests requires.
+const testAdminAudience = "licetum-admin"
+
+// token signs claims as the mock identity provider. A token that names no audience gets the one of the admin API, so the same
+// token works there and (where the audience is not looked at) at a service; a test of the audience sets "aud" itself.
 func (e *env) token(claims jwt.MapClaims) string {
 	claims["iss"] = e.mock.URL + "/realm"
 	claims["exp"] = time.Now().Add(time.Hour).Unix()
+	if _, ok := claims["aud"]; !ok {
+		claims["aud"] = testAdminAudience
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = "k1"
 	s, err := tok.SignedString(e.key)

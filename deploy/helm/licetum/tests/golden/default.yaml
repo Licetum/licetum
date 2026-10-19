@@ -121,7 +121,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: admin
       annotations:
-        checksum/config: 7fcce095bb980d25c097f93e01d4c27094ee396e6968f25df8bd81275ff52588
+        checksum/config: 0f295a4e8f6568481232989f3fb136093de95d0b41c822b060e86079a6ae9d83
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -178,11 +178,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: AUTH__STATE_SECRET
-            - name: PLATFORM__CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: PLATFORM__CLIENT_SECRET
             - name: CORS__ALLOW_ORIGINS
               value: "[]"
           startupProbe:
@@ -249,7 +244,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: pdp
       annotations:
-        checksum/config: 7fcce095bb980d25c097f93e01d4c27094ee396e6968f25df8bd81275ff52588
+        checksum/config: 0f295a4e8f6568481232989f3fb136093de95d0b41c822b060e86079a6ae9d83
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -318,11 +313,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: AUTH__STATE_SECRET
-            - name: PLATFORM__CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: PLATFORM__CLIENT_SECRET
           startupProbe:
             httpGet: {path: /readyz, port: ops}
             periodSeconds: 2
@@ -388,7 +378,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: worker
       annotations:
-        checksum/config: 7fcce095bb980d25c097f93e01d4c27094ee396e6968f25df8bd81275ff52588
+        checksum/config: 0f295a4e8f6568481232989f3fb136093de95d0b41c822b060e86079a6ae9d83
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -445,11 +435,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: AUTH__STATE_SECRET
-            - name: PLATFORM__CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: PLATFORM__CLIENT_SECRET
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5
@@ -524,7 +509,6 @@ stringData:
   DB__URI: "postgres://licetum:licetum@db-primary.example.internal:5432/licetum"
   REDIS__URI: "redis://redis.example.internal:6379/0"
   AUTH__STATE_SECRET: "ci-only-state-secret"
-  PLATFORM__CLIENT_SECRET: "ci-only-client-secret"
   DB__READ_URI: "postgres://licetum:licetum@db-replica.example.internal:5432/licetum"
 ---
 # Source: licetum/templates/configmap.yaml
@@ -559,11 +543,10 @@ data:
   PLATFORM__NAME: "Licetum"
   PLATFORM__URL: "https://admin.example.com"
   PLATFORM__ICON: "https://admin.example.com/favicon.ico"
-  PLATFORM__AUTHORIZATION_URL: "https://idp.example.com/auth"
-  PLATFORM__TOKEN_URL: "https://idp.example.com/token"
-  PLATFORM__JWKS_URL: "https://idp.example.com/keys"
-  PLATFORM__ISSUER: "https://idp.example.com"
-  PLATFORM__CLIENT_ID: "licetum"
+  ADMIN_AUTH__ISSUER: "https://idp.example.com"
+  ADMIN_AUTH__AUDIENCE: "licetum-admin"
+  ADMIN_AUTH__JWKS_URL: "https://idp.example.com/keys"
+  ADMIN_AUTH__SUBJECT_CLAIM: "preferred_username"
   PLATFORM__ADMIN_GROUP_NAME: "Platform administrator"
   PLATFORM__ADMIN_CLAIM: "preferred_username"
   PLATFORM__ADMIN_CLAIM_VALUES: "[\"admin\"]"
@@ -637,11 +620,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: AUTH__STATE_SECRET
-            - name: PLATFORM__CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: PLATFORM__CLIENT_SECRET
           resources:
             limits:
               memory: 256Mi

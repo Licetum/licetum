@@ -91,6 +91,9 @@ type App struct {
 	// jwks holds the key sets of the identity providers, configured on first use (see keySets).
 	jwks     pepauth.KeySets
 	jwksOnce sync.Once
+	// adminVerifier checks the tokens of the administrators (ADMIN_AUTH__*), made on first use (see VerifyAdminToken).
+	adminVerifier     *pepauth.Verifier
+	adminVerifierOnce sync.Once
 	// local keeps the revision of the policy and its snapshot in memory (see localView).
 	local viewState
 	// pep keeps the PEP directory of the process (see PEPDirectory).

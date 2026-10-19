@@ -145,7 +145,9 @@ const (
 
 	// platform
 	PlatformNotSeeded Key = "platform_not_seeded"
-	AccessDenied      Key = "access_denied"
+	// AdminAuthNotConfigured: ADMIN_AUTH__* is not set, so no administrator can authenticate
+	AdminAuthNotConfigured Key = "admin_auth_not_configured"
+	AccessDenied           Key = "access_denied"
 
 	// oauth / tokens
 	AuthHeaderRequired        Key = "auth_header_required"
@@ -785,6 +787,11 @@ var catalog = map[Key]Text{
 		ZH: "资源类型 %s 没有同步器，因此没有资源：规则或角色权限项只能授予整个类型，不能指定 resource_id 或 resource_from_claim",
 	},
 
+	AdminAuthNotConfigured: {
+		EN: "Administrator sign-in is not configured: set ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL",
+		RU: "Вход администраторов не настроен: задайте ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE и ADMIN_AUTH__JWKS_URL",
+		ZH: "未配置管理员登录：请设置 ADMIN_AUTH__ISSUER、ADMIN_AUTH__AUDIENCE 和 ADMIN_AUTH__JWKS_URL",
+	},
 	PlatformNotSeeded: {
 		EN: "The self-service is not seeded yet — set the PLATFORM__* env vars and run the migration (licetum migrate)",
 		RU: "Self-service ещё не засеян — задайте PLATFORM__* env и выполните миграцию (licetum migrate)",

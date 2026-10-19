@@ -77,14 +77,7 @@ func (a *App) AuthenticatePEP(ctx context.Context, credential, serviceRef, opera
 		}
 		verified, err := verifier.Verify(ctx, credential)
 		if err != nil {
-			if errors.Is(err, pepauth.ErrJWKSUnavailable) {
-				var unavailable *apperr.Error
-				if errors.As(err, &unavailable) {
-					return nil, unavailable
-				}
-				return nil, err
-			}
-			return nil, apperr.InvalidToken(i18n.TokenInvalid)
+			return nil, verifyFailure(err)
 		}
 		issuer, viaClient = verified.Issuer, verified.Client
 	}
@@ -112,6 +105,19 @@ func (a *App) AuthenticatePEP(ctx context.Context, credential, serviceRef, opera
 		return nil, forbidden
 	}
 	return &PEPCaller{Client: client, ServiceID: serviceID}, nil
+}
+
+// verifyFailure is the answer to a token the verifier did not accept: a key set that could not be read is a 424 (the token is
+// neither accepted nor refused), anything else a 401 invalid_token.
+func verifyFailure(err error) error {
+	if errors.Is(err, pepauth.ErrJWKSUnavailable) {
+		var unavailable *apperr.Error
+		if errors.As(err, &unavailable) {
+			return unavailable
+		}
+		return err
+	}
+	return apperr.InvalidToken(i18n.TokenInvalid)
 }
 
 // apiKeyClient authenticates an API key: the key id names a credential the directory holds, and the sha256 of the secret equals
