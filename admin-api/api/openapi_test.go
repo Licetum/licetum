@@ -1,13 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/licetum/licetum/admin-api/service"
+	"github.com/licetum/licetum/core/cli"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/i18n"
@@ -22,8 +27,8 @@ func docsHandler(t *testing.T) http.Handler {
 
 func TestOpenAPIExposesStableOperations(t *testing.T) {
 	admin, _ := NewAdminAPI(service.New(&engine.App{Cfg: &config.Config{}}))
-	check, _ := server.NewCheckAPI(&engine.App{Cfg: &config.Config{}})
-	for name, handler := range map[string]http.Handler{"admin": admin, "check": check} {
+	pdp, _ := server.NewPDPAPI(&engine.App{Cfg: &config.Config{}})
+	for name, handler := range map[string]http.Handler{"admin": admin, "pdp": pdp} {
 		t.Run(name, func(t *testing.T) {
 			record := httptest.NewRecorder()
 			handler.ServeHTTP(record, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
@@ -41,6 +46,41 @@ func TestOpenAPIExposesStableOperations(t *testing.T) {
 				t.Fatalf("invalid OpenAPI document: version=%q paths=%d", spec.OpenAPI, len(spec.Paths))
 			}
 		})
+	}
+}
+
+// TestContract_API01_CommittedSchemasMatchTheCode: the committed schemas are the documents the openapi commands print, so the
+// client generated from the admin schema and the drift check of task go:schema:check describe the code. The test and the
+// commands run the same function (cli.OpenAPI). The schemas are read relative to this package, as the other tests of the
+// module read their files. After a change of an operation or a model, run task go:schema and commit the result.
+func TestContract_API01_CommittedSchemasMatchTheCode(t *testing.T) {
+	admin := map[string]func() huma.API{"admin": func() huma.API {
+		_, a := NewAdminAPI(service.New(&engine.App{Cfg: &config.Config{}}))
+		return a
+	}}
+	pdp := map[string]func() huma.API{"pdp": func() huma.API {
+		_, a := server.NewPDPAPI(&engine.App{Cfg: &config.Config{}})
+		return a
+	}}
+	for _, c := range []struct {
+		file string
+		args []string
+		apps map[string]func() huma.API
+	}{
+		{"../schema/admin.yaml", []string{"admin", "-yaml"}, admin},
+		{"../../core/schema/pdp.yaml", []string{"pdp", "-yaml"}, pdp},
+	} {
+		committed, err := os.ReadFile(c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generated, err := cli.OpenAPI(c.args, c.apps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(generated, committed) {
+			t.Errorf("%s is not what `openapi %s -yaml` prints: run task go:schema and commit the result", c.file, c.args[0])
+		}
 	}
 }
 

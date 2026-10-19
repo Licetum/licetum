@@ -127,21 +127,21 @@ You need Docker and [Task](https://taskfile.dev).
 task dev
 ```
 
-This starts PostgreSQL, Redis, a local Dex OIDC provider, the check API, the admin API and the web interface,
+This starts PostgreSQL, Redis, a local Dex OIDC provider, the PDP, the admin API and the web interface,
 with hot reload for the Go services and the web interface.
 
 | Component | URL |
 |---|---|
 | Web interface | http://localhost:3000 |
 | Admin API | http://localhost:8002 |
-| Check API | http://localhost:8001 |
+| PDP | http://localhost:8001 |
 
 Sign in at http://localhost:3000 as `admin@example.com` with the password `password`. These credentials are
 for development only.
 
 To run the Go binaries without Docker, see the guides for the [core](core/README.md) and the
 [admin API](admin-api/README.md). Each can print its OpenAPI specification without a server:
-`licetum openapi check` for the check API, `licetum-admin openapi admin` for the admin API.
+`licetum openapi pdp` for the PDP, `licetum-admin openapi admin` for the admin API.
 
 ## What Licetum is not
 
@@ -153,7 +153,7 @@ To run the Go binaries without Docker, see the guides for the [core](core/README
 
 ## Documentation
 
-- [core/](core/README.md): the engine, the check API, the database schema and migrations (MIT).
+- [core/](core/README.md): the engine, the PDP, the database schema and migrations (MIT).
 - [admin-api/](admin-api/README.md): the admin API, the policy tools and the `licetum-admin` binary (AGPL-3.0).
 - [web/](web/README.md): the admin interface (AGPL-3.0).
 
@@ -163,7 +163,7 @@ The project lives in the [Licetum](https://github.com/Licetum) organization:
 
 - [licetum](https://github.com/Licetum/licetum): this repository, with the engine, the APIs and the web interface.
 - [licetum-go-sdk](https://github.com/Licetum/licetum-go-sdk), [licetum-ts-sdk](https://github.com/Licetum/licetum-ts-sdk),
-  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk): client libraries for the check API (to be
+  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk): client libraries for the PDP (to be
   published; each will carry its own license file).
 - [licetum-helm](https://github.com/Licetum/licetum-helm): the Helm chart.
 - [licetum-docs](https://github.com/Licetum/licetum-docs): the documentation.
@@ -177,7 +177,7 @@ follow [SECURITY.md](SECURITY.md) and do not open a public issue.
 
 Licetum is made of three parts, each under its own license (see [LICENSE](LICENSE)):
 
-- [`core/`](core/LICENSE): the engine, the check API, the database schema and the runtime. MIT License.
+- [`core/`](core/LICENSE): the engine, the PDP, the database schema and the runtime. MIT License.
 - [`admin-api/`](admin-api/LICENSE): the admin API. GNU Affero General Public License v3.0 only.
 - [`web/`](web/LICENSE): the admin interface. GNU Affero General Public License v3.0 only.
 

@@ -165,9 +165,9 @@ func TestBodiesHaveTheShapeOfTheModel(t *testing.T) {
 	}
 }
 
-// The committed schema of the check API is the oracle of the routes and of the names of the freshness parameters.
+// The committed schema of the PDP is the oracle of the routes and of the names of the freshness parameters.
 func TestRoutesAndQueriesExistInTheSchema(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "schema", "check.yaml"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schema", "pdp.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestRoutesAndQueriesExistInTheSchema(t *testing.T) {
 			}
 			op, ok := doc.Paths["/service/{service_id}/access/v1/"+endpointOf(t, c.req)][strings.ToLower(c.req.Method)]
 			if !ok {
-				t.Fatalf("%s %s is no operation of core/schema/check.yaml", c.req.Method, u.Path)
+				t.Fatalf("%s %s is no operation of core/schema/pdp.yaml", c.req.Method, u.Path)
 			}
 			for name, values := range u.Query() {
 				var found bool

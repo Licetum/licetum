@@ -44,10 +44,10 @@ x-env: &env
   PLATFORM__ADMIN_CLAIM: preferred_username
   PLATFORM__ADMIN_CLAIM_VALUES: '["admin"]'
 
-x-check: &check
+x-pdp: &pdp
   <<: *go
   image: licetum:mr
-  command: ["check", "-addr", ":8001"]
+  command: ["pdp", "-addr", ":8001"]
 
 x-pg: &pg
   image: postgres:16
@@ -126,7 +126,7 @@ services:
     networks: [net-a]
 
   check-a1: &check-a
-    <<: *check
+    <<: *pdp
     environment:
       <<: *env
       DB__URI: postgres://licetum:licetum@pg-primary:5432/licetum?sslmode=disable
@@ -166,7 +166,7 @@ services:
     networks: [net-b]
     depends_on: [toxiproxy, migrate]
   check-b1: &check-b
-    <<: *check
+    <<: *pdp
     environment:
       <<: *env
       DB__URI: postgres://licetum:licetum@toxiproxy:15432/licetum?sslmode=disable
@@ -209,7 +209,7 @@ services:
     networks: [net-c]
     depends_on: [toxiproxy, migrate]
   check-c1: &check-c
-    <<: *check
+    <<: *pdp
     environment:
       <<: *env
       DB__URI: postgres://licetum:licetum@toxiproxy:15442/licetum?sslmode=disable

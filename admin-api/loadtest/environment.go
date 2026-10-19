@@ -100,7 +100,7 @@ func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin stri
 	return env, nil
 }
 
-// checkServerEnv is the environment the check server is started with (see startCheck).
+// checkServerEnv is the environment the check server is started with (see startPDP).
 func checkServerEnv(e *env, opts Options) []string {
 	return []string{
 		"DB__URI=" + e.checkDBURI,

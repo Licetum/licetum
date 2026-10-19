@@ -1,6 +1,6 @@
 // Package cli holds what the Licetum binaries share: reading the configuration, applying the migrations, serving an
-// HTTP application with its settings and printing the OpenAPI document. The binaries themselves (the check runtime
-// in core/cmd/licetum, the admin API in admin-api/cmd/licetum-admin) only choose the subcommands.
+// HTTP application with its settings and printing the OpenAPI document. The binaries themselves (the PDP in
+// core/cmd/licetum, the admin API in admin-api/cmd/licetum-admin) only choose the subcommands.
 package cli
 
 import (
@@ -84,8 +84,9 @@ func Failover(ctx context.Context, args []string) error {
 	return nil
 }
 
-// Serve runs an HTTP application until the context ends. name is the application's name in the logs, defaultAddr its
-// address when neither -addr nor HTTP__ADDR is set; build creates the handler from the engine.
+// Serve runs an HTTP application until the context ends. name is the application's name in the logs and its role; the
+// address is the -addr flag, else the application's own setting (PDP__ADDR for the PDP, HTTP__ADDR for the admin API), else
+// defaultAddr. build creates the handler from the engine.
 func Serve(ctx context.Context, name string, args []string, defaultAddr string, build func(*engine.App) http.Handler, logs *logx.Switch) error {
 	cfg, err := LoadConfig(true)
 	if err != nil {
@@ -93,12 +94,16 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	}
 
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
-	addr := fs.String("addr", "", "HTTP server address (overrides HTTP__ADDR)")
+	addr := fs.String("addr", "", "HTTP server address (overrides PDP__ADDR or HTTP__ADDR)")
 	_ = fs.Parse(args)
+	own := cfg.HTTP.Addr
+	if name == "pdp" {
+		own = cfg.PDP.Addr
+	}
 	switch {
 	case *addr != "":
-	case cfg.HTTP.Addr != "":
-		*addr = cfg.HTTP.Addr
+	case own != "":
+		*addr = own
 	default:
 		*addr = defaultAddr
 	}
@@ -110,10 +115,10 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	defer pool.Close()
 	logConnectionBudget(ctx, pool, cfg, name, name == "admin")
 
-	// The check API answers within a budget: its Redis client times out fast, does not retry, and skips Redis for a while
+	// The PDP answers within a budget: its Redis client times out fast, does not retry, and skips Redis for a while
 	// after repeated failures (see redisx.FastFail). The admin API waits for Redis as long as the default allows.
 	var redisOptions redisx.Options
-	if name == "check" && cfg.Redis.HotTimeout > 0 {
+	if name == "pdp" && cfg.Redis.HotTimeout > 0 {
 		redisOptions.HotTimeout = cfg.Redis.HotTimeout
 	}
 	rdb, err := redisx.ConnectWith(ctx, cfg.Redis.URI, redisOptions)
@@ -127,8 +132,8 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	app.Logs = logs
 	app.Role = roleOf(name)
 	warnDeprecated()
-	if app.Role == engine.RoleCheck && cfg.DB.ReadURI != "" && cfg.DB.ReadURI != cfg.DB.URI {
-		// The check API reads the policy from the read replica of its region; everything else, and every read that must be
+	if app.Role == engine.RolePDP && cfg.DB.ReadURI != "" && cfg.DB.ReadURI != cfg.DB.URI {
+		// The PDP reads the policy from the read replica of its region; everything else, and every read that must be
 		// current, goes to the primary (see engine.App.ReadDB).
 		readCfg := cfg.DB
 		readCfg.URI = cfg.DB.ReadURI
@@ -222,8 +227,8 @@ func StopServing(srv *http.Server, app *engine.App, cfg config.Shutdown, errCh <
 // roleOf is the role of the application of that name in the synchronization pipeline.
 func roleOf(name string) engine.Role {
 	switch name {
-	case "check":
-		return engine.RoleCheck
+	case "pdp":
+		return engine.RolePDP
 	case "admin":
 		return engine.RoleAdmin
 	}
@@ -269,7 +274,7 @@ func connectionBudget(cfg *config.Config, withSyncPool, withReadPool bool) (tota
 // logConnectionBudget tells the operator how many connections the process may take, and warns when PostgreSQL would not
 // give even one process that many: many replicas with the default pool settings exhaust max_connections.
 func logConnectionBudget(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, app string, withSyncPool bool) {
-	total, parts := connectionBudget(cfg, withSyncPool, app == "check" && cfg.DB.ReadURI != "" && cfg.DB.ReadURI != cfg.DB.URI)
+	total, parts := connectionBudget(cfg, withSyncPool, app == "pdp" && cfg.DB.ReadURI != "" && cfg.DB.ReadURI != cfg.DB.URI)
 	slog.InfoContext(ctx, "database connections: the most this process may hold, to be multiplied by the replicas against "+
 		"max_connections of PostgreSQL (or default_pool_size of PgBouncer)", append([]any{"app", app, "total", total}, parts...)...)
 	if cfg.DB.PgBouncer {
@@ -293,7 +298,7 @@ func connectSyncPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, er
 	return db.Connect(ctx, c)
 }
 
-// Worker runs the synchronization worker: it executes the jobs the check and admin processes queue and keeps the types
+// Worker runs the synchronization worker: it executes the jobs the PDP and admin processes queue and keeps the types
 // that are being used fresh. It serves /metrics and /healthz on its address (default :8002, -addr or HTTP__ADDR).
 func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.Switch) error {
 	cfg, err := config.Load()
@@ -341,7 +346,7 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 		slog.WarnContext(ctx, "the stored log settings are not applied, the defaults stay in force", "error", err)
 	}
 	go app.WatchRevision(ctx)
-	// The retention runs here only: the check and the admin processes do not delete.
+	// The retention runs here only: the PDP and the admin processes do not delete.
 	go app.WatchRetention(ctx)
 
 	mux := http.NewServeMux()
@@ -377,35 +382,45 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 	return app.RunWorker(ctx)
 }
 
-// PrintOpenAPI prints the spec of an application without connecting to the DB or Redis: registering routes does not need
-// those dependencies. args is "<name> [-yaml] [-lang en|ru|zh]"; apps maps each name to the function that builds its API.
+// PrintOpenAPI prints on the standard output the document OpenAPI returns for the same arguments.
 func PrintOpenAPI(args []string, apps map[string]func() huma.API) error {
+	out, err := OpenAPI(args, apps)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(out)
+	return err
+}
+
+// OpenAPI is the spec of an application, as the openapi command prints it, without connecting to the DB or Redis:
+// registering routes does not need those dependencies. args is "<name> [-yaml] [-lang en|ru|zh]"; apps maps each name to
+// the function that builds its API. The document ends with a newline.
+func OpenAPI(args []string, apps map[string]func() huma.API) ([]byte, error) {
 	fs := flag.NewFlagSet("openapi", flag.ExitOnError)
 	asYAML := fs.Bool("yaml", false, "print YAML instead of JSON")
 	langCode := fs.String("lang", string(i18n.Default), "language of descriptions: en, ru or zh")
 	build, ok := apps[firstArg(args)]
 	if !ok {
-		return fmt.Errorf("usage: openapi <%s> [-yaml] [-lang en|ru|zh]", joinNames(apps))
+		return nil, fmt.Errorf("usage: openapi <%s> [-yaml] [-lang en|ru|zh]", joinNames(apps))
 	}
 	_ = fs.Parse(args[1:])
 	lang, ok := i18n.FromCode(*langCode)
 	if !ok {
-		return fmt.Errorf("unsupported language %q (supported: en, ru, zh)", *langCode)
+		return nil, fmt.Errorf("unsupported language %q (supported: en, ru, zh)", *langCode)
 	}
 
 	out, err := server.LocalizedSpec(build(), lang, *asYAML)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !*asYAML {
 		var pretty bytes.Buffer
 		if err := json.Indent(&pretty, out, "", "  "); err != nil {
-			return err
+			return nil, err
 		}
 		out = pretty.Bytes()
 	}
-	_, err = os.Stdout.Write(append(out, '\n'))
-	return err
+	return append(out, '\n'), nil
 }
 
 func firstArg(args []string) string {

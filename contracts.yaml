@@ -819,7 +819,7 @@ contracts:
     oracle: the generated schemas
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: API02
     statement: Every message and API text has its translations.
     oracle: the catalogs

@@ -125,8 +125,8 @@ here too.
 
 ## Load test
 
-`loadtest/` measures the check API (`licetum check`) at a policy size. The harness seeds a service through this module's
-service layer, starts the check binary as its own process, and ramps the traffic up with [k6](https://grafana.com/docs/k6/)
+`loadtest/` measures the PDP (`licetum pdp`) at a policy size. The harness seeds a service through this module's
+service layer, starts the PDP binary as its own process, and ramps the traffic up with [k6](https://grafana.com/docs/k6/)
 until a step misses its objective. The admin API takes no load: it writes the policy once.
 
 ```bash
@@ -153,7 +153,7 @@ the k6 summaries and logs, and `check.log`. The tokens of the run are written to
 
 Docker runs PostgreSQL and Redis; a server named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI` is used
 instead. The containers preload `pg_stat_statements`; an external server needs it in `shared_preload_libraries` for the
-statement figures. The check server's pool is `-db-pool` connections (30 by default, with no overflow, so the pool is
+statement figures. The PDP's pool is `-db-pool` connections (30 by default, with no overflow, so the pool is
 the setting under test); a pool smaller than the traffic makes the requests wait for a connection, which shows as a tail of slow answers.
 
 Two switches for reading a run: `LICETUM_LOADTEST_K6_RAW=1` keeps the point of every request (`*.points.json.gz`), and
@@ -165,7 +165,7 @@ The nightly run is `.github/workflows/loadtest.yml`; the smoke volume runs on pu
 
 ```
 cmd/licetum-admin/     entry point: admin / restore-admin / openapi subcommands
-cmd/licetum-loadtest/  load test of the check API (see Load test)
+cmd/licetum-loadtest/  load test of the PDP (see Load test)
 loadtest/           the seeding, the traffic and the report of the load test
 api/                HTTP operations on Huma v2: documented routes, the policy checks (auth.go, admin_targets.go), batches
 service/            business logic of the admin: services, types, synchronizers, groups, roles, rules, changes, policy tools;

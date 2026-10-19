@@ -1,6 +1,6 @@
 # The values of the installation into kind: the images built by the test, the PostgreSQL and Redis of deps.yaml.
 region: kind
-publicUrl: http://licetum-check:8001
+publicUrl: http://licetum-pdp:8001
 image:
   core: {repository: licetum, tag: ci}
   admin: {repository: licetum-admin, tag: ci}
@@ -21,7 +21,7 @@ platform:
 shutdown:
   drain: 5
   timeout: 15
-check:
+pdp:
   replicas: 3
   autoscaling:
     enabled: false

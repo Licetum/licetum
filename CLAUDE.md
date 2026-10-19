@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout (since the module split)
 
-- `core/` — Go module `github.com/licetum/licetum/core`, MIT: the engine (`core/engine`), the check API (`core/server`), the HTTP helpers (`core/httpx`) and the key sets of the identity providers (`core/pepauth`, leaves: see depguard),
-  the database schema and migrations (`core/db`), synchronizers, models. Binary: `core/cmd/licetum` (`check`, `migrate`,
-  `openapi check`). Schema: `core/schema/check.yaml`.
+- `core/` — Go module `github.com/licetum/licetum/core`, MIT: the engine (`core/engine`), the PDP (`core/server`), the HTTP helpers (`core/httpx`) and the key sets of the identity providers (`core/pepauth`, leaves: see depguard),
+  the database schema and migrations (`core/db`), synchronizers, models. Binary: `core/cmd/licetum` (`pdp`, `migrate`,
+  `openapi pdp`). Schema: `core/schema/pdp.yaml`.
 - `admin-api/` — Go module `github.com/licetum/licetum/admin-api`, AGPL-3.0-only: the admin API (`admin-api/api`), the admin
   services (`admin-api/service`, which embed `engine.App`), the binary `admin-api/cmd/licetum-admin` (`admin`,
   `restore-admin`, `openapi admin`). Schema: `admin-api/schema/admin.yaml`. Depends on `core` through a `replace`.
@@ -28,16 +28,16 @@ embedded into other software gets its own permissive license when it is added (n
 The backend is written in Go (`backend/`), one binary with subcommands:
 - `licetum admin` — admin API (services, type_resources, resources, groups, group_members, roles and their
   permission items, assignment_rules, oauth callback, platform self-service). Port 8000. Routes: `internal/api/admin.go`.
-- `licetum check` — the single runtime endpoint client services actually call at request time
-  (`GET /service/{service_id}/permission`), kept in its own process/port (8001) so it can be
+- `licetum pdp` — the PDP, the single runtime endpoint client services actually call at request time
+  (`GET /service/{service_id}/permission`), kept in its own process/port (8001, `-addr` or `PDP__ADDR` overrides it) so it can be
   scaled/deployed independently of the admin surface. Route: `internal/api/check.go`.
 - `licetum worker` — the synchronization worker: executes the jobs that fetch the resource sources into the local copy, and keeps the
-  types in use fresh on a schedule. Metrics on :8002. The check and admin processes never apply a synchronization.
+  types in use fresh on a schedule. Metrics on :8002. The PDP and admin processes never apply a synchronization.
 - `licetum migrate` — apply DB migrations and seed the platform self-service.
 - `licetum restore-admin [-user name]...` — the way back in when nobody can manage the platform: puts the admin group, its
   memberships (`PLATFORM__ADMIN_CLAIM_VALUES` and each `-user`), the admin rules of every policy back in force and switches off
   the denials that cover a policy (`db.RestoreAdminAccess`, `internal/db/restore.go`). The seed never does this on purpose.
-- `licetum openapi admin|check [-yaml] [-lang en|ru|zh]` — print the OpenAPI spec without a server.
+- `licetum openapi pdp [-yaml] [-lang en|ru|zh]` — print the PDP's OpenAPI spec without a server (the admin API's is `licetum-admin openapi admin`).
 
 The admin API is itself protected by Licetum permissions — see "Self-service: access policies for
 Licetum itself" below.
@@ -59,12 +59,12 @@ The epic is being refactored to the design of issue #49 (regional AuthZEN PDP, s
 `TestContract_<ID>_<What>`; `task contracts:check` (part of `task check`, `core/internal/tools/contractscheck`) fails on an
 active contract without a test, a test naming an unknown contract, or a planned contract that already has a test. What used to
 run on every pull request through PgBouncer runs nightly: `.github/workflows/nightly-suite.yml` (PgBouncer, DECP, chaos,
-multi-region, load test) is called by the dispatcher `nightly.yml` on `main` with the ref of the epic.
+load test; multi-region is switched off until P7, ADR 0001 §10.7) is called by the dispatcher `nightly.yml` on `main` with the ref of the epic.
 
 The decision contracts (DEC01–DEC14, DECP) are tables, not code: `core/testsupport/policyfix` is the fixture format (services,
 types, resources, groups, roles, rules, cases with claims, context and a time, questions with the expected decision and
 explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides answer them: the engine through the AuthZEN API
-of the check API (`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its
+of the PDP (`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its
 resources, `Ask` asks the case's evaluations (`POST …/access/v1/evaluations`, with explain) at the case's time through
 `App.SetClock`, `CrossCheck` asks the case's resource and action searches (`…/access/v1/search/resource`, `…/search/action`) and
 fails every DEC and DECP test where the list (`coverNodes`) disagrees with the evaluations (`CoversOf`); level `pg`; until P2-23
@@ -79,7 +79,7 @@ Backend (run from `backend/`, Go 1.26):
 ```
 go run ./cmd/licetum migrate           # apply migrations + seed self-service (idempotent)
 go run ./cmd/licetum admin             # admin API on :8000 (-addr / HTTP__ADDR to override)
-go run ./cmd/licetum check             # permission-check API on :8001
+go run ./cmd/licetum pdp               # the PDP (AuthZEN, permission endpoints) on :8001
 go run ./cmd/licetum worker            # synchronization worker (jobs that fetch the resource sources), metrics on :8002
 go vet ./... && go test -race ./...                    # unit tests
 go test -race -tags integration ./...                  # integration tests via Testcontainers (set DOCKER_HOST for non-default contexts;
@@ -88,7 +88,7 @@ task backend:coverage                                  # coverage reports in bac
 ```
 Lint: `golangci-lint run` (config `backend/.golangci.yml`: gofmt/goimports, staticcheck, gosec,
 unused, depguard layer rules) + `go mod tidy -diff`. After changing the API run `task backend:schema`
-— `backend/schema/{admin,check}.yaml` are committed (orval input) and `task check` fails on drift.
+— `backend/schema/{admin,pdp}.yaml` are committed (orval input) and `task check` fails on drift.
 
 Migrations: `core/db/migrations/00001_init.sql` is the whole schema of a fresh install (goose, one file: before the first
 public release all earlier migrations were folded into it). A schema change from now on is a new `0000N_name.sql` (goose
@@ -146,7 +146,7 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
     at most that many others): `core/README.md` says how to size it, `chaos/f5_8_test.go` measures it.
   - **Shutdown** (`cli.StopServing`): `SetDraining` (responses get `Connection: close`), wait `SHUTDOWN__DRAIN`, `http.Server.Shutdown` with
     `SHUTDOWN__TIMEOUT`, then the deferred `app.Close()`. **Admission** (`server.withAdmission`, outermost; `App.Admit`): `HTTP__MAX_INFLIGHT`
-    (default `GOMAXPROCS×256`) → 503 `overloaded` + `Retry-After: 1`, `licetum_shed_total`; `HTTP__REQUEST_TIMEOUT` (`App.RequestTimeout`: 10 s check,
+    (default `GOMAXPROCS×256`) → 503 `overloaded` + `Retry-After: 1`, `licetum_shed_total`; `HTTP__REQUEST_TIMEOUT` (`App.RequestTimeout`: 10 s pdp,
     60 s admin/worker, none for an engine without a role); `/healthz`, `/readyz`, `/metrics` exempt.
   - **Connections**: `db.Connect` registers the uuid types for the simple protocol (`AfterConnect`) and, with `DB__PGBOUNCER`, uses
     `QueryExecModeSimpleProtocol` with no statement cache; `licetum_db_pool_*` (`poolCollector`); each process logs `connectionBudget`.
@@ -158,7 +158,7 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
     dependency on the request path go through `logx.Repeated` (`logDependency`, `errKind`; `licetum_log_suppressed_total`): one record per kind per second.
   - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_REDIS_OUTAGE` shortens the minute, `LICETUM_CHAOS_POSTGRES_OUTAGE` the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
-- **Read replica** (F6; `engine/replica.go`, `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL`; `core/README.md` has the description): a check process
+- **Read replica** (F6; `engine/replica.go`, `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL`; `core/README.md` has the description): a PDP process
   may set `App.ReadDB` (`UseReadReplica`, `cli.Serve`). `App.reader(ctx)` is the pool of a read of the policy: the replica, or `DB` when there is none, when
   the request needs a current read (`withPrimary`: `consistency=higher`, or a revision the view did not reach, set in `cachedAnswer`; such an answer is not kept)
   or while the replica lags with `DB__LAG_ACTION=primary`. Reads of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) use `reader(ctx)`;
@@ -169,7 +169,7 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   readiness); `licetum failover` (`db.BumpAllRevisions`) raises every revision after a promotion and a revision that goes backwards is counted
   (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` + `WORKER__REGION` (table engine only) keep a source that one
   region reaches off the workers of the others (`claimJob`); `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
-  `docs/deployment.md`, the Compose environment `admin-api/tests/multiregion` (tag `multiregion`, `task go:test:multiregion`, nightly `multiregion.yml`).
+  `docs/deployment.md`, the Compose environment `admin-api/tests/multiregion` (tag `multiregion`, `task go:test:multiregion`, `multiregion.yml`, switched off until P7 per ADR 0001 §10.7).
   An admin write is six round trips to the primary at most (`mutate` sends the change record and the revision bump as one batch; `checkAssignmentRuleRefs` reads
   the type once and returns its service): `chaos/f6_test.go` `TestF6_7_*` keeps it so, since the admin API of a far region pays the link for each.
 - The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
@@ -183,13 +183,13 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   `AUTH__JWKS_MIN_REFRESH`; transport failures are `errJWKSUnavailable` (breaker), never cached.
 - `App.Background` runs on a fixed pool with a bounded queue and returns whether the work was accepted; a full queue drops it
   (`licetum_background_dropped_total`). Work that registers a marker (`refreshInBackground`) must clear it when dropped.
-- `redisx.ConnectWith(HotTimeout)` is how the check process connects (`cli.Serve`, name `check`): read/write timeout, no retries, and a
+- `redisx.ConnectWith(HotTimeout)` is how the PDP connects (`cli.Serve`, name `pdp`): read/write timeout, no retries, and a
   `FastFail` hook that skips Redis for 5 s after 3 failures in a row (half-open probe afterwards). Skipped commands are not round trips
   (`observer.ObserveRedis`).
 
 Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` and every
 Redis client given to `engine.New` is counted (`licetum_db_*`, `licetum_redis_*` metrics, `engine.Trace.DBQueries()/RedisRoundTrips()` for
-tests); `harness.StartReplicas` builds several check replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`). The tests build
+tests); `harness.StartReplicas` builds several PDP replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`). The tests build
 their AuthZEN requests with `core/testsupport/authzenreq`: `Replica.Permission` sends the resource search for branches
 (`harness.Branches`) for at least the revision of the last admin write (`Cluster.LastRevision`), and `Replica.Fresh` sends it with the
 test lever `harness.Higher()` (the `X-Test-Consistency` header, not a query parameter). `admin-api/tests/oldendpoints_test.go` counts
@@ -234,7 +234,7 @@ seed), `redisx/` (cache version, circuit breaker), `synchronizer/` (resource sou
 `config/` reads env vars. Handlers never touch the DB directly; they call `service.App` methods.
 
 API docs are generated from code, FastAPI-style: `/docs` (Swagger UI) and `/openapi.json` on both
-apps, or `licetum openapi admin|check` without a server. When adding or changing an endpoint:
+apps, or `licetum openapi pdp` (the admin API: `licetum-admin openapi admin`) without a server. When adding or changing an endpoint:
 register it with `register(api, huma.Operation{...}, handler)` in `internal/api` (OperationID,
 Summary, Description, Tags, extra Errors), and document every field of its model with struct tags
 (`doc`, `example`, `enum`, `format:"uuid"`; required = value field, optional = pointer +
@@ -275,7 +275,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
 - **Service**: a client application registered with Licetum. Has its own OAuth2 config
   (authorization/token/jwks URLs, issuer, client id/secret) used to verify tokens presented to
   `/permission`, and a **slug**: lowercase Latin letters, digits, `-`, `_`, unique among live services and
-  never a UUID (`model.ValidSlug`; `00009_service_slug.sql`). The check API takes the service as one path
+  never a UUID (`model.ValidSlug`; `00009_service_slug.sql`). The PDP takes the service as one path
   segment — its id or its slug (`App.ServiceIDByRef`). Licetum itself is registered with the slug
   `model.PlatformSlug` (`licetum`, reserved: no other service takes it; a name that makes an invalid slug
   falls back to `service-<12 hex digits of the id>`, `00009_service_slug.sql`). An empty/NULL `client_secret` is a public client (sign-in with PKCE);
@@ -342,7 +342,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   an empty list is kept too: it is the source's answer). `consistency=higher` (`fresh`) asks the source anyway and
   refreshes that list. A source that does not answer (transport error, bad status, malformed or `null` body, open breaker,
   SQL source without `list_query`) is an error (`FetchAll` returns it): the sync is skipped and the data stays.
-  A synchronization is a **job** (`sync_job`, `engine/sync_jobs.go`, `engine/sync_worker.go`): the check and admin processes
+  A synchronization is a **job** (`sync_job`, `engine/sync_jobs.go`, `engine/sync_worker.go`): the PDP and admin processes
   ask for it with `Ensure` and wait for the result for a bounded time, the `worker` role executes it (see item 3 of the
   permission computation). Requests for the same type, in any process, share one job; the source of a type is asked once.
   A type has **one** source: a second `POST` is 409 `synchronizer_exists`. `POST …/resource/synchronizer/test` tries a
@@ -435,7 +435,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   (409, `blocked_by`).
 
 - **KnownSubject** (`known_subject`, `service/subjects.go`, `SUBJECTS__ENABLED` default OFF (the dev Compose stack sets it on), `SUBJECTS__RETENTION_DAYS` default 90):
-  the subjects of verified tokens (the check API's `authenticateCaller` and the admin API's `Authenticate` call
+  the subjects of verified tokens (the PDP's `authenticateCaller` and the admin API's `Authenticate` call
   `App.NoteSubject`, at most once per ten minutes per subject and process, written in the background) with the display name and
   only the claims the policy reads (`requestAttributes`). It lets the UI say which groups a person is in (`identityOf` over the
   live memberships and the stored claims) and whom a rule reaches (`peopleReached`). `/subject` (list, one, forget) is governed by
@@ -484,7 +484,7 @@ roles, role items, rules) bump the permission cache version.
 This is the core algorithm and the most important part to understand before touching anything
 authorization-related. The entry point is `GetPermission(ctx, service, subject, env, consistency)`, where `env` (`service.NewEnv`) holds the
 claims, the request context and the time of the decision;
-it returns the typed result `{type_name: sync | not_sync}` used by the check API and the self-service
+it returns the typed result `{type_name: sync | not_sync}` used by the PDP and the self-service
 (`Authenticate` uses `getPermissionData`, which also returns the denied entities).
 1. Resolve the caller's identity set: `{subject} ∪ {group_subject(g) for every group g they belong to,
    transitively}`; group memberships and rules outside `valid_from`/`expires_at` are ignored
@@ -522,7 +522,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
    data or graph signature changed, and a start of the worker imports the previous release's Redis hashes
    (`authz:resource_sync:hash:<type>`, `v4:<data>:<graph>`) for types without a row. The worker's schedule (`SYNC__SCHEDULE_TICK`)
    queues due types that someone asked for within `SYNC__DEMAND_WINDOW` (all with `SYNC__KEEP_WARM`), gives up a job claimed
-   5 times, and prunes old jobs. `SYNC__ENGINE` is `dbos` by default (`postgres` selects the `sync_job` table below); the DBOS engine runs the same pipeline on DBOS workflows (`engine/sync_dbos.go`, see core/README.md: queue `licetum-sync`, dedup id as the shared job, an executor heartbeat in `sync_executor` and a janitor that takes over the workflows of dead executors, the workflow row read `FOR SHARE` as the fence); both engines pass the same acceptance tests (`LICETUM_SYNC_ENGINE=postgres go test -tags integration …` runs the suite on the table engine). `App.Role` (check, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
+   5 times, and prunes old jobs. `SYNC__ENGINE` is `dbos` by default (`postgres` selects the `sync_job` table below); the DBOS engine runs the same pipeline on DBOS workflows (`engine/sync_dbos.go`, see core/README.md: queue `licetum-sync`, dedup id as the shared job, an executor heartbeat in `sync_executor` and a janitor that takes over the workflows of dead executors, the workflow row read `FOR SHARE` as the fence); both engines pass the same acceptance tests (`LICETUM_SYNC_ENGINE=postgres go test -tags integration …` runs the suite on the table engine). `App.Role` (pdp, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
    outside the worker. Every committed change of a type's data bumps the data revision of its service in the same transaction
    (`bumpDataRevisions`, see F2), and the worker then calls `invalidateView` (and `recordDataChange` for the previous release). `resolve` (one resource
    refreshed inline by the admin API) writes under the same component lock and timeouts.
@@ -629,7 +629,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the check API
 
 ### Check, AuthZEN, metrics
 
-- Every check API path takes the service as `{id}` — the service id or its slug (`App.ServiceIDByRef`).
+- Every PDP path takes the service as `{id}` — the service id or its slug (`App.ServiceIDByRef`).
 - Request context (`context`, a JSON object): in the check body, as the `context` query parameter of `GET
   /permission`, as the AuthZEN `context` (every key but `explain`), and in the admin simulations. The service that calls
   Licetum sets it, as it sets the token: never copy it from end-user input. Names are identifiers
@@ -691,7 +691,7 @@ Claim values are compared as Python `str()` would render them (`service.PyStr`: 
 Access log (`logAndRecover` in `internal/api/server.go`): one `request` line per HTTP request with `request_id`
 (the caller's `X-Request-ID` when it is sane, else a generated UUID; returned in the response), `operation`, `user`,
 status and duration. `user` is set only after the token is verified (`setRequestUser`, called by `platformAuth` and
-the check API's `authenticateCaller`), so a forged token never shows up. Request bodies are never logged: they carry
+the PDP's `authenticateCaller`), so a forged token never shows up. Request bodies are never logged: they carry
 client secrets and tokens.
 
 ## Web interface (`web/`)

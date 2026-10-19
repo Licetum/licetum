@@ -5,8 +5,8 @@ servers named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI`.
 
 | directory | build tag | tier | what |
 |---|---|---|---|
-| `api/` | `integration` | I | the admin and check APIs against real servers |
-| `cluster/` | `integration` | M | several check replicas on one PostgreSQL and one Redis; request cost counters; the fakes |
+| `api/` | `integration` | I | the admin API and the PDP against real servers |
+| `cluster/` | `integration` | M | several PDP replicas on one PostgreSQL and one Redis; request cost counters; the fakes |
 | `chaos/` | `chaos` | C | Toxiproxy in front of PostgreSQL and Redis: latency, cut, black hole, a read-only Redis |
 | `contracts/` | `integration` | I | the engine runner of the decision contracts (DEC* in `contracts.yaml`) and their tests |
 | `harness/` | none | | the helpers the packages above share (not tests) |
@@ -17,13 +17,13 @@ task go:test:chaos         # tag chaos: chaos/ (slower, nightly in .github/workf
 task go:vet:tags           # no services: compiles and vets all the tagged code (integration, chaos, multiregion), with and without -race
 ```
 
-The chaos tests and the multi-region environment run only nightly, but `task go:vet:tags` is part of `task check` (`task go:lint`, the CI job
+The chaos tests run only nightly, the multi-region environment is switched off until P7 (ADR 0001 §10.7), but `task go:vet:tags` is part of `task check` (`task go:lint`, the CI job
 `go-lint`), so a change that stops them compiling fails the pull request. A new build tag goes into `GO_BUILD_TAGS` of `Taskfile.yaml`.
 
 ## The decision contracts (P1)
 
 `contracts.Load(t, infra, fixture)` loads a fixture of `core/testsupport/policyfix` (YAML under its `testdata/decisions`) into a
-cluster of its own (`harness.StartReplicas`, one check replica, a database per fixture): the services by slug, the types with their
+cluster of its own (`harness.StartReplicas`, one PDP replica, a database per fixture): the services by slug, the types with their
 parents, inherit masks and `access_implies`, an http synchronizer per type with resources fed by the fake source (names, the declared
 parents, by the name of the parent type, and the attributes; a parent no resource has is an unresolved link), and the policy through
 `POST /batch`. `Loaded.Ask(case)` asks the questions of a case through `POST /service/{slug}/access/v1/evaluations?consistency=higher` with
@@ -41,7 +41,7 @@ a resource of a type without resources and `type_not_found` are not compared; a 
 resources is the exception: the resource search of its type and action must not list the resource). The evaluations decide the
 asked resources (`CoversOf`), the searches every resource (`coverNodes`): the cross-check keeps the two paths equal.
 
-While the check API has the routes that AuthZEN replaces, `Loaded.SecondOpinion(case, answers)` asks the case through `POST
+While the PDP has the routes that AuthZEN replaces, `Loaded.SecondOpinion(case, answers)` asks the case through `POST
 /service/{slug}/check` and `GET /service/{slug}/permission` too and lists every difference from the evaluations, and every question on
 which the permission list disagrees with them (including what the searches state more weakly: the mode of a type, a resource listed
 twice). It lives in `contracts/legacy.go` and goes with those routes.
@@ -55,7 +55,7 @@ twice). It lives in `contracts/legacy.go` and goes with those routes.
 
 ## The harness
 
-`harness.StartReplicas(t, infra, n, opts...)` builds a `Cluster`: `n` check API replicas, each with **its own** `engine.App`,
+`harness.StartReplicas(t, infra, n, opts...)` builds a `Cluster`: `n` PDP replicas, each with **its own** `engine.App`,
 database pool, Redis client and HTTP server, on one shared PostgreSQL schema and one shared Redis (which is flushed), next to an
 admin API that sets the policy up, a fake identity provider (`support.IdP`) and a fake source of resources (`support.Source`).
 Tests of a package run one after another: they share the Redis.
@@ -92,7 +92,7 @@ c.Replicas[1].Warm(c, harness.Branches(p.Slug, alice), alice) // until the cost 
 - **Levers.** The freshness of a request is `?consistency=higher` for its caller, and `engine.WithConsistency` in the context for
   the process that serves it (it wins over the query, and no network input sets it). `harness.Levers(handler)` is the test-only
   wrapper that turns the header `X-Test-Consistency` (`higher` or `minimize_latency`) into it; it lives under `tests/`, so no
-  binary has it. The check replicas of the harness are behind it, and a test asks for the freshest answer with the lever
+  binary has it. The PDP replicas of the harness are behind it, and a test asks for the freshest answer with the lever
   (`Replica.Fresh`, or `harness.Higher()` as the last argument of `Send`, `Try` and `HTTPRequest`), not with `?consistency=higher`,
   so that no test depends on a parameter of the API. The revision to reflect is `authzenreq.AtLeast(rev)` (`Replica.Permission` asks for the last
   write of the test). A test that needs to know whether an answer lacked the data of a type reads `Trace.SyncPending()` of its own
@@ -145,7 +145,7 @@ schema of this one, `.github/workflows/ci.yml`, job `previous-release`).
 
 `cluster/f6_test.go` needs a real streaming replica of the PostgreSQL of `LICETUM_TEST_POSTGRES_URI`: `LICETUM_TEST_REPLICA_ADDR=host:port`
 (skipped without it). `scripts/pg-replica.sh up` starts a primary and a replica from the server binaries of the machine (no Docker) and prints
-the two exports; `task go:test:integration:replica` does all of it. `harness.WithReadReplica()` gives the check replicas a read pool on it;
+the two exports; `task go:test:integration:replica` does all of it. `harness.WithReadReplica()` gives the PDP replicas a read pool on it;
 `Cluster.PauseReplay`/`ResumeReplay` (`pg_wal_replay_pause`) make it lag.
 
 | test | proves |

@@ -21,10 +21,10 @@ import (
 // database and Redis, so many more than the cores can be served at once.
 const defaultInflightPerCPU = 256
 
-// Default request deadlines, when HTTP__REQUEST_TIMEOUT is zero: the check API answers within a budget; the admin API
+// Default request deadlines, when HTTP__REQUEST_TIMEOUT is zero: the PDP answers within a budget; the admin API
 // waits for synchronizations (SYNC__ADMIN_WAIT) and keeps the 60 s the server always allowed a response.
 const (
-	defaultCheckRequestTimeout = 10 * time.Second
+	defaultPDPRequestTimeout   = 10 * time.Second
 	defaultAdminRequestTimeout = 60 * time.Second
 )
 
@@ -52,8 +52,8 @@ func (a *App) RequestTimeout() time.Duration {
 	switch {
 	case d < 0:
 		return 0
-	case d == 0 && a.Role == RoleCheck:
-		return defaultCheckRequestTimeout
+	case d == 0 && a.Role == RolePDP:
+		return defaultPDPRequestTimeout
 	case d == 0 && (a.Role == RoleAdmin || a.Role == RoleWorker):
 		return defaultAdminRequestTimeout
 	}

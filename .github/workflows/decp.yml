@@ -1,6 +1,6 @@
 name: Decision property test
 
-# DECP of contracts.yaml on many generated policies: the engine of the check API against the reference evaluator, over a
+# DECP of contracts.yaml on many generated policies: the engine of the PDP against the reference evaluator, over a
 # wider range of seeds than the pull request runs (seeds 1-20 there). Nightly through the nightly suite, and on demand; a
 # failure names the seed to run again with LICETUM_DECP_SEEDS.
 on:

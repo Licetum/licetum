@@ -163,7 +163,7 @@ func setup(t *testing.T) *env {
 	e.pool = pool
 	e.cfg = cfg
 	e.admin = newTestServer(t, api.NewAdminHandler(app))
-	e.check = newTestServer(t, server.NewCheckHandler(app.App))
+	e.check = newTestServer(t, server.NewPDPHandler(app.App))
 	t.Cleanup(e.admin.Close)
 	t.Cleanup(e.check.Close)
 	e.adminToken = e.token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
