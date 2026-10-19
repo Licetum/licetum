@@ -20,20 +20,20 @@ func TestAPIKeyIsMadeAndParsedBackInItsFormat(t *testing.T) {
 	if !apiKeyShape.MatchString(full) {
 		t.Fatalf("the key %q is not in the format", full)
 	}
-	gotID, secret, err := ParseAPIKey(full)
+	gotID, random, err := ParseAPIKey(full)
 	if err != nil {
 		t.Fatalf("the key does not parse: %v", err)
 	}
 	if gotID != keyID || !strings.HasPrefix(full, "lct_"+keyID+"_") {
 		t.Fatalf("parsed id %q, made id %q", gotID, keyID)
 	}
-	if !bytes.Equal(hash, HashSecret(secret)) {
+	if !bytes.Equal(hash, HashSecret(random)) {
 		t.Fatal("the stored hash is not the hash of the secret")
 	}
-	if !CompareSecret(hash, secret) {
+	if !CompareSecret(hash, random) {
 		t.Fatal("the secret does not match its hash")
 	}
-	if CompareSecret(hash, secret+"x") || CompareSecret(hash[:31], secret) || CompareSecret(nil, secret) {
+	if CompareSecret(hash, random+"x") || CompareSecret(hash[:31], random) || CompareSecret(nil, random) {
 		t.Fatal("a different secret, or a hash of another length, matches")
 	}
 
@@ -74,10 +74,10 @@ func TestAPIKeyFormatIsStrict(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			keyID, secret, err := ParseAPIKey(c.key)
+			keyID, random, err := ParseAPIKey(c.key)
 			if c.ok {
-				if err != nil || keyID != id || secret != canonical {
-					t.Fatalf("parsed %q, %q, %v", keyID, secret, err)
+				if err != nil || keyID != id || random != canonical {
+					t.Fatalf("parsed %q, %q, %v", keyID, random, err)
 				}
 				return
 			}
@@ -93,8 +93,8 @@ func TestAPIKeyFormatIsStrict(t *testing.T) {
 
 // TestAPIKeyDummyCompareDoesNotPanic: the comparison for an unknown key id runs for any secret, and says nothing.
 func TestAPIKeyDummyCompareDoesNotPanic(t *testing.T) {
-	for _, secret := range []string{"", "x", strings.Repeat("A", 43), "lct_not-a-key"} {
-		DummyCompare(secret)
+	for _, random := range []string{"", "x", strings.Repeat("A", 43), "lct_not-a-key"} {
+		DummyCompare(random)
 	}
 	if !bytes.Equal(dummyHash, HashSecret("")) {
 		t.Fatal("the dummy hash is not the hash of the empty secret")

@@ -117,17 +117,17 @@ func verifyFailure(err error) error {
 // costs one comparison, so the answer does not tell a key id that exists from one that does not by its time.
 func apiKeyClient(dir *PEPDirectory, key string, now time.Time) (db.PEPClient, error) {
 	invalid := apperr.InvalidToken(i18n.TokenInvalid)
-	keyID, secret, err := pepauth.ParseAPIKey(key)
+	keyID, random, err := pepauth.ParseAPIKey(key)
 	if err != nil {
 		pepauth.DummyCompare(key)
 		return db.PEPClient{}, invalid
 	}
 	cred, client, ok := dir.APIKey(keyID, now)
 	if !ok {
-		pepauth.DummyCompare(secret)
+		pepauth.DummyCompare(random)
 		return db.PEPClient{}, invalid
 	}
-	if !pepauth.CompareSecret(cred.SHA256, secret) {
+	if !pepauth.CompareSecret(cred.SHA256, random) {
 		return db.PEPClient{}, invalid
 	}
 	return client, nil
