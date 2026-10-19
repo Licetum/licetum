@@ -3,7 +3,9 @@
   "path": "/service/orders/access/v1/evaluations?at_least_as_fresh=3",
   "body": {
     "context": {
-      "explain": true
+      "licetum": {
+        "explain": true
+      }
     },
     "evaluations": [
       {
@@ -29,6 +31,7 @@
           "name": "enabled"
         },
         "resource": {
+          "id": "*",
           "type": "flag"
         }
       }

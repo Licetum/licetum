@@ -1,0 +1,18 @@
+{
+  "name": "the subject, the action and the context given at the top level are the defaults of each evaluation",
+  "source": "AuthZEN 1.0, Access Evaluations API: top-level fields are defaults for the evaluations that omit them",
+  "checked_against_text": false,
+  "endpoint": "evaluations",
+  "grants": [["alice@acmecorp.com", "can_read", "todo", "1"], ["alice@acmecorp.com", "can_read", "todo", "3"]],
+  "request": {
+    "subject": {"type": "user", "id": "alice@acmecorp.com"},
+    "action": {"name": "can_read"},
+    "context": {"time": "1985-10-26T01:22-07:00"},
+    "evaluations": [
+      {"resource": {"type": "todo", "id": "1"}},
+      {"resource": {"type": "todo", "id": "2"}},
+      {"resource": {"type": "todo", "id": "3"}}
+    ]
+  },
+  "decisions": [true, false, true]
+}

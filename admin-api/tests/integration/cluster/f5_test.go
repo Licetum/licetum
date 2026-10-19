@@ -46,6 +46,10 @@ func healthz(c *harness.Cluster, r *harness.Replica) *harness.Result {
 // errorCode is extra.code of an error answer.
 func errorCode(t *testing.T, res *harness.Result) string {
 	t.Helper()
+	// The AuthZEN operations answer a JSON string and name the code in a header.
+	if code := res.Header.Get("Licetum-Error-Code"); code != "" {
+		return code
+	}
 	var body struct {
 		Detail string `json:"detail"`
 		Extra  struct {

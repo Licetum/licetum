@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -274,15 +273,15 @@ func TestAuthzenMetadata(t *testing.T) {
 
 // ---------- over HTTP, without a database: what fails before the service is looked up ----------
 
-func post(t *testing.T, h http.Handler, path, body string) (int, map[string]any) {
+// post sends a POST without credentials, and returns the status, the body and the code of the error (its
+// Licetum-Error-Code header).
+func post(t *testing.T, h http.Handler, path, body string) (int, string, string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	var out map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	return rec.Code, out
+	return rec.Code, rec.Body.String(), rec.Header().Get("Licetum-Error-Code")
 }
 
 // Each invalid request is a 400 in the error shape, with the code of what was wrong: the schema (validation_failed), or the
@@ -307,12 +306,12 @@ func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
 		"resource search needs action": {"search/resource", `{"subject":{"type":"user","id":"a"},"resource":{"type":"t"}}`, "authzen_field_required"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			status, body := post(t, h, base+c.path, c.body)
+			status, body, code := post(t, h, base+c.path, c.body)
 			if status != http.StatusBadRequest {
-				t.Fatalf("status %d, want 400: %v", status, body)
+				t.Fatalf("status %d, want 400: %s", status, body)
 			}
-			if extra, _ := body["extra"].(map[string]any); extra["code"] != c.code {
-				t.Fatalf("code %v, want %s: %v", extra["code"], c.code, body)
+			if code != c.code {
+				t.Fatalf("code %q, want %s: %s", code, c.code, body)
 			}
 		})
 	}
@@ -320,7 +319,7 @@ func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
 
 func TestOtherOperationsKeepTheirValidationStatus(t *testing.T) {
 	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
-	status, body := post(t, h, "/service/orders/check", `{"checks":[]}`)
+	status, body, _ := post(t, h, "/service/orders/check", `{"checks":[]}`)
 	if status != http.StatusUnprocessableEntity {
 		t.Fatalf("the check API keeps its 422: %d %v", status, body)
 	}
@@ -331,7 +330,7 @@ func TestAuthzenMetadataNeedsAPublicURL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/authzen-configuration/service/orders", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "authzen_metadata_disabled") {
+	if rec.Code != http.StatusNotFound || rec.Header().Get("Licetum-Error-Code") != "authzen_metadata_disabled" {
 		t.Fatalf("without HTTP__PUBLIC_URL there is no document: %d %s", rec.Code, rec.Body)
 	}
 }

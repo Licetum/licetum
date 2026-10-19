@@ -1,0 +1,18 @@
+{
+  "name": "permit_on_first_permit stops at the first permit: the answer ends with it",
+  "source": "AuthZEN 1.0, evaluations_semantic permit_on_first_permit",
+  "checked_against_text": false,
+  "endpoint": "evaluations",
+  "grants": [["alice@acmecorp.com", "can_read", "todo", "1"], ["alice@acmecorp.com", "can_read", "todo", "3"]],
+  "request": {
+    "subject": {"type": "user", "id": "alice@acmecorp.com"},
+    "action": {"name": "can_read"},
+    "options": {"evaluations_semantic": "permit_on_first_permit"},
+    "evaluations": [
+      {"resource": {"type": "todo", "id": "2"}},
+      {"resource": {"type": "todo", "id": "3"}},
+      {"resource": {"type": "todo", "id": "1"}}
+    ]
+  },
+  "decisions": [false, true]
+}

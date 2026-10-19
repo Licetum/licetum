@@ -50,9 +50,9 @@ for every service, under `/service/{id or slug}/access/v1/`: `evaluation`, `eval
 a service is `<HTTP__PUBLIC_URL>/service/{id or slug}`; its metadata is at
 `/.well-known/authzen-configuration/service/{id or slug}` (served only when `HTTP__PUBLIC_URL` is set).
 
-- The resource type is a resource type of the service, the resource id its id in the external system (empty: the type as a whole),
-  the action an access level. `context` holds the attributes of the request the rules read; `{"explain": true}` returns the
-  explanation in `context.reason_admin`.
+- The resource type is a resource type of the service, the resource id its id in the external system (`*`: the type as a whole),
+  the action an access level. `context` holds the attributes of the request the rules read; `{"licetum": {"explain": true}}` returns
+  the explanation in `context.reason_admin`. The `licetum` object is the only place of the settings of the request.
 - The subject is the holder of the bearer token. A client application listed in the service's `trusted_clients` may ask about any
   person, giving the person's claims in `subject.properties`; these calls are recorded like the calls on behalf of a person.
 - The subject search is for trusted clients only and decides the known subjects (`SUBJECTS__ENABLED`).

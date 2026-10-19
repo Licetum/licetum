@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/apperr"
+	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
@@ -17,7 +18,8 @@ import (
 // authzenCaller is the holder of a verified token, who asks AuthZEN questions: about themselves, or — when the service
 // trusts their client application — about other people, whose claims they give as subject.properties.
 type authzenCaller struct {
-	app       *engine.App
+	app       pdpEngine
+	cfg       *config.Config
 	serviceID uuid.UUID
 	svc       *model.Service
 	subject   string
@@ -44,7 +46,7 @@ type speaker struct {
 	delegated bool
 }
 
-func newAuthzenCaller(ctx context.Context, app *engine.App, serviceID uuid.UUID, authorization string) (*authzenCaller, error) {
+func newAuthzenCaller(ctx context.Context, app pdpEngine, cfg *config.Config, serviceID uuid.UUID, authorization string) (*authzenCaller, error) {
 	svc, claims, err := verifiedCaller(ctx, app, serviceID, authorization)
 	if err != nil {
 		return nil, err
@@ -54,7 +56,7 @@ func newAuthzenCaller(ctx context.Context, app *engine.App, serviceID uuid.UUID,
 		return nil, err
 	}
 	SetRequestUser(ctx, subject)
-	c := &authzenCaller{app: app, serviceID: serviceID, svc: svc, subject: subject, claims: claims, tally: map[string]*delegatedTally{}}
+	c := &authzenCaller{app: app, cfg: cfg, serviceID: serviceID, svc: svc, subject: subject, claims: claims, tally: map[string]*delegatedTally{}}
 	// The caller is a subject like any other, a trusted client application included: rules may grant a service account
 	// access by the attributes of its claims, so it belongs to the registry as well.
 	app.NoteSubject(subject, claims)

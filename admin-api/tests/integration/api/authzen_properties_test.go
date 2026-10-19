@@ -100,19 +100,19 @@ func TestAuthzenOnlyAClientTheServiceTrustsMayAskAboutAnotherPerson(t *testing.T
 	w := newWorld(t)
 	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1", "subject": "dave", "access": []string{"read"}})
 	// about asks whether dave may read the resource of the service, as the holder of the token made of the claims (none: no token).
-	about := func(ref string, resource authzenreq.Resource, claims jwt.MapClaims) (int, []byte) {
+	about := func(ref string, resource authzenreq.Resource, claims jwt.MapClaims) (int, http.Header, []byte) {
 		w.t.Helper()
 		token := ""
 		if claims != nil {
 			token = w.token(claims)
 		}
-		return w.ask(authzenreq.Evaluation(ref, "dave", resource, "read"), token)
+		return w.askWithHeader(authzenreq.Evaluation(ref, "dave", resource, "read"), token)
 	}
 	org, branch := w.ref(w.org), authzenreq.On("branch", "B1")
 
 	// Nobody is trusted yet.
-	status, body := about(org, branch, jwt.MapClaims{"azp": "docs-backend", "sub": "svc"})
-	requireErrorCode(t, status, body, http.StatusForbidden, "authzen_subject_mismatch")
+	status, header, body := about(org, branch, jwt.MapClaims{"azp": "docs-backend", "sub": "svc"})
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_subject_mismatch")
 
 	// The service names its clients; a client is its azp, or its client_id when there is no azp.
 	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend", "reports"}})
@@ -120,24 +120,24 @@ func TestAuthzenOnlyAClientTheServiceTrustsMayAskAboutAnotherPerson(t *testing.T
 		"azp":       {"azp": "docs-backend", "sub": "svc"},
 		"client_id": {"client_id": "reports", "sub": "svc"},
 	} {
-		status, body := about(org, branch, claims)
+		status, _, body := about(org, branch, claims)
 		if allowed, err := authzenreq.Allowed(status, body); err != nil || !allowed {
 			t.Errorf("a client trusted by its %s asks about dave: %d %s", name, status, body)
 		}
 	}
 
 	// A token that names no client, and a client the service does not trust, are refused, and no token is a 401.
-	status, body = about(org, branch, jwt.MapClaims{"sub": "svc"})
-	requireErrorCode(t, status, body, http.StatusForbidden, "authzen_subject_mismatch")
-	status, body = about(org, branch, jwt.MapClaims{"azp": "stranger", "sub": "svc"})
-	requireErrorCode(t, status, body, http.StatusForbidden, "authzen_subject_mismatch")
-	if status, _ = about(org, branch, nil); status != http.StatusUnauthorized {
+	status, header, body = about(org, branch, jwt.MapClaims{"sub": "svc"})
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_subject_mismatch")
+	status, header, body = about(org, branch, jwt.MapClaims{"azp": "stranger", "sub": "svc"})
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_subject_mismatch")
+	if status, _, _ = about(org, branch, nil); status != http.StatusUnauthorized {
 		t.Fatalf("no token: %d", status)
 	}
 
 	// Another service does not trust the client.
-	status, body = about(w.ref(w.appSvc), authzenreq.On("item", "I1"), jwt.MapClaims{"azp": "docs-backend", "sub": "svc"})
-	requireErrorCode(t, status, body, http.StatusForbidden, "authzen_subject_mismatch")
+	status, header, body = about(w.ref(w.appSvc), authzenreq.On("item", "I1"), jwt.MapClaims{"azp": "docs-backend", "sub": "svc"})
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_subject_mismatch")
 }
 
 func TestAuthzenASubjectThatLooksLikeAGroupIsRefused(t *testing.T) {
@@ -145,10 +145,10 @@ func TestAuthzenASubjectThatLooksLikeAGroupIsRefused(t *testing.T) {
 	groupSubject := "group:" + w.group
 
 	// A subject like that would be taken for the group itself: the evaluation is refused.
-	status, body := w.ask(authzenreq.Evaluation(w.ref(w.org), groupSubject, authzenreq.On("branch", "B1"), "read"), w.client)
-	requireErrorCode(t, status, body, http.StatusBadRequest, "delegation_subject_invalid")
-	status, body = w.ask(authzenreq.SearchResource(w.ref(w.org), groupSubject, "branch", "read"), w.client)
-	requireErrorCode(t, status, body, http.StatusBadRequest, "delegation_subject_invalid")
+	status, header, body := w.askWithHeader(authzenreq.Evaluation(w.ref(w.org), groupSubject, authzenreq.On("branch", "B1"), "read"), w.client)
+	requireAuthzenError(t, status, header, body, http.StatusBadRequest, "delegation_subject_invalid")
+	status, header, body = w.askWithHeader(authzenreq.SearchResource(w.ref(w.org), groupSubject, "branch", "read"), w.client)
+	requireAuthzenError(t, status, header, body, http.StatusBadRequest, "delegation_subject_invalid")
 
 	// In a batch it is a denial that says why, not a failure of the batch, and not a decision.
 	status, body = w.ask(authzenreq.Evaluations(w.ref(w.org), groupSubject, []authzenreq.Question{
@@ -168,26 +168,26 @@ func TestAuthzenTheClaimsOfAPersonAreBounded(t *testing.T) {
 		}
 		return out
 	}
-	about := func(properties map[string]any) (int, []byte) {
+	about := func(properties map[string]any) (int, http.Header, []byte) {
 		w.t.Helper()
-		return w.ask(authzenreq.Evaluation(w.ref(w.org), "dave", authzenreq.On("branch", "B1"), "read", authzenreq.WithProperties(properties)), w.client)
+		return w.askWithHeader(authzenreq.Evaluation(w.ref(w.org), "dave", authzenreq.On("branch", "B1"), "read", authzenreq.WithProperties(properties)), w.client)
 	}
 
 	// At most 100 claims.
-	status, body := about(claims(100))
+	status, _, body := about(claims(100))
 	if _, err := authzenreq.Allowed(status, body); err != nil {
 		t.Fatalf("100 claims: %v", err)
 	}
-	status, body = about(claims(101))
-	requireErrorCode(t, status, body, http.StatusBadRequest, "delegation_claims_invalid")
+	status, header, body := about(claims(101))
+	requireAuthzenError(t, status, header, body, http.StatusBadRequest, "delegation_claims_invalid")
 
 	// At most 16 KiB of them.
-	status, body = about(map[string]any{"note": strings.Repeat("x", 10*1024)})
+	status, _, body = about(map[string]any{"note": strings.Repeat("x", 10*1024)})
 	if _, err := authzenreq.Allowed(status, body); err != nil {
 		t.Fatalf("10 KiB of claims: %v", err)
 	}
-	status, body = about(map[string]any{"note": strings.Repeat("x", 17*1024)})
-	requireErrorCode(t, status, body, http.StatusBadRequest, "delegation_claims_invalid")
+	status, header, body = about(map[string]any{"note": strings.Repeat("x", 17*1024)})
+	requireAuthzenError(t, status, header, body, http.StatusBadRequest, "delegation_claims_invalid")
 }
 
 func TestAuthzenTheResourcesOfAPersonAreSearchedByTheirProperties(t *testing.T) {

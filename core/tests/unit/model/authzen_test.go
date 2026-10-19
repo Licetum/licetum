@@ -300,12 +300,21 @@ func TestParseAuthzenContextReadsTheLicetumSettings(t *testing.T) {
 	if err != nil || nested.Explain {
 		t.Fatalf("a nested licetum must not be read as the settings: %+v, %v", nested, err)
 	}
+	// The header of the PDP, 1.<r>, is a valid min_revision: the epoch is checked and only r is kept.
+	for value, want := range map[string]string{"42": "42", "1.42": "42", "7.0": "0"} {
+		_, got, err := model.ParseAuthzenContext(map[string]any{"licetum": map[string]any{"min_revision": value}})
+		if err != nil || got.MinRevision != want {
+			t.Errorf("min_revision %q: got %q, %v; want %q", value, got.MinRevision, err, want)
+		}
+	}
 	for name, raw := range map[string]any{
 		"not an object":         "yes",
 		"null":                  nil,
 		"an unknown field":      map[string]any{"verbose": true},
 		"a number revision":     map[string]any{"min_revision": 42},
 		"a revision not digits": map[string]any{"min_revision": "4x2"},
+		"an epoch not digits":   map[string]any{"min_revision": "x.42"},
+		"two dots":              map[string]any{"min_revision": "1.2.3"},
 		"explain not a bool":    map[string]any{"explain": "yes"},
 	} {
 		t.Run(name, func(t *testing.T) {

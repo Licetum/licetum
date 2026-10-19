@@ -781,26 +781,42 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "404":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "422":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
       summary: AuthZEN Policy Decision Point metadata
       tags:
         - AuthZEN
@@ -895,15 +911,19 @@ paths:
       description: |-
         Decides whether the subject may perform the action on the resource.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
-        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
-        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
+        subject.properties, and every such call is recorded as the calls on behalf of a person are.
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
+        has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_evaluation
       parameters:
         - description: Service id or slug
@@ -913,26 +933,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
       requestBody:
         content:
           application/json:
@@ -950,44 +950,72 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "401":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "403":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "404":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "422":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "424":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
       security:
         - bearer: []
       summary: AuthZEN access evaluation
@@ -998,15 +1026,19 @@ paths:
       description: |-
         Decides up to 100 evaluations in one request; subject, resource, action and context given at the top level are defaults for the evaluations that omit them. options.evaluations_semantic chooses between answering all of them (execute_all, the default), stopping at the first denial (deny_on_first_deny) and stopping at the first permit (permit_on_first_permit). An evaluation that cannot be decided is a denial with context.error holding its status and message. Without evaluations the top-level fields are one evaluation, and the answer is its decision.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
-        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
-        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
+        subject.properties, and every such call is recorded as the calls on behalf of a person are.
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
+        has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_evaluations
       parameters:
         - description: Service id or slug
@@ -1016,26 +1048,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
       requestBody:
         content:
           application/json:
@@ -1053,44 +1065,72 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "401":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "403":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "404":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "422":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "424":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
       security:
         - bearer: []
       summary: AuthZEN access evaluations (batch)
@@ -1104,15 +1144,19 @@ paths:
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
-        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
-        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
+        subject.properties, and every such call is recorded as the calls on behalf of a person are.
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
+        has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_search_action
       parameters:
         - description: Service id or slug
@@ -1122,26 +1166,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
       requestBody:
         content:
           application/json:
@@ -1159,44 +1183,72 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "401":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "403":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "404":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "422":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "424":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
       security:
         - bearer: []
       summary: AuthZEN action search
@@ -1210,15 +1262,19 @@ paths:
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
-        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
-        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
+        subject.properties, and every such call is recorded as the calls on behalf of a person are.
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
+        has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_search_resource
       parameters:
         - description: Service id or slug
@@ -1228,26 +1284,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
       requestBody:
         content:
           application/json:
@@ -1265,44 +1301,72 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "401":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "403":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "404":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "422":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "424":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
       security:
         - bearer: []
       summary: AuthZEN resource search
@@ -1316,15 +1380,19 @@ paths:
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service (the service is in the path, as its id or its
-        slug). resource.type is the name of a resource type of the service, resource.id the resource id in the external system
-        (* — the type as a whole), action.name an access level. subject.id is the subject of the bearer token
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
         (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
         client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are. The context holds the
-        attributes of the request that the rules may read; its key licetum holds the settings of Licetum (explain, min_revision).
+        subject.properties, and every such call is recorded as the calls on behalf of a person are.
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403.
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
+        has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_search_subject
       parameters:
         - description: Service id or slug
@@ -1334,26 +1402,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
       requestBody:
         content:
           application/json:
@@ -1371,44 +1419,72 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "401":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "403":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "404":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "422":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "424":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: string
           description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
       security:
         - bearer: []
       summary: AuthZEN subject search
@@ -1438,26 +1514,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
       requestBody:
         content:
           application/json:
@@ -1535,26 +1591,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
       requestBody:
         content:
           application/json:
@@ -1638,26 +1674,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
       requestBody:
         content:
           application/json:
@@ -1765,26 +1781,6 @@ paths:
           schema:
             description: Service id or slug
             type: string
-        - description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-          explode: false
-          in: query
-          name: consistency
-          schema:
-            default: minimize_latency
-            description: "minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"
-            enum:
-              - minimize_latency
-              - higher
-            type: string
-        - description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-          explode: false
-          in: query
-          name: at_least_as_fresh
-          schema:
-            description: "The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"
-            format: int64
-            minimum: 0
-            type: integer
         - description: Only this resource type
           explode: false
           in: query

@@ -277,6 +277,13 @@ func (e *env) token(claims jwt.MapClaims) string {
 
 func (e *env) do(method, url string, body any, headers ...string) (int, []byte) {
 	e.t.Helper()
+	status, _, raw := e.doWithHeader(method, url, body, headers...)
+	return status, raw
+}
+
+// doWithHeader is do with the headers of the answer too: the code of an AuthZEN error is in its Licetum-Error-Code header.
+func (e *env) doWithHeader(method, url string, body any, headers ...string) (int, http.Header, []byte) {
+	e.t.Helper()
 	var reader *bytes.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -314,7 +321,7 @@ func (e *env) do(method, url string, body any, headers ...string) (int, []byte) 
 	if _, err := io.Copy(&buf, resp.Body); err != nil {
 		e.t.Fatalf("read response: %v", err)
 	}
-	return resp.StatusCode, buf.Bytes()
+	return resp.StatusCode, resp.Header, buf.Bytes()
 }
 
 // must performs an admin API request that must return 200 and returns the decoded JSON.

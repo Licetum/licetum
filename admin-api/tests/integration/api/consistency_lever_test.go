@@ -133,8 +133,8 @@ func (w *leverWorld) routes() []leverRoute {
 }
 
 // The legacy check route answers 422 for a context name the rules cannot read (core/server/check.go documents it). The
-// AuthZEN evaluation answers 400 for the same name, the specification has no 422 (conditions_test.go asserts that). The
-// legal name in the same body is answered, so the refusal is the name's and not the body's.
+// AuthZEN evaluation ignores such a name instead (AZ06; conditions_test.go asserts that). The legal name in the same body
+// is answered, so the refusal is the name's and not the body's.
 func TestLegacyCheckAnswers422ForAContextNameWithASpace(t *testing.T) {
 	w := newLeverWorld(t)
 	checks := []map[string]any{{"type": "branch", "resource_id": "B1", "action": "read"}}

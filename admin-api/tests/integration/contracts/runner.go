@@ -600,8 +600,8 @@ func (l *Loaded) runBatch(ops []model.BatchOperation, what []string) {
 // the data of some type fails the test.
 func (l *Loaded) Ask(c *policyfix.Case) []Answer {
 	l.t.Helper()
-	if _, clash := c.Context["explain"]; clash {
-		l.t.Fatalf("fixture %s, case %q: the context names an attribute explain, which is how an evaluation asks for its explanation", l.f.Name, c.Name)
+	if _, clash := c.Context["licetum"]; clash {
+		l.t.Fatalf("fixture %s, case %q: the context names an attribute licetum, the key of the settings of Licetum in an evaluation (context.licetum.explain asks for the explanation)", l.f.Name, c.Name)
 	}
 	l.clock.Set(l.f.NowOf(c))
 	token := l.tokenOf(c)

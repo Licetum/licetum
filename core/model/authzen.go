@@ -65,7 +65,7 @@ type AuthzenAction struct {
 // AuthzenLicetum holds the settings of Licetum that an AuthZEN request carries in the top-level key licetum of its context.
 // A licetum nested in an attribute is an attribute like any other.
 type AuthzenLicetum struct {
-	MinRevision string `json:"min_revision,omitempty" doc:"The revision of an admin write (the X-Authz-Revision header of its response): the answer reflects every write up to it. A decimal number, as a string"`
+	MinRevision string `json:"min_revision,omitempty" doc:"The revision the answer must reflect: the Licetum-Revision header of an earlier answer (1.<r>) or the X-Authz-Revision header of an admin write, as a string. A bare decimal r is accepted too"`
 	Explain     bool   `json:"explain,omitempty" doc:"Return the explanation of the decision in context.reason_admin"`
 }
 
@@ -224,7 +224,7 @@ func (r *AuthzenEvaluationsRequest) Validate() error {
 		if attrs == nil {
 			attrs = r.Context
 		}
-		if err := checkEvaluation("evaluations["+strconv.Itoa(i)+"].", sub, res, act, attrs); err != nil {
+		if err := checkEvaluationWith("evaluations["+strconv.Itoa(i)+"].", sub, res, act, attrs, false); err != nil {
 			return err
 		}
 	}
@@ -281,7 +281,18 @@ func authzenRequired(field string) error {
 // checkEvaluation checks the subject, the resource and the action of an evaluation, and its context. field names the
 // evaluation in the errors: "" for a request on its own, "evaluations[2]." for an evaluation of a batch.
 func checkEvaluation(field string, sub *AuthzenSubject, res *AuthzenResource, act *AuthzenAction, attrs map[string]any) error {
-	if err := checkSubject(field+"subject", sub, true); err != nil {
+	return checkEvaluationWith(field, sub, res, act, attrs, true)
+}
+
+// checkEvaluationWith is checkEvaluation; with bounds false the subject is only checked for its presence. An evaluation of a
+// batch is decided on its own: a subject the bounds refuse is that evaluation's denial with its reason (the speaker refuses
+// it), not a refusal of the whole batch, as the specification reports the errors of an evaluation in its context.
+func checkEvaluationWith(field string, sub *AuthzenSubject, res *AuthzenResource, act *AuthzenAction, attrs map[string]any, bounds bool) error {
+	if bounds {
+		if err := checkSubject(field+"subject", sub, true); err != nil {
+			return err
+		}
+	} else if err := checkSubjectPresent(field+"subject", sub); err != nil {
 		return err
 	}
 	if res == nil {
@@ -320,6 +331,20 @@ func checkSubject(field string, s *AuthzenSubject, withID bool) error {
 	}
 	_, err := PrepareSubject(s.Type, s.ID, s.Properties)
 	return err
+}
+
+// checkSubjectPresent checks that a subject is given, with its type and its id, and leaves their bounds to PrepareSubject.
+func checkSubjectPresent(field string, s *AuthzenSubject) error {
+	if s == nil {
+		return authzenRequired(field)
+	}
+	if s.Type == "" {
+		return authzenRequired(field + ".type")
+	}
+	if s.ID == "" {
+		return authzenRequired(field + ".id")
+	}
+	return nil
 }
 
 // checkResourceType checks that the resource names a type. Its id is for the endpoint to read or to ignore.
@@ -485,9 +510,19 @@ func parseAuthzenLicetum(v any) (AuthzenLicetum, error) {
 				return AuthzenLicetum{}, apperr.Unprocessable(i18n.AuthzenLicetumInvalid)
 			}
 			if s != "" {
-				if _, err := strconv.ParseUint(s, 10, 63); err != nil {
+				// The value is the Licetum-Revision header, 1.<r>, or a bare r. The epoch e is checked and not compared yet
+				// (ADR 0001, section 6.4): only the revision r is kept.
+				rev := s
+				if epoch, after, found := strings.Cut(s, "."); found {
+					if _, err := strconv.ParseUint(epoch, 10, 63); err != nil {
+						return AuthzenLicetum{}, apperr.Unprocessable(i18n.AuthzenLicetumInvalid)
+					}
+					rev = after
+				}
+				if _, err := strconv.ParseUint(rev, 10, 63); err != nil {
 					return AuthzenLicetum{}, apperr.Unprocessable(i18n.AuthzenLicetumInvalid)
 				}
+				s = rev
 			}
 			out.MinRevision = s
 		case "explain":

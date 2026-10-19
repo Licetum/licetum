@@ -15,7 +15,13 @@ import (
 // may do read (the search of AuthZEN, authzenreq.SearchResource). SeedPolicy gives alice read on every branch. It is the request
 // of Replica.Permission, Fresh and TryPermission; the options are those of authzenreq (AtLeast, Page).
 func Branches(ref, token string, opts ...authzenreq.Option) authzenreq.Request {
-	return authzenreq.SearchResource(ref, authzenreq.SubjectOf(token), "branch", "read", opts...)
+	// A token that names nobody (a refused token) still gets a well-formed request: the subject id is required, and the
+	// server refuses the token itself with 401.
+	subject := authzenreq.SubjectOf(token)
+	if subject == "" {
+		subject = "nobody"
+	}
+	return authzenreq.SearchResource(ref, subject, "branch", "read", opts...)
 }
 
 // PermissionRequest is the request of Replica.Permission: Branches, asking for an answer that reflects the last write made through

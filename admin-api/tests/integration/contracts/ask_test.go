@@ -46,14 +46,14 @@ cases:
 			"subject": {"type": "user", "id": "ann"},
 			"evaluations": [
 				{"resource": {"type": "store", "id": "s1"}, "action": {"name": "read"}},
-				{"resource": {"type": "reports"}, "action": {"name": "list"}}
+				{"resource": {"type": "reports", "id": "*"}, "action": {"name": "list"}}
 			],
-			"context": {"explain": true, "ip": "10.0.0.1"}
+			"context": {"licetum": {"explain": true}, "ip": "10.0.0.1"}
 		}`},
 		{&f.Cases[1], `{
 			"subject": {"type": "user", "id": "bob"},
 			"evaluations": [{"resource": {"type": "store", "id": "s1"}, "action": {"name": "write"}}],
-			"context": {"explain": true}
+			"context": {"licetum": {"explain": true}}
 		}`},
 	} {
 		req := evaluationsOf("shop", tc.c, tc.c.Questions)
@@ -75,7 +75,7 @@ cases:
 			t.Errorf("case %q:\n got %s\nwant %s", tc.c.Name, raw, tc.want)
 		}
 	}
-	if _, ok := f.Cases[0].Context["explain"]; ok || len(f.Cases[0].Context) != 1 {
+	if _, ok := f.Cases[0].Context["licetum"]; ok || len(f.Cases[0].Context) != 1 {
 		t.Errorf("the request changed the context of the case: %v", f.Cases[0].Context)
 	}
 }

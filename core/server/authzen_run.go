@@ -52,10 +52,9 @@ func badRequest(err error) *apperr.Error {
 
 // evaluation is one question of an Access Evaluation(s) request while it is being answered.
 type evaluation struct {
-	req     model.CheckRequest
-	sp      speaker
-	attrs   model.RequestContext
-	explain bool
+	req   model.CheckRequest
+	sp    speaker
+	attrs model.RequestContext
 	// err is why the question could not be decided; the decision is then false.
 	err  *apperr.Error
 	resp model.AuthzenEvaluationResponse
@@ -86,11 +85,12 @@ func (c *authzenCaller) prepare(ctx context.Context, e *evaluation, item model.A
 	}
 	e.sp = sp
 	e.req = model.CheckRequest{Type: item.Resource.Type, Action: item.Action.Name, ResourceID: resourceIDOf(item.Resource)}
-	attrs, settings, err := model.ParseAuthzenContext(item.Context)
+	// The settings of Licetum (context.licetum) are read from the top-level context of the batch only (authzenSettings): the
+	// context of an item holds its attributes, and its own licetum key is not a setting.
+	attrs, _, err := model.ParseAuthzenContext(item.Context)
 	if err != nil {
 		return badRequest(err)
 	}
-	e.explain = settings.Explain
 	e.attrs = attrs
 	return nil
 }
@@ -105,11 +105,27 @@ func resourceIDOf(r *model.AuthzenResource) *string {
 	return &id
 }
 
-// evaluate answers the items. The items that carry the same person and the same request attributes are decided in one
-// round (CheckAccess takes one environment per call). A question that cannot be decided has err set and no decision;
-// anything else that goes wrong fails the whole request.
-func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consistency, items []model.AuthzenEvaluationRequest, defaults model.AuthzenEvaluationsRequest) ([]evaluation, error) {
+// evaluate answers the items in order. Under execute_all, the items that carry the same person and the same request
+// attributes are decided in one round (CheckAccess takes one environment per call). The other semantics stop at the
+// evaluation that decides the batch: each evaluation is decided in turn, and nothing after the stopping one is evaluated,
+// so the result ends with it. A question that cannot be decided has err set and no decision; anything else that goes
+// wrong fails the whole request.
+func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consistency, items []model.AuthzenEvaluationRequest, defaults model.AuthzenEvaluationsRequest, explain bool, semantic string) ([]evaluation, error) {
 	evals := make([]evaluation, len(items))
+	if semantic != model.AuthzenExecuteAll {
+		for i, item := range items {
+			e := &evals[i]
+			if e.err = c.prepare(ctx, e, item, defaults); e.err == nil {
+				if err := c.decide(ctx, consistency, explain, evals, []int{i}); err != nil {
+					return nil, err
+				}
+			}
+			if stopsBatch(semantic, e.err == nil && e.resp.Decision) {
+				return evals[:i+1], nil
+			}
+		}
+		return evals, nil
+	}
 	groups := map[string][]int{}
 	var order []string
 	for i, item := range items {
@@ -136,33 +152,50 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 	}
 
 	for _, key := range order {
-		idx := groups[key]
-		first := evals[idx[0]]
-		group := make([]model.CheckRequest, len(idx))
-		anyExplain := false
-		for j, i := range idx {
-			group[j] = evals[i].req
-			anyExplain = anyExplain || evals[i].explain
-		}
-		env := c.app.NewEnv(first.sp.claims, first.attrs)
-		results, err := c.app.CheckAccess(ctx, c.serviceID, first.sp.subject, env, group, anyExplain, consistency)
-		if err != nil {
+		if err := c.decide(ctx, consistency, explain, evals, groups[key]); err != nil {
 			return nil, err
 		}
-		c.app.LogDecisions(ctx, c.serviceID, first.sp.subject, group, results, consistency)
-		allowed := 0
-		for j, i := range idx {
-			evals[i].resp = model.AuthzenEvaluationResponse{Decision: results[j].Allowed}
-			if results[j].Allowed {
-				allowed++
-			}
-			if evals[i].explain && results[j].Explanation != nil {
-				evals[i].resp.Context = map[string]any{"reason_admin": results[j].Explanation}
-			}
-		}
-		c.note(first.sp, len(idx), allowed)
 	}
 	return evals, nil
+}
+
+// decide answers the evaluations at idx with one CheckAccess call: they carry the same person and the same attributes.
+func (c *authzenCaller) decide(ctx context.Context, consistency engine.Consistency, explain bool, evals []evaluation, idx []int) error {
+	first := evals[idx[0]]
+	group := make([]model.CheckRequest, len(idx))
+	for j, i := range idx {
+		group[j] = evals[i].req
+	}
+	env := c.app.NewEnv(first.sp.claims, first.attrs)
+	results, err := c.app.CheckAccess(ctx, c.serviceID, first.sp.subject, env, group, explain, consistency)
+	if err != nil {
+		return err
+	}
+	c.app.LogDecisions(ctx, c.serviceID, first.sp.subject, group, results, consistency)
+	allowed := 0
+	for j, i := range idx {
+		evals[i].resp = model.AuthzenEvaluationResponse{Decision: results[j].Allowed}
+		if results[j].Allowed {
+			allowed++
+		}
+		if explain && results[j].Explanation != nil {
+			evals[i].resp.Context = map[string]any{"reason_admin": results[j].Explanation}
+		}
+	}
+	c.note(first.sp, len(idx), allowed)
+	return nil
+}
+
+// stopsBatch says whether the decision of an evaluation ends a batch under the semantic: a denial under deny_on_first_deny,
+// a permit under permit_on_first_permit.
+func stopsBatch(semantic string, decision bool) bool {
+	switch semantic {
+	case model.AuthzenDenyOnFirstDeny:
+		return !decision
+	case model.AuthzenPermitOnFirstPermit:
+		return decision
+	}
+	return false
 }
 
 // responseOf is the decision of an evaluation: a question that could not be decided is a denial that says why.
@@ -455,7 +488,7 @@ func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.C
 	SetRequestUser(ctx, "client:"+client)
 
 	out := &model.AuthzenSubjectSearchResponse{Results: []model.AuthzenSubject{}}
-	if !c.app.Cfg.Subjects.Enabled {
+	if !c.cfg.Subjects.Enabled {
 		out.Context = map[string]any{"subjects_registry": "disabled"}
 		out.Page = pageInfo(0, nil, "")
 		return out, nil

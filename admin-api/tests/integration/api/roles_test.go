@@ -150,9 +150,8 @@ func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	}
 
 	e.must("PATCH", "/service/"+orders, map[string]any{"slug": "orders-v2"})
-	if status, _ := e.permission("orders", alice); status != http.StatusNotFound {
-		t.Fatalf("the old slug after a rename: want 404, got %d", status)
-	}
+	status, header, body := e.permissionRaw("orders", alice)
+	requireAuthzenError(t, status, header, body, http.StatusNotFound, "service_not_found")
 	if status, _ := e.permission("orders-v2", alice); status != http.StatusOK {
 		t.Fatalf("the new slug: %d", status)
 	}

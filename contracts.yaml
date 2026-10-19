@@ -538,13 +538,13 @@ contracts:
     oracle: the examples of the specification (core/pdp/authzen/testdata/spec)
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ03
     statement: A short-circuiting batch evaluates nothing after the stopping evaluation.
     oracle: an evaluation counter
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ04
     statement: Each search page is computed at the current position, and no page expires. The cursor is (bucket, last key, digest of the request); until P5 it has no bucket and keys follow today's order by id (ADR 0001, 7.6). Paging ends with next_token "" and has no gaps or repeats for the items present throughout; a changed request is a 400 (authzen_page_invalid).
     oracle: the full result set
@@ -568,7 +568,7 @@ contracts:
     oracle: the response header
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ08
     statement: A 401 carries WWW-Authenticate; the Bearer scheme is case-insensitive and another scheme is a 401.
     oracle: RFC 6750
@@ -592,7 +592,7 @@ contracts:
     oracle: the specification
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ12
     statement: explain requires the explain operation of the client.
     oracle: status code

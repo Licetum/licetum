@@ -59,14 +59,25 @@ func init() {
 	// failures) uses the same shape as service-layer errors — the frontend only parses that one.
 	huma.NewErrorWithContext = func(ctx huma.Context, status int, msg string, errs ...error) huma.StatusError {
 		lang := i18n.Default
+		authzen := false
 		if ctx != nil {
 			lang = i18n.FromContext(ctx.Context())
-			// The AuthZEN specification knows no 422: a request that is not valid is a 400.
-			if status == http.StatusUnprocessableEntity && ctx.Operation() != nil && slices.Contains(ctx.Operation().Tags, authzenTag) {
+			authzen = ctx.Operation() != nil && slices.Contains(ctx.Operation().Tags, authzenTag)
+			// The AuthZEN specification knows neither a 422 nor a 413: a request that is not valid, or too large, is a 400.
+			if authzen && (status == http.StatusUnprocessableEntity || status == http.StatusRequestEntityTooLarge) {
 				status = http.StatusBadRequest
 			}
 		}
-		return newHumaError(status, msg, errs...).Localize(lang)
+		apiErr := newHumaError(status, msg, errs...).Localize(lang)
+		if authzen {
+			// Huma writes these errors without the headers of an error (only the errors of a handler carry them, see
+			// authzenError.GetHeaders), so the code goes on the response here.
+			if ctx != nil {
+				ctx.SetHeader(licetumErrorCodeHeader, apiErr.Extra.Code)
+			}
+			return authzenErrorOf(apiErr)
+		}
+		return apiErr
 	}
 	huma.NewError = func(status int, msg string, errs ...error) huma.StatusError {
 		return newHumaError(status, msg, errs...)
@@ -131,13 +142,21 @@ func Register[I, O any](api huma.API, op huma.Operation, h func(context.Context,
 		op.DefaultStatus = http.StatusOK
 	}
 	op.Errors = mergeErrors(defaultErrors, op.Errors)
+	authzen := slices.Contains(op.Tags, authzenTag)
 	huma.Register(api, op, func(ctx context.Context, in *I) (*O, error) {
 		out, err := h(ctx, in)
 		if err != nil {
-			return nil, LocalizeError(ctx, op.OperationID, err)
+			apiErr := LocalizeError(ctx, op.OperationID, err)
+			if authzen {
+				return nil, authzenErrorOf(apiErr)
+			}
+			return nil, apiErr
 		}
 		return out, nil
 	})
+	if authzen {
+		documentAuthzenErrors(api, op)
+	}
 }
 
 // LocalizeError turns a handler error into the response error in the request language: an
@@ -230,7 +249,8 @@ func stripTrailingSlash(next http.Handler) http.Handler {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
-	// trace names the revision of the write the request made: it goes out in the revisionHeader.
+	// trace names the revisions of the request: the one of its write goes out in the revisionHeader, and the one of the
+	// policy its answers were read at in the licetumRevisionHeader.
 	trace *engine.Trace
 }
 
@@ -239,6 +259,12 @@ func (s *statusRecorder) WriteHeader(code int) {
 	if s.trace != nil {
 		if rev := s.trace.Revision(); rev > 0 {
 			s.Header().Set(revisionHeader, strconv.FormatInt(rev, 10))
+			s.Header().Set(licetumRevisionHeader, licetumRevision(rev))
+		} else if code == http.StatusOK {
+			// An answer carries the revision it was read at; a request that read none (a probe, the metadata) carries none.
+			if rev := s.trace.ReadRevision(); rev > 0 {
+				s.Header().Set(licetumRevisionHeader, licetumRevision(rev))
+			}
 		}
 		if s.trace.SyncPending() {
 			s.Header().Set(syncHeader, "pending")
@@ -284,30 +310,60 @@ func SetOnBehalfOf(ctx context.Context, subject string) {
 
 const requestIDHeader = "X-Request-ID"
 
+// requestIDMax is the longest X-Request-ID that is returned as it was received.
+const requestIDMax = 128
+
 // revisionHeader carries the revision of a write: pass it back as at_least_as_fresh to get answers that reflect the write.
 const revisionHeader = "X-Authz-Revision"
+
+// licetumRevisionHeader carries the revision of the policy: the one an answer was read at, or the one a write made. Its
+// value is "1.<revision>": the epoch 1 (there are no epochs before P3) and the revision of the rules.
+const licetumRevisionHeader = "Licetum-Revision"
+
+// licetumErrorCodeHeader carries the catalog key of an error of an AuthZEN operation (see authzenError).
+const licetumErrorCodeHeader = "Licetum-Error-Code"
 
 // syncHeader says "pending" when the answer lacks the resources of a type whose synchronization had not finished in time
 // (SYNC__REQUEST_WAIT): such a type contributes no resources.
 const syncHeader = "X-Authz-Sync"
 
-// requestID keeps the caller's X-Request-ID when it is a sane token (up to 128 characters of letters, digits,
-// '.', '_' and '-') and generates one otherwise, so that a request can be followed through the logs.
+// licetumRevision is the value of Licetum-Revision for a revision of the rules.
+func licetumRevision(rev int64) string {
+	return "1." + strconv.FormatInt(rev, 10)
+}
+
+// requestID is the identifier of a request: the caller's X-Request-ID, returned exactly as it was received when it is safe
+// for a header (see safeRequestID), and a generated UUID otherwise or when the caller sent none.
 func requestID(r *http.Request) string {
-	if id := r.Header.Get(requestIDHeader); id != "" && len(id) <= 128 && validRequestID(id) {
+	if id := r.Header.Get(requestIDHeader); safeRequestID(id) {
 		return id
 	}
 	return uuid.NewString()
 }
 
-func validRequestID(id string) bool {
-	for _, c := range id {
-		ok := c == '.' || c == '_' || c == '-' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
-		if !ok {
+// safeRequestID says whether an X-Request-ID can be returned as it was received: 1 to requestIDMax printable ASCII
+// characters, with no space. A value with a space or a control character is replaced by a generated one, so that the
+// header and the log line cannot be split by what a client sent.
+func safeRequestID(id string) bool {
+	if id == "" || len(id) > requestIDMax {
+		return false
+	}
+	for i := range len(id) {
+		if id[i] < 0x21 || id[i] > 0x7e {
 			return false
 		}
 	}
 	return true
+}
+
+// logRequestID is the copy of a received X-Request-ID that the access log carries when it is not the request's identifier:
+// at most requestIDMax bytes of it, with every byte that is not printable ASCII escaped.
+func logRequestID(received string) string {
+	if len(received) > requestIDMax {
+		received = received[:requestIDMax]
+	}
+	quoted := strconv.QuoteToASCII(received)
+	return quoted[1 : len(quoted)-1]
 }
 
 func logAndRecover(app *engine.App, next http.Handler) http.Handler {
@@ -337,6 +393,11 @@ func logAndRecover(app *engine.App, next http.Handler) http.Handler {
 			}
 			if info.onBehalfOf != "" {
 				attrs = append(attrs, "on_behalf_of", logSafe(info.onBehalfOf))
+			}
+			// An X-Request-ID that was replaced is logged as it was received, escaped, so that the line still shows what the
+			// client sent.
+			if received := r.Header.Get(requestIDHeader); received != "" && received != info.id {
+				attrs = append(attrs, "received_request_id", logRequestID(received))
 			}
 			slog.InfoContext(r.Context(), "request", attrs...)
 		}()

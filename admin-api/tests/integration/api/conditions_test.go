@@ -150,11 +150,12 @@ func TestIntegrationRequestAttributesDecideAndAreCachedByValue(t *testing.T) {
 		t.Fatalf("simulation with an address outside the network: %v", sim)
 	}
 
-	// A context name with a space, and an address that is not a network, are refused.
-	status, _ = w.ask(authzenreq.Evaluation(w.ref(w.org), hierarchySubject, authzenreq.On("branch", "B1"), "read",
+	// A context name with a space is ignored by an AuthZEN request (AZ06), as if the attribute were absent: the rule has no
+	// address to read, so the evaluation is answered 200 and denied. An address that is not a network is refused.
+	status, raw = w.ask(authzenreq.Evaluation(w.ref(w.org), hierarchySubject, authzenreq.On("branch", "B1"), "read",
 		authzenreq.WithContext(map[string]any{"bad name": 1})), w.token(claims))
-	if status != http.StatusBadRequest {
-		t.Fatalf("context name with a space: want 400 (the specification has no 422), got %d", status)
+	if allowed, err := authzenreq.Allowed(status, raw); err != nil || allowed {
+		t.Fatalf("context name with a space is ignored: want 200 and a denial, got %d %s (%v)", status, raw, err)
 	}
 	status, raw = w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "subject": "u",

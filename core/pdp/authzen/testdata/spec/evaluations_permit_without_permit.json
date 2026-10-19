@@ -1,0 +1,17 @@
+{
+  "name": "permit_on_first_permit without a permit answers every evaluation, an unknown resource included",
+  "source": "AuthZEN 1.0, evaluations_semantic permit_on_first_permit",
+  "checked_against_text": false,
+  "endpoint": "evaluations",
+  "grants": [],
+  "request": {
+    "subject": {"type": "user", "id": "alice@acmecorp.com"},
+    "action": {"name": "can_read"},
+    "options": {"evaluations_semantic": "permit_on_first_permit"},
+    "evaluations": [
+      {"resource": {"type": "todo", "id": "2"}},
+      {"resource": {"type": "todo", "id": "4"}}
+    ]
+  },
+  "decisions": [false, false]
+}
