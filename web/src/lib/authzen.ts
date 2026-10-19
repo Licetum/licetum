@@ -5,10 +5,9 @@ import type {
   AuthzenEvaluationsRequest,
   AuthzenResourceSearchRequest,
   AuthzenSubjectSearchRequest,
-  CheckResult,
 } from '@/api/admin/model';
 
-import { explanationSchema } from './schemas';
+import { explanationSchema, type Explanation } from './schemas';
 
 /*
  * The requests of the OpenID AuthZEN Authorization API 1.0 that the Integration page shows and tries, and that the simulation of
@@ -105,7 +104,14 @@ export interface Paging {
   limit?: number;
   token?: string;
 }
-const pageOf = (p?: Paging) => (p && (p.limit !== undefined || p.token) ? { page: { ...p } } : {});
+const pageOf = (p?: Paging) => {
+  const page = {
+    ...(p?.limit !== undefined ? { limit: p.limit } : {}),
+    // The first page has no token: an empty one is left out.
+    ...(p?.token ? { token: p.token } : {}),
+  };
+  return Object.keys(page).length > 0 ? { page } : {};
+};
 
 /** The resources of the type that the person may do the action with: no `resource.id`. */
 export function searchResourceRequest(s: Sample, p?: Paging): AuthzenResourceSearchRequest {
@@ -176,6 +182,12 @@ export function snippet(lang: Lang, url: string, body: AuthzenRequest): string {
     case 'python':
       return `import requests\n\nres = requests.post(\n    "${url}",\n    headers={"Authorization": f"Bearer {api_key}"},\n    json=${pretty.replace(/\n/g, '\n    ')},\n)\nanswer = res.json()`;
   }
+}
+
+/** What the verdict of the Check page is drawn from: the decision and, when the simulation gave one, its explanation. */
+export interface CheckResult {
+  allowed: boolean;
+  explanation?: Explanation;
 }
 
 /** The answer of an evaluation of the simulation in the form the verdict is drawn from: the decision and its explanation. */

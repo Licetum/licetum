@@ -1,6 +1,5 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
 import {
   Alert,
   Avatar,
@@ -12,7 +11,6 @@ import {
   Select,
   Table,
   Tabs,
-  Tag,
   Typography,
 } from 'antd';
 import Link from 'next/link';
@@ -21,19 +19,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useRunBatch } from '@/api/admin/batch/batch';
-import type { SimulatePermission200 } from '@/api/admin/model';
-import { simulatePermission } from '@/api/admin/simulation/simulation';
 import { useGetDirectoryEntry } from '@/api/admin/subject/subject';
-import { EmptyBlock, errorDetail, ErrorBlock, LoadingBlock, PageHeader } from '@/components/kit';
+import { EmptyBlock, errorDetail, LoadingBlock, PageHeader } from '@/components/kit';
 import { usePreferences } from '@/components/providers';
 import { formatDateTime } from '@/domain/format';
 import { personOf } from '@/domain/members';
 import { ruleToInput } from '@/domain/rule';
 import { useAccess } from '@/lib/access';
+import { propertiesOf } from '@/lib/authzen';
 import { useUndoNotice } from '@/lib/undo';
 import { useQueryState } from '@/lib/use-query-state';
 
 import { WhatCell, WhereCell } from '../access/rule-cells';
+import { VisibleAccess } from '../check/visible-access';
 import {
   useAllMembers,
   useGroupNames,
@@ -46,18 +44,6 @@ import { useGrant } from '../grant/grant-context';
 
 type Pair = { id: number; key: string; value: string };
 let seq = 0;
-
-function parseValue(value: string): string | string[] {
-  const v = value.trim();
-  if (v.startsWith('[') && v.endsWith(']')) {
-    return v
-      .slice(1, -1)
-      .split(',')
-      .map((x) => x.trim().replace(/^"|"$/g, ''))
-      .filter(Boolean);
-  }
-  return v;
-}
 
 export function PersonPage({ username }: { username: string }) {
   const { t } = useTranslation();
@@ -77,6 +63,8 @@ export function PersonPage({ username }: { username: string }) {
   const [tab, setTab] = useQueryState('tab', 'effective');
   const [serviceSlug, setServiceSlug] = useQueryState('service');
   const [attrs, setAttrs] = useState<Pair[]>([]);
+  // The attributes the questions are asked with: those typed, once they have rested (each change starts new requests).
+  const [applied, setApplied] = useState<Pair[]>([]);
   const [revoking, setRevoking] = useState(false);
 
   const clientServices = (services.data ?? []).filter((s) => s.slug !== 'licetum');
@@ -106,26 +94,23 @@ export function PersonPage({ username }: { username: string }) {
       key,
       value: Array.isArray(value) ? `[${value.join(', ')}]` : String(value),
     }));
-    if (pairs.length > 0) setAttrs(pairs);
+    if (pairs.length > 0) {
+      setAttrs(pairs);
+      setApplied(pairs);
+    }
   }, [known.data, seeded]);
+  useEffect(() => {
+    const timer = setTimeout(() => setApplied(attrs), 500);
+    return () => clearTimeout(timer);
+  }, [attrs]);
 
-  const claims = useMemo(
-    () => ({
-      preferred_username: username,
-      ...Object.fromEntries(
-        attrs.filter((a) => a.key.trim()).map((a) => [a.key.trim(), parseValue(a.value)]),
-      ),
-    }),
-    [attrs, username],
+  // The properties of the person the simulation is asked with (the PDP takes the username as preferred_username by itself).
+  const who = useMemo(
+    () => ({ person: username, properties: propertiesOf(applied), context: {} }),
+    [username, applied],
   );
-  const effective = useQuery({
-    queryKey: ['person-effective', service?.id, username, claims],
-    enabled: !!service && tab === 'effective',
-    queryFn: async () => {
-      const res = await simulatePermission(service!.id, { subject: username, claims, limit: null });
-      return res.status === 200 ? (res.data as SimulatePermission200) : {};
-    },
-  });
+  // The questions wait for the properties the application sent, so that the first ones are the real ones.
+  const waiting = known.isLoading || (!!known.data?.properties && !seeded);
 
   const direct = useMemo(
     () => (rules.data ?? []).filter((r) => r.subject === username),
@@ -344,15 +329,14 @@ export function PersonPage({ username }: { username: string }) {
           </Flex>
           {!service ? (
             <EmptyBlock title={t('person.noServices')} />
-          ) : effective.isPending ? (
+          ) : waiting ? (
             <LoadingBlock rows={3} />
-          ) : effective.isError ? (
-            <ErrorBlock error={effective.error} onRetry={() => void effective.refetch()} />
-          ) : Object.keys(effective.data ?? {}).length === 0 ? (
-            <EmptyBlock
-              title={t('person.nothing', { service: service.name })}
-              hint={t('person.nothingHint')}
-              action={
+          ) : (
+            <VisibleAccess
+              serviceId={service.id}
+              serviceSlug={service.slug}
+              who={who}
+              emptyAction={
                 access.whole('assignment_rule', 'write') ? (
                   <Button
                     type="primary"
@@ -364,86 +348,6 @@ export function PersonPage({ username }: { username: string }) {
                   </Button>
                 ) : undefined
               }
-            />
-          ) : (
-            <Table
-              rowKey={([name]) => name}
-              size="middle"
-              pagination={false}
-              dataSource={Object.entries(effective.data ?? {})}
-              expandable={{
-                rowExpandable: ([, v]) => v.type === 'sync',
-                expandedRowRender: ([name, v]) =>
-                  v.type === 'sync' ? (
-                    <Table
-                      size="small"
-                      rowKey="id"
-                      pagination={{ pageSize: 15, showSizeChanger: false }}
-                      dataSource={v.resources}
-                      columns={[
-                        {
-                          title: t('check.resource'),
-                          key: 'name',
-                          render: (_, r) => (
-                            <span>
-                              {r.name}{' '}
-                              <span className="mono" style={{ color: 'var(--licetum-muted)' }}>
-                                {r.id}
-                              </span>
-                            </span>
-                          ),
-                        },
-                        {
-                          title: t('check.level'),
-                          key: 'access',
-                          width: 200,
-                          render: (_, r) =>
-                            (r.access ?? []).map((a) => (
-                              <Tag key={a} className="mono">
-                                {a}
-                              </Tag>
-                            )),
-                        },
-                        {
-                          title: '',
-                          key: 'why',
-                          width: 110,
-                          render: (_, r) => (
-                            <Link
-                              href={`/check?mode=one&service=${service.slug}&subject=${encodeURIComponent(username)}&type=${encodeURIComponent(name)}&resource=${encodeURIComponent(r.id)}`}
-                            >
-                              {t('check.why')} ›
-                            </Link>
-                          ),
-                        },
-                      ]}
-                    />
-                  ) : null,
-              }}
-              columns={[
-                { title: t('check.type'), key: 'type', render: (_, [name]) => name },
-                {
-                  title: t('check.list.resources'),
-                  key: 'count',
-                  width: 200,
-                  render: (_, [, v]) =>
-                    v.type === 'sync'
-                      ? `${v.resources.length}${v.next_after ? '+' : ''}`
-                      : t('check.list.wholeType'),
-                },
-                {
-                  title: t('check.level'),
-                  key: 'levels',
-                  render: (_, [, v]) =>
-                    v.type === 'not_sync'
-                      ? v.access.map((a) => (
-                          <Tag key={a} className="mono">
-                            {a}
-                          </Tag>
-                        ))
-                      : null,
-                },
-              ]}
             />
           )}
           <Alert

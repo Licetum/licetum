@@ -41,7 +41,7 @@ describe('identity provider discovery', () => {
     expect(discoverQuerySchema.safeParse({ issuer: '' }).success).toBe(false);
   });
 
-  it('cuts the document down to the four fields and ignores values of the wrong type', () => {
+  it('cuts the document down to the issuer and its keys and ignores values of the wrong type', () => {
     const found = discoveryDocumentSchema.parse({
       issuer: 'https://idp.example.com',
       authorization_endpoint: 'https://idp.example.com/auth',
@@ -51,10 +51,11 @@ describe('identity provider discovery', () => {
     });
     expect(found).toEqual({
       issuer: 'https://idp.example.com',
-      authorization_url: 'https://idp.example.com/auth',
-      token_url: undefined,
       jwks_url: 'https://idp.example.com/keys',
     });
+    expect(
+      discoveryDocumentSchema.parse({ issuer: 'https://idp.example.com', jwks_uri: 7 }),
+    ).toEqual({ issuer: 'https://idp.example.com', jwks_url: undefined });
   });
 });
 

@@ -9,8 +9,6 @@ import {
   Input,
   Segmented,
   Select,
-  Table,
-  Tag,
   Typography,
   message,
 } from 'antd';
@@ -20,16 +18,10 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type {
-  CheckResult,
-  NotSyncTypePermission,
-  RuleRef,
-  SimulatePermission200,
-  SyncTypePermission,
-} from '@/api/admin/model';
+import type { RuleRef } from '@/api/admin/model';
 import { useCreatePolicyScenario } from '@/api/admin/policy/policy';
 import { useListResourcesOfType } from '@/api/admin/resource/resource';
-import { useSimulateEvaluations, useSimulatePermission } from '@/api/admin/simulation/simulation';
+import { useSimulateEvaluations } from '@/api/admin/simulation/simulation';
 import { DecisionTag, EmptyBlock, errorDetail, PageHeader } from '@/components/kit';
 import type { Rule } from '@/domain/rule';
 import {
@@ -37,12 +29,14 @@ import {
   evaluationError,
   evaluationsRequest,
   propertiesOf,
+  type CheckResult,
   type Properties,
 } from '@/lib/authzen';
 
 import { useAllTypes, useGroupNames, useRules, useServices } from '../data/queries';
 import { levelsOf } from '../grant/grant-model';
 import { WhoHasAccess } from '../services/who-has-access';
+import { VisibleAccess } from './visible-access';
 
 type Pair = { id: number; key: string; value: string };
 type Question = {
@@ -89,8 +83,17 @@ export function CheckWorkspace() {
 
   const check = useSimulateEvaluations();
   const createScenario = useCreatePolicyScenario();
-  const permission = useSimulatePermission();
   const [lastRun, setLastRun] = useState<{ questions: Question[]; subject: string } | null>(null);
+  // "What a person sees" is drawn by its own component from what was asked when the button was pressed; `run` starts it over.
+  const [listed, setListed] = useState<{
+    serviceId: string;
+    slug: string;
+    subject: string;
+    properties: Properties;
+    context: Properties;
+    type?: string;
+    run: number;
+  } | null>(null);
 
   const service = (services.data ?? []).find((s) => s.slug === serviceSlug || s.id === serviceSlug);
   useEffect(() => {
@@ -115,7 +118,6 @@ export function CheckWorkspace() {
   const run = async () => {
     if (!service) return;
     check.reset();
-    permission.reset();
     if (mode === 'one') {
       const asked = questions.filter((q) => q.type);
       setLastRun({ questions: asked, subject: subject.trim() });
@@ -127,16 +129,15 @@ export function CheckWorkspace() {
         ),
       });
     } else {
-      await permission.mutateAsync({
+      setListed((previous) => ({
         serviceId: service.id,
-        data: {
-          subject: subject.trim(),
-          claims: { preferred_username: subject.trim(), ...properties },
-          context: attributes,
-          type: listType,
-          limit: listType ? 200 : undefined,
-        },
-      });
+        slug: service.slug,
+        subject: subject.trim(),
+        properties,
+        context: attributes,
+        type: listType,
+        run: (previous?.run ?? 0) + 1,
+      }));
     }
   };
 
@@ -184,7 +185,7 @@ export function CheckWorkspace() {
     }
   };
 
-  const error = check.error ?? permission.error;
+  const error = check.error;
 
   // The first question that names a type: who has access to what it asks about.
   const whoQuestion = questions.find((q) => q.type);
@@ -227,6 +228,7 @@ export function CheckWorkspace() {
                 setServiceSlug(v);
                 setQuestions([question()]);
                 setListType(undefined);
+                setListed(null);
               }}
               loading={services.isPending}
               options={(services.data ?? []).map((s) => ({ value: s.slug, label: s.name }))}
@@ -323,12 +325,7 @@ export function CheckWorkspace() {
               />
             </Field>
             <span style={{ flex: 1 }} />
-            <Button
-              type="primary"
-              disabled={!ready}
-              loading={permission.isPending}
-              onClick={() => void run()}
-            >
+            <Button type="primary" disabled={!ready} onClick={() => void run()}>
               {t('check.show')}
             </Button>
           </Flex>
@@ -392,15 +389,17 @@ export function CheckWorkspace() {
         </Flex>
       )}
 
-      {mode === 'list' && permission.data && (
-        <PermissionList
-          data={permission.data.data as SimulatePermission200}
-          subject={subject.trim()}
-          serviceSlug={service?.slug ?? ''}
+      {mode === 'list' && listed && (
+        <VisibleAccess
+          serviceId={listed.serviceId}
+          serviceSlug={listed.slug}
+          who={{ person: listed.subject, properties: listed.properties, context: listed.context }}
+          only={listed.type}
+          run={listed.run}
         />
       )}
 
-      {!check.data && !permission.data && !error && (
+      {!check.data && !(mode === 'list' && listed) && !error && (
         <EmptyBlock title={t('check.start.title')} hint={t('check.start.hint')} />
       )}
     </div>
@@ -710,104 +709,5 @@ function Verdict(props: {
         )}
       </Flex>
     </div>
-  );
-}
-
-type Entry = [string, SyncTypePermission | NotSyncTypePermission];
-
-function PermissionList({
-  data,
-  subject,
-  serviceSlug,
-}: {
-  data: SimulatePermission200;
-  subject: string;
-  serviceSlug: string;
-}) {
-  const { t } = useTranslation();
-  const entries = Object.entries(data) as Entry[];
-  if (entries.length === 0) {
-    return <EmptyBlock title={t('check.list.none', { subject })} hint={t('check.list.noneHint')} />;
-  }
-  return (
-    <Table<Entry>
-      rowKey={([name]) => name}
-      size="middle"
-      pagination={false}
-      dataSource={entries}
-      expandable={{
-        rowExpandable: ([, v]) => v.type === 'sync',
-        expandedRowRender: ([name, v]) =>
-          v.type === 'sync' ? (
-            <Table
-              size="small"
-              rowKey="id"
-              pagination={{ pageSize: 20, showSizeChanger: false }}
-              dataSource={v.resources}
-              columns={[
-                {
-                  title: t('check.resource'),
-                  key: 'name',
-                  render: (_, r) => (
-                    <span>
-                      {r.name}{' '}
-                      <span className="mono" style={{ color: 'var(--licetum-muted)' }}>
-                        {r.id}
-                      </span>
-                    </span>
-                  ),
-                },
-                {
-                  title: t('check.level'),
-                  key: 'access',
-                  width: 200,
-                  render: (_, r) =>
-                    (r.access ?? []).map((a) => (
-                      <Tag key={a} className="mono">
-                        {a}
-                      </Tag>
-                    )),
-                },
-                {
-                  title: '',
-                  key: 'why',
-                  width: 110,
-                  render: (_, r) => (
-                    <Link
-                      href={`/check?mode=one&service=${serviceSlug}&subject=${encodeURIComponent(subject)}&type=${encodeURIComponent(name)}&resource=${encodeURIComponent(r.id)}`}
-                    >
-                      {t('check.why')} ›
-                    </Link>
-                  ),
-                },
-              ]}
-            />
-          ) : null,
-      }}
-      columns={[
-        { title: t('check.type'), key: 'type', render: (_, [name]) => name },
-        {
-          title: t('check.list.resources'),
-          key: 'count',
-          width: 220,
-          render: (_, [, v]) =>
-            v.type === 'sync'
-              ? `${v.resources.length}${v.next_after ? '+' : ''}`
-              : t('check.list.wholeType'),
-        },
-        {
-          title: t('check.level'),
-          key: 'levels',
-          render: (_, [, v]) =>
-            v.type === 'not_sync'
-              ? v.access.map((a) => (
-                  <Tag key={a} className="mono">
-                    {a}
-                  </Tag>
-                ))
-              : null,
-        },
-      ]}
-    />
   );
 }

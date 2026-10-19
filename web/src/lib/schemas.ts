@@ -46,26 +46,20 @@ export const discoverQuerySchema = z.object({
 
 const optionalText = z.string().optional().catch(undefined);
 
-/** The fields of an OpenID Connect discovery document that the form needs; a field of another type is ignored. */
+/** The fields of an OpenID Connect discovery document that the issuer form needs; a field of another type is ignored. */
 export const discoveryDocumentSchema = z
   .object({
     issuer: optionalText,
-    authorization_endpoint: optionalText,
-    token_endpoint: optionalText,
     jwks_uri: optionalText,
   })
   .transform((doc) => ({
     issuer: doc.issuer,
-    authorization_url: doc.authorization_endpoint,
-    token_url: doc.token_endpoint,
     jwks_url: doc.jwks_uri,
   }));
 
 /** The answer of `/api/discover`. */
 export const discoveredEndpointsSchema = z.object({
   issuer: optionalText,
-  authorization_url: optionalText,
-  token_url: optionalText,
   jwks_url: optionalText,
 });
 
@@ -121,3 +115,4 @@ export const explanationSchema = z.object({
     }),
   ),
 });
+export type Explanation = z.infer<typeof explanationSchema>;

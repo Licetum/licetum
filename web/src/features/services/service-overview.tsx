@@ -1,18 +1,6 @@
 'use client';
 
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Descriptions,
-  Drawer,
-  Flex,
-  Form,
-  Input,
-  Modal,
-  Tag,
-  Typography,
-} from 'antd';
+import { Alert, Button, Descriptions, Drawer, Flex, Form, Input, Modal, Typography } from 'antd';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -54,29 +42,21 @@ export function ServiceOverview() {
 
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [form] = Form.useForm<ServiceUpdate & { secretMode: string }>();
+  const [form] = Form.useForm<ServiceUpdate>();
 
   const canWrite = access.any('service', 'write');
   const ownTypes = (types.data ?? []).filter((x) => x.service_id === service.id);
   const ownRules = (rules.data ?? []).filter((r) => r.service_id === service.id);
   const recent = (log.data ?? []).slice(-5).reverse();
 
-  const save = async (values: ServiceUpdate & { clearSecret?: boolean }) => {
+  const save = async (values: ServiceUpdate) => {
     setError(null);
     const body: ServiceUpdate = {
       name: values.name,
       // An empty field removes the address or the icon (both are optional).
       url: values.url ?? '',
       icon: values.icon ?? '',
-      issuer: values.issuer,
-      client_id: values.client_id,
-      authorization_url: values.authorization_url,
-      token_url: values.token_url,
-      jwks_url: values.jwks_url,
     };
-    // Omitted keeps the secret; null removes it and makes the client public.
-    if (values.clearSecret) body.client_secret = null;
-    else if (values.client_secret) body.client_secret = values.client_secret;
     try {
       await update.mutateAsync({ serviceId: service.id, data: body });
       await refresh();
@@ -154,19 +134,15 @@ export function ServiceOverview() {
       )}
 
       <Flex gap={16} wrap align="flex-start">
-        <section style={card} aria-labelledby="signin">
+        <section style={card} aria-labelledby="details">
           <Flex justify="space-between" align="center" style={{ marginBottom: 8 }}>
-            <Typography.Title level={5} id="signin" style={{ margin: 0 }}>
-              {t('service.signin')}
+            <Typography.Title level={5} id="details" style={{ margin: 0 }}>
+              {t('service.details')}
             </Typography.Title>
             {canWrite && (
               <Button
                 onClick={() => {
-                  form.setFieldsValue({
-                    ...service,
-                    client_secret: undefined,
-                    clearSecret: false,
-                  } as never);
+                  form.setFieldsValue({ name: service.name, url: service.url, icon: service.icon });
                   setError(null);
                   setEditing(true);
                 }}
@@ -180,29 +156,14 @@ export function ServiceOverview() {
             size="small"
             styles={{ label: { width: 140, color: 'var(--licetum-muted)' } }}
           >
-            <Descriptions.Item label="Issuer">
-              <span className="mono">{service.issuer ?? '—'}</span>
-            </Descriptions.Item>
-            <Descriptions.Item label={t('service.secretStatus')}>
-              {service.has_client_secret ? (
-                <Tag color="success">{t('service.secretSet')}</Tag>
-              ) : (
-                <Tag>{t('service.secretNone')}</Tag>
-              )}
-            </Descriptions.Item>
-            <Descriptions.Item label="client_id">
-              <span className="mono">{service.client_id ?? '—'}</span>
-            </Descriptions.Item>
-            <Descriptions.Item label={t('service.authUrl')}>
-              <span className="mono">{service.authorization_url ?? '—'}</span>
-            </Descriptions.Item>
-            <Descriptions.Item label={t('service.tokenUrl')}>
-              <span className="mono">{service.token_url ?? '—'}</span>
-            </Descriptions.Item>
-            <Descriptions.Item label="JWKS">
-              <span className="mono">{service.jwks_url ?? '—'}</span>
+            <Descriptions.Item label={t('service.name')}>{service.name}</Descriptions.Item>
+            <Descriptions.Item label={t('service.slug')}>
+              <IdChip value={service.slug} />
             </Descriptions.Item>
             <Descriptions.Item label={t('service.appUrl')}>{service.url ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label={t('service.iconUrl')}>
+              <span className="mono">{service.icon ?? '—'}</span>
+            </Descriptions.Item>
             <Descriptions.Item label="id">
               <IdChip value={service.id} />
             </Descriptions.Item>
@@ -294,7 +255,7 @@ export function ServiceOverview() {
         open={editing}
         onClose={() => setEditing(false)}
         title={t('service.edit')}
-        size={560}
+        size={480}
         destroyOnHidden
         footer={
           <Flex justify="flex-end" gap={8}>
@@ -327,31 +288,6 @@ export function ServiceOverview() {
           </Form.Item>
           <Form.Item name="icon" label={t('service.iconUrl')}>
             <Input />
-          </Form.Item>
-          <Form.Item name="issuer" label="Issuer">
-            <Input className="mono" />
-          </Form.Item>
-          <Form.Item name="client_id" label="client_id">
-            <Input className="mono" />
-          </Form.Item>
-          <Form.Item
-            name="client_secret"
-            label={t('service.newSecret')}
-            extra={t('service.secretHelp')}
-          >
-            <Input.Password autoComplete="new-password" placeholder={t('service.secretKeep')} />
-          </Form.Item>
-          <Form.Item name="clearSecret" valuePropName="checked">
-            <Checkbox disabled={!service.has_client_secret}>{t('service.makePublic')}</Checkbox>
-          </Form.Item>
-          <Form.Item name="authorization_url" label={t('service.authUrl')}>
-            <Input className="mono" />
-          </Form.Item>
-          <Form.Item name="token_url" label={t('service.tokenUrl')}>
-            <Input className="mono" />
-          </Form.Item>
-          <Form.Item name="jwks_url" label="JWKS">
-            <Input className="mono" />
           </Form.Item>
         </Form>
       </Drawer>

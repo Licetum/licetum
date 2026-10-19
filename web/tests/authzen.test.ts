@@ -330,6 +330,47 @@ describe('the AuthZEN request builders of the integration and simulation pages',
   });
 });
 
+describe('the requests of the page that shows what a person sees', () => {
+  const person: Sample = {
+    person: 'alice',
+    properties: { department: 'sales' },
+    context: { ip: '10.0.0.1' },
+    type: 'branch',
+    resource: '',
+    action: 'write',
+  };
+
+  it('TestContract_WEB03_ThePageAsksOneResourceSearchPerLevelAndThenForTheNextPageOfThatLevel', () => {
+    const first = searchResourceRequest(person, { limit: 50 });
+    expect(first.action).toEqual({ name: 'write' });
+    expect(first.resource).toEqual({ type: 'branch' });
+    expect(first.page).toEqual({ limit: 50 });
+    expect(problems('search_resource', first)).toEqual([]);
+
+    // The first page carries no token, not even an empty one.
+    expect(searchResourceRequest(person, { limit: 50, token: '' }).page).toEqual({ limit: 50 });
+    expect(searchResourceRequest(person, { token: '' })).not.toHaveProperty('page');
+
+    const next = searchResourceRequest(person, { limit: 50, token: 'eyJhIjoxfQ' });
+    expect(next.page).toEqual({ limit: 50, token: 'eyJhIjoxfQ' });
+    // The token only goes with the same subject, resource, action, context and limit: nothing else changes between pages.
+    expect({ ...next, page: undefined }).toEqual({ ...first, page: undefined });
+    expect(problems('search_resource', next)).toEqual([]);
+  });
+
+  it('TestContract_WEB03_ThePageAsksTheLevelsOnATypeAsAWholeWithAnActionSearchAndNoAction', () => {
+    const request = searchActionRequest({ ...person, action: '' });
+    expect(request.resource).toEqual({ type: 'branch', id: '*' });
+    expect('action' in request).toBe(false);
+    expect(request.subject).toEqual({
+      type: 'user',
+      id: 'alice',
+      properties: { department: 'sales' },
+    });
+    expect(problems('search_action', request)).toEqual([]);
+  });
+});
+
 describe('the answers of the simulation', () => {
   const rule = {
     access: ['read'],

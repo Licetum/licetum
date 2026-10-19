@@ -13,7 +13,6 @@ import { useCreateService } from '@/api/admin/service/service';
 import { useCreateTypeResource } from '@/api/admin/type-resource/type-resource';
 import { DecisionTag, errorDetail, PageHeader } from '@/components/kit';
 import { useAccess } from '@/lib/access';
-import { discoveredEndpointsSchema } from '@/lib/schemas';
 
 import { useAllTypes, useRefreshAll, useServices } from '../data/queries';
 import { SourceDrawer } from './sources-tab';
@@ -29,7 +28,7 @@ const slugify = (name: string) =>
 type Draft = { name: string; parent: string };
 let seq = 0;
 
-/** Connecting a service in four steps — sign-in, resource types, source, check. Each step saves what it did, so a half-done setup can be continued. */
+/** Connecting a service in four steps — the service, resource types, source, check. Each step saves what it did, so a half-done setup can be continued. */
 export function ConnectWizard() {
   const { t } = useTranslation();
   const router = useRouter();
@@ -81,7 +80,7 @@ export function ConnectWizard() {
         current={current - 1}
         style={{ marginBottom: 24, maxWidth: 760 }}
         items={[
-          { title: t('wizard.step.signin') },
+          { title: t('wizard.step.service') },
           { title: t('wizard.step.types') },
           { title: t('wizard.step.source') },
           { title: t('wizard.step.check') },
@@ -89,7 +88,7 @@ export function ConnectWizard() {
       />
       <div style={{ maxWidth: 760 }}>
         {current === 1 && (
-          <StepSignIn existing={service?.slug} onDone={(created) => go(2, created)} />
+          <StepService existing={service?.slug} onDone={(created) => go(2, created)} />
         )}
         {current === 2 && service && (
           <StepTypes
@@ -120,19 +119,17 @@ export function ConnectWizard() {
   );
 }
 
-function StepSignIn({ existing, onDone }: { existing?: string; onDone: (slug: string) => void }) {
+function StepService({ existing, onDone }: { existing?: string; onDone: (slug: string) => void }) {
   const { t } = useTranslation();
   const create = useCreateService();
   const refresh = useRefreshAll();
-  const [form] = Form.useForm<ServiceInput & { advanced?: boolean }>();
+  const [form] = Form.useForm<ServiceInput>();
   const [error, setError] = useState<unknown>(null);
-  const [discovery, setDiscovery] = useState<'idle' | 'busy' | 'ok' | 'fail'>('idle');
-  const [advanced, setAdvanced] = useState(false);
 
   if (existing) {
     return (
       <Flex vertical gap={12}>
-        <Alert type="success" showIcon title={t('wizard.signin.done', { slug: existing })} />
+        <Alert type="success" showIcon title={t('wizard.service.done', { slug: existing })} />
         <Flex gap={8}>
           <Button type="primary" onClick={() => onDone(existing)}>
             {t('wizard.next')}
@@ -142,27 +139,6 @@ function StepSignIn({ existing, onDone }: { existing?: string; onDone: (slug: st
     );
   }
 
-  const discover = async () => {
-    const issuer = String(form.getFieldValue('issuer') ?? '').trim();
-    if (!issuer) return;
-    setDiscovery('busy');
-    try {
-      const res = await fetch(`/api/discover?issuer=${encodeURIComponent(issuer)}`);
-      if (!res.ok) throw new Error(String(res.status));
-      const found = discoveredEndpointsSchema.parse(await res.json());
-      form.setFieldsValue({
-        authorization_url: found.authorization_url,
-        token_url: found.token_url,
-        jwks_url: found.jwks_url,
-        ...(found.issuer ? { issuer: found.issuer } : {}),
-      });
-      setDiscovery('ok');
-    } catch {
-      setDiscovery('fail');
-      setAdvanced(true);
-    }
-  };
-
   const submit = async (values: ServiceInput) => {
     setError(null);
     // The address and the icon are optional; an empty field is no address.
@@ -170,7 +146,6 @@ function StepSignIn({ existing, onDone }: { existing?: string; onDone: (slug: st
       ...values,
       url: values.url?.trim() || null,
       icon: values.icon?.trim() || null,
-      client_secret: values.client_secret || null,
     };
     try {
       await create.mutateAsync({ data: body });
@@ -182,13 +157,7 @@ function StepSignIn({ existing, onDone }: { existing?: string; onDone: (slug: st
   };
 
   return (
-    <Form
-      form={form}
-      layout="vertical"
-      requiredMark={false}
-      onFinish={(v) => void submit(v)}
-      initialValues={{ client_secret: '' }}
-    >
+    <Form form={form} layout="vertical" requiredMark={false} onFinish={(v) => void submit(v)}>
       <Flex vertical gap={0}>
         {error != null && (
           <Alert
@@ -198,80 +167,6 @@ function StepSignIn({ existing, onDone }: { existing?: string; onDone: (slug: st
             style={{ marginBottom: 16 }}
           />
         )}
-        <Form.Item label={t('wizard.issuer')} htmlFor="issuer" extra={t('wizard.issuerHelp')}>
-          <Flex gap={8}>
-            <Form.Item name="issuer" noStyle rules={[{ required: true }]}>
-              <Input
-                id="issuer"
-                placeholder="https://sso.example.com/realms/main"
-                className="mono"
-                onPressEnter={(e) => {
-                  e.preventDefault();
-                  void discover();
-                }}
-              />
-            </Form.Item>
-            <Button onClick={() => void discover()} loading={discovery === 'busy'}>
-              {t('wizard.discoverBtn')}
-            </Button>
-          </Flex>
-        </Form.Item>
-        {discovery === 'ok' && (
-          <Alert
-            type="success"
-            showIcon
-            title={t('wizard.discover.ok')}
-            style={{ marginBottom: 16 }}
-          />
-        )}
-        {discovery === 'fail' && (
-          <Alert
-            type="warning"
-            showIcon
-            title={t('wizard.discover.fail')}
-            style={{ marginBottom: 16 }}
-          />
-        )}
-        <Button
-          type="link"
-          style={{ alignSelf: 'flex-start', paddingLeft: 0 }}
-          onClick={() => setAdvanced((v) => !v)}
-        >
-          {advanced ? t('wizard.hideUrls') : t('wizard.showUrls')}
-        </Button>
-        <div style={{ display: advanced ? 'block' : 'none' }}>
-          <Form.Item
-            name="authorization_url"
-            label={t('service.authUrl')}
-            rules={[{ required: true }]}
-          >
-            <Input className="mono" />
-          </Form.Item>
-          <Form.Item name="token_url" label={t('service.tokenUrl')} rules={[{ required: true }]}>
-            <Input className="mono" />
-          </Form.Item>
-          <Form.Item name="jwks_url" label="JWKS" rules={[{ required: true }]}>
-            <Input className="mono" />
-          </Form.Item>
-        </div>
-        <Flex gap={16} wrap>
-          <Form.Item
-            name="client_id"
-            label="client_id"
-            rules={[{ required: true }]}
-            style={{ flex: 1, minWidth: 220 }}
-          >
-            <Input className="mono" />
-          </Form.Item>
-          <Form.Item
-            name="client_secret"
-            label={t('wizard.secretLabel')}
-            extra={t('wizard.secret.help')}
-            style={{ flex: 1, minWidth: 220 }}
-          >
-            <Input.Password autoComplete="new-password" />
-          </Form.Item>
-        </Flex>
         <Flex gap={16} wrap>
           <Form.Item
             name="name"
@@ -288,7 +183,7 @@ function StepSignIn({ existing, onDone }: { existing?: string; onDone: (slug: st
           </Form.Item>
           <Form.Item
             name="slug"
-            label="Slug"
+            label={t('service.slug')}
             extra={t('wizard.slug.help')}
             rules={[
               {
@@ -599,6 +494,8 @@ function StepCheck({
         description={
           <span>
             {t('wizard.check.next.body')}{' '}
+            <Link href={`/services/${slug}/pep`}>{t('service.tab.pep')}</Link>
+            {' · '}
             <Link href={`/services/${slug}/integration`}>{t('service.tab.integration')}</Link>
           </span>
         }

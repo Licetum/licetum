@@ -21,6 +21,17 @@ Next.js 16 (App Router) + Ant Design 6 + TanStack Query. The visual system is in
   PDP for the Check page (which sends them to the simulation, `/service/{id}/simulate/access/v1/*`, and draws the verdict from
   `context.reason_admin`) and for the snippets and the tester of the Integration page. `tests/authzen.test.ts` holds each
   request to the AuthZEN specification (contract WEB03).
+- **PEP clients and issuers**: the applications that ask the PDP of a service are managed on the service's "PEP clients" tab
+  (`features/services/pep-*`: a client is known by an API key Licetum issues, or by the tokens of a registered issuer; a key's
+  secret is shown once, in a dialog that forgets it when it closes, and is never kept by the query cache) and the identity
+  providers they may present tokens of under Settings, "PEP issuers" (`features/settings/settings-issuers.tsx`, with the
+  discovery document read through `/api/discover`). A service itself is only a name, a slug, an address and an icon.
+- **What a person sees** (the Check page's second mode and the effective access of the person page) is read with the AuthZEN
+  searches of the simulation, not computed in one answer (`features/check/visible-access.tsx`): one action search per type for
+  the levels on the type as a whole, and, when the row of a type with resources is opened, one resource search per access
+  level of the type, a page at a time (a "load more" button asks for the next page of the levels that have one). A row lists a
+  resource only as far as every level has been read, so its levels are exact (`seen-model.ts`). Levels that only a role grants
+  are not asked about.
 - **The API client is generated** from `../admin-api/schema/admin.yaml` by orval (`pnpm orval`, into `src/api`, not
   committed). Server data is read with TanStack Query; a write is followed by `useRefreshAll()`.
 - **Data from outside is parsed, not cast**: `src/lib/schemas.ts` (zod) holds the shape of the token answers, the
@@ -42,8 +53,8 @@ src/lib/            session, env, access, undo notice, URL state
 src/i18n/           ru, en and zh dictionaries (en is the source); scripts/check-locales.mjs checks them
 src/theme/          the visual system as an Ant Design theme
 tests/              Jest tests: domain helpers, grant form model, schemas, session cookie, the OIDC sign-in, the AuthZEN builders
-                    (oidc.test.ts); tests/ui renders components
-                    with mocked data (no browser, no running stack)
+                    (oidc.test.ts), the PEP forms and the merge of the levels of a person; tests/ui renders screens with the
+                    admin API answered from a table (harness.tsx; no browser, no running stack; next/navigation is a stub)
 ```
 
 ## Run

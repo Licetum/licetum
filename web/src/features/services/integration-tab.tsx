@@ -29,7 +29,6 @@ import {
 } from '@/lib/authzen';
 
 import { useAllTypes } from '../data/queries';
-import { DelegationSection } from './delegation-section';
 import { useService } from './service-frame';
 
 /** How the code of a service asks Licetum: ready-made calls with the service's own slug and type names, and a way to try one. */
@@ -319,8 +318,6 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
           ]}
         />
       </div>
-
-      <DelegationSection checkUrl={checkUrl} />
 
       <Alert
         type="info"
