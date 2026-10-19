@@ -154,7 +154,7 @@ func TestPEPAPIKeyAuthenticatesAndTheBodyNamesThePerson(t *testing.T) {
 	}
 
 	// A key whose secret is wrong, one whose id nobody holds, and one that is not a key at all, are not authenticated.
-	secret := key[strings.LastIndex(key, "_")+1:]
+	secret := key[len("lct_")+16+1:] // the secret is base64url, which has underscores of its own
 	flipped := "A" + secret[1:]
 	if secret[0] == 'A' {
 		flipped = "B" + secret[1:]

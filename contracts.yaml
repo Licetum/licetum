@@ -634,7 +634,7 @@ contracts:
     oracle: status codes over time
     level: system
     phase: P2
-    status: planned
+    status: active
   - id: PEP03
     statement: One JWKS fetch per TTL, one refetch per unknown kid, and junk tokens do not multiply fetches.
     oracle: fetches counted by the fake IdP

@@ -24,6 +24,7 @@ const (
 	// input validation
 	FieldRequired                 Key = "field_required"
 	FieldURLInvalid               Key = "field_url_invalid"
+	FieldInvalid                  Key = "field_invalid"
 	FieldDSNInvalid               Key = "field_dsn_invalid"
 	FieldDSNScheme                Key = "field_dsn_scheme"
 	FieldDSNHost                  Key = "field_dsn_host"
@@ -233,6 +234,11 @@ var catalog = map[Key]Text{
 		EN: "Field %s is required",
 		RU: "Поле %s обязательно",
 		ZH: "字段 %s 为必填项",
+	},
+	FieldInvalid: {
+		EN: "Field %s is not valid",
+		RU: "Поле %s недопустимо",
+		ZH: "字段 %s 无效",
 	},
 	FieldURLInvalid: {
 		EN: "Field %s: expected a URL with the http or https scheme",

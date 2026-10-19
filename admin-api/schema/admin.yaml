@@ -1540,6 +1540,253 @@ components:
         - type
         - access
       type: object
+    PEPClient:
+      additionalProperties: false
+      properties:
+        client_id:
+          description: "jwt only: the client of the issuer"
+          type:
+            - string
+            - "null"
+        created_at:
+          description: When the client was created
+          format: date-time
+          type: string
+        enabled:
+          description: Whether the client is accepted
+          type: boolean
+        id:
+          description: Client id
+          format: uuid
+          type: string
+        issuer:
+          description: "jwt only: the issuer of the client's tokens"
+          type:
+            - string
+            - "null"
+        kind:
+          description: jwt or api_key
+          enum:
+            - jwt
+            - api_key
+          type: string
+        name:
+          description: Name of the client, unique within the service
+          type: string
+        operations:
+          description: What the client may call
+          items:
+            type: string
+          type: array
+        service_id:
+          description: The service the client belongs to
+          format: uuid
+          type: string
+      required:
+        - id
+        - service_id
+        - name
+        - kind
+        - issuer
+        - client_id
+        - operations
+        - enabled
+        - created_at
+      type: object
+    PEPClientInput:
+      additionalProperties: true
+      properties:
+        client_id:
+          description: "jwt only: the client of the issuer (the azp, or client_id, of its tokens)"
+          examples:
+            - checkout-backend
+          type: string
+        enabled:
+          description: "Whether the client is accepted; absent: true"
+          type: boolean
+        issuer:
+          description: "jwt only: the registered issuer (its iss) the tokens of the client come from"
+          examples:
+            - https://idp.example.com/realms/main
+          type: string
+        kind:
+          description: "jwt: a client application of a registered issuer, which presents its access tokens; api_key: the client holds API keys that Licetum issues"
+          enum:
+            - jwt
+            - api_key
+          type: string
+        name:
+          description: Name of the client, unique within the service
+          examples:
+            - checkout
+          maxLength: 100
+          minLength: 1
+          type: string
+        operations:
+          description: "What the client may call. Absent: evaluate only; explain and the three searches are off by default"
+          items:
+            enum:
+              - evaluate
+              - search_resource
+              - search_action
+              - search_subject
+              - explain
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - name
+        - kind
+      type: object
+    PEPClientPatch:
+      additionalProperties: true
+      properties:
+        client_id:
+          description: "jwt only: the client of the issuer"
+          type: string
+        enabled:
+          description: Whether the client is accepted. A disabled client's API keys are refused (401) and its tokens get the same 403 as an unregistered client
+          type: boolean
+        issuer:
+          description: "jwt only: the registered issuer the tokens of the client come from"
+          type: string
+        name:
+          description: New name of the client
+          maxLength: 100
+          minLength: 1
+          type: string
+        operations:
+          description: What the client may call; replaces the list
+          items:
+            enum:
+              - evaluate
+              - search_resource
+              - search_action
+              - search_subject
+              - explain
+            type: string
+          type: array
+      type: object
+    PEPIssuer:
+      additionalProperties: true
+      properties:
+        algs:
+          description: "The signature algorithms accepted. Absent: RS256, ES256 and EdDSA. Asymmetric algorithms only"
+          items:
+            enum:
+              - RS256
+              - RS384
+              - RS512
+              - PS256
+              - PS384
+              - PS512
+              - ES256
+              - ES384
+              - ES512
+              - EdDSA
+            type: string
+          type:
+            - array
+            - "null"
+        audiences:
+          description: "The values one of which the aud of a token must contain. Absent or empty: the audience of the PDP (PDP__AUDIENCE, else PDP__PUBLIC_URL). A token always needs an aud"
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        issuer:
+          description: The iss of the tokens, compared exactly
+          examples:
+            - https://idp.example.com/realms/main
+          maxLength: 2048
+          minLength: 1
+          type: string
+        jwks_url:
+          description: Where the keys of the issuer are read
+          examples:
+            - https://idp.example.com/realms/main/protocol/openid-connect/certs
+          type: string
+        require_typ:
+          description: Accept only tokens whose typ header is at+jwt (RFC 9068)
+          type: boolean
+      required:
+        - issuer
+        - jwks_url
+      type: object
+    PEPKey:
+      additionalProperties: false
+      properties:
+        active:
+          description: "Whether the key works now: not revoked and not expired. A client has at most two active keys"
+          type: boolean
+        created_at:
+          description: When the key was issued
+          format: date-time
+          type: string
+        expires_at:
+          description: "When the key stops working; null: never"
+          format: date-time
+          type:
+            - string
+            - "null"
+        key_id:
+          description: Identifies the key (it is the part of the key after lct_); the key itself is never stored
+          examples:
+            - 3f9a1c0d5b7e2a64
+          type: string
+        revoked_at:
+          description: "When the key was revoked; null: it is not"
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - key_id
+        - created_at
+        - expires_at
+        - revoked_at
+        - active
+      type: object
+    PEPKeyIssued:
+      additionalProperties: false
+      properties:
+        active:
+          description: "Whether the key works now: not revoked and not expired. A client has at most two active keys"
+          type: boolean
+        created_at:
+          description: When the key was issued
+          format: date-time
+          type: string
+        expires_at:
+          description: "When the key stops working; null: never"
+          format: date-time
+          type:
+            - string
+            - "null"
+        key:
+          description: The API key (lct_<key id>_<secret>). It is shown once and cannot be read again; send it as the bearer token of the AuthZEN API
+          type: string
+        key_id:
+          description: Identifies the key (it is the part of the key after lct_); the key itself is never stored
+          examples:
+            - 3f9a1c0d5b7e2a64
+          type: string
+        revoked_at:
+          description: "When the key was revoked; null: it is not"
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - key
+        - key_id
+        - created_at
+        - expires_at
+        - revoked_at
+        - active
+      type: object
     Platform:
       additionalProperties: false
       properties:
@@ -4837,6 +5084,222 @@ paths:
       summary: My access to the platform
       tags:
         - Platform
+  /platform/pep-issuers:
+    delete:
+      description: Deletes an issuer that no client uses (409 while one does, a deleted client included). The name is a query parameter because it is a URL.
+      operationId: delete_pep_issuer
+      parameters:
+        - description: The issuer to delete (its iss)
+          explode: false
+          in: query
+          name: issuer
+          schema:
+            description: The issuer to delete (its iss)
+            maxLength: 2048
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Delete a PEP issuer
+      tags:
+        - PEP
+    get:
+      description: The identity providers whose tokens a PEP may present, by name. They are shared by all services; a client of a service picks one.
+      operationId: list_pep_issuers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PEPIssuer"
+                type:
+                  - array
+                  - "null"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: PEP issuers
+      tags:
+        - PEP
+    put:
+      description: Creates the issuer, or replaces the settings of the one with this name. The iss of a token is compared exactly with the name. A token is accepted only with an aud that contains one of the audiences (or, with none listed, the audience of the PDP), a signature of an allowed algorithm (asymmetric only) and a valid exp and nbf (60 s of leeway). Needs write on the services as a whole.
+      operationId: put_pep_issuer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PEPIssuer"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPIssuer"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Register or replace a PEP issuer
+      tags:
+        - PEP
   /readyz:
     get:
       description: |-
@@ -6099,6 +6562,674 @@ paths:
       summary: Refresh the access token
       tags:
         - OAuth
+  /service/{service_id}/pep-clients:
+    get:
+      description: The clients of the service that call its AuthZEN API, by name.
+      operationId: list_pep_clients
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PEPClient"
+                type:
+                  - array
+                  - "null"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: PEP clients of a service
+      tags:
+        - PEP
+    post:
+      description: "Registers a client of the service's AuthZEN API. A jwt client is a client application of a registered issuer: its access tokens are accepted when the issuer, the audience and the signature are right. An api_key client holds API keys that Licetum issues (POST …/keys). Operations default to evaluate; explain and the three searches have to be listed. The same client of an issuer in two services is two rows. The name, and the issuer with the client id, are unique within the service (422)."
+      operationId: create_pep_client
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PEPClientInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPClient"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Register a PEP client
+      tags:
+        - PEP
+  /service/{service_id}/pep-clients/{client_id}:
+    delete:
+      description: Deletes the client and revokes its keys. Its name and identity are free again.
+      operationId: delete_pep_client
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Delete a PEP client
+      tags:
+        - PEP
+    get:
+      operationId: get_pep_client
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPClient"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: A PEP client
+      tags:
+        - PEP
+    patch:
+      description: Changes the fields that are present. The kind does not change. Disabling a client takes effect on every PDP within the revocation delay, without deleting its keys.
+      operationId: update_pep_client
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PEPClientPatch"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPClient"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Change a PEP client
+      tags:
+        - PEP
+  /service/{service_id}/pep-clients/{client_id}/keys:
+    get:
+      description: The keys of the client, revoked ones too, the newest first. A key's secret is never returned, only its id and dates.
+      operationId: list_pep_keys
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PEPKey"
+                type:
+                  - array
+                  - "null"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: API keys of a PEP client
+      tags:
+        - PEP
+    post:
+      description: "Issues a key to an api_key client. The key is in this answer and nowhere else: Licetum keeps only its hash, so a lost key is revoked and issued again. A client has at most two active keys (409), so a key is rotated by issuing the new one, moving the PEP to it and revoking the old one."
+      operationId: issue_pep_key
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPKeyIssued"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Issue an API key
+      tags:
+        - PEP
+  /service/{service_id}/pep-clients/{client_id}/keys/{key_id}:
+    delete:
+      description: Revokes the key. Every PDP refuses it within the revocation delay (the revision poll interval). A key that is revoked already stays so.
+      operationId: revoke_pep_key
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+        - description: Key id, the part of the key after lct_
+          in: path
+          name: key_id
+          required: true
+          schema:
+            description: Key id, the part of the key after lct_
+            examples:
+              - 3f9a1c0d5b7e2a64
+            maxLength: 64
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Revoke an API key
+      tags:
+        - PEP
   /service/{service_id}/policy/claims:
     get:
       description: The claims and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in claim-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. It is what the tokens the service's users get, and the claims a trusted client sends when it asks on behalf of a person, have to carry for the answers to be the real ones.

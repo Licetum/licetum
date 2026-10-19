@@ -683,6 +683,15 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   credential, and a PEP client may ask the subject search without being a `trusted_clients` entry. `PEP__RATE_LIMIT`/`PEP__RATE_BURST` is a token bucket per
   client and per process (429 `authzen_rate_limited` + `Retry-After`; off by default; a global limit belongs to the ingress). The directory holds enabled
   clients only, so the key of a disabled client is a 401, not a 403. Tests: `core/server/authzen_pep_test.go`, `admin-api/tests/integration/api/pep_test.go`.
+  **Management** (`admin-api/api/admin_pep.go`, `admin-api/service/pep.go`, `core/model/pep.go`; minimal routes at their final paths, re-gated by the roles of the
+  service in P4): `GET|POST /service/{id}/pep-clients`, `GET|PATCH|DELETE …/pep-clients/{client_id}`, `GET|POST …/pep-clients/{client_id}/keys`,
+  `DELETE …/keys/{key_id}`, and `GET|PUT|DELETE /platform/pep-issuers` (the issuer to delete is the `issuer` query parameter: it is a URL). They are governed by the
+  platform policy `service`: read on the service to read its clients and keys, write to change them, the whole policy for the issuers. The path takes the service id
+  (the slug arrives with the routes of P4); a service that does not exist is refused like one the caller may not touch (403). A write goes through `db.CreatePEPClient`,
+  `ModifyPEPClient` (the row read under its lock, so a PATCH never loses a concurrent change), `IssueAPIKey`, `RevokeAPIKey`, … each in its own transaction with the bump of
+  the `pep` scope, then `App.AfterPEPWrite`. The change log does not record them (nor does a rollback restore them). The key is in the answer that issues it
+  (`Cache-Control: no-store`) and nowhere else; a client has two active keys at most (409), and a revoked key, a disabled or a deleted client is refused by every replica
+  within the revision poll interval (PEP02, `cluster/pep_test.go`).
 - **Calls on behalf of a person** (`service/delegation.go`, `api/check.go`): `POST /service/{id}/on_behalf/check` and `…/permission` answer
   as the check and the permission do, for the `subject` and the `claims` named in the body instead of the holder of the token. The caller
   sends its own token (same IdP and keys as a user's, typically client-credentials); `AuthorizeDelegate` takes its client from `azp`, then
