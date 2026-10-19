@@ -50,19 +50,20 @@ func (w *leverWorld) send(base string, r authzenreq.Request, token string, heade
 	return w.do(r.Method, base+r.Path, r.Body, append([]string{"Authorization", "Bearer " + token}, headers...)...)
 }
 
-// bypasses are the answers that skipped the result caches so far, as the check API counts them.
-func (w *leverWorld) bypasses() (permission, check float64) {
+// bypasses are the answers that skipped the result caches so far, as the check API counts them: the permissions, the checks and the
+// pages of the resource search.
+func (w *leverWorld) bypasses() (permission, check, search float64) {
 	w.t.Helper()
 	status, raw := w.do(http.MethodGet, w.ops.URL+"/metrics", nil)
 	if status != http.StatusOK {
 		w.t.Fatalf("metrics: %d", status)
 	}
 	value := func(name string) float64 { return max(metricValue(string(raw), name+`{result="bypass"}`), 0) }
-	return value("licetum_permission_cache_total"), value("licetum_check_cache_total")
+	return value("licetum_permission_cache_total"), value("licetum_check_cache_total"), value("licetum_search_cache_total")
 }
 
-// bypassed counts answers that skipped the result cache of the permissions and of the checks.
-type bypassed struct{ permission, check float64 }
+// bypassed counts answers that skipped the result cache of the permissions, of the checks and of the resource search.
+type bypassed struct{ permission, check, search float64 }
 
 // leverRoute is a route of the check API that reads the freshness of the request, with the request that asks it a question.
 type leverRoute struct {
@@ -171,13 +172,13 @@ func TestTheConsistencyLeverOfTheContextActsAsTheQueryParameter(t *testing.T) {
 			// take sends the request and returns how many answers it took from the data and not from the caches.
 			take := func(base string, fresh bool, headers ...string) bypassed {
 				t.Helper()
-				permission, check := w.bypasses()
+				permission, check, search := w.bypasses()
 				status, body := w.send(base, r.build(fresh), r.token, headers...)
 				if status != http.StatusOK {
 					t.Fatalf("%s: %d %s", r.name, status, body)
 				}
-				afterPermission, afterCheck := w.bypasses()
-				return bypassed{afterPermission - permission, afterCheck - check}
+				afterPermission, afterCheck, afterSearch := w.bypasses()
+				return bypassed{afterPermission - permission, afterCheck - check, afterSearch - search}
 			}
 
 			// The first request synchronizes what it needs and has the people it meets written to the registry.
