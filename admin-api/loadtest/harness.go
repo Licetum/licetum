@@ -592,11 +592,15 @@ func measurementFrom(res k6Result, w window, cores int) Measurement {
 	return m
 }
 
-// startPDP runs `licetum pdp` against the infrastructure of the run, on the address PDP__ADDR names. Its pool is the one the
-// options name, with no overflow, so the number of connections to PostgreSQL is the setting under test. Its output goes to
-// check.log.
+// startPDP runs `licetum pdp` against the infrastructure of the run, on the address PDP__ADDR names, and its operations
+// listener on PDP__OPS_ADDR (the probes and the metrics are read there). Its pool is the one the options name, with no
+// overflow, so the number of connections to PostgreSQL is the setting under test. Its output goes to check.log.
 func startPDP(ctx context.Context, e *env, opts Options, index int) (*checkServer, error) {
 	addr, err := freeAddr()
+	if err != nil {
+		return nil, err
+	}
+	opsAddr, err := freeAddr()
 	if err != nil {
 		return nil, err
 	}
@@ -614,7 +618,7 @@ func startPDP(ctx context.Context, e *env, opts Options, index int) (*checkServe
 	}
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // the binary is the one the run was asked to measure
 	cmd.Env = append(os.Environ(), checkServerEnv(e, opts)...)
-	cmd.Env = append(cmd.Env, "PDP__ADDR="+addr)
+	cmd.Env = append(cmd.Env, "PDP__ADDR="+addr, "PDP__OPS_ADDR="+opsAddr)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		if cerr := logFile.Close(); cerr != nil {
@@ -622,7 +626,7 @@ func startPDP(ctx context.Context, e *env, opts Options, index int) (*checkServe
 		}
 		return nil, fmt.Errorf("start %s: %w", opts.CheckBin, err)
 	}
-	cs := &checkServer{cmd: cmd, base: "http://" + addr, log: logFile, done: make(chan struct{})}
+	cs := &checkServer{cmd: cmd, base: "http://" + addr, ops: "http://" + opsAddr, log: logFile, done: make(chan struct{})}
 	go func() {
 		_ = cmd.Wait()
 		close(cs.done)

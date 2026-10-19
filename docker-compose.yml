@@ -88,6 +88,12 @@ services:
       - --build.entrypoint=/tmp/air/licetum
       - --build.args_bin=pdp,-addr,:8001
       - --build.exclude_dir=schema,tmp
+    # The probes and /metrics are on the ops port: inside the network only (expose, not ports).
+    environment:
+      <<: *env-app
+      PDP__OPS_ADDR: ":9090"
+    expose:
+      - "9090"
     ports:
       - "8001:8001"
     depends_on:

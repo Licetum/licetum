@@ -55,12 +55,16 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.pdp.port }}
+            - name: ops
+              containerPort: {{ .Values.pdp.opsPort }}
           envFrom:
             - configMapRef:
                 name: {{ include "licetum.fullname" . }}-config
           env:
             - name: PDP__ADDR
               value: ":{{ .Values.pdp.port }}"
+            - name: PDP__OPS_ADDR
+              value: ":{{ .Values.pdp.opsPort }}"
             {{- include "licetum.secretEnv" (dict "root" . "key" "DB__URI") | nindent 12 }}
             {{- include "licetum.secretEnv" (dict "root" . "key" "DB__READ_URI" "optional" true) | nindent 12 }}
             {{- include "licetum.secretEnv" (dict "root" . "key" "REDIS__URI") | nindent 12 }}
@@ -71,15 +75,15 @@ spec:
               value: {{ . | quote }}
             {{- end }}
           startupProbe:
-            httpGet: {path: /readyz, port: http}
+            httpGet: {path: /readyz, port: ops}
             periodSeconds: 2
             failureThreshold: 60
           readinessProbe:
-            httpGet: {path: /readyz, port: http}
+            httpGet: {path: /readyz, port: ops}
             periodSeconds: 5
             failureThreshold: 2
           livenessProbe:
-            httpGet: {path: /healthz, port: http}
+            httpGet: {path: /healthz, port: ops}
             periodSeconds: 10
             failureThreshold: 3
           lifecycle:
@@ -110,6 +114,9 @@ spec:
     - name: http
       port: {{ .Values.pdp.port }}
       targetPort: http
+    - name: ops
+      port: {{ .Values.pdp.opsPort }}
+      targetPort: ops
 {{- if .Values.pdp.podDisruptionBudget.enabled }}
 ---
 apiVersion: policy/v1

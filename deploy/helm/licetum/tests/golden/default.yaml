@@ -81,6 +81,9 @@ spec:
     - name: http
       port: 8001
       targetPort: http
+    - name: ops
+      port: 9090
+      targetPort: ops
 ---
 # Source: licetum/templates/admin.yaml
 apiVersion: apps/v1
@@ -284,12 +287,16 @@ spec:
           ports:
             - name: http
               containerPort: 8001
+            - name: ops
+              containerPort: 9090
           envFrom:
             - configMapRef:
                 name: release-licetum-config
           env:
             - name: PDP__ADDR
               value: ":8001"
+            - name: PDP__OPS_ADDR
+              value: ":9090"
             - name: DB__URI
               valueFrom:
                 secretKeyRef:
@@ -317,15 +324,15 @@ spec:
                   name: release-licetum-secrets
                   key: PLATFORM__CLIENT_SECRET
           startupProbe:
-            httpGet: {path: /readyz, port: http}
+            httpGet: {path: /readyz, port: ops}
             periodSeconds: 2
             failureThreshold: 60
           readinessProbe:
-            httpGet: {path: /readyz, port: http}
+            httpGet: {path: /readyz, port: ops}
             periodSeconds: 5
             failureThreshold: 2
           livenessProbe:
-            httpGet: {path: /healthz, port: http}
+            httpGet: {path: /healthz, port: ops}
             periodSeconds: 10
             failureThreshold: 3
           lifecycle:

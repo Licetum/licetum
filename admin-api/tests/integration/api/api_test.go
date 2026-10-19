@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/go-jose/go-jose/v4"
@@ -71,6 +72,7 @@ type env struct {
 	t     *testing.T
 	admin *httptest.Server
 	check *httptest.Server
+	ops   *httptest.Server // the operations listener of the same PDP: probes and metrics (server.NewOpsHandler)
 	mock  *httptest.Server
 	key   *rsa.PrivateKey
 	app   *service.App
@@ -164,8 +166,10 @@ func setup(t *testing.T) *env {
 	e.cfg = cfg
 	e.admin = newTestServer(t, api.NewAdminHandler(app))
 	e.check = newTestServer(t, server.NewPDPHandler(app.App))
+	e.ops = newTestServer(t, server.NewOpsHandler(app.App))
 	t.Cleanup(e.admin.Close)
 	t.Cleanup(e.check.Close)
+	t.Cleanup(e.ops.Close)
 	e.adminToken = e.token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
 	return e
 }
@@ -584,23 +588,31 @@ func TestIntegrationSchemaValidation(t *testing.T) {
 		}
 	}
 
-	// Docs and spec.
-	for _, srv := range []*httptest.Server{e.admin, e.check} {
-		status, raw := e.do("GET", srv.URL+"/openapi.json", nil)
-		var spec struct {
-			OpenAPI string         `json:"openapi"`
-			Paths   map[string]any `json:"paths"`
-		}
-		if status != http.StatusOK || json.Unmarshal(raw, &spec) != nil || spec.OpenAPI != "3.1.0" || len(spec.Paths) == 0 {
-			t.Fatalf("openapi.json: %d %.200s", status, raw)
-		}
-		if status, _ := e.do("GET", srv.URL+"/docs", nil); status != http.StatusOK {
-			t.Fatalf("/docs: %d", status)
+	// Docs and spec: the admin API serves them. The PDP's public port serves neither (its document is what `licetum openapi pdp`
+	// prints, checked below), and its probes and metrics are on the operations listener.
+	status, raw := e.do("GET", e.admin.URL+"/openapi.json", nil)
+	var spec struct {
+		OpenAPI string         `json:"openapi"`
+		Paths   map[string]any `json:"paths"`
+	}
+	if status != http.StatusOK || json.Unmarshal(raw, &spec) != nil || spec.OpenAPI != "3.1.0" || len(spec.Paths) == 0 {
+		t.Fatalf("openapi.json: %d %.200s", status, raw)
+	}
+	if status, _ := e.do("GET", e.admin.URL+"/docs", nil); status != http.StatusOK {
+		t.Fatalf("/docs: %d", status)
+	}
+	for _, path := range []string{"/openapi.json", "/docs", "/healthz", "/readyz", "/metrics"} {
+		if status, _ := e.do("GET", e.check.URL+path, nil); status != http.StatusNotFound {
+			t.Fatalf("the PDP's public port answers %s with %d, want 404", path, status)
 		}
 	}
-	_, raw := e.do("GET", e.check.URL+"/openapi.json", nil)
-	if !strings.Contains(string(raw), `"authzen_evaluation"`) || !strings.Contains(string(raw), `"bearer"`) {
-		t.Fatal("the check API spec lacks authzen_evaluation or the bearer security scheme")
+	_, pdp := server.NewPDPAPI(e.app.App)
+	doc, err := server.LocalizedSpec(pdp, i18n.Default, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), `"authzen_evaluation"`) || !strings.Contains(string(doc), `"bearer"`) {
+		t.Fatal("the PDP spec lacks authzen_evaluation or the bearer security scheme")
 	}
 }
 

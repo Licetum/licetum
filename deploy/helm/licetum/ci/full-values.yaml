@@ -17,6 +17,7 @@ platform:
   clientId: licetum
 pdp:
   maxInflight: "512"
+  opsPort: 9090
   autoscaling:
     targetInflight: 200
 worker:

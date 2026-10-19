@@ -27,25 +27,42 @@ func docsHandler(t *testing.T) http.Handler {
 
 func TestOpenAPIExposesStableOperations(t *testing.T) {
 	admin, _ := NewAdminAPI(service.New(&engine.App{Cfg: &config.Config{}}))
-	pdp, _ := server.NewPDPAPI(&engine.App{Cfg: &config.Config{}})
-	for name, handler := range map[string]http.Handler{"admin": admin, "pdp": pdp} {
-		t.Run(name, func(t *testing.T) {
-			record := httptest.NewRecorder()
-			handler.ServeHTTP(record, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
-			if record.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200", record.Code)
-			}
-			var spec struct {
-				OpenAPI string                    `json:"openapi"`
-				Paths   map[string]map[string]any `json:"paths"`
-			}
-			if err := json.Unmarshal(record.Body.Bytes(), &spec); err != nil {
-				t.Fatal(err)
-			}
-			if spec.OpenAPI != "3.1.0" || len(spec.Paths) == 0 {
-				t.Fatalf("invalid OpenAPI document: version=%q paths=%d", spec.OpenAPI, len(spec.Paths))
-			}
-		})
+	record := httptest.NewRecorder()
+	admin.ServeHTTP(record, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if record.Code != http.StatusOK {
+		t.Fatalf("admin: status = %d, want 200", record.Code)
+	}
+	checkOpenAPIDocument(t, record.Body.Bytes())
+
+	// The PDP serves no document on its public port, nor the component schemas of it, nor docs: `licetum openapi pdp` prints the
+	// document (TestContract_API01), and its operations are on the ops listener.
+	pdp, api := server.NewPDPAPI(&engine.App{Cfg: &config.Config{}})
+	for _, path := range []string{"/openapi.json", "/openapi.yaml", "/docs", "/schemas/Error.json"} {
+		record := httptest.NewRecorder()
+		pdp.ServeHTTP(record, httptest.NewRequest(http.MethodGet, path, nil))
+		if record.Code != http.StatusNotFound {
+			t.Fatalf("pdp: %s status = %d, want 404", path, record.Code)
+		}
+	}
+	doc, err := server.LocalizedSpec(api, i18n.Default, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkOpenAPIDocument(t, doc)
+}
+
+// checkOpenAPIDocument checks what makes a document usable: its OpenAPI version and a non-empty set of paths.
+func checkOpenAPIDocument(t *testing.T, raw []byte) {
+	t.Helper()
+	var spec struct {
+		OpenAPI string                    `json:"openapi"`
+		Paths   map[string]map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.OpenAPI != "3.1.0" || len(spec.Paths) == 0 {
+		t.Fatalf("invalid OpenAPI document: version=%q paths=%d", spec.OpenAPI, len(spec.Paths))
 	}
 }
 

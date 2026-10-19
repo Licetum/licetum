@@ -1,0 +1,10 @@
+GET /.well-known/authzen-configuration/service/{service_id}
+GET /service/{service_id}/permission
+POST /service/{service_id}/access/v1/evaluation
+POST /service/{service_id}/access/v1/evaluations
+POST /service/{service_id}/access/v1/search/action
+POST /service/{service_id}/access/v1/search/resource
+POST /service/{service_id}/access/v1/search/subject
+POST /service/{service_id}/check
+POST /service/{service_id}/on_behalf/check
+POST /service/{service_id}/on_behalf/permission

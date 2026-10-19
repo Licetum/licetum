@@ -32,7 +32,9 @@ var _ pdpEngine = (*engine.App)(nil)
 
 // NewPDPHandler serves the regional PDP (licetum pdp), the process client services call on every request: the AuthZEN API of
 // each service and, until P2-23, the routes the check API served before it (see registerLegacy). It is a separate app/port
-// (8001) so that it can be scaled and deployed independently of the admin API.
+// (8001) so that it can be scaled and deployed independently of the admin API. Its public port serves these routes and
+// nothing else: the probes and the metrics are on the ops listener (NewOpsHandler), and the PDP has no docs or OpenAPI document
+// on either listener (`licetum openapi pdp` prints the document).
 func NewPDPHandler(app *engine.App) http.Handler {
 	h, _ := NewPDPAPI(app)
 	return h
@@ -47,11 +49,12 @@ func NewPDPAPI(app *engine.App) (http.Handler, huma.API) {
 		{Name: "Delegated", Description: "The same questions asked on behalf of a person by a client application the service trusts, without the person's token. Every call is recorded."},
 		{Name: "System", Description: "Service endpoints."},
 	}
-	return NewServer(app, "Licetum PDP", tags, func(api huma.API) {
+	mux, api := newRouteTable("Licetum PDP", tags, false, func(api huma.API) {
 		httpx.AddBearerScheme(api, "Access token issued by the IdP of the service whose permissions are being checked.")
 		security := []map[string][]string{{httpx.BearerScheme: {}}}
 		authErrors := []int{http.StatusUnauthorized, http.StatusFailedDependency}
 		registerLegacy(api, app, security, authErrors)
 		registerAuthzen(api, app, app.Cfg, security, authErrors)
 	})
+	return withStack(app, mux), api
 }

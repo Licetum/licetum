@@ -119,6 +119,35 @@ func TestLoadPDPAddressIsItsOwn(t *testing.T) {
 	}
 }
 
+// An empty PDP__OPS_ADDR is the default, not an empty address: an empty one makes the listener take a random port.
+func TestLoadPDPOpsAddressDefaultsWhenEmpty(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PDP.OpsAddr != ":9090" {
+		t.Errorf("PDP.OpsAddr default = %q, want :9090", cfg.PDP.OpsAddr)
+	}
+
+	t.Setenv("PDP__OPS_ADDR", "")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PDP.OpsAddr != ":9090" {
+		t.Errorf("PDP.OpsAddr with an empty PDP__OPS_ADDR = %q, want :9090", cfg.PDP.OpsAddr)
+	}
+
+	t.Setenv("PDP__OPS_ADDR", "127.0.0.1:9191")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PDP.OpsAddr != "127.0.0.1:9191" {
+		t.Errorf("PDP.OpsAddr = %q, want 127.0.0.1:9191", cfg.PDP.OpsAddr)
+	}
+}
+
 func TestLoadPublicURL(t *testing.T) {
 	t.Setenv("HTTP__PUBLIC_URL", "https://licetum.example.com/")
 	cfg, err := config.Load()

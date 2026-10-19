@@ -31,9 +31,20 @@ This is the topology Licetum is built and tested for: several `pdp` instances in
   `worker` and the migration Job in the region of the primary only. A PDP pod of another region writes to the primary only
   rarely: it queues a synchronization job, and records a delegated call in the `strict` audit mode.
 - **Entry**: a GeoDNS, an Anycast address or a global load balancer sends a client to the nearest region whose pods are ready. That
-  layer is not part of Licetum. `/readyz` is what it should probe (the reasons are in `core/README.md`).
+  layer is not part of Licetum. It should use the readiness of the pod on its ops port (`:9090`), not on the public one (the
+  reasons are in `core/README.md`). The ops port is reached from inside the cluster (the Service's `ops` port), so a layer
+  outside the cluster needs a health check that runs there.
 - **The revision and the data it numbers travel in one stream** (`revision_state` is a table of the same database): a region that
   sees revision R in its replica has the data of R.
+
+### The ports of a PDP
+
+| port | setting | serves | reached by |
+|---|---|---|---|
+| `8001` | `PDP__ADDR` (`pdp.port`) | the AuthZEN API and the legacy permission routes | the clients of the services, through the entry layer |
+| `9090` | `PDP__OPS_ADDR` (`pdp.opsPort`) | `/healthz`, `/readyz`, `/metrics` | the kubelet and the health checks of the entry layer; Prometheus, from `networkPolicy.monitoringNamespace` |
+
+The public port serves no probe and no metric. The chart's probes, its Service port `ops` and its ServiceMonitor use the ops port.
 
 ### What is regional and what is global
 
@@ -146,3 +157,7 @@ reachable. `deploy/helm/test.sh` checks that the network policy of the profile n
    `terminationGracePeriodSeconds` of `2 x drain + timeout + 10`.
 4. A release that drops what the previous one uses is split in two: the release that stops using it, and, after it has been
    rolled out everywhere, the release that drops it.
+
+The release that moves the PDP's probes and metrics to the ops port (`:9090`) is such a release: the public port stops answering
+`/readyz`, `/healthz` and `/metrics` (they are a JSON 404 on `:8001`). Move every health check and scrape of a PDP pod to `:9090`
+before the PDP pods are upgraded; the chart's own probes and ServiceMonitor already use it.

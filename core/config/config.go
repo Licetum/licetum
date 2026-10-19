@@ -232,6 +232,9 @@ type PDP struct {
 	// Addr is the address the PDP listens on (PDP__ADDR, default :8001). The -addr flag overrides it; HTTP__ADDR is the
 	// address of the admin API and is not read for the PDP.
 	Addr string
+	// OpsAddr is the address of the operations listener (PDP__OPS_ADDR, default :9090): the liveness and readiness probes and
+	// the metrics. They are not on Addr, so a client of the PDP cannot reach them (see server.NewOpsHandler).
+	OpsAddr string
 }
 
 // Policy tunes what the check API does while it cannot confirm that its copy of the policy is current.
@@ -381,7 +384,7 @@ func Load() (*Config, error) {
 			MaxInflight:    e.int("HTTP__MAX_INFLIGHT", 0),
 			RequestTimeout: e.duration("HTTP__REQUEST_TIMEOUT", 0),
 		},
-		PDP: PDP{Addr: e.str("PDP__ADDR", ":8001")},
+		PDP: PDP{Addr: e.str("PDP__ADDR", ":8001"), OpsAddr: e.address("PDP__OPS_ADDR", ":9090")},
 	}
 	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
 		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))
@@ -483,6 +486,15 @@ func lookup(name string) (string, bool) {
 
 func (e *envReader) str(name, def string) string {
 	if v, ok := lookup(name); ok {
+		return v
+	}
+	return def
+}
+
+// address is str for a listen address whose empty value is the default: an empty address makes the listener take a random
+// port, which no probe or scrape finds.
+func (e *envReader) address(name, def string) string {
+	if v := e.str(name, def); strings.TrimSpace(v) != "" {
 		return v
 	}
 	return def

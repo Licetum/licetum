@@ -13,7 +13,7 @@ spec:
     matchLabels:
       {{- include "licetum.selectorLabels" (dict "root" . "component" "pdp") | nindent 6 }}
   endpoints:
-    - port: http
+    - port: ops
       path: /metrics
       interval: {{ .Values.serviceMonitor.interval }}
 {{- end }}

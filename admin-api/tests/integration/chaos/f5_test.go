@@ -532,15 +532,18 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 		}
 	}
 
-	// The balancer: the replicas that answered /readyz with 200 at the last probe, over keep-alive connections.
+	// The balancer: the replicas that answered /readyz with 200 at the last probe, over keep-alive connections. Traffic goes to
+	// the public port of a replica; its probe goes to the operations listener, which is where /readyz is.
 	var (
-		mu    sync.Mutex
-		ready = map[string]bool{}
-		urls  []string
+		mu      sync.Mutex
+		ready   = map[string]bool{}
+		urls    []string
+		probeOf = map[string]string{} // public URL -> operations URL
 	)
 	for _, r := range c.Replicas {
 		urls = append(urls, r.Server.URL)
 		ready[r.Server.URL] = true
+		probeOf[r.Server.URL] = r.Ops.URL
 	}
 	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 64, MaxConnsPerHost: 0}, Timeout: 10 * time.Second}
 	t.Cleanup(client.CloseIdleConnections)
@@ -561,8 +564,11 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 			all := slices.Clone(urls)
 			mu.Unlock()
 			for _, u := range all {
+				mu.Lock()
+				ops := probeOf[u]
+				mu.Unlock()
 				ctx, cancel := context.WithTimeout(probing, time.Second)
-				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u+"/readyz", nil)
+				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ops+"/readyz", nil)
 				resp, err := client.Do(req)
 				ok := err == nil && resp.StatusCode == http.StatusOK
 				if resp != nil {
@@ -635,6 +641,7 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 		}
 		mu.Lock()
 		urls = append(urls, replacement.Server.URL)
+		probeOf[replacement.Server.URL] = replacement.Ops.URL
 		ready[replacement.Server.URL] = false // the balancer admits it at its next probe
 		mu.Unlock()
 		time.Sleep(2 * probe)
