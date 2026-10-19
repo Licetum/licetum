@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +81,8 @@ type env struct {
 	cfg   *config.Config
 	// adminToken is sent to the admin API by default (see do).
 	adminToken string
+	// callers makes the questions of the tests the questions of a PEP client (see doWithHeader).
+	callers *support.PEPCallers
 	// stopWorker stops the worker the test process runs (a test that needs the jobs to wait calls it).
 	stopWorker func()
 }
@@ -170,6 +173,7 @@ func setup(t *testing.T) *env {
 	t.Cleanup(e.check.Close)
 	t.Cleanup(e.ops.Close)
 	e.adminToken = e.token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
+	e.callers = support.NewPEPCallers(t, pool, app.AfterPEPWrite)
 	return e
 }
 
@@ -295,6 +299,7 @@ func (e *env) do(method, url string, body any, headers ...string) (int, []byte) 
 // doWithHeader is do with the headers of the answer too: the code of an AuthZEN error is in its Licetum-Error-Code header.
 func (e *env) doWithHeader(method, url string, body any, headers ...string) (int, http.Header, []byte) {
 	e.t.Helper()
+	headers, body = e.asPEP(url, headers, body)
 	var reader *bytes.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -334,6 +339,39 @@ func (e *env) doWithHeader(method, url string, body any, headers ...string) (int
 	}
 	return resp.StatusCode, resp.Header, buf.Bytes()
 }
+
+// asPEP turns a question to the AuthZEN API that names who asks by a person's token into the question of a PEP client: the API key of
+// the client of the service, and the claims of the token as the properties of the subject (support.PEPCallers). The PDP takes
+// no person's token on these routes; a test of that gives the header legacyToken, which this does not touch.
+func (e *env) asPEP(url string, headers []string, body any) ([]string, any) {
+	if e.callers == nil || e.check == nil || !strings.HasPrefix(url, e.check.URL) {
+		return headers, body
+	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		if http.CanonicalHeaderKey(headers[i]) == legacyToken {
+			out := append(slices.Clone(headers[:i]), headers[i+2:]...)
+			return out, body
+		}
+	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		if http.CanonicalHeaderKey(headers[i]) != "Authorization" {
+			continue
+		}
+		token, ok := strings.CutPrefix(headers[i+1], "Bearer ")
+		if !ok {
+			break
+		}
+		credential, prepared := e.callers.Prepare(strings.TrimPrefix(url, e.check.URL), token, body)
+		out := slices.Clone(headers)
+		out[i+1] = "Bearer " + credential
+		return out, prepared
+	}
+	return headers, body
+}
+
+// legacyToken, among the headers of a request, says that the token of the request is sent as it is, to the routes that still take
+// a person's token. Its pair is dropped before the request is sent.
+const legacyToken = "X-Test-Legacy-Token"
 
 // must performs an admin API request that must return 200 and returns the decoded JSON.
 func (e *env) must(method, path string, body any) map[string]any {

@@ -83,6 +83,8 @@ type Cluster struct {
 	replicaReadURI string
 	client         *http.Client
 	configure      []func(*config.Config)
+	// callers makes the questions of the tests the questions of a PEP client (see send).
+	callers *support.PEPCallers
 }
 
 // Replica is one check API instance: its own App, database pool, Redis client and HTTP servers. Server is the public port
@@ -173,6 +175,11 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(c.Pool.Close)
+	c.callers = support.NewPEPCallers(t, c.Pool, func() {
+		for _, r := range c.Replicas {
+			r.App.AfterPEPWrite()
+		}
+	})
 	c.Redis, err = redisx.Connect(ctx, infra.RedisURI)
 	if err != nil {
 		t.Fatalf("connect to Redis: %v", err)
@@ -410,6 +417,7 @@ func (c *Cluster) do(method, target, token string, body any, requestID string, h
 }
 
 func (c *Cluster) send(client *http.Client, method, target, token string, body any, requestID string, header http.Header) (int, []byte, http.Header, error) {
+	token, body = c.asPEP(target, token, body)
 	req, err := newRequest(context.Background(), method, target, token, body, header)
 	if err != nil {
 		return 0, nil, nil, err
@@ -427,6 +435,20 @@ func (c *Cluster) send(client *http.Client, method, target, token string, body a
 		return 0, nil, nil, err
 	}
 	return resp.StatusCode, raw, resp.Header, nil
+}
+
+// asPEP turns a question to the AuthZEN API that names who asks by a person's token into the question of a PEP client: the API key
+// of the client of the service, and the claims of the token as the properties of the subject (support.PEPCallers). The PDP takes
+// no person's token on these routes. Any other request is sent as it is.
+func (c *Cluster) asPEP(target, token string, body any) (string, any) {
+	if c.callers == nil || token == "" {
+		return token, body
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return token, body
+	}
+	return c.callers.Prepare(u.Path, token, body)
 }
 
 // Result is an answer of a replica with what the request cost.
