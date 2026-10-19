@@ -222,9 +222,6 @@ type HTTP struct {
 	// RequestTimeout is the deadline put on the context of a request. Zero takes the default of the process (10 s for the
 	// check API, 60 s for the admin API, whose requests may wait for a synchronization), a negative value sets none.
 	RequestTimeout time.Duration
-	// PublicURL is the address clients reach the check API at, without a trailing slash (https://licetum.example.com).
-	// The AuthZEN discovery document is built from it; without it the document is not served.
-	PublicURL string
 }
 
 // PDP tunes the regional PDP process (licetum pdp, see cli.Serve).
@@ -235,6 +232,12 @@ type PDP struct {
 	// OpsAddr is the address of the operations listener (PDP__OPS_ADDR, default :9090): the liveness and readiness probes and
 	// the metrics. They are not on Addr, so a client of the PDP cannot reach them (see server.NewOpsHandler).
 	OpsAddr string
+	// PublicURL is the identifier of the PDP that the PEPs use, without a trailing slash (PDP__PUBLIC_URL, required:
+	// https://licetum.example.com). The policy decision point of a service is PublicURL + "/service/" + slug, and the AuthZEN
+	// metadata is built from it. Only a loopback host may use http (localhost, 127.0.0.1, [::1]).
+	PublicURL string
+	// Audience is the audience a client token must carry when its issuer lists none (PDP__AUDIENCE, default PDP__PUBLIC_URL).
+	Audience string
 }
 
 // Policy tunes what the check API does while it cannot confirm that its copy of the policy is current.
@@ -380,11 +383,15 @@ func Load() (*Config, error) {
 		},
 		HTTP: HTTP{
 			Addr:           e.str("HTTP__ADDR", ""),
-			PublicURL:      strings.TrimRight(e.str("HTTP__PUBLIC_URL", ""), "/"),
 			MaxInflight:    e.int("HTTP__MAX_INFLIGHT", 0),
 			RequestTimeout: e.duration("HTTP__REQUEST_TIMEOUT", 0),
 		},
-		PDP: PDP{Addr: e.str("PDP__ADDR", ":8001"), OpsAddr: e.address("PDP__OPS_ADDR", ":9090")},
+		PDP: PDP{
+			Addr:      e.str("PDP__ADDR", ":8001"),
+			OpsAddr:   e.address("PDP__OPS_ADDR", ":9090"),
+			PublicURL: strings.TrimRight(e.str("PDP__PUBLIC_URL", ""), "/"),
+			Audience:  e.str("PDP__AUDIENCE", ""),
+		},
 	}
 	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
 		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))
@@ -411,10 +418,9 @@ func Load() (*Config, error) {
 	if cfg.Delegation.AuditBuffer < 1 {
 		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_BUFFER must be positive, got %d", cfg.Delegation.AuditBuffer))
 	}
-	if u := cfg.HTTP.PublicURL; u != "" {
-		if parsed, err := url.Parse(u); err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" ||
-			parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-			e.errs = append(e.errs, fmt.Errorf("HTTP__PUBLIC_URL must be an http(s) URL without a path, a query or a fragment, got %q", u))
+	if u := cfg.PDP.PublicURL; u != "" {
+		if err := checkPublicURL(u); err != nil {
+			e.errs = append(e.errs, err)
 		}
 	}
 	if r := cfg.Sync.WorkerRegion; r != "" && !regionName.MatchString(r) {
@@ -447,10 +453,11 @@ func (c *Config) RequireRedis() error {
 }
 
 // DeprecatedSettings names the settings that are set but no longer have an effect: the Redis lock of the synchronization
-// was replaced by the job table (SYNC__LEASE). They are still read for one release; the processes log a warning.
+// was replaced by the job table (SYNC__LEASE), and HTTP__PUBLIC_URL became PDP__PUBLIC_URL. The processes log a warning
+// when one of them is still set, so that a deployment notices it.
 func DeprecatedSettings() []string {
 	var out []string
-	for _, name := range []string{"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT"} {
+	for _, name := range []string{"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "HTTP__PUBLIC_URL"} {
 		if _, ok := lookup(name); ok {
 			out = append(out, name)
 		}
@@ -574,4 +581,21 @@ func (e *envReader) list(name string, def []string) []string {
 		}
 	}
 	return out
+}
+
+// checkPublicURL is the rule of PDP__PUBLIC_URL: https, or http for a loopback host, and no path, query or fragment.
+func checkPublicURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || strings.ContainsAny(raw, "?#") {
+		return fmt.Errorf("PDP__PUBLIC_URL must be an https URL without a path, a query or a fragment, got %q", raw)
+	}
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if host := parsed.Hostname(); host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			return nil
+		}
+	}
+	return fmt.Errorf("PDP__PUBLIC_URL must use https (http is allowed only for localhost, 127.0.0.1 or [::1]), got %q", raw)
 }

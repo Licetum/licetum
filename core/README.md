@@ -48,8 +48,8 @@ The address is set with `-addr :9000`, or with `PDP__ADDR` (the PDP) or `HTTP__A
 The PDP implements the [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html)
 for every service, under `/service/{id or slug}/access/v1/`: `evaluation`, `evaluations` (with
 `options.evaluations_semantic`), `search/subject`, `search/resource` and `search/action`. The Policy Decision Point of
-a service is `<HTTP__PUBLIC_URL>/service/{id or slug}`; its metadata is at
-`/.well-known/authzen-configuration/service/{id or slug}` (served only when `HTTP__PUBLIC_URL` is set).
+a service is `<PDP__PUBLIC_URL>/service/<slug>`; its metadata is at
+`/.well-known/authzen-configuration/service/{id or slug}` (served only when `PDP__PUBLIC_URL` is set).
 
 - The resource type is a resource type of the service, the resource id its id in the external system (`*`: the type as a whole),
   the action an access level. `context` holds the attributes of the request the rules read; `{"licetum": {"explain": true}}` returns
@@ -91,7 +91,7 @@ lists accept a JSON array or a comma-separated string.
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | | The retention of both runs in the **worker** only (`licetum worker`): give it the same `SUBJECTS__RETENTION_DAYS` and `DELEGATION__AUDIT_RETENTION_DAYS` as the other processes, or the defaults (90 and 365 days) apply. |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person), `DELEGATION__AUDIT_MODE` (`strict`, default: the record is committed before the answer; `async`: buffered and written in batches), `DELEGATION__AUDIT_BUFFER` (async buffer size, default 100000) |
-| `PDP__ADDR`, `PDP__OPS_ADDR`, `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address: `PDP__ADDR` for the PDP (default `:8001`: the AuthZEN API and the legacy routes only), `PDP__OPS_ADDR` for its probes and `/metrics` (default `:9090`), `HTTP__ADDR` for the admin API and the worker; the address clients reach the PDP at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
+| `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `HTTP__ADDR` | the listen address: `PDP__ADDR` for the PDP (default `:8001`: the AuthZEN API and the legacy routes only), `PDP__OPS_ADDR` for its probes and `/metrics` (default `:9090`), `HTTP__ADDR` for the admin API and the worker; `PDP__PUBLIC_URL` is the identifier the PEPs use for the PDP (`https://licetum.example.com`, required by the PDP; https, except for a loopback host), which the AuthZEN discovery document is built from; `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`) is read but not used yet: from P2-15 it is the audience a client token must carry when its issuer lists none |
 | `HTTP__MAX_INFLIGHT`, `HTTP__REQUEST_TIMEOUT` | admission control: the requests served at once (default `GOMAXPROCS × 256`, a negative value removes the limit) and the deadline of a request (default `10s` for the PDP, `60s` for the admin API, a negative value sets none) |
 | `POLICY__MAX_STALENESS` | how long a process goes on answering from its copy of the policy when it cannot confirm it against PostgreSQL; beyond it requests fail closed (503 `policy_unavailable`). Default `0`: **no limit** — the process answers for as long as PostgreSQL is unreachable and does not see a revocation made meanwhile; set it where that is not acceptable |
 | `SHUTDOWN__DRAIN`, `SHUTDOWN__TIMEOUT` | on SIGTERM: how long the process is not ready but serves (default `10s`) and how long it waits for the requests in progress (default `30s`) |

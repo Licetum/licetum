@@ -331,6 +331,6 @@ func TestAuthzenMetadataNeedsAPublicURL(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound || rec.Header().Get("Licetum-Error-Code") != "authzen_metadata_disabled" {
-		t.Fatalf("without HTTP__PUBLIC_URL there is no document: %d %s", rec.Code, rec.Body)
+		t.Fatalf("without PDP__PUBLIC_URL there is no document: %d %s", rec.Code, rec.Body)
 	}
 }

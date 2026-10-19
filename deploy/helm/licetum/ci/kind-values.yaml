@@ -1,6 +1,7 @@
 # The values of the installation into kind: the images built by the test, the PostgreSQL and Redis of deps.yaml.
 region: kind
-publicUrl: http://licetum-pdp:8001
+# The PDP identifier is an https name (the PEPs use it); the smoke test fetches the discovery document over http in the cluster.
+publicUrl: https://licetum.example.com
 image:
   core: {repository: licetum, tag: ci}
   admin: {repository: licetum-admin, tag: ci}

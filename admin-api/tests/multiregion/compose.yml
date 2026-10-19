@@ -30,7 +30,7 @@ x-env: &env
   DB__MAX_REPLICA_LAG: ${MR_MAX_REPLICA_LAG:-10s}
   DB__LAG_ACTION: ${MR_LAG_ACTION:-unready}
   POLICY__MAX_STALENESS: ${MR_MAX_STALENESS:-0}
-  HTTP__PUBLIC_URL: http://localhost:18001
+  PDP__PUBLIC_URL: http://localhost:18001
   PLATFORM__NAME: Licetum
   PLATFORM__URL: ${MR_IDP_URL}/app
   PLATFORM__ICON: ${MR_IDP_URL}/icon.png

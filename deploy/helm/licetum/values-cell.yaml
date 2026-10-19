@@ -2,6 +2,8 @@
 # with this profile on top of values.yaml; db and Redis addresses are the cell's own, and the network policy denies everything else.
 # The cell is complete: it has its own admin, worker and migrations, and the policy is copied between cells by the policy
 # document (export and import), never by replication.
+# The PDP identifier of the cell: the name the PEPs use for the PDP (https, required; the chart refuses to render without it).
+publicUrl: ""
 networkPolicy:
   enabled: true
   # Fill in the CIDRs of the cell's own PostgreSQL and Redis (and of nothing else).

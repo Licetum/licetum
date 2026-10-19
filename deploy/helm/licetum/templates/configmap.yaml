@@ -23,9 +23,7 @@ data:
   {{- with .Values.policyMaxStaleness }}
   POLICY__MAX_STALENESS: {{ . | quote }}
   {{- end }}
-  {{- with .Values.publicUrl }}
-  HTTP__PUBLIC_URL: {{ . | quote }}
-  {{- end }}
+  PDP__PUBLIC_URL: {{ required "publicUrl is required: the PEPs name the PDP by it, for example https://licetum.example.com" .Values.publicUrl | quote }}
   PLATFORM__NAME: {{ .Values.platform.name | quote }}
   PLATFORM__URL: {{ .Values.platform.url | quote }}
   PLATFORM__ICON: {{ .Values.platform.icon | quote }}

@@ -110,6 +110,9 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 		*addr = defaultAddr
 	}
 
+	if name == "pdp" && cfg.PDP.PublicURL == "" {
+		return errors.New("PDP__PUBLIC_URL is required: the PEPs name the PDP by it, for example https://licetum.example.com")
+	}
 	pool, err := db.Connect(ctx, cfg.DB)
 	if err != nil {
 		return err

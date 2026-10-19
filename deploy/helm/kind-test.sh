@@ -44,7 +44,7 @@ migrations() { kubectl -n "$ns" get jobs -l app.kubernetes.io/component=migrate 
 before=$(migrations | python3 -c 'import json,sys; j=json.load(sys.stdin)["items"]; print(len(j), j[0]["metadata"]["uid"] if j else "")')
 echo "migration jobs before the upgrade: $before"
 
-# The load asks the discovery document: unauthenticated, served on the public port, and built from HTTP__PUBLIC_URL, so a pod that
+# The load asks the discovery document: unauthenticated, served on the public port, and built from PDP__PUBLIC_URL, so a pod that
 # came up without its public URL fails the test too.
 log "rolling upgrade under load (about 100 requests a second)"
 kubectl -n "$ns" run load --restart=Never --image=curlimages/curl:8.10.1 --command -- sh -c "

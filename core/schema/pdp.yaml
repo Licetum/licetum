@@ -734,7 +734,7 @@ openapi: 3.1.0
 paths:
   /.well-known/authzen-configuration/service/{service_id}:
     get:
-      description: The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, "Policy Decision Point Metadata"). The Policy Decision Point of a service is <public url>/service/<id or slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from HTTP__PUBLIC_URL, and is not served (404) without it.
+      description: The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, "Policy Decision Point Metadata"). The Policy Decision Point of a service is <PDP__PUBLIC_URL>/service/<slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from PDP__PUBLIC_URL, and is not served (404) without it.
       operationId: authzen_metadata
       parameters:
         - description: Service id or slug
