@@ -227,6 +227,18 @@ type HTTP struct {
 // DefaultSearchScanBudget is the default of PDP__SEARCH_SCAN_BUDGET, and what a Config that was not loaded (a zero value) means.
 const DefaultSearchScanBudget = 10000
 
+// PEP tunes how the PDP serves the clients that authenticate with PEP credentials (an API key, or a token of a registered issuer).
+type PEP struct {
+	// RateLimit is how many requests per second one PEP client may send to one PDP pod (PEP__RATE_LIMIT; 0, the default, turns the
+	// limit off). It is a token bucket per client and per pod: without a shared state between the pods, the limit of the fleet grows
+	// with their number, and a global limit belongs to the ingress in front of the PDPs. A request over the limit is a 429 with
+	// Retry-After.
+	RateLimit int
+	// Burst is how many requests a client may send at once when its bucket is full (PEP__RATE_BURST; 0, the default, is the
+	// rate, at least 1).
+	Burst int
+}
+
 // PDP tunes the regional PDP process (licetum pdp, see cli.Serve).
 type PDP struct {
 	// Addr is the address the PDP listens on (PDP__ADDR, default :8001). The -addr flag overrides it; HTTP__ADDR is the
@@ -283,6 +295,7 @@ type Config struct {
 	Policy     Policy
 	Shutdown   Shutdown
 	PDP        PDP
+	PEP        PEP
 }
 
 // Load reads the whole environment. Required variables are checked only for the sections the
@@ -399,6 +412,7 @@ func Load() (*Config, error) {
 			Audience:         e.str("PDP__AUDIENCE", ""),
 			SearchScanBudget: e.int("PDP__SEARCH_SCAN_BUDGET", DefaultSearchScanBudget),
 		},
+		PEP: PEP{RateLimit: e.int("PEP__RATE_LIMIT", 0), Burst: e.int("PEP__RATE_BURST", 0)},
 	}
 	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
 		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))
@@ -429,6 +443,10 @@ func Load() (*Config, error) {
 		if err := checkPublicURL(u); err != nil {
 			e.errs = append(e.errs, err)
 		}
+	}
+	if cfg.PEP.RateLimit < 0 || cfg.PEP.Burst < 0 {
+		e.errs = append(e.errs, fmt.Errorf("PEP__RATE_LIMIT and PEP__RATE_BURST must not be negative (0 turns the limit off), got %d and %d",
+			cfg.PEP.RateLimit, cfg.PEP.Burst))
 	}
 	if cfg.PDP.SearchScanBudget < 1 {
 		e.errs = append(e.errs, fmt.Errorf("PDP__SEARCH_SCAN_BUDGET must be positive, got %d", cfg.PDP.SearchScanBudget))

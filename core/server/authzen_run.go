@@ -492,11 +492,14 @@ func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.C
 	if aerr != nil {
 		return nil, aerr
 	}
-	client, err := c.trusted()
-	if err != nil {
-		return nil, err
+	if c.pep == nil {
+		// Only a client application the service trusts may ask; a PEP client was authenticated for this operation.
+		client, err := c.trusted()
+		if err != nil {
+			return nil, err
+		}
+		SetRequestUser(ctx, "client:"+client)
 	}
-	SetRequestUser(ctx, "client:"+client)
 
 	out := &model.AuthzenSubjectSearchResponse{Results: []model.AuthzenSubject{}}
 	if !c.cfg.Subjects.Enabled {

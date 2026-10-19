@@ -24,6 +24,8 @@ type authzenCaller struct {
 	svc       *model.Service
 	subject   string
 	claims    engine.Claims
+	// pep is set when the caller is a PEP client: the people it asks about come from the body, never from the credential.
+	pep *engine.PEPCaller
 
 	// The client application of the token, when the service trusts it (see engine.AuthorizeDelegate); asked once.
 	trustChecked bool
@@ -75,6 +77,19 @@ func (c *authzenCaller) trusted() (string, error) {
 // speaker says who a subject object stands for. The holder of the token speaks for themselves with the claims of the
 // token; any other subject needs a trusted client, and brings the claims in its properties.
 func (c *authzenCaller) speaker(ctx context.Context, s *model.AuthzenSubject) (speaker, *apperr.Error) {
+	if c.pep != nil {
+		// A PEP client speaks for the people it asks about: the subject is the one of the body, and the claims the rules read are
+		// its properties.
+		claims, err := engine.PrepareDelegated(s.ID, s.Properties)
+		if err != nil {
+			return speaker{}, badRequest(err)
+		}
+		if !c.loggedOnBehalf {
+			c.loggedOnBehalf = true
+			SetOnBehalfOf(ctx, s.ID)
+		}
+		return speaker{subject: s.ID, claims: claims}, nil
+	}
 	if s.ID == c.subject {
 		return speaker{subject: c.subject, claims: c.claims}, nil
 	}

@@ -19,6 +19,7 @@ type pdpEngine interface {
 	ServiceIDByRef(ctx context.Context, ref string) (uuid.UUID, error)
 	GetServiceForCheck(ctx context.Context, serviceID uuid.UUID) (*model.Service, error)
 	VerifyToken(ctx context.Context, svc *model.Service, token string) (engine.Claims, error)
+	AuthenticatePEP(ctx context.Context, credential, serviceRef, operation string) (*engine.PEPCaller, error)
 	NoteSubject(subject string, claims engine.Claims)
 	NewEnv(claims engine.Claims, context map[string]any) engine.Env
 	CheckAccess(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, requests []model.CheckRequest, explain bool, consistency engine.Consistency) ([]model.CheckResult, error)

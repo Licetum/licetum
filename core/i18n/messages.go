@@ -172,6 +172,8 @@ const (
 	TokenNoSubject            Key = "token_no_subject"
 	AuthzenIncomplete         Key = "authzen_incomplete"
 	AuthzenSubjectMismatch    Key = "authzen_subject_mismatch"
+	AuthzenForbidden          Key = "authzen_forbidden"
+	AuthzenRateLimited        Key = "authzen_rate_limited"
 	AuthzenFieldRequired      Key = "authzen_field_required"
 	AuthzenPageInvalid        Key = "authzen_page_invalid"
 	AuthzenMetadataDisabled   Key = "authzen_metadata_disabled"
@@ -912,6 +914,16 @@ var catalog = map[Key]Text{
 		EN: "subject.id must be the subject of the bearer token, unless the token belongs to a client application the service trusts",
 		RU: "subject.id должен совпадать с субъектом bearer-токена, если токен не принадлежит клиентскому приложению, которому доверяет сервис",
 		ZH: "subject.id 必须是 Bearer 令牌的主体，除非该令牌属于服务所信任的客户端应用",
+	},
+	AuthzenForbidden: {
+		EN: "The client may not do this",
+		RU: "Клиенту это не разрешено",
+		ZH: "该客户端无权执行此操作",
+	},
+	AuthzenRateLimited: {
+		EN: "The client sends requests faster than the limit of this server allows; try again after the time in Retry-After",
+		RU: "Клиент отправляет запросы чаще, чем позволяет лимит этого сервера; повторите после времени из Retry-After",
+		ZH: "客户端的请求速度超过了此服务器的限制；请在 Retry-After 指示的时间后重试",
 	},
 	AuthzenFieldRequired: {
 		EN: "%s is required",

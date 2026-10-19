@@ -245,7 +245,7 @@ the web interface sends extra form fields. Path-param structs that are embedded 
 or Huma won't see their fields.
 
 Settings: `config.Load()` reads env vars with the same prefixes as before (`DB__`, `AUTH__`,
-`REDIS__`, `CORS__`, `PLATFORM__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE` and `PDP__SEARCH_SCAN_BUDGET`); names are case-insensitive, lists accept a
+`REDIS__`, `CORS__`, `PLATFORM__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `PDP__SEARCH_SCAN_BUDGET`, `PEP__RATE_LIMIT` and `PEP__RATE_BURST`); names are case-insensitive, lists accept a
 JSON array or CSV. `DB__URI` may keep the SQLAlchemy `+asyncpg` suffix (`db.NormalizeDSN`).
 `PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback.
 
@@ -668,6 +668,21 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   last subject covered (no `page.total`), so no page skips or repeats a person; the decisions are the cached `CheckAccess` ones. The token of a
   trusted client is noted in the registry like any other (rules may grant a service account access by its claims), by the AuthZEN and the
   delegated endpoints alike.
+- **PEP clients** (`engine/pep.go`, `engine/pep_auth.go`, `server/authzen_auth.go`, `server/pep_limits.go`, `pepauth/`, migration `00006`; ADR 0001, 7.10): the
+  callers of the AuthZEN routes. The directory (`pep_issuer`, `pep_client`, `pep_credential`) is read as a whole by `App.PEPDirectory` and follows the
+  `pep` scope of `revision_state`; a write to it bumps that scope only (no decision reads the directory, so no answer key moves) and calls
+  `App.AfterPEPWrite`. A client belongs to one service and is `api_key` (a key `lct_<16 hex digits>_<43 characters>`, stored as the sha256 of its
+  secret, at most two active at once) or `jwt` (the `iss` and the `azp`/`client_id` of the token of an issuer registered in `pep_issuer`: the algorithm
+  allowlist, `aud` always required, the issuer's `audiences` or else `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`), `at+jwt` when the issuer asks, 60 s of
+  leeway). `operations` lists what it may call: `evaluate` (the default), `search_resource`, `search_action`, `search_subject` and `explain`. The routes ask
+  `AuthenticatePEP` first (`authzenAuth.caller`): an API key or a token of a registered issuer that does not verify is a 401 (`Bearer error="invalid_token"`,
+  a key's answer takes the same time whether its id exists or not); a valid credential that gives nothing on the service (no such service, a client of
+  another service, a disabled one, an operation it lacks, `explain` without the `explain` operation) is **one** 403 `authzen_forbidden`, the same body for
+  every reason, so a caller learns nothing about which services exist. Any other bearer token is the token of a person and goes the old way (the
+  service's own OAuth) until stage 2c. The person of a question is the body's `subject` (`PrepareDelegated`, the claims in `subject.properties`), never the
+  credential, and a PEP client may ask the subject search without being a `trusted_clients` entry. `PEP__RATE_LIMIT`/`PEP__RATE_BURST` is a token bucket per
+  client and per process (429 `authzen_rate_limited` + `Retry-After`; off by default; a global limit belongs to the ingress). The directory holds enabled
+  clients only, so the key of a disabled client is a 401, not a 403. Tests: `core/server/authzen_pep_test.go`, `admin-api/tests/integration/api/pep_test.go`.
 - **Calls on behalf of a person** (`service/delegation.go`, `api/check.go`): `POST /service/{id}/on_behalf/check` and `…/permission` answer
   as the check and the permission do, for the `subject` and the `claims` named in the body instead of the holder of the token. The caller
   sends its own token (same IdP and keys as a user's, typically client-credentials); `AuthorizeDelegate` takes its client from `azp`, then

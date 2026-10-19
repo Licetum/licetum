@@ -30,7 +30,8 @@ const authzenMaxBody int64 = 1 << 20
 // ---------- routes ----------
 
 func registerAuthzen(api huma.API, app pdpEngine, cfg *config.Config, security []map[string][]string, authErrors []int) {
-	errs := append([]int{http.StatusForbidden}, authErrors...)
+	errs := append([]int{http.StatusForbidden, http.StatusTooManyRequests}, authErrors...)
+	auth := newAuthzenAuth(app, cfg)
 	const note = `
 
 This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
@@ -40,11 +41,17 @@ resource.type is the name of a resource type of the service, and resource.id the
 client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
 subject.properties, and every such call is recorded as the calls on behalf of a person are.
 
+A PEP client of the service authenticates with an API key, or with a token of an issuer registered for PEPs; the person of the
+question is then the subject of the body, whose claims are in subject.properties. The client needs the operation of the route
+(evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation). Whatever it lacks,
+an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
+
 The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
 is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
 explanation goes into context.reason_admin).
 
-A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
+A request that is not valid is a 400, a missing or invalid token a 401, a subject or an operation the caller may not ask for a 403,
+a client over its rate limit a 429. An error
 has its message as a JSON string, and its code in the Licetum-Error-Code header.`
 
 	Register(api, huma.Operation{
@@ -74,11 +81,7 @@ has its message as a JSON string, and its code in the Licetum-Error-Code header.
 		if aerr != nil {
 			return nil, aerr
 		}
-		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-		if err != nil {
-			return nil, err
-		}
-		caller, err := newAuthzenCaller(ctx, app, cfg, serviceID, in.Authorization)
+		caller, err := auth.caller(ctx, in.ServiceRef, in.Authorization, engine.PEPEvaluate, settings.Explain)
 		if err != nil {
 			return nil, err
 		}
@@ -123,11 +126,7 @@ has its message as a JSON string, and its code in the Licetum-Error-Code header.
 		if aerr != nil {
 			return nil, aerr
 		}
-		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-		if err != nil {
-			return nil, err
-		}
-		caller, err := newAuthzenCaller(ctx, app, cfg, serviceID, in.Authorization)
+		caller, err := auth.caller(ctx, in.ServiceRef, in.Authorization, engine.PEPEvaluate, settings.Explain)
 		if err != nil {
 			return nil, err
 		}
@@ -191,11 +190,7 @@ there are more results; send it back as page.token with the same request. The re
 		if aerr != nil {
 			return nil, aerr
 		}
-		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-		if err != nil {
-			return nil, err
-		}
-		caller, err := newAuthzenCaller(ctx, app, cfg, serviceID, in.Authorization)
+		caller, err := auth.caller(ctx, in.ServiceRef, in.Authorization, engine.PEPSearchResource, false)
 		if err != nil {
 			return nil, err
 		}
@@ -236,11 +231,7 @@ there are more results; send it back as page.token with the same request. The re
 		if aerr != nil {
 			return nil, aerr
 		}
-		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-		if err != nil {
-			return nil, err
-		}
-		caller, err := newAuthzenCaller(ctx, app, cfg, serviceID, in.Authorization)
+		caller, err := auth.caller(ctx, in.ServiceRef, in.Authorization, engine.PEPSearchAction, false)
 		if err != nil {
 			return nil, err
 		}
@@ -281,11 +272,7 @@ there are more results; send it back as page.token with the same request. The re
 		if aerr != nil {
 			return nil, aerr
 		}
-		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-		if err != nil {
-			return nil, err
-		}
-		caller, err := newAuthzenCaller(ctx, app, cfg, serviceID, in.Authorization)
+		caller, err := auth.caller(ctx, in.ServiceRef, in.Authorization, engine.PEPSearchSubject, false)
 		if err != nil {
 			return nil, err
 		}

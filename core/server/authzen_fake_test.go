@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,6 +20,7 @@ import (
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/config"
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/i18n"
@@ -49,6 +51,9 @@ type fakePDP struct {
 	// calls it received.
 	searchPages []engine.ResourcePage
 	searches    []fakeSearch
+
+	// pepClients are the PEP credentials the fake knows (the credential is the key): clients of the fake service.
+	pepClients map[string]db.PEPClient
 }
 
 // fakeSearch is one call of SearchResources: what the handler asked of the engine.
@@ -431,4 +436,41 @@ func TestRequestIDLogCopyIsEscapedAndBounded(t *testing.T) {
 	if got := logRequestID(strings.Repeat("x", 300)); len(got) != requestIDMax {
 		t.Errorf("logRequestID keeps %d bytes, want %d", len(got), requestIDMax)
 	}
+}
+
+// AuthenticatePEP answers as the engine does for the clients of the fake service: a credential that is not one of the fake is not
+// a PEP credential (an API key that is not known is a 401), and every refusal of a known client is the same 403.
+func (f *fakePDP) AuthenticatePEP(_ context.Context, credential, serviceRef, operation string) (*engine.PEPCaller, error) {
+	client, ok := f.pepClients[credential]
+	if !ok {
+		if strings.HasPrefix(credential, "lct_") {
+			return nil, apperr.InvalidToken(i18n.TokenInvalid)
+		}
+		return nil, engine.ErrNotPEPCredential
+	}
+	if serviceRef != fakeServiceRef || !client.Enabled || !slices.Contains(client.Operations, operation) {
+		return nil, apperr.Forbidden(i18n.AuthzenForbidden)
+	}
+	return &engine.PEPCaller{Client: client, ServiceID: fakeServiceID}, nil
+}
+
+// withPEPClient adds a client that authenticates with the credential and may do the operations.
+func (f *fakePDP) withPEPClient(credential, name string, operations ...string) *fakePDP {
+	if f.pepClients == nil {
+		f.pepClients = map[string]db.PEPClient{}
+	}
+	f.pepClients[credential] = db.PEPClient{ID: uuid.New(), ServiceID: fakeServiceID, Name: name, Kind: db.PEPKindAPIKey, Operations: operations, Enabled: true}
+	return f
+}
+
+// authzenCallAs sends an AuthZEN request with the given Authorization header ("" sends none).
+func authzenCallAs(h http.Handler, path, body, authorization string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
 }
