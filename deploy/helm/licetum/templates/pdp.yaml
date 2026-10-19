@@ -1,0 +1,203 @@
+{{- $component := dict "root" . "component" "pdp" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "licetum.fullname" . }}-pdp
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pdp
+spec:
+  {{- if not .Values.pdp.autoscaling.enabled }}
+  replicas: {{ .Values.pdp.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      {{- include "licetum.selectorLabels" $component | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "licetum.labels" . | nindent 8 }}
+        app.kubernetes.io/component: pdp
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.pdp.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "licetum.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ include "licetum.terminationGrace" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- include "licetum.placement" $component | nindent 6 }}
+      {{- with .Values.pdp.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.pdp.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: pdp
+          image: {{ include "licetum.imageCore" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["pdp", "-addr", ":{{ .Values.pdp.port }}"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.pdp.port }}
+            - name: ops
+              containerPort: {{ .Values.pdp.opsPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "licetum.fullname" . }}-config
+          env:
+            - name: PDP__ADDR
+              value: ":{{ .Values.pdp.port }}"
+            - name: PDP__OPS_ADDR
+              value: ":{{ .Values.pdp.opsPort }}"
+            {{- include "licetum.secretEnv" (dict "root" . "key" "DB__URI") | nindent 12 }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "DB__READ_URI" "optional" true) | nindent 12 }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "REDIS__URI") | nindent 12 }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "AUTH__STATE_SECRET") | nindent 12 }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "PLATFORM__CLIENT_SECRET") | nindent 12 }}
+            {{- with .Values.pdp.maxInflight }}
+            - name: HTTP__MAX_INFLIGHT
+              value: {{ . | quote }}
+            {{- end }}
+          startupProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ int .Values.shutdown.drain }}
+          resources:
+            {{- toYaml .Values.pdp.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "licetum.fullname" . }}-pdp
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pdp
+  {{- with .Values.pdp.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.pdp.service.type }}
+  selector:
+    {{- include "licetum.selectorLabels" $component | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.pdp.port }}
+      targetPort: http
+    - name: ops
+      port: {{ .Values.pdp.opsPort }}
+      targetPort: ops
+{{- if .Values.pdp.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "licetum.fullname" . }}-pdp
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pdp
+spec:
+  maxUnavailable: {{ .Values.pdp.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "licetum.selectorLabels" $component | nindent 6 }}
+{{- end }}
+{{- if .Values.pdp.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "licetum.fullname" . }}-pdp
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pdp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "licetum.fullname" . }}-pdp
+  minReplicas: {{ .Values.pdp.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.pdp.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.pdp.autoscaling.targetCPUUtilizationPercentage }}
+    {{- if gt (int .Values.pdp.autoscaling.targetInflight) 0 }}
+    - type: Pods
+      pods:
+        metric:
+          name: licetum_http_inflight
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.pdp.autoscaling.targetInflight | quote }}
+    {{- end }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+{{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "licetum.fullname" . }}-pdp
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pdp
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.host is required when the ingress is enabled" .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "licetum.fullname" . }}-pdp
+                port:
+                  name: http
+{{- end }}

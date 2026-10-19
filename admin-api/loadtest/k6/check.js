@@ -1,4 +1,4 @@
-// Load test of the Licetum check API, run by admin-api/loadtest (see its README).
+// Load test of the AuthZEN API of Licetum, run by admin-api/loadtest (see its README).
 //
 // Arrivals are an open model: k6 starts a request at each tick of the rate whether or not earlier answers have come
 // back, so a server that falls behind shows as late answers and dropped iterations, not as a lower rate. Every request
@@ -6,7 +6,8 @@
 // over all the requests of that operation in that phase, and the summary says how many there were.
 //
 // The choices of the script come from a generator seeded with SEED. The data is deterministic (the seeding); the choices
-// are deterministic per virtual user; which iteration a virtual user runs is up to k6's scheduler.
+// are deterministic per virtual user; which iteration a virtual user runs is up to k6's scheduler. The cold mode is the
+// exception: its choices are a function of the number of the iteration, not of the virtual user.
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { SharedArray } from 'k6/data';
@@ -24,6 +25,9 @@ const backend = __ENV.BACKEND_TOKEN;
 const mode = __ENV.MODE || 'mix';
 const consistencySetting = __ENV.CONSISTENCY || 'minimize_latency';
 const seed = Number(__ENV.SEED || 1);
+// The number of the first iteration of this invocation among all the iterations of the run: the cold mode asks each
+// evaluation question once, so a later window must go on where the earlier ones stopped.
+const firstIteration = Number(__ENV.FIRST_ITERATION || 0);
 
 // The generator the current draws come from. It is declared before the warm pool is drawn at start-up.
 let rng = null;
@@ -34,9 +38,9 @@ const measureSeconds = Number(__ENV.MEASURE_SECONDS || 60);
 // The tokens are read once for all the virtual users: one token per subject, in the order of the subjects.
 const tokens = new SharedArray('tokens', () => JSON.parse(open(__ENV.TOKENS)));
 
-// The operations, in the order the harness reports them.
-const ops = ['permission', 'check1', 'check10', 'check100', 'authzen', 'authzen_batch', 'on_behalf'];
-const weights = parseMix(__ENV.MIX || 'permission=2,check1=3,authzen=3,authzen_batch=1,on_behalf=1');
+// The operations, in the order the harness reports them (opNames in mix.go lists the same, and a test keeps them so).
+const ops = ['search_resource', 'evaluation', 'evaluations10', 'evaluations100', 'evaluation_properties'];
+const weights = parseMix(__ENV.MIX || 'search_resource=2,evaluation=5,evaluations10=2,evaluation_properties=1');
 
 const phases = ['warmup', 'measure'];
 const metrics = {};
@@ -96,8 +100,11 @@ export default function () {
     subjectIndex = pair.subject;
     doc = pair.doc;
   } else if (mode === 'cold') {
-    subjectIndex = Math.floor(random() * users);
-    doc = accessibleDoc(subjectIndex);
+    // The evaluations ask what no earlier request of the run asked, so no cached answer fits them. A search repeats for a
+    // subject in every round: the permission cache of the subject answers it, not a cache of questions.
+    const n = firstIteration + exec.scenario.iterationInTest;
+    subjectIndex = coldSubject(n);
+    doc = coldDoc(subjectIndex, Math.floor(n / users));
   } else {
     // A Zipf-like skew (exponent 1): the subjects near the start of the range are asked about far more often.
     subjectIndex = Math.min(users - 1, Math.floor(Math.pow(users, random())) - 1);
@@ -106,44 +113,40 @@ export default function () {
   const subject = `user-${subjectIndex}`;
   const dept = `dept-${subjectIndex % groups}`;
   const token = tokens[subjectIndex];
-  // The cold mode asks the sources again on every request (consistency=higher skips the caches).
-  const consistency = mode === 'cold' ? 'higher' : consistencySetting;
+  // The cold mode sends no consistency query: its evaluation questions are new, so no cache holds an answer to them. The
+  // other modes ask with the consistency of the run.
+  const consistencyQuery = mode === 'cold' ? '' : `?consistency=${consistencySetting}`;
 
   const op = ops[pick()];
   let res;
   switch (op) {
-    case 'permission':
-      res = http.get(`${base}/service/${service}/permission?type=document&limit=20&consistency=${consistency}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      break;
-    case 'check1':
-      res = checkRequest(base, token, consistency, [doc]);
-      break;
-    case 'check10':
-      res = checkRequest(base, token, consistency, questions(subjectIndex, 10));
-      break;
-    case 'check100':
-      res = checkRequest(base, token, consistency, questions(subjectIndex, 100));
-      break;
-    case 'authzen':
+    case 'search_resource':
+      // One page of the documents the subject may read.
       res = http.post(
-        `${base}/service/${service}/access/v1/evaluation?consistency=${consistency}`,
+        `${base}/service/${service}/access/v1/search/resource${consistencyQuery}`,
+        `{"subject":{"type":"user","id":"${subject}"},"resource":{"type":"document"},"action":{"name":"read"},"page":{"limit":20}}`,
+        { headers: jsonHeaders(token) },
+      );
+      break;
+    case 'evaluation':
+      res = http.post(
+        `${base}/service/${service}/access/v1/evaluation${consistencyQuery}`,
         `{"subject":{"type":"user","id":"${subject}"},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
         { headers: jsonHeaders(token) },
       );
       break;
-    case 'authzen_batch':
-      res = http.post(
-        `${base}/service/${service}/access/v1/evaluations?consistency=${consistency}`,
-        authzenBatch(subjectIndex),
-        { headers: jsonHeaders(token) },
-      );
+    case 'evaluations10':
+      res = evaluationsRequest(base, token, consistencyQuery, subjectIndex, 10, doc);
       break;
-    case 'on_behalf':
+    case 'evaluations100':
+      res = evaluationsRequest(base, token, consistencyQuery, subjectIndex, 100, doc);
+      break;
+    case 'evaluation_properties':
+      // The token is the one of the client application the service trusts; the subject is another person, whose claims
+      // the client brings.
       res = http.post(
-        `${base}/service/${service}/on_behalf/check?consistency=${consistency}`,
-        `{"subject":"${subject}","claims":{"department":"${dept}"},"checks":[{"type":"document","resource_id":"${doc}","action":"read"}]}`,
+        `${base}/service/${service}/access/v1/evaluation${consistencyQuery}`,
+        `{"subject":{"type":"user","id":"${subject}","properties":{"department":"${dept}"}},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
         { headers: jsonHeaders(backend) },
       );
       break;
@@ -151,11 +154,17 @@ export default function () {
 
   m.latency[op].add(res.timings.duration);
   m.requests[op].add(1);
-  const ok = res.status >= 200 && res.status < 300;
+  let ok = res.status >= 200 && res.status < 300;
+  let answers = { total: 0, allowed: 0 };
+  if (ok) {
+    answers = countDecisions(res.body);
+    // An evaluation the API could not decide comes back in a 200 answer as decision false with context.error. It is not
+    // a denial: it counts as a failed request.
+    ok = answers.errors === 0;
+  }
   m.failed.add(!ok);
   if (ok) {
     m.answered2xx.add(1);
-    const answers = countDecisions(res.body);
     m.decisions.add(answers.total);
     m.allowed.add(answers.allowed);
   } else {
@@ -163,19 +172,11 @@ export default function () {
   }
 }
 
-// checkRequest asks the check API the given questions, each (document, read).
-function checkRequest(base, token, consistency, docs) {
-  const checks = docs.map((d) => `{"type":"document","resource_id":"${d}","action":"read"}`).join(',');
-  return http.post(`${base}/service/${service}/check?consistency=${consistency}`, `{"checks":[${checks}]}`, {
-    headers: jsonHeaders(token),
-  });
-}
-
 function jsonHeaders(token) {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-// questions are n documents the subject may read, for a check with n questions.
+// questions are n documents the subject may read, for a batch of n evaluations.
 function questions(subjectIndex, n) {
   const out = [];
   for (let k = 0; k < n; k++) {
@@ -184,13 +185,19 @@ function questions(subjectIndex, n) {
   return out;
 }
 
-// authzenBatch is a batch of ten evaluations of documents the subject may read.
-function authzenBatch(subjectIndex) {
-  const evaluations = [];
-  for (let k = 0; k < 10; k++) {
-    evaluations.push(`{"resource":{"type":"document","id":"${accessibleDoc(subjectIndex)}"}}`);
+// evaluationsRequest is a batch of n evaluations of documents the subject may read, about the subject. In the cold mode
+// the first one is the document no earlier request asked about this subject, so the batch is a question no earlier one was.
+function evaluationsRequest(base, token, consistencyQuery, subjectIndex, n, doc) {
+  const docs = questions(subjectIndex, n);
+  if (mode === 'cold') {
+    docs[0] = doc;
   }
-  return `{"subject":{"type":"user","id":"user-${subjectIndex}"},"action":{"name":"read"},"evaluations":[${evaluations.join(',')}]}`;
+  const evaluations = docs.map((d) => `{"resource":{"type":"document","id":"${d}"}}`);
+  return http.post(
+    `${base}/service/${service}/access/v1/evaluations${consistencyQuery}`,
+    `{"subject":{"type":"user","id":"user-${subjectIndex}"},"action":{"name":"read"},"evaluations":[${evaluations.join(',')}]}`,
+    { headers: jsonHeaders(token) },
+  );
 }
 
 // accessibleDoc is a document the subject may read, most of the time. The owner pattern grants the documents of the
@@ -221,6 +228,59 @@ function accessibleDoc(subjectIndex) {
     return g < documents ? `d-${g}` : randomDoc();
   }
   return randomDoc();
+}
+
+// The cold mode walks the subjects in rounds: each round visits every subject once, in an order that scrambles them, and
+// the k-th visit of a subject asks it about the k-th document of a sequence of its own that repeats none. So no pair of
+// (subject, document) of an evaluation is asked twice. A search lists everything a subject may read, so it repeats for a
+// subject in every round: the permission cache of the subject answers it, not a cache of questions.
+const subjectStride = coprimeStride(users);
+
+function coldSubject(n) {
+  return ((n % users) * subjectStride) % users;
+}
+
+function coprimeStride(n) {
+  const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+  let stride = Math.max(1, Math.round(n * 0.6180339887));
+  while (gcd(stride, n) !== 1) {
+    stride++;
+  }
+  return stride % n || 1;
+}
+
+// The documents already asked of each subject by this virtual user, in the order of the visits. The sequence of a subject
+// is a function of the seed and the subject alone, so every virtual user builds the same one.
+const coldSequences = new Map();
+
+function coldDoc(subjectIndex, visit) {
+  let sequence = coldSequences.get(subjectIndex);
+  if (!sequence) {
+    sequence = { draw: mulberry32(seed * 7919 + subjectIndex), seen: new Set(), docs: [] };
+    coldSequences.set(subjectIndex, sequence);
+  }
+  while (sequence.docs.length <= visit) {
+    const doc = unaskedDoc(subjectIndex, sequence);
+    sequence.seen.add(doc);
+    sequence.docs.push(doc);
+  }
+  return sequence.docs[visit];
+}
+
+// unaskedDoc draws the documents the subject may read, as the other modes do, until one that was not asked comes up; when
+// the documents it is likely to be asked about are used up, it takes the next document of the source that was not asked.
+function unaskedDoc(subjectIndex, sequence) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const doc = accessibleDocWith(subjectIndex, sequence.draw);
+    if (!sequence.seen.has(doc)) {
+      return doc;
+    }
+  }
+  let g = Math.floor(sequence.draw() * documents);
+  while (sequence.seen.has(`d-${g}`) && sequence.seen.size < documents) {
+    g = (g + 1) % documents;
+  }
+  return `d-${g}`;
 }
 
 function randomDoc() {
@@ -291,12 +351,14 @@ function parseMix(spec) {
   return out;
 }
 
-// countDecisions counts the answers of a response: every "allowed" (check, on-behalf) and "decision" (AuthZEN) field,
-// and the granted ones. The bodies are the ones the API writes, so the fields are matched as written.
+// countDecisions counts the answers of a response: every "decision" field of the AuthZEN API, the granted ones, and the
+// evaluations that carry context.error. The bodies are the ones the API writes, so the fields are matched as written.
+// A search has no decisions.
 function countDecisions(body) {
   const count = (s) => body.split(s).length - 1;
   return {
-    total: count('"allowed":') + count('"decision":'),
-    allowed: count('"allowed":true') + count('"decision":true'),
+    total: count('"decision":'),
+    allowed: count('"decision":true'),
+    errors: count('"error":'),
   };
 }

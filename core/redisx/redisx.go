@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -15,11 +16,46 @@ import (
 
 // Connect parses REDIS__URI (redis://, rediss://, unix://) and checks the connection.
 func Connect(ctx context.Context, uri string) (*redis.Client, error) {
+	return ConnectWith(ctx, uri, Options{})
+}
+
+// fastFails are the FastFail hooks of the clients made with a HotTimeout.
+var fastFails sync.Map // *redis.Client -> *FastFail
+
+// Skipped is how many commands the FastFail of the client has not sent (0 for a client without one).
+func Skipped(rdb *redis.Client) int64 {
+	if v, ok := fastFails.Load(rdb); ok {
+		return v.(*FastFail).skipped.Load()
+	}
+	return 0
+}
+
+// Options tune a client for the check path.
+type Options struct {
+	// HotTimeout, when positive, is the read and write timeout of every command, and retries are off: a slow Redis costs
+	// a request at most this much. The client is also given a FastFail, which skips Redis for a while after a few failures
+	// in a row.
+	HotTimeout time.Duration
+}
+
+// ConnectWith is Connect with the options of the check path.
+func ConnectWith(ctx context.Context, uri string, o Options) (*redis.Client, error) {
 	opts, err := redis.ParseURL(uri)
 	if err != nil {
 		return nil, fmt.Errorf("parse REDIS__URI: %w", err)
 	}
+	if o.HotTimeout > 0 {
+		opts.ReadTimeout, opts.WriteTimeout = o.HotTimeout, o.HotTimeout
+		opts.DialTimeout = max(5*o.HotTimeout, 250*time.Millisecond)
+		opts.PoolTimeout = max(2*o.HotTimeout, 100*time.Millisecond)
+		opts.MaxRetries = -1 // go-redis: -1 turns the retries off (0 would mean the default of 3)
+	}
 	client := redis.NewClient(opts)
+	if o.HotTimeout > 0 {
+		ff := NewFastFail()
+		client.AddHook(ff)
+		fastFails.Store(client, ff)
+	}
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("connect to Redis: %w", err)
@@ -52,6 +88,18 @@ const (
 	Cooldown         = 30 * time.Second
 )
 
+// Breaker holds the parameters of the distributed circuit breaker. The package functions use Default; other values
+// exist for the tests, which run the breaker with windows of a few milliseconds.
+type Breaker struct {
+	// Threshold failures within Window open the breaker for Cooldown.
+	Threshold int
+	Window    time.Duration
+	Cooldown  time.Duration
+}
+
+// Default is the breaker of the dependencies of the check path (token endpoints, key sets, resource sources).
+var Default = Breaker{Threshold: FailureThreshold, Window: FailureWindow, Cooldown: Cooldown}
+
 func failKey(key string) string { return "authz:breaker:" + key + ":fail" }
 func openKey(key string) string { return "authz:breaker:" + key + ":open" }
 
@@ -62,19 +110,35 @@ func BreakerOpen(ctx context.Context, rdb *redis.Client, key string) bool {
 	return err == nil && n > 0
 }
 
+// recordFailure counts one failure and opens the breaker at the threshold, in one script: the commands run without
+// another client between them, and a process that dies cannot leave the counter without its expiry (as INCR followed by
+// EXPIRE did). A counter that already exists without an expiry, left by the previous release, gets one too.
+//
+// KEYS: the failure counter, the open flag. ARGV: threshold, window and cooldown in milliseconds. It returns the count.
+var recordFailure = redis.NewScript(`
+local failures = redis.call('INCR', KEYS[1])
+if failures == 1 or redis.call('PTTL', KEYS[1]) < 0 then
+	redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+if failures >= tonumber(ARGV[1]) then
+	redis.call('SET', KEYS[2], '1', 'PX', ARGV[3])
+end
+return failures
+`)
+
+// RecordFailure notes a failed call of the dependency named by key. The breaker is best effort: when Redis cannot be
+// reached the failure is not counted, and the calls go on.
 func RecordFailure(ctx context.Context, rdb *redis.Client, key string) {
-	failures, err := rdb.Incr(ctx, failKey(key)).Result()
-	if err != nil {
-		return
-	}
-	if failures == 1 {
-		rdb.Expire(ctx, failKey(key), FailureWindow)
-	}
-	if failures >= FailureThreshold {
-		rdb.Set(ctx, openKey(key), "1", Cooldown)
-	}
+	Default.RecordFailure(ctx, rdb, key)
 }
 
+// RecordSuccess closes the breaker of the dependency named by key.
 func RecordSuccess(ctx context.Context, rdb *redis.Client, key string) {
 	rdb.Del(ctx, failKey(key), openKey(key))
+}
+
+// RecordFailure is the package function with the parameters of b.
+func (b Breaker) RecordFailure(ctx context.Context, rdb *redis.Client, key string) {
+	_ = recordFailure.Run(ctx, rdb, []string{failKey(key), openKey(key)},
+		b.Threshold, b.Window.Milliseconds(), b.Cooldown.Milliseconds()).Err()
 }

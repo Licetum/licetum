@@ -24,8 +24,9 @@ const (
 	DecisionTypeNotFound     = "type_not_found"
 )
 
-// checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format.
-const checkResultFormat = "t2"
+// checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format and
+// with the decisions.
+const checkResultFormat = "t5"
 
 // CheckAccess answers the questions "may the caller do X with Y" without building the whole permission map: the
 // rules are loaded once, and the questions are answered together, each from the ancestors of its resource. The
@@ -37,19 +38,22 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 		return nil, err
 	}
 	sum := sha256.Sum256(questions)
-	state := a.readCacheState(ctx)
-	key := fmt.Sprintf("authz:check:%s:v%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
+	if err := a.replicaGate(); err != nil {
+		return nil, err
+	}
+	state := a.cacheState(ctx).forConsistency(ctx, consistency)
+	key := fmt.Sprintf("authz:check:%s:r%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env), explain, hex.EncodeToString(sum[:]))
 	results, err := cachedAnswer(ctx, a, key, state, consistency, a.metrics.checkCache,
 		func(ctx context.Context) (computed[[]model.CheckResult], error) {
-			if _, err := a.GetExistingService(ctx, a.DB, serviceID); err != nil {
+			if err := a.serviceExists(ctx, state, serviceID); err != nil {
 				return computed[[]model.CheckResult]{}, err
 			}
-			results, deps, ttl, err := a.checkAccess(ctx, serviceID, subject, env, requests, explain, state, consistency)
+			results, deps, ttl, hold, err := a.checkAccess(ctx, serviceID, subject, env, requests, explain, state, consistency)
 			if err != nil {
 				return computed[[]model.CheckResult]{}, err
 			}
-			return computed[[]model.CheckResult]{value: results, deps: deps, ttl: ttl}, nil
+			return computed[[]model.CheckResult]{value: results, deps: deps, ttl: ttl, hold: hold}, nil
 		})
 	if err != nil {
 		return nil, err
@@ -65,31 +69,33 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 }
 
 // checkAccess computes the answers of one request (the cache around it is in CheckAccess).
-func (a *App) checkAccess(ctx context.Context, serviceID uuid.UUID, subject string, env Env, requests []model.CheckRequest, explain bool, state cacheState, consistency Consistency) ([]model.CheckResult, map[string]int64, time.Duration, error) {
+func (a *App) checkAccess(ctx context.Context, serviceID uuid.UUID, subject string, env Env, requests []model.CheckRequest, explain bool, state cacheState, consistency Consistency) ([]model.CheckResult, map[string]int64, time.Duration, time.Duration, error) {
 	asked := make([]string, len(requests))
 	for i, r := range requests {
 		asked[i] = r.Type
 	}
 	p, err := a.prepare(ctx, serviceID, subject, env, state, consistency, asked)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
 	results, err := a.decideChecks(ctx, p, serviceID, requests, explain)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
-	return results, p.deps, p.ttl, nil
+	return results, p.deps, p.ttl, p.hold, nil
 }
 
 // checkInputs is what the questions of one request are answered from, read once for all of them.
 type checkInputs struct {
 	rows       map[anchorRef]uuid.UUID              // the resources the questions name
 	ancestors  map[uuid.UUID]map[uuid.UUID]LevelSet // per resource row: its ancestors, with the levels flowing from them
-	unresolved map[uuid.UUID][]uuid.UUID            // per resource row: the parent types of its unresolved links
+	unresolved map[uuid.UUID][]UnresolvedLink       // per resource row: the unresolved links at or above it
 }
 
 // decideChecks answers the questions of one request. The resources they name, their ancestors and their unresolved
-// parent links are read in a fixed number of queries, not once per question.
+// parent links are read in a fixed number of queries, not once per question. A resource of a type without resources (no
+// live synchronizer, see Prepared.sourced) is not looked up: the question about it is resource_not_found, as about any
+// resource the local copy does not have, though a deleted synchronizer may have left its row there.
 func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID, requests []model.CheckRequest, explain bool) ([]model.CheckResult, error) {
 	typeIDs := make([]uuid.UUID, len(requests))
 	found := make([]bool, len(requests))
@@ -101,21 +107,21 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 			continue
 		}
 		typeIDs[i], found[i] = id, true
-		askedTypes[id] = true
-		if r.ResourceID != nil {
+		if r.ResourceID != nil && p.hasResources(id) {
+			askedTypes[id] = true
 			refs = append(refs, anchorRef{Type: id, Ext: *r.ResourceID})
 		}
 	}
 
 	in := &checkInputs{}
-	var unresolved map[uuid.UUID][]uuid.UUID
+	var unresolved map[uuid.UUID][]UnresolvedLink
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.Go(func() (err error) {
 		in.rows, err = a.anchorRowIDs(ectx, refs)
 		return err
 	})
 	eg.Go(func() (err error) {
-		unresolved, err = a.UnresolvedParents(ectx, Keys(askedTypes))
+		unresolved, err = a.UnresolvedParents(ectx, p.Graph, Keys(askedTypes))
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -138,53 +144,46 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 	return out, nil
 }
 
-// answerCheck answers one question. A question about a type that does not exist is type_not_found.
+// answerCheck answers one question. A question about a type that does not exist is type_not_found, and one about a resource
+// that is not there (in.rows has no row for it) is resource_not_found.
 func (p *Prepared) answerCheck(in *checkInputs, typeID uuid.UUID, found bool, r model.CheckRequest, explain bool) model.CheckResult {
-	answer := func(decision string, allowed bool, lv *levelVerdict, covers []Cover) model.CheckResult {
+	answer := func(decision string, allowed bool, lv *levelVerdict) model.CheckResult {
 		res := model.CheckResult{Allowed: allowed}
 		if explain {
-			res.Explanation = p.explanation(decision, lv, covers)
+			res.Explanation = p.explanation(decision, lv)
 		}
 		return res
 	}
 	if !found {
-		return answer(DecisionTypeNotFound, false, nil, nil)
+		return answer(DecisionTypeNotFound, false, nil)
 	}
 
 	var verdict nodeVerdict
-	var covers []Cover
 	if r.ResourceID == nil {
 		// The type as a whole: only the rules anchored on the type itself count.
 		verdict = p.engine.decideWhole(typeID)
-		for i := range p.Insts {
-			if p.Insts[i].Whole() && p.Insts[i].AnchorType == typeID {
-				covers = append(covers, Cover{Inst: i, Mask: AllLevels})
-			}
-		}
 	} else {
 		node, ok := in.rows[anchorRef{Type: typeID, Ext: *r.ResourceID}]
 		if !ok {
-			return answer(DecisionResourceNotFound, false, nil, nil)
+			return answer(DecisionResourceNotFound, false, nil)
 		}
-		covers = p.CoversOf(typeID, in.ancestors[node], in.unresolved[node])
-		verdict = p.engine.decide(typeID, covers)
+		verdict = p.engine.decide(typeID, p.CoversOf(typeID, in.ancestors[node], in.unresolved[node]))
 	}
 
 	i := slices.IndexFunc(verdict.Levels, func(lv levelVerdict) bool { return lv.Level == r.Action })
 	switch {
 	case i < 0:
-		return answer(DecisionNoAccess, false, nil, covers)
+		return answer(DecisionNoAccess, false, nil)
 	case verdict.Levels[i].Allowed:
-		return answer(DecisionAllowed, true, &verdict.Levels[i], covers)
+		return answer(DecisionAllowed, true, &verdict.Levels[i])
 	default:
-		return answer(DecisionDenied, false, &verdict.Levels[i], covers)
+		return answer(DecisionDenied, false, &verdict.Levels[i])
 	}
 }
 
 // CoversOf finds the instances that cover one resource of type typeID, given its ancestors with the levels that
-// flow from them, and the parent types of its unresolved links.
-func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, unresolvedParents []uuid.UUID) []Cover {
-	nodeType, _ := p.Graph.Node(typeID)
+// flow from them, and the unresolved links at or above it (see UnresolvedParents).
+func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, unresolved []UnresolvedLink) []Cover {
 	covers := []Cover{}
 	for i := range p.Insts {
 		in := &p.Insts[i]
@@ -196,31 +195,17 @@ func (p *Prepared) CoversOf(typeID uuid.UUID, ancestors map[uuid.UUID]LevelSet, 
 			}
 			continue
 		}
-		if m, ok := ancestors[*in.AnchorRow]; ok {
-			covers = append(covers, Cover{Inst: i, Mask: m})
-			continue
+		known, ok := ancestors[*in.AnchorRow]
+		if ok {
+			covers = append(covers, Cover{Inst: i, Mask: known})
 		}
 		if !in.Deny {
 			continue
 		}
-		// A denial may reach a resource whose parent is not known.
-		for _, parentType := range unresolvedParents {
-			edgeMask := LevelSet{}
-			for _, e := range nodeType.Parents {
-				if e.Parent == parentType {
-					edgeMask = e.Inherit
-				}
-			}
-			flow := AllLevels
-			if in.AnchorType != parentType {
-				var ok bool
-				if flow, ok = p.Graph.DescendantsOf(in.AnchorType)[parentType]; !ok {
-					continue
-				}
-			}
-			if m := edgeMask.Intersect(flow); !m.empty() {
-				covers = append(covers, Cover{Inst: i, Mask: m, Assumed: true})
-			}
+		// A denial may reach a resource whose hierarchy is not fully known, also when its anchor is a known ancestor:
+		// the missing parent could lie below the anchor too and let through levels the known routes do not.
+		if m := p.Graph.assumedMask(in.AnchorType, unresolved); !m.empty() && (!ok || !m.SubsetOf(known)) {
+			covers = append(covers, Cover{Inst: i, Mask: m, Assumed: true})
 		}
 	}
 	return covers
@@ -243,7 +228,7 @@ func (p *Prepared) RuleRef(inst int) model.RuleRef {
 	if in.Deny {
 		ref.Effect = model.EffectDeny
 	}
-	if !in.Whole() {
+	if !in.Whole() && in.AnchorExt != "" {
 		ext := in.AnchorExt
 		ref.Anchor.ResourceID = &ext
 	}
@@ -251,7 +236,7 @@ func (p *Prepared) RuleRef(inst int) model.RuleRef {
 }
 
 // explanation builds the explanation of a verdict on one level.
-func (p *Prepared) explanation(decision string, lv *levelVerdict, covers []Cover) *model.Explanation {
+func (p *Prepared) explanation(decision string, lv *levelVerdict) *model.Explanation {
 	e := &model.Explanation{Decision: decision, GrantedBy: []model.RuleRef{}, Denials: []model.DenialRef{}}
 	if lv == nil {
 		return e
@@ -265,7 +250,7 @@ func (p *Prepared) explanation(decision string, lv *levelVerdict, covers []Cover
 		for _, x := range d.LiftedBy {
 			ref.LiftedBy = append(ref.LiftedBy, p.RuleRef(x))
 		}
-		ref.UnresolvedParent = slices.ContainsFunc(covers, func(c Cover) bool { return c.Inst == d.Inst && c.Assumed })
+		ref.UnresolvedParent = d.Assumed
 		e.Denials = append(e.Denials, ref)
 	}
 	return e

@@ -1,0 +1,87 @@
+# Budgets of the check API load test (admin-api/loadtest), see notebook/README.md.
+#
+# One entry per profile, mode and latency added to PostgreSQL and Redis. A nightly run is compared with its entry by
+# `licetum-loadtest budget`; a figure more than `tolerance` on the wrong side fails the workflow (a latency also gets
+# `latency_slack_ms` on top: a few milliseconds are jitter on a shared runner):
+#   rps                 the sustained rate (the highest ramp step that met its objectives): a floor
+#   reference_rps       the step the other figures belong to (the sustained step of the baseline)
+#   p50_ms, p99_ms      latency of all the requests of that step: ceilings (p99 0: the step had too few samples)
+#   db_queries_per_request, redis_round_trips_per_request   counted by the server: ceilings
+# The figures come from the baseline of block F0 and are set again, on purpose, when a block improves them
+# (`licetum-loadtest budget -calibrate`). A run that is better than its budget by more than the tolerance does not
+# fail; its report asks for the budget to be set again.
+tolerance: 0.15
+latency_slack_ms: 5
+budgets:
+    # cold: these figures were measured when every request asked with consistency=higher. Since P2-07 (ADR 0001, 11.6.1 item 6) the
+    # cold mode sends no consistency parameter and asks evaluation questions that no earlier request of the run asked (a
+    # search repeats per subject), so the new cold workload does not match these budgets. They are deferred to the recalibration that is part of P7 (ADR 0001, 11.11: the
+    # budgets are recalibrated on a fixed runner without -race) and stay as they are until then. Since F3 such a request waits for a fresh synchronization job of the worker
+    # instead of fetching the sources itself, and the fresh jobs ask a type's source at most once per
+    # SYNC__FRESH_MIN_INTERVAL (1 s): its p50 was 0.90 to 0.93 s from 2 to 8 requests/s (2.53 to 2.55 s with 100 ms added),
+    # where the F0 baseline (the fetch in the request) had 0.40 s (2.27 s). The p50 and its step are those of the nightly run
+    # 39121082518 (8882ff5c, ubuntu-latest) at the highest step it sustained. Its sustained rate (8 and 4 requests/s) was
+    # capped by the computations that held their slot of COMPUTE__CONCURRENCY while they waited for the worker (fixed since:
+    # a computation gives its slot back for that wait and takes one again afterwards, `pauseComputeSlot`; on one shared
+    # 4-CPU machine the 16 requests/s step went from 59.5 % errors to none), so the rate floor stays the baseline's; so do
+    # the ceilings of queries and round trips, which the run is under.
+    - profile: medium
+      mode: cold
+      added_latency_ms: 0
+      rps: 16
+      reference_rps: 8
+      p50_ms: 932.7
+      p99_ms: 0
+      db_queries_per_request: 15.42
+      redis_round_trips_per_request: 5.65
+      note: 'rps, queries and round trips: lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate, commits b7859306 and 5abcc757 (loadtest/notebook/results); p50 at 8 requests/s: nightly run 39121082518, 8882ff5c'
+    - profile: medium
+      mode: cold
+      added_latency_ms: 100
+      rps: 8
+      reference_rps: 4
+      p50_ms: 2531.0
+      p99_ms: 0
+      db_queries_per_request: 15.23
+      redis_round_trips_per_request: 5.19
+      note: 'rps, queries and round trips: lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate, commits b7859306 and 5abcc757 (loadtest/notebook/results); p50 at 4 requests/s: nightly run 39121082518, 8882ff5c'
+    - profile: medium
+      mode: mix
+      added_latency_ms: 0
+      rps: 80
+      reference_rps: 80
+      p50_ms: 7.48
+      p99_ms: 0
+      db_queries_per_request: 6.28
+      redis_round_trips_per_request: 2.42
+      note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
+    - profile: medium
+      mode: mix
+      added_latency_ms: 100
+      rps: 20
+      reference_rps: 20
+      p50_ms: 512.73
+      p99_ms: 0
+      db_queries_per_request: 5.88
+      redis_round_trips_per_request: 0.02
+      note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
+    - profile: medium
+      mode: warm
+      added_latency_ms: 0
+      rps: 320
+      reference_rps: 320
+      p50_ms: 0.6
+      p99_ms: 30.89
+      db_queries_per_request: 1.66
+      redis_round_trips_per_request: 0.51
+      note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
+    - profile: medium
+      mode: warm
+      added_latency_ms: 100
+      rps: 80
+      reference_rps: 80
+      p50_ms: 0.42
+      p99_ms: 0
+      db_queries_per_request: 1.95
+      redis_round_trips_per_request: 0
+      note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'

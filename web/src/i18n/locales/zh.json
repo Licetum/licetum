@@ -1180,6 +1180,7 @@
   },
   "whohas": {
     "assumed": "父级未知",
+    "assumedLevels": "{{levels}}：父级未知",
     "col": {
       "people": "已知人员",
       "via": "来源",

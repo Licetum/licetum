@@ -2,26 +2,15 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
-	"log/slog"
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
-)
-
-const (
-	delegatedSubjectMax = 256
-	delegatedClaimsMax  = 100
-	delegatedClaimsSize = 16 * 1024
-	// delegatedPruneEvery is how often the retention of the audit is applied.
-	delegatedPruneEvery = time.Hour
 )
 
 // ClientOfClaims is the client application a token was issued to: azp (OpenID Connect), or client_id (RFC 9068).
@@ -48,29 +37,14 @@ func AuthorizeDelegate(svc *model.Service, claims Claims) (string, error) {
 }
 
 // PrepareDelegated checks the person a call names and builds the claims the decision reads: those the caller sends, with
-// preferred_username set to the subject unless the caller sent one (the rules that name a person read it).
+// preferred_username set to the subject unless the caller sent one (the rules that name a person read it). The checks are
+// those of model.PrepareSubject, which the AuthZEN requests share.
 func PrepareDelegated(subject string, raw map[string]any) (Claims, error) {
-	if subject == "" || len(subject) > delegatedSubjectMax || strings.HasPrefix(subject, model.GroupSubjectPrefix) ||
-		strings.ContainsFunc(subject, unicode.IsControl) {
-		return nil, apperr.Unprocessable(i18n.DelegationSubjectInvalid)
+	prepared, err := model.PrepareSubject("", subject, raw)
+	if err != nil {
+		return nil, err
 	}
-	if len(raw) > delegatedClaimsMax {
-		return nil, apperr.Unprocessable(i18n.DelegationClaimsInvalid)
-	}
-	if len(raw) > 0 {
-		encoded, err := json.Marshal(raw)
-		if err != nil || len(encoded) > delegatedClaimsSize {
-			return nil, apperr.Unprocessable(i18n.DelegationClaimsInvalid)
-		}
-	}
-	claims := Claims{}
-	for k, v := range raw {
-		claims[k] = v
-	}
-	if !PyTruthy(claims["preferred_username"]) {
-		claims["preferred_username"] = subject
-	}
-	return claims, nil
+	return Claims(prepared.Claims), nil
 }
 
 // DelegatedCall is what the audit keeps of a call.
@@ -83,33 +57,20 @@ type DelegatedCall struct {
 	Allowed       int
 }
 
-// RecordDelegatedCall keeps a call. It is written before the answer is given: a call that cannot be recorded is not
-// answered.
+// RecordDelegatedCall keeps a call. In strict mode (the default) it is written before the answer is given: a call that
+// cannot be recorded is not answered. In async mode the record is buffered and written in batches (see auditSink).
 func (a *App) RecordDelegatedCall(ctx context.Context, serviceID uuid.UUID, c DelegatedCall) error {
 	requestID := ""
 	if t := TraceFrom(ctx); t != nil {
 		requestID = t.Request()
 	}
+	if sink := a.audit(); sink != nil {
+		sink.add(auditRecord{at: time.Now(), serviceID: serviceID, call: c, requestID: requestID})
+		return nil
+	}
 	_, err := a.DB.Exec(ctx, `
 		INSERT INTO delegated_call (service_id, caller_client, caller_subject, subject, operation, questions, allowed, request_id)
 		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, NULLIF($8, ''))`,
 		serviceID, c.CallerClient, c.CallerSubject, c.Subject, c.Operation, c.Questions, c.Allowed, requestID)
-	if err != nil {
-		return err
-	}
-	a.Background(a.pruneDelegatedCalls)
-	return nil
-}
-
-// pruneDelegatedCalls applies the retention of the audit, at most once an hour per process.
-func (a *App) pruneDelegatedCalls(ctx context.Context) {
-	days := a.Cfg.Delegation.AuditRetentionDays
-	now := time.Now()
-	last := a.delegationPruned.Load()
-	if days <= 0 || now.Sub(time.Unix(0, last)) < delegatedPruneEvery || !a.delegationPruned.CompareAndSwap(last, now.UnixNano()) {
-		return
-	}
-	if _, err := a.DB.Exec(ctx, `DELETE FROM delegated_call WHERE at < now() - make_interval(days => $1)`, days); err != nil {
-		slog.WarnContext(ctx, "failed to apply the retention of the delegated calls", "error", err)
-	}
+	return err
 }

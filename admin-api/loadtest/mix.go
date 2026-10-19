@@ -7,30 +7,36 @@ import (
 	"strings"
 )
 
-// op is one of the requests of the check API the traffic sends.
+// op is one of the requests of the AuthZEN API the traffic sends.
 type op int
 
 const (
-	opPermission op = iota
-	opCheck1
-	opCheck10
-	opCheck100
-	opAuthzen
-	opAuthzenBatch
-	opOnBehalf
+	opSearchResource op = iota
+	opEvaluation
+	opEvaluations10
+	opEvaluations100
+	opEvaluationProperties
 	numOps
 )
 
-// opNames are the names of the requests, as the mix spells them and as the k6 script names its metrics.
-var opNames = [numOps]string{"permission", "check1", "check10", "check100", "authzen", "authzen_batch", "on_behalf"}
+// opNames are the names of the requests, as the mix spells them and as the k6 script names its metrics. The script lists the
+// same names in the same order (TestK6ScriptNamesTheRequestsOfTheMix keeps them so).
+//   - search_resource: the documents a person may read, one page of 20 (POST …/access/v1/search/resource);
+//   - evaluation: one question about a person (POST …/access/v1/evaluation);
+//   - evaluations10 and evaluations100: ten and a hundred questions about a person in one request (…/evaluations);
+//   - evaluation_properties: one question about another person, asked by a client application the service trusts, which
+//     brings the claims of the person in subject.properties (…/evaluation with the token of the client).
+var opNames = [numOps]string{"search_resource", "evaluation", "evaluations10", "evaluations100", "evaluation_properties"}
 
 // Mix is the share of each request in the traffic: a request is drawn with probability weight/total (k6 draws them, see
 // k6/check.js, which reads the same spelling).
 type Mix [numOps]int
 
-// DefaultMix is the traffic of a service that asks for every decision it makes: the permission lists, the checks of one
-// and of ten questions, the AuthZEN evaluations (single and batched) and the calls on behalf of a person.
-const DefaultMix = "permission=2,check1=3,check10=1,authzen=2,authzen_batch=1,on_behalf=1"
+// DefaultMix is the traffic of a service that asks for every decision it makes: the lists of what a person may read, the
+// evaluations of one question and of ten, and the questions about another person that a trusted client asks. The shares
+// are those of the traffic budgets.yaml was measured with: the lists 2, the single questions 5, the questions in tens 2,
+// the questions about another person 1.
+const DefaultMix = "search_resource=2,evaluation=5,evaluations10=2,evaluation_properties=1"
 
 // ParseMix reads "name=weight,..." over the names of the requests. A request left out has weight 0.
 func ParseMix(s string) (Mix, error) {
@@ -78,11 +84,9 @@ func indexOf(names []string, name string) int {
 	return -1
 }
 
-// countDecisions counts the answers of a response: every "allowed" (check, on-behalf) and "decision" (AuthZEN) field,
-// and the ones that are granted. The bodies are the ones the API writes, so the fields are matched as written.
+// countDecisions counts the answers of a response: every "decision" field of the AuthZEN API, and the ones that are
+// granted. The bodies are the ones the API writes, so the fields are matched as written. A search has no decisions.
 func countDecisions(body []byte) (decisions, allowed int) {
 	count := func(field string) int { return bytes.Count(body, []byte(field)) }
-	decisions = count(`"allowed":`) + count(`"decision":`)
-	allowed = count(`"allowed":true`) + count(`"decision":true`)
-	return decisions, allowed
+	return count(`"decision":`), count(`"decision":true`)
 }

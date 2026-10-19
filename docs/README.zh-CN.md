@@ -108,17 +108,17 @@ Content-Type: application/json
 task dev
 ```
 
-该命令会启动 PostgreSQL、Redis、本地 Dex OIDC 提供方、检查 API、管理 API 和 Web 界面。Go 服务和 Web 界面都支持热重载。
+该命令会启动 PostgreSQL、Redis、本地 Dex OIDC 提供方、PDP、管理 API 和 Web 界面。Go 服务和 Web 界面都支持热重载。
 
 | 组件 | 地址 |
 |---|---|
 | Web 界面 | http://localhost:3000 |
 | 管理 API | http://localhost:8002 |
-| 检查 API | http://localhost:8001 |
+| PDP | http://localhost:8001 |
 
 请在 http://localhost:3000 使用 `admin@example.com` 和密码 `password` 登录。这些凭据仅用于开发。
 
-如果要在不使用 Docker 的情况下运行 Go 二进制文件，请参阅 [core](../core/README.md) 和 [admin API](../admin-api/README.md) 指南。两者都可以在不启动服务的情况下输出 OpenAPI 规范：`licetum openapi check` 输出检查 API 的规范，`licetum-admin openapi admin` 输出管理 API 的规范。
+如果要在不使用 Docker 的情况下运行 Go 二进制文件，请参阅 [core](../core/README.md) 和 [admin API](../admin-api/README.md) 指南。两者都可以在不启动服务的情况下输出 OpenAPI 规范：`licetum openapi pdp` 输出 PDP 的规范，`licetum-admin openapi admin` 输出管理 API 的规范。
 
 ## Licetum 不是什么
 
@@ -129,7 +129,7 @@ task dev
 
 ## 文档
 
-- [core/](../core/README.md)：引擎、检查 API、数据库结构与迁移（MIT）。
+- [core/](../core/README.md)：引擎、PDP、数据库结构与迁移（MIT）。
 - [admin-api/](../admin-api/README.md)：管理 API、策略工具和 `licetum-admin` 二进制文件（AGPL-3.0）。
 - [web/](../web/README.md)：管理界面（AGPL-3.0）。
 
@@ -139,7 +139,7 @@ task dev
 
 - [licetum](https://github.com/Licetum/licetum)：本仓库，包含引擎、API 和 Web 界面。
 - [licetum-go-sdk](https://github.com/Licetum/licetum-go-sdk)、[licetum-ts-sdk](https://github.com/Licetum/licetum-ts-sdk)、
-  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk)：检查 API 的客户端库（尚待发布；每个库都会附带自己的许可证文件）。
+  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk)：PDP 的客户端库（尚待发布；每个库都会附带自己的许可证文件）。
 - [licetum-helm](https://github.com/Licetum/licetum-helm)：Helm chart。
 - [licetum-docs](https://github.com/Licetum/licetum-docs)：文档。
 
@@ -151,7 +151,7 @@ task dev
 
 Licetum 由三部分组成，每部分采用各自的许可证（见 [LICENSE](../LICENSE)）：
 
-- [`core/`](../core/LICENSE)：引擎、检查 API、数据库结构和运行时。MIT 许可证。
+- [`core/`](../core/LICENSE)：引擎、PDP、数据库结构和运行时。MIT 许可证。
 - [`admin-api/`](../admin-api/LICENSE)：管理 API。仅适用 GNU Affero General Public License v3.0。
 - [`web/`](../web/LICENSE)：管理界面。仅适用 GNU Affero General Public License v3.0。
 

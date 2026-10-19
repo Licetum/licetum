@@ -130,6 +130,10 @@ func (a *App) DeleteService(ctx context.Context, serviceID uuid.UUID) (uuid.UUID
 		if _, err := q.Exec(ctx, `UPDATE service SET deleted_at = now() WHERE id = $1`, serviceID); err != nil {
 			return change{}, err
 		}
+		// The PEP directory holds the clients of live services only, so the delete moves the pep scope too (PEPDirectory).
+		if _, err := db.BumpRevision(ctx, q, db.ScopePEP); err != nil {
+			return change{}, err
+		}
 		// services are the entities of the platform "service" policy
 		return change{entity: "service", entityID: serviceID, serviceID: &serviceID, action: actionDelete,
 			before: old.Response()}, nil

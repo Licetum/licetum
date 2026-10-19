@@ -1,0 +1,104 @@
+# DEC12, nested groups (admin-api/tests/integration/api/gaps_test.go, TestIntegrationNestedGroupsAndSubjectKindsRoundTrip):
+# inner holds everyone whose team is audit, outer holds the group inner, and a rule gives the members of outer read on B1.
+# The test checks that the policy document carries the nesting and the rule; the decision it relies on is that a member of
+# inner is a member of outer. The rule's subject_kind (service) is a label only: it takes no part in a decision, and the
+# fixture format has no field for it.
+#
+# Around the test: the group itself as a subject of a rule (group:<id>) reaches the members of the groups nested into it;
+# a claim the token does not carry never makes a subject a member (DEC08), nor does another value; a chain of sixteen
+# groups, each nested into the next, resolves to its last group — sixteen levels, counting the group the subject is a
+# member of directly. The limit itself (17 levels count, 18 do not) is pinned in dec12_nested_groups.yaml.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4.
+contracts: [DEC08, DEC12]
+description: A member of a nested group is a member of every group that nests it, up to sixteen levels.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+groups:
+  # The test.
+  - name: inner
+    members: [{predicate: [{attr: team, op: eq, value: audit}]}]
+  - name: outer
+    members: [{group: inner}]
+  # Sixteen levels: deep is a member of level-01, which is a member of level-02, and so on up to level-16.
+  - {name: level-01, members: [{subject: deep}]}
+  - {name: level-02, members: [{group: level-01}]}
+  - {name: level-03, members: [{group: level-02}]}
+  - {name: level-04, members: [{group: level-03}]}
+  - {name: level-05, members: [{group: level-04}]}
+  - {name: level-06, members: [{group: level-05}]}
+  - {name: level-07, members: [{group: level-06}]}
+  - {name: level-08, members: [{group: level-07}]}
+  - {name: level-09, members: [{group: level-08}]}
+  - {name: level-10, members: [{group: level-09}]}
+  - {name: level-11, members: [{group: level-10}]}
+  - {name: level-12, members: [{group: level-11}]}
+  - {name: level-13, members: [{group: level-12}]}
+  - {name: level-14, members: [{group: level-13}]}
+  - {name: level-15, members: [{group: level-14}]}
+  - {name: level-16, members: [{group: level-15}]}
+rules:
+  # The test: read on B1 for the members of outer.
+  - {name: outer-read-B1, member_of: outer, type: branch, resource: B1, access: [read]}
+  # The group outer itself as the subject of a rule.
+  - {name: outer-as-subject-read-B3, subject_group: outer, type: branch, resource: B3, access: [read]}
+  # The last group of the chain.
+  - {name: level-16-read-B2, member_of: level-16, type: branch, resource: B2, access: [read]}
+cases:
+  # from admin-api/tests/integration/api/gaps_test.go:TestIntegrationNestedGroupsAndSubjectKindsRoundTrip
+  - name: a member of the nested group is a member of the group that nests it
+    subject: auditor
+    claims: {team: audit}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [outer-read-B1], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: the rule of the nesting group reaches below B1 in another service
+    subject: auditor
+    service: app
+    claims: {team: audit}
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [outer-read-B1]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+  - name: the nesting group as the subject of a rule reaches the members of the nested group
+    subject: auditor
+    claims: {team: audit}
+    questions:
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [outer-as-subject-read-B3], denials: []}
+  - name: without the claim the subject is a member of neither group
+    subject: outsider
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access, granted_by: []}
+  - name: with another value the subject is a member of neither group
+    subject: outsider
+    claims: {team: sales}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+  - name: sixteen levels of nesting resolve to the last group
+    subject: deep
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [level-16-read-B2], denials: []}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: a subject in no group of the chain gets nothing from its last group
+    subject: shallow
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: []}

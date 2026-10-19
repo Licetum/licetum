@@ -35,11 +35,15 @@ func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport,
 	if err != nil {
 		return nil, err
 	}
+	g, err := a.LoadTypeGraph(ctx)
+	if err != nil {
+		return nil, err
+	}
 	withMembers, err := a.groupsWithMembers(ctx, groupIDs)
 	if err != nil {
 		return nil, err
 	}
-	matching, err := a.ResourcesMatching(ctx, rules)
+	matching, err := a.ResourcesMatching(ctx, rules, func(id uuid.UUID) bool { return synced[id] })
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +65,10 @@ func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport,
 		// a duplicate or a guard on an empty group is worth knowing when the synchronizer comes back.
 		if r.RoleID == nil && hasResourceTarget(r) && !synced[*r.TypeResourceID] {
 			lint.add(model.LintError, i18n.LintRuleTargetDead, &id, nil, nil, label)
+		} else if r.RoleID == nil && r.ResourceFromClaim != nil && g.LookupCut(r.ResourceFromClaim.LookupTypeResourceID, *r.TypeResourceID) {
+			// The type is there, but the claim is looked up in a type without resources, or the climb passes one: the
+			// rule finds nothing there (a denial keeps an absent anchor, see engine.TypeGraph.LookupCut).
+			lint.add(model.LintError, i18n.LintRuleLookupDead, &id, nil, nil, label)
 		}
 
 		if r.Effect != model.EffectDeny && everyoneRule(r) {

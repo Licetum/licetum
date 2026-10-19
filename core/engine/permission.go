@@ -5,9 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -15,15 +15,21 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/model"
 )
 
 const (
 	ResultCacheTTL = 60 * time.Second
-	MaxGroupDepth  = 16
-	// resultCacheFormat is the version of the cached result format: when the format changes, new keys
-	// do not overlap the old ones, and stale entries simply expire by TTL.
-	resultCacheFormat = "t6"
+	// pendingAnswerTTL is how long an answer is kept when a type it reads has no data yet.
+	pendingAnswerTTL = 2 * time.Second
+	// MaxGroupDepth is how many nestings of groups a membership resolves through: a group counts when the subject is
+	// matched by one of its own memberships, or by a group nested into it through at most this many groups.
+	MaxGroupDepth = 16
+	// resultCacheFormat is the version of the cached result format: when the format or the decisions change, new
+	// keys do not overlap the old ones (a release does not serve the answers of the previous one during a rolling
+	// update), and stale entries simply expire by TTL.
+	resultCacheFormat = "t9"
 )
 
 // PermissionResult — {type_resource_name: sync {resources} | not_sync {access}}.
@@ -72,28 +78,31 @@ func (a *App) GetPermission(ctx context.Context, serviceID uuid.UUID, subject st
 // GetPermissionData is GetPermission with what the self-service needs too: the denials, and the levels
 // on each type as a whole.
 func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, consistency Consistency) (*permissionData, error) {
-	state := a.readCacheState(ctx)
-	key := fmt.Sprintf("authz:permission:%s:v%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
+	if err := a.replicaGate(); err != nil {
+		return nil, err
+	}
+	state := a.cacheState(ctx).forConsistency(ctx, consistency)
+	key := fmt.Sprintf("authz:permission:%s:r%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env))
 	return cachedAnswer(ctx, a, key, state, consistency, a.metrics.permissionCache,
 		func(ctx context.Context) (computed[*permissionData], error) {
-			if _, err := a.GetExistingService(ctx, a.DB, serviceID); err != nil {
+			if err := a.serviceExists(ctx, state, serviceID); err != nil {
 				return computed[*permissionData]{}, err
 			}
 			started := time.Now()
-			data, deps, ttl, err := a.computePermissionData(ctx, serviceID, subject, env, state, consistency)
+			data, deps, ttl, hold, err := a.computePermissionData(ctx, serviceID, subject, env, state, consistency)
 			if err != nil {
 				return computed[*permissionData]{}, err
 			}
 			a.metrics.permissionCompute.Observe(time.Since(started).Seconds())
-			return computed[*permissionData]{value: data, deps: deps, ttl: ttl}, nil
+			return computed[*permissionData]{value: data, deps: deps, ttl: ttl, hold: hold}, nil
 		})
 }
 
 // requestFingerprint hashes what the request carries that the rules look at (its claims and its context attributes):
 // two requests with the same fingerprint get the same answer. The names of those attributes are kept in the cache state
-// for the current rules version; when they are not there, they are read from the rules and stored for the requests that
-// follow.
+// for the current revision of the rules (by the snapshot, or by the memo of the process); when they are not there, they
+// are read from the rules and remembered for the requests that follow.
 func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env) string {
 	if state.attrsOK {
 		return fingerprint(state.attrs, env)
@@ -101,17 +110,11 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 	attrs, err := a.RequestAttributes(ctx)
 	if err != nil {
 		// Without the list, fall back to every attribute the request carries: correct, only less shared.
-		slog.WarnContext(ctx, "failed to read the attributes the rules look at", "error", err)
+		logDependency(ctx, slog.LevelWarn, "failed to read the attributes the rules look at", err)
 		return fingerprint(allRequestAttributes(env), env)
 	}
 	if state.ok {
-		if record, err := json.Marshal(claimAttrsRecord{Version: state.version, Attrs: attrs}); err == nil {
-			a.Background(func(ctx context.Context) {
-				if err := a.Redis.Set(ctx, claimAttrsKey, record, claimAttrsTTL).Err(); err != nil {
-					slog.WarnContext(ctx, "failed to store the attributes the rules look at", "error", err)
-				}
-			})
-		}
+		a.attrsMemo.Store(&attrsMemo{revision: state.version, attrs: attrs})
 	}
 	return fingerprint(attrs, env)
 }
@@ -125,7 +128,11 @@ const notNowSQL = `COALESCE(c->>'source', 'claim') <> 'now'`
 // RequestAttributes reads the attributes the rules look at: the conditions of the rules, of their guards and of the group
 // memberships, and the claims of the resource_from_claim specs (of rules and of role items).
 func (a *App) RequestAttributes(ctx context.Context) ([]string, error) {
-	rows, err := a.DB.Query(ctx, `
+	return requestAttributes(ctx, a.reader(ctx))
+}
+
+func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
+	rows, err := q.Query(ctx, `
 		SELECT DISTINCT attr FROM (
 			SELECT `+conditionAttrSQL+` AS attr FROM assignment_rule, jsonb_array_elements(predicate) c WHERE `+notNowSQL+`
 			UNION ALL SELECT `+conditionAttrSQL+` FROM assignment_rule, jsonb_array_elements(requires_predicate) c WHERE `+notNowSQL+`
@@ -195,7 +202,12 @@ func fingerprint(attrs []string, env Env) string {
 // closure: the subject plus every group it ends up in. Only memberships in force now count. The bool reports whether a
 // membership reads the time of the decision.
 func (a *App) ResolveIdentitySet(ctx context.Context, subject string, env Env) (identitySet, bool, error) {
-	members, err := a.LiveMemberships(ctx)
+	return a.resolveIdentitySet(ctx, subject, env, a.now())
+}
+
+// resolveIdentitySet is ResolveIdentitySet over the memberships in force at now.
+func (a *App) resolveIdentitySet(ctx context.Context, subject string, env Env, now time.Time) (identitySet, bool, error) {
+	members, err := a.liveMembershipsAt(ctx, now)
 	if err != nil {
 		return nil, false, err
 	}
@@ -205,9 +217,15 @@ func (a *App) ResolveIdentitySet(ctx context.Context, subject string, env Env) (
 
 // LiveMemberships reads the group memberships in force now.
 func (a *App) LiveMemberships(ctx context.Context) ([]model.GroupMember, error) {
-	rows, err := a.DB.Query(ctx, `
+	return a.liveMembershipsAt(ctx, a.now())
+}
+
+// liveMembershipsAt reads the group memberships in force at now. The moment is the App's (see SetClock), not the database's:
+// the snapshot compares the windows in memory with it too.
+func (a *App) liveMembershipsAt(ctx context.Context, now time.Time) ([]model.GroupMember, error) {
+	rows, err := a.reader(ctx).Query(ctx, `
 		SELECT `+GroupMemberColumns+` FROM group_member
-		WHERE enabled AND (valid_from IS NULL OR valid_from <= now()) AND (expires_at IS NULL OR expires_at > now())`)
+		WHERE enabled AND (valid_from IS NULL OR valid_from <= $1) AND (expires_at IS NULL OR expires_at > $1)`, now)
 	if err != nil {
 		return nil, err
 	}
@@ -241,15 +259,19 @@ func IdentityOf(members []model.GroupMember, subject string, env Env) (identityS
 		}
 	}
 
-	// A member of a group that is a member of this one is a member of this one too, as far as the child is known.
+	// A member of a group that is a member of this one is a member of this one too, as far as the child is known. Each
+	// round reads the result of the previous one, so round k adds the groups k nestings away whatever the order of the
+	// memberships, and the depth is exactly MaxGroupDepth.
 	for range MaxGroupDepth {
+		next := maps.Clone(groups)
 		changed := false
 		for _, m := range nested {
-			if t := groups[m.GroupID].or(groups[*m.MemberGroupID]); t != groups[m.GroupID] {
-				groups[m.GroupID] = t
+			if t := next[m.GroupID].or(groups[*m.MemberGroupID]); t != next[m.GroupID] {
+				next[m.GroupID] = t
 				changed = true
 			}
 		}
+		groups = next
 		if !changed {
 			break
 		}
@@ -266,7 +288,7 @@ func IdentityOf(members []model.GroupMember, subject string, env Env) (identityS
 
 // LoadRules reads assignment rules (the assignmentRuleColumns columns of alias ar).
 func (a *App) LoadRules(ctx context.Context, sql string, args ...any) ([]model.AssignmentRule, error) {
-	rows, err := a.DB.Query(ctx, sql, args...)
+	rows, err := a.reader(ctx).Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -285,32 +307,34 @@ func (a *App) LoadRules(ctx context.Context, sql string, args ...any) ([]model.A
 
 // applicableRules loads the assignments in force that target the caller: a literal subject from the identity set,
 // every member of a group, or everyone whose conditions hold for the request. The assignments of roles are then
-// expanded into the permissions of their roles (see expandRoles). It returns the ids of the assignments that apply
-// only because a denial applies on a missing attribute, and whether a loaded rule reads the time of the decision.
-func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity identitySet, env Env) ([]model.AssignmentRule, map[uuid.UUID]bool, bool, error) {
+// expanded into the permissions of their roles (see expandRoles). Only the assignments in force at now count. It returns
+// the ids of the assignments that apply only because a denial applies on a missing attribute, and whether a loaded rule
+// reads the time of the decision.
+func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity identitySet, env Env, now time.Time) ([]model.AssignmentRule, map[uuid.UUID]bool, bool, error) {
 	identityList := make([]string, 0, len(identity))
 	for s := range identity {
 		identityList = append(identityList, s)
 	}
 
 	// An inline rule lives on a relevant type that is not deleted; a role assignment is checked by the
-	// types of its items in expandRoles.
+	// types of its items in expandRoles. A rule is in force at $2: RuleActiveSQL at the moment of the decision, which is
+	// the App's (see SetClock), as the snapshot has it.
 	const ruleQuery = `
 		SELECT ` + AssignmentRuleColumns + `
 		FROM assignment_rule ar
 		LEFT JOIN type_resource t ON t.id = ar.type_resource_id
-		WHERE ` + RuleActiveSQL + `
+		WHERE ar.enabled AND (ar.valid_from IS NULL OR ar.valid_from <= $2) AND (ar.expires_at IS NULL OR ar.expires_at > $2)
 		  AND (ar.role_id IS NOT NULL OR (ar.type_resource_id = ANY($1) AND t.deleted_at IS NULL))`
 
 	// Indexed path (formerly Grant): point rows with subject IN identity — fast even with a large
 	// number of point grants.
-	direct, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject = ANY($2) ORDER BY ar.id`, typeIDs, identityList)
+	direct, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject = ANY($3) ORDER BY ar.id`, typeIDs, now, identityList)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	// Rule path: a predicate over the request or member_of_group_id — scanned in full, since we cannot know in
 	// advance which rule matches which subject.
-	byRule, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject IS NULL ORDER BY ar.id`, typeIDs)
+	byRule, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject IS NULL ORDER BY ar.id`, typeIDs, now)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -338,6 +362,34 @@ func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity
 	return rules, missing, usesNow, nil
 }
 
+// applicableFromSnapshot is applicableRules over the snapshot: the rules with a subject of the identity set come from an
+// index, only the rules without a subject are scanned, and the windows of validity are compared with now.
+func applicableFromSnapshot(snap *snapshot, relevant map[uuid.UUID]bool, identity identitySet, env Env, now time.Time) ([]model.AssignmentRule, map[uuid.UUID]bool, bool) {
+	subjects := make([]string, 0, len(identity))
+	for s := range identity {
+		subjects = append(subjects, s)
+	}
+	direct, scanned := snap.applicable(relevant, subjects, now)
+
+	var out []model.AssignmentRule
+	missing := map[uuid.UUID]bool{}
+	usesNow := false
+	for _, rule := range slices.Concat(direct, scanned) {
+		if ruleUsesNow(rule) {
+			usesNow = true
+		}
+		applies, miss := RuleApplies(rule, identity, env)
+		if !applies {
+			continue
+		}
+		out = append(out, rule)
+		if miss {
+			missing[rule.ID] = true
+		}
+	}
+	return snap.expandRoles(out, relevant), missing, usesNow
+}
+
 // ExpandRoles turns every assignment of a role into one rule per item of the role: a copy of the
 // assignment (same id, subject, validity and effect) that carries the item's target and access levels.
 // The engine then sees the permissions of a role exactly like inline rules. Items on types outside
@@ -354,7 +406,7 @@ func (a *App) ExpandRoles(ctx context.Context, rules []model.AssignmentRule, typ
 
 	items := map[uuid.UUID][]model.RolePermission{}
 	if len(roleIDs) > 0 {
-		rows, err := a.DB.Query(ctx, `
+		rows, err := a.reader(ctx).Query(ctx, `
 			SELECT `+RolePermissionColumns+`
 			FROM role_permission rp
 			JOIN type_resource t ON t.id = rp.type_resource_id
@@ -452,29 +504,42 @@ func RuleOrigin(rule model.AssignmentRule) string {
 	return who
 }
 
+// holdUnbounded is the hold of an answer that no validity window limits.
+const holdUnbounded = 24 * time.Hour
+
+// validityUntil turns the next moment a rule or a membership starts or stops being in force (nil: there is none) into how
+// long an answer stays cached (ttl: at most ResultCacheTTL) and how long it stays correct at all (hold: the time to that
+// moment; the answer may be served that long when the database cannot be reached and nothing newer can be had). The ttl has a
+// floor of a second so that an answer is worth keeping; the hold has none, it is the exact distance to the boundary (zero or
+// less when the boundary is already here: such an answer is not served stale).
+func validityUntil(until *time.Time, now time.Time) (ttl, hold time.Duration) {
+	if until == nil {
+		return ResultCacheTTL, holdUnbounded
+	}
+	hold = until.Sub(now)
+	return min(ResultCacheTTL, max(time.Second, hold)), hold
+}
+
 // cacheTTL returns how long the cached result stays correct with respect to validity periods: the
 // time until the nearest moment a rule (on the given types) or a group membership starts or stops
-// being in force. Capped at ResultCacheTTL.
-func (a *App) cacheTTL(ctx context.Context, typeIDs []uuid.UUID) time.Duration {
+// being in force, counted from now. Capped at ResultCacheTTL.
+func (a *App) cacheTTL(ctx context.Context, typeIDs []uuid.UUID, now time.Time) (ttl, hold time.Duration) {
 	var until *time.Time
-	err := a.DB.QueryRow(ctx, `
+	err := a.reader(ctx).QueryRow(ctx, `
 		SELECT min(b) FROM (
 			-- a role assignment has no type of its own: its boundaries count for every type
 			SELECT valid_from AS b FROM assignment_rule
-			WHERE valid_from > now() AND (type_resource_id = ANY($1) OR role_id IS NOT NULL)
+			WHERE valid_from > $2 AND (type_resource_id = ANY($1) OR role_id IS NOT NULL)
 			UNION ALL SELECT expires_at FROM assignment_rule
-			WHERE expires_at > now() AND (type_resource_id = ANY($1) OR role_id IS NOT NULL)
-			UNION ALL SELECT valid_from FROM group_member WHERE valid_from > now()
-			UNION ALL SELECT expires_at FROM group_member WHERE expires_at > now()
-		) x`, typeIDs).Scan(&until)
+			WHERE expires_at > $2 AND (type_resource_id = ANY($1) OR role_id IS NOT NULL)
+			UNION ALL SELECT valid_from FROM group_member WHERE valid_from > $2
+			UNION ALL SELECT expires_at FROM group_member WHERE expires_at > $2
+		) x`, typeIDs, now).Scan(&until)
 	if err != nil {
-		slog.WarnContext(ctx, "failed to read the next validity boundary", "error", err)
-		return time.Second
+		logDependency(ctx, slog.LevelWarn, "failed to read the next validity boundary", err)
+		return time.Second, time.Second
 	}
-	if until == nil {
-		return ResultCacheTTL
-	}
-	return min(ResultCacheTTL, max(time.Second, time.Until(*until)))
+	return validityUntil(until, now)
 }
 
 // ServiceTypes returns the live types owned by a service.
@@ -491,7 +556,7 @@ func ServiceTypes(g *TypeGraph, serviceID uuid.UUID) []uuid.UUID {
 
 // TypesWithSynchronizer returns which of the given types have a live synchronizer (are sync types).
 func (a *App) TypesWithSynchronizer(ctx context.Context, typeIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
-	rows, err := a.DB.Query(ctx,
+	rows, err := a.reader(ctx).Query(ctx,
 		`SELECT DISTINCT type_resource_id FROM synchronizer WHERE type_resource_id = ANY($1) AND deleted_at IS NULL`, typeIDs)
 	if err != nil {
 		return nil, err
@@ -516,18 +581,32 @@ type Prepared struct {
 	Insts       []Instance
 	serviceType []uuid.UUID
 	syncTypes   map[uuid.UUID]bool // the service types with a live synchronizer
-	resultTypes []uuid.UUID        // the sync types of the service whose data is current
+	// sourced are the involved types that have resources: a live synchronizer in the type graph of the decision and in
+	// the read of the synchronization (ensure). The resources of any other type are not there for the decision, whatever
+	// rows a deleted synchronizer left in the local copy: a rule on one anchors nothing, a question about one is
+	// resource_not_found, no cascade reaches one and a link to one is unresolved.
+	sourced     map[uuid.UUID]bool
+	resultTypes []uuid.UUID // the sync types of the service whose data is current
 	ttl         time.Duration
+	// hold is how long the answer stays correct with respect to validity windows and the state of the data it was made from
+	// (see validityUntil): never less than ttl.
+	hold time.Duration
 	// deps are the data versions of the services whose resource data the decision reads (see prepare).
 	deps map[string]int64
 }
 
-// syncedTypes keeps the service types whose data is current: the ones with a live synchronizer that were
-// synchronized now or are within their throttle.
+// syncedTypes keeps the involved types that have resources (see sourced), and the service types among them, whose data is
+// current: the ones with a live synchronizer that were synchronized now or are within their throttle.
 func (p *Prepared) syncedTypes(synced map[uuid.UUID]bool) {
+	p.sourced = map[uuid.UUID]bool{}
+	for id := range synced {
+		if p.Graph.IsSync(id) {
+			p.sourced[id] = true
+		}
+	}
 	p.resultTypes = nil
 	for _, id := range p.serviceType {
-		if synced[id] {
+		if p.sourced[id] {
 			p.resultTypes = append(p.resultTypes, id)
 		}
 	}
@@ -541,17 +620,28 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	var identity identitySet
 	var identityUsesNow bool
 	var g *TypeGraph
-	eg, ectx := errgroup.WithContext(ctx)
-	eg.Go(func() (err error) {
-		identity, identityUsesNow, err = a.ResolveIdentitySet(ectx, subject, env)
-		return err
-	})
-	eg.Go(func() (err error) {
-		g, err = a.LoadTypeGraph(ectx)
-		return err
-	})
-	if err := eg.Wait(); err != nil {
-		return nil, err
+	// The decision is made at one moment: the memberships and the rules in force then count, and the time the answer stays
+	// correct is counted from it. It is taken inside the computation, so that the hold of the answer is never counted from
+	// before the computation started (see cachedAnswer).
+	now := a.now()
+	snap := state.snap
+	if snap != nil {
+		// The policy is in memory: the memberships and the graph cost no query.
+		identity, identityUsesNow = IdentityOf(snap.liveMembers(now), subject, env)
+		g = snap.graph
+	} else {
+		eg, ectx := errgroup.WithContext(ctx)
+		eg.Go(func() (err error) {
+			identity, identityUsesNow, err = a.resolveIdentitySet(ectx, subject, env, now)
+			return err
+		})
+		eg.Go(func() (err error) {
+			g, err = a.LoadTypeGraph(ectx)
+			return err
+		})
+		if err := eg.Wait(); err != nil {
+			return nil, err
+		}
 	}
 	p := &Prepared{Graph: g, serviceType: ServiceTypes(g, serviceID)}
 
@@ -568,25 +658,34 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	var rules []model.AssignmentRule
 	var missing map[uuid.UUID]bool
 	var rulesUseNow bool
-	eg, ectx = errgroup.WithContext(ctx)
-	eg.Go(func() (err error) {
-		rules, missing, rulesUseNow, err = a.applicableRules(ectx, relevantIDs, identity, env)
-		return err
-	})
-	eg.Go(func() error {
-		p.ttl = a.cacheTTL(ectx, relevantIDs)
-		return nil
-	})
-	eg.Go(func() (err error) {
-		p.syncTypes, err = a.TypesWithSynchronizer(ectx, p.serviceType)
-		return err
-	})
-	if err := eg.Wait(); err != nil {
-		return nil, err
+	if snap != nil {
+		rules, missing, rulesUseNow = applicableFromSnapshot(snap, relevant, identity, env, now)
+		p.ttl, p.hold = snap.validity(relevant, now)
+	} else {
+		eg, ectx := errgroup.WithContext(ctx)
+		eg.Go(func() (err error) {
+			rules, missing, rulesUseNow, err = a.applicableRules(ectx, relevantIDs, identity, env, now)
+			return err
+		})
+		eg.Go(func() error {
+			p.ttl, p.hold = a.cacheTTL(ectx, relevantIDs, now)
+			return nil
+		})
+		if err := eg.Wait(); err != nil {
+			return nil, err
+		}
+	}
+	// The mode of a type is the type graph's, on both paths: it knows which types have a live synchronizer.
+	p.syncTypes = map[uuid.UUID]bool{}
+	for _, id := range p.serviceType {
+		if g.IsSync(id) {
+			p.syncTypes[id] = true
+		}
 	}
 	// An answer that reads the hour or the weekday is correct until the next minute only.
 	if identityUsesNow || rulesUseNow {
 		p.ttl = min(p.ttl, max(untilNextMinute(env.Now), time.Second))
+		p.hold = min(p.hold, untilNextMinute(env.Now))
 	}
 
 	// The types the applicable rules reach (the type itself, its descendants and the lookup type of
@@ -604,21 +703,28 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 			involved[id] = true
 		}
 		if rule.ResourceFromClaim != nil {
+			// The lookup climbs from the matched resource to the rule's type through every type in between, also those no
+			// level flows through (DescendantsOf leaves them out): their data must be there, or the climb stops short.
 			involved[rule.ResourceFromClaim.LookupTypeResourceID] = true
+			for _, id := range g.TypesBetween(rule.ResourceFromClaim.LookupTypeResourceID, *rule.TypeResourceID) {
+				involved[id] = true
+			}
 		}
 	}
 	involvedIDs := Keys(involved)
-	var synced map[uuid.UUID]bool
-	var err error
-	if consistency.fresh() {
-		synced, err = a.syncTypesOnce(ctx, involvedIDs, true, func(ctx context.Context) (map[uuid.UUID]bool, error) {
-			return a.EnsureSynced(ctx, g, involvedIDs, true)
-		})
-	} else {
-		synced, err = a.syncWhileServing(ctx, g, involvedIDs)
-	}
+	// The check path asks for the synchronization and waits for it for a bounded time; it never writes the graph itself.
+	res, err := a.ensure(ctx, g, involvedIDs, SyncOptions{Fresh: consistency.fresh(), Wait: a.requestWait()}, "request")
 	if err != nil {
 		return nil, err
+	}
+	synced := res.Synced
+	if res.Pending {
+		// The data of some type is not there yet: the answer is made of what exists and is not kept for long.
+		if t := TraceFrom(ctx); t != nil {
+			t.setSyncPending()
+		}
+		p.ttl = min(p.ttl, pendingAnswerTTL)
+		p.hold = min(p.hold, pendingAnswerTTL) // an answer that lacks data is never served beyond its short life
 	}
 	p.syncedTypes(synced)
 
@@ -632,7 +738,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		}
 	}
 
-	if p.Insts, err = a.BuildInstances(ctx, rules, env, missing); err != nil {
+	if p.Insts, err = a.buildInstances(ctx, g, snap, rules, env, missing, p.hasResources); err != nil {
 		return nil, err
 	}
 	pairs, err := a.instancePairs(ctx, p.Insts)
@@ -643,15 +749,34 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	return p, nil
 }
 
+// hasResources reports whether the decision reads resources of a type (see sourced).
+func (p *Prepared) hasResources(typeID uuid.UUID) bool { return p.sourced[typeID] }
+
 // BuildInstances turns the applicable rules into instances anchored at whole types or at resources.
 // A rule on a resource that is not in the cache has no anchor and no effect; a rule with resource_from_claim
 // yields one instance per ancestor found, and a rule with resource_where one per resource whose attributes match.
 // The lookups of all the rules run together, in parallel with the anchors of the rules that name a resource.
-func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
+// g is the type graph the lookups climb (see findAncestorsBatch); it also says which types have resources (IsSync):
+// a resource of a type without a live synchronizer is not in the cache for a rule, whatever rows its deleted
+// synchronizer left there.
+func (a *App) BuildInstances(ctx context.Context, g *TypeGraph, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool) ([]Instance, error) {
+	return a.buildInstances(ctx, g, nil, rules, env, missing, g.IsSync)
+}
+
+// buildInstances is BuildInstances reading the access groups from the snapshot when there is one. sourced says which types
+// have resources: a rule finds its anchors among the resources of those types only.
+func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool, sourced func(uuid.UUID) bool) ([]Instance, error) {
 	var refs []anchorRef
 	var lookups []ancestorLookup
 	claimValues := map[int]string{}
 	var groupTypes []uuid.UUID
+	type climb struct {
+		types []uuid.UUID
+		cut   bool
+	}
+	between := map[[2]uuid.UUID]climb{}
+	// cut are the rules whose lookup climbs through a type that has no resources (see climbTypes).
+	cut := map[int]bool{}
 	for i, r := range rules {
 		if hasGroupReference(r.Access) {
 			groupTypes = append(groupTypes, *r.TypeResourceID)
@@ -664,12 +789,26 @@ func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, 
 				continue
 			}
 			claimValues[i] = PyStr(value)
+			pair := [2]uuid.UUID{spec.LookupTypeResourceID, *r.TypeResourceID}
+			c, ok := between[pair]
+			if !ok {
+				c.types, c.cut = climbTypes(g, pair[0], pair[1], sourced)
+				between[pair] = c
+			}
+			cut[i] = c.cut
+			if c.types == nil {
+				// The rule's type is neither the lookup type nor above it, or one of them has no resources: no climb reaches it.
+				continue
+			}
 			lookups = append(lookups, ancestorLookup{
 				Index: i, Lookup: spec.LookupTypeResourceID, Target: *r.TypeResourceID,
-				Value: PyStr(value), MatchBy: spec.MatchBy,
+				Value: PyStr(value), MatchBy: spec.MatchBy, Between: c.types,
 			})
 		case r.ResourceID != nil:
-			refs = append(refs, anchorRef{Type: *r.TypeResourceID, Ext: *r.ResourceID})
+			// A resource of a type without resources is not looked up: it is not in the cache (see below).
+			if sourced(*r.TypeResourceID) {
+				refs = append(refs, anchorRef{Type: *r.TypeResourceID, Ext: *r.ResourceID})
+			}
 		}
 	}
 
@@ -686,10 +825,14 @@ func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, 
 		return err
 	})
 	eg.Go(func() (err error) {
-		matched, err = a.ResourcesMatching(ectx, rules)
+		matched, err = a.ResourcesMatching(ectx, rules, sourced)
 		return err
 	})
 	eg.Go(func() (err error) {
+		if snap != nil {
+			groups = snap.accessGroupLevels(groupTypes)
+			return nil
+		}
 		groups, err = a.accessGroupLevels(ectx, groupTypes)
 		return err
 	})
@@ -705,6 +848,17 @@ func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, 
 			Levels: expandAccess(rule.Access, groups[*rule.TypeResourceID]), AnchorType: *rule.TypeResourceID,
 			Note: RuleOrigin(*rule), Missing: missing[rule.ID],
 		}
+		// absent is the instance of a denial that cannot be anchored because a type it needs has no resources: it covers
+		// nothing for real, like a denial on a resource the local copy does not have, but the resources below a link to a
+		// missing parent fall under it (CoversOf, pass C of coverNodes), so deleting the synchronizer of a type does not
+		// lift the denials that read its resources.
+		absent := func(why string) Instance {
+			in := base
+			id := uuid.Nil
+			in.AnchorRow, in.Absent = &id, true
+			in.Note += "; " + why
+			return in
+		}
 		switch {
 		case rule.ResourceFromClaim != nil:
 			for _, n := range found[i] {
@@ -714,12 +868,21 @@ func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, 
 				in.Note += fmt.Sprintf("; resource %s found by claim %s=%s", n.Ext, rule.ResourceFromClaim.Claim, claimValues[i])
 				out = append(out, in)
 			}
+			if base.Deny && cut[i] {
+				out = append(out, absent(fmt.Sprintf("a type its claim %s is looked up through has no resources", rule.ResourceFromClaim.Claim)))
+			}
 		case rule.ResourceID != nil:
 			id, ok := rows[anchorRef{Type: *rule.TypeResourceID, Ext: *rule.ResourceID}]
-			if !ok {
-				continue
-			}
 			in := base
+			if !ok {
+				// The local copy does not have the resource (yet). An allow or an exception on it covers nothing, but a
+				// denial stays: it covers nothing for real either, yet it may be the missing parent of an unresolved link,
+				// so the resources below such a link fall under it (CoversOf, pass C of coverNodes).
+				if !base.Deny {
+					continue
+				}
+				id, in.Absent = uuid.Nil, true
+			}
 			in.AnchorRow, in.AnchorExt = &id, *rule.ResourceID
 			out = append(out, in)
 		case len(rule.ResourceWhere) > 0:
@@ -730,11 +893,39 @@ func (a *App) BuildInstances(ctx context.Context, rules []model.AssignmentRule, 
 				in.Note += fmt.Sprintf("; resource %s matches its attributes", n.Ext)
 				out = append(out, in)
 			}
+			if base.Deny && !sourced(*rule.TypeResourceID) {
+				out = append(out, absent("its type has no resources to match the attributes of"))
+			}
 		default:
 			out = append(out, base)
 		}
 	}
 	return out, nil
+}
+
+// climbTypes is TypesBetween(lower, upper) for the lookup of a resource_from_claim rule: the types the climb from a matched
+// resource of the lookup type up to the rule's type may pass. Only types with resources count: a type without a live
+// synchronizer has none to match, to pass or to anchor at. It is nil when the lookup type or the rule's type has none,
+// and leaves out the types between without one, where the climb stops as at an unresolved link (findAncestorsBatch).
+// cut says a type the climb needs was left out, or the lookup type or the rule's type has no resources: the anchors of the
+// rule cannot all be found, and a denial keeps an absent anchor for the ones that cannot (buildInstances). It is false for
+// a pair of types no climb reaches, which has no anchor to lose.
+func climbTypes(g *TypeGraph, lower, upper uuid.UUID, sourced func(uuid.UUID) bool) (types []uuid.UUID, cut bool) {
+	between := g.TypesBetween(lower, upper)
+	if between == nil {
+		return nil, false
+	}
+	if !sourced(lower) || !sourced(upper) {
+		return nil, true
+	}
+	for _, id := range between {
+		if sourced(id) {
+			types = append(types, id)
+		} else {
+			cut = true
+		}
+	}
+	return types, cut
 }
 
 // instancePairs relates the anchors of denials and exceptions: for every denial and exception both
@@ -743,7 +934,7 @@ func (a *App) instancePairs(ctx context.Context, insts []Instance) (map[[2]int]L
 	var idx [][2]int
 	var pairs [][2]uuid.UUID
 	for d := range insts {
-		if !insts[d].Deny || insts[d].Whole() {
+		if !insts[d].Deny || insts[d].Whole() || insts[d].Absent {
 			continue
 		}
 		for e := range insts {
@@ -772,8 +963,16 @@ type nodeState struct {
 	covers []Cover
 }
 
-func hasCover(n *nodeState, inst int) bool {
-	return slices.ContainsFunc(n.covers, func(c Cover) bool { return c.Inst == inst && !c.Assumed })
+// knownCover returns the levels through which an instance covers a resource for real, and whether it does.
+func knownCover(n *nodeState, inst int) (LevelSet, bool) {
+	var out LevelSet
+	found := false
+	for _, c := range n.covers {
+		if c.Inst == inst && !c.Assumed {
+			out, found = out.union(c.Mask), true
+		}
+	}
+	return out, found
 }
 
 // coverNodes finds the resources of the result types covered by the instances. Allow instances
@@ -809,7 +1008,7 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 	var anchorInst []int
 	var anchorRows []uuid.UUID
 	for i := range p.Insts {
-		if !p.Insts[i].Whole() {
+		if !p.Insts[i].Whole() && !p.Insts[i].Absent {
 			anchorInst = append(anchorInst, i)
 			anchorRows = append(anchorRows, *p.Insts[i].AnchorRow)
 		}
@@ -819,7 +1018,7 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 	// anchors, and the unresolved parent links of the result types.
 	var listed map[uuid.UUID][]graphNode
 	var expanded [][]CoveredNode
-	var unresolved map[uuid.UUID][]uuid.UUID
+	var unresolved map[uuid.UUID][]UnresolvedLink
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.Go(func() (err error) {
 		listed, err = a.listCachedResources(ectx, wholeTypeIDs)
@@ -830,7 +1029,7 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 		return err
 	})
 	eg.Go(func() (err error) {
-		unresolved, err = a.UnresolvedParents(ectx, p.resultTypes)
+		unresolved, err = a.UnresolvedParents(ectx, g, p.resultTypes)
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -901,31 +1100,22 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 			attach(i, n.graphNode, n.Mask, false)
 		}
 	}
-	// Pass C: a resource with an unresolved parent link may hang below any denial anchored above
-	// that parent's type — the hierarchy above it is not fully known, so the denial applies.
-	for id, parentTypes := range unresolved {
+	// Pass C: a resource with an unresolved parent link at or above it may hang below any denial anchored above the
+	// missing parent's type — the hierarchy above it is not fully known, so the denial applies. That holds for a denial
+	// whose anchor is a known ancestor as well: the missing parent could lie below the anchor too and let through levels
+	// the known routes do not (CoversOf).
+	for id, links := range unresolved {
 		n, ok := nodes[id]
 		if !ok {
 			continue
 		}
-		nodeType, _ := g.Node(n.Type)
 		for i := range p.Insts {
 			in := &p.Insts[i]
-			if !in.Deny || in.Whole() || hasCover(n, i) {
+			if !in.Deny || in.Whole() {
 				continue
 			}
-			for _, parentType := range parentTypes {
-				edgeMask := LevelSet{}
-				for _, e := range nodeType.Parents {
-					if e.Parent == parentType {
-						edgeMask = e.Inherit
-					}
-				}
-				flowMask, reaches := wholeMask(in.AnchorType, parentType)
-				if !reaches {
-					continue
-				}
-				if m := edgeMask.Intersect(flowMask); !m.empty() {
+			if m := g.assumedMask(in.AnchorType, links); !m.empty() {
+				if known, ok := knownCover(n, i); !ok || !m.SubsetOf(known) {
 					n.covers = append(n.covers, Cover{Inst: i, Mask: m, Assumed: true})
 				}
 			}
@@ -936,14 +1126,14 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 
 // computePermissionData computes the permissions of a subject in a service. Along with the answer it returns
 // the data versions it read (see prepare) and how long it stays correct.
-func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency) (*permissionData, map[string]int64, time.Duration, error) {
+func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency) (*permissionData, map[string]int64, time.Duration, time.Duration, error) {
 	p, err := a.prepare(ctx, serviceID, subject, env, state, consistency, nil)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
 	nodes, err := a.coverNodes(ctx, p)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, 0, err
 	}
 
 	data := &permissionData{
@@ -993,7 +1183,7 @@ func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, su
 			}
 		}
 	}
-	return data, p.deps, p.ttl, nil
+	return data, p.deps, p.ttl, p.hold, nil
 }
 
 func Keys[K comparable, V any](m map[K]V) []K {

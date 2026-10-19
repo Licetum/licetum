@@ -6,6 +6,7 @@ package api_test
 // the questions about other people that a trusted client asks, and the discovery document.
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -20,20 +21,16 @@ func (w *world) authzen(path string, body any, claims jwt.MapClaims) (int, map[s
 	if claims != nil {
 		headers = append(headers, "Authorization", "Bearer "+w.token(claims))
 	}
-	status, raw := w.do(http.MethodPost, w.check.URL+"/service/"+w.org+"/access/v1/"+path+"?consistency=higher", body, headers...)
-	out := map[string]any{}
-	if len(raw) > 0 {
-		out = decodeMap(w.t, raw)
-	}
-	return status, out
+	status, header, raw := w.doWithHeader(http.MethodPost, w.check.URL+"/service/"+w.org+"/access/v1/"+path+"?consistency=higher", body, headers...)
+	return status, authzenAnswer(w.t, status, header, raw)
 }
 
+// authzenEval is an evaluation of the action on the resource. An evaluation requires resource.id: * names the type as a whole.
 func authzenEval(resourceType, resourceID, action string) map[string]any {
-	resource := map[string]any{"type": resourceType}
-	if resourceID != "" {
-		resource["id"] = resourceID
+	return map[string]any{
+		"resource": map[string]any{"type": resourceType, "id": resourceID},
+		"action":   map[string]any{"name": action},
 	}
-	return map[string]any{"resource": resource, "action": map[string]any{"name": action}}
 }
 
 func decisionsOf(t *testing.T, body map[string]any) []bool {
@@ -83,7 +80,7 @@ func TestAuthzenEvaluationsSemanticsAndErrors(t *testing.T) {
 
 	// An evaluation that names somebody else is a denial with its error, not a failure of the batch.
 	other := map[string]any{"subject": map[string]any{"type": "user", "id": "someone-else"}, "resource": b3["resource"], "action": b3["action"]}
-	out := batch("", b3, other, authzenEval("nothing", "", "read"))
+	out := batch("", b3, other, authzenEval("nothing", "*", "read"))
 	items := out["evaluations"].([]any)
 	if len(items) != 3 || items[0].(map[string]any)["decision"] != true {
 		t.Fatalf("batch with a bad evaluation: %v", out)
@@ -274,22 +271,23 @@ func TestAuthzenTrustedClientAsksAboutAPerson(t *testing.T) {
 
 func TestAuthzenMetadata(t *testing.T) {
 	w := newWorld(t)
-	status, raw := w.do("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.org, nil)
-	requireErrorCode(t, status, raw, http.StatusNotFound, "authzen_metadata_disabled")
+	status, header, raw := w.doWithHeader("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.org, nil)
+	requireAuthzenError(t, status, header, raw, http.StatusNotFound, "authzen_metadata_disabled")
 
-	w.cfg.HTTP.PublicURL = "https://licetum.test"
+	w.cfg.PDP.PublicURL = "https://licetum.test"
 	status, raw = w.do("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.org, nil)
 	if status != http.StatusOK {
 		t.Fatalf("metadata: %d %s", status, raw)
 	}
 	doc := decodeMap(t, raw)
-	pdp := "https://licetum.test/service/" + w.org
+	// The identifier of the PDP names the service by its slug (ADR 0001, 7.2); the slug becomes fixed in P3 (ADM11). The path takes the id too.
+	pdp := "https://licetum.test/service/org"
 	if doc["policy_decision_point"] != pdp || doc["access_evaluation_endpoint"] != pdp+"/access/v1/evaluation" ||
 		doc["search_resource_endpoint"] != pdp+"/access/v1/search/resource" {
 		t.Fatalf("metadata: %v", doc)
 	}
-	status, raw = w.do("GET", w.check.URL+"/.well-known/authzen-configuration/service/00000000-0000-0000-0000-000000000000", nil)
-	requireErrorCode(t, status, raw, http.StatusNotFound, "service_not_found")
+	status, header, raw = w.doWithHeader("GET", w.check.URL+"/.well-known/authzen-configuration/service/00000000-0000-0000-0000-000000000000", nil)
+	requireAuthzenError(t, status, header, raw, http.StatusNotFound, "service_not_found")
 }
 
 func TestAuthzenSubjectSearchPagesWithoutSkippingOrRepeating(t *testing.T) {
@@ -304,6 +302,8 @@ func TestAuthzenSubjectSearchPagesWithoutSkippingOrRepeating(t *testing.T) {
 			w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": p, "access": []string{"read"}})
 		}
 	}
+	// The registry is written in batches (once a second); write what is waiting now.
+	w.app.FlushSubjects(context.Background())
 	waitFor(t, "the people in the registry", func() bool {
 		s, raw := w.do("GET", w.admin.URL+"/subject", nil)
 		return s == http.StatusOK && decodeMap(t, raw)["total"].(float64) >= 6

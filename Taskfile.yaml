@@ -5,6 +5,9 @@ version: "3"
 
 vars:
   GOLANGCI_LINT: '{{.GOLANGCI_LINT | default "golangci-lint"}}'
+  # The build tags that guard test and tool code (integration suites, fault injection, the multi-region environment):
+  # go:vet:tags compiles it on every pull request. A new tag goes here, and the task fails until it does.
+  GO_BUILD_TAGS: integration,chaos,multiregion
 
 tasks:
   default:
@@ -78,16 +81,40 @@ tasks:
   go:schema:check:
     desc: The schemas must match the code (run `task go:schema` after changing the API)
     cmds:
-      - (cd core && go run ./cmd/licetum openapi check -yaml | diff -u schema/check.yaml -)
+      - (cd core && go run ./cmd/licetum openapi pdp -yaml | diff -u schema/pdp.yaml -)
       - (cd admin-api && go run ./cmd/licetum-admin openapi admin -yaml | diff -u schema/admin.yaml -)
+
+  contracts:check:
+    desc: contracts.yaml and the TestContract_<ID>_* tests agree (docs/adr/0001-regional-pdp.md, "Tests as contracts")
+    cmds:
+      - (cd core && go run ./internal/tools/contractscheck -root ..)
+
+  # Code behind a build tag is compiled by no ordinary build: golangci-lint has no tags, go:coverage compiles only `integration`,
+  # and chaos and multiregion would break unseen until the nightly run. `go vet` compiles and type-checks it with its tests,
+  # with and without the race detector (the race and norace files of a package differ), and the load test is built.
+  go:vet:tags:
+    desc: Compile and vet the code behind the build tags ({{.GO_BUILD_TAGS}}) in both modules, with and without -race, and build the load test
+    cmds:
+      - |
+        known=" {{.GO_BUILD_TAGS | replace "," " "}} race linux "
+        for tag in $(grep -rh --include='*.go' '^//go:build ' core admin-api | sed 's|^//go:build ||' | tr -cs 'A-Za-z0-9_' '\n' | sort -u); do
+          case "$known" in *" $tag "*) ;; *) echo "build tag '$tag' is not in GO_BUILD_TAGS of Taskfile.yaml: add it, so that go:vet:tags compiles its code" >&2; exit 1 ;; esac
+        done
+      - |
+        for m in core admin-api; do
+          (cd $m && go vet -tags {{.GO_BUILD_TAGS}} ./... && go vet -race -tags {{.GO_BUILD_TAGS}} ./...) || exit 1
+        done
+      - cd admin-api && go build ./loadtest/... ./cmd/...
 
   # golangci-lint goes first and alone: it may change files, the rest only read them.
   go:lint:
-    desc: All Go checks of both modules (golangci-lint fixes and formats first, then go mod tidy and the schema drift check)
+    desc: All Go checks of both modules (golangci-lint fixes and formats first, then the tagged code compiles, go mod tidy, the schema drift check and the contracts)
     cmds:
       - task: go:golangci
+      - task: go:vet:tags
       - task: go:tidy
       - task: go:schema:check
+      - task: contracts:check
 
   go:fix:
     desc: golangci-lint fmt + run --fix in both modules
@@ -112,7 +139,51 @@ tasks:
         if [ -z "${DOCKER_HOST:-}" ]; then
           export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
         fi
-        for m in core admin-api; do (cd $m && go test -race -count=1 -tags integration ./tests/integration/...) || exit 1; done
+        for m in core admin-api; do (cd $m && go test -race -count=1 -timeout 30m -tags integration ./tests/integration/...) || exit 1; done
+
+  go:test:integration:pgbouncer:
+    desc: The integration tests through PgBouncer in transaction mode (needs LICETUM_TEST_POSTGRES_URI, LICETUM_TEST_REDIS_URI and LICETUM_TEST_PGBOUNCER_ADDR, see admin-api/tests/integration/README.md)
+    cmds:
+      - |
+        for v in LICETUM_TEST_POSTGRES_URI LICETUM_TEST_REDIS_URI LICETUM_TEST_PGBOUNCER_ADDR; do
+          if [ -z "$(printenv $v)" ]; then echo "$v is not set: see admin-api/tests/integration/README.md"; exit 1; fi
+        done
+        for m in core admin-api; do (cd $m && go test -race -count=1 -p 1 -timeout 40m -tags integration ./tests/integration/...) || exit 1; done
+
+  go:test:integration:replica:
+    desc: The read replica tests (F6) against a primary and a streaming replica on this machine (scripts/pg-replica.sh up, needs LICETUM_TEST_REDIS_URI)
+    cmds:
+      - |
+        if [ -z "$(printenv LICETUM_TEST_REDIS_URI)" ]; then echo "LICETUM_TEST_REDIS_URI is not set"; exit 1; fi
+        dir=$(mktemp -d)
+        trap 'scripts/pg-replica.sh down "$dir"' EXIT
+        eval "$(scripts/pg-replica.sh up "$dir")"
+        (cd admin-api && go test -race -count=1 -timeout 30m -tags integration ./tests/integration/cluster -run 'TestF6')
+
+  go:test:multiregion:
+    desc: The multi-region environment (three regions, latency between them, a primary and replicas) and the F6 scenarios, needs Docker
+    cmds:
+      - docker build -f core/Dockerfile --target runtime -t licetum:mr .
+      - docker build -f admin-api/Dockerfile --target runtime -t licetum-admin:mr .
+      - cd admin-api/tests/multiregion && go test -count=1 -timeout 60m -tags multiregion -v .
+
+  go:test:decp:
+    desc: The decision property test (DECP) over the seeds of LICETUM_DECP_SEEDS (one, or first-last; 1-20 when unset), needs Docker or LICETUM_TEST_POSTGRES_URI / LICETUM_TEST_REDIS_URI
+    cmds:
+      - |
+        if [ -z "${DOCKER_HOST:-}" ] && [ -z "${LICETUM_TEST_POSTGRES_URI:-}" ]; then
+          export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
+        fi
+        cd admin-api && go test -count=1 -timeout 80m -tags integration -run 'TestContract_DECP' ./tests/integration/contracts/
+
+  go:test:chaos:
+    desc: Fault injection tests with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole, read-only Redis), needs Docker
+    cmds:
+      - |
+        if [ -z "${DOCKER_HOST:-}" ]; then
+          export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
+        fi
+        cd admin-api && go test -race -count=1 -timeout 30m -tags chaos ./tests/integration/...
 
   go:coverage:
     desc: Coverage profiles and HTML reports of both modules (unit and integration)
@@ -122,13 +193,13 @@ tasks:
           export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
         fi
         for m in core admin-api; do
-          (cd $m && mkdir -p reports && go test -race -count=1 -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./redisx/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
+          (cd $m && mkdir -p reports && go test -race -count=1 -timeout 30m -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./httpx/...,./pepauth/...,./redisx/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
         done
 
   go:schema:
-    desc: Export the OpenAPI schemas (core/schema/check.yaml, admin-api/schema/admin.yaml) — the inputs for orval
+    desc: Export the OpenAPI schemas (core/schema/pdp.yaml, admin-api/schema/admin.yaml) — the inputs for orval
     cmds:
-      - (cd core && go run ./cmd/licetum openapi check -yaml > schema/check.yaml)
+      - (cd core && go run ./cmd/licetum openapi pdp -yaml > schema/pdp.yaml)
       - (cd admin-api && go run ./cmd/licetum-admin openapi admin -yaml > schema/admin.yaml)
 
   # Load test of the check API (admin-api/loadtest): builds the binary it measures and ramps the traffic up. The

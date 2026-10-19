@@ -1,0 +1,78 @@
+# DEC06, DEC10, DEC11: what lies below a type whose synchronizer was deleted. item (service app, under branch) reported I1
+# under B1 at the first synchronization and lost its synchronizer afterwards, as in dec06_synchronizer_deleted.yaml; part
+# (service app, under item) still has one, and its source still names I1 as the parent of P1. item has no resources now,
+# so P1 names a parent that is not there (an unresolved link): nothing flows to P1 from the resources above I1 (the grant
+# on D1), every point denial that could cover the missing parent is assumed to cover P1 (the one on D1 above it, and the
+# one on I1 itself, a dead rule the admin API keeps), and a whole-type rule above item still reaches part through the type
+# links. A claim is not matched among the resources item had, and a match below item does not climb through them.
+#
+# division <- branch (service org), item <- branch and part <- item (service app); D1 ⊃ B1, B2; P1 -> I1 (missing);
+# before: B1 ⊃ I1.
+contracts: [DEC06, DEC10, DEC11]
+description: Below a type that lost its synchronizer, the links to the resources it had are unresolved.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: branch, service: org, sync: true, parents: [{type: division}]}
+  - {name: item, service: app, sync: false, parents: [{type: branch}]}
+  - {name: part, service: app, sync: true, parents: [{type: item}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: division, id: D1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: division, id: D1}]}
+  - {type: part, id: P1, name: Part 1, parents: [{type: item, id: I1}]}
+rules:
+  # A grant on D1: it reached P1 through I1 while item had its synchronizer.
+  - {name: above-D1, subject: above, type: division, resource: D1, access: [read]}
+  # A whole-type grant above item: it reaches part through the type links.
+  - {name: whole-branch, subject: whole, type: branch, access: [read]}
+  # A denial on D1 beside a grant on part: D1 may lie above the missing parent of P1.
+  - {name: dd-part, subject: denied-above, type: part, access: [read]}
+  - {name: dd-deny-D1, subject: denied-above, type: division, resource: D1, access: ["*"], deny: true}
+  # A denial on I1, dead with the synchronizer of item, beside a grant on part: it names the missing parent of P1.
+  - {name: di-part, subject: denied-item, type: part, access: [read]}
+  - {name: di-deny-I1, subject: denied-item, type: item, resource: I1, access: ["*"], deny: true}
+  # Claims looked up among the resources of item, among those of part below it, and among the branches.
+  - {name: branch-of-item, subject: by-claim, type: branch, access: [read], from_claim: {claim: item_name, lookup_type: item, match_by: name}}
+  - {name: branch-of-part, subject: by-claim, type: branch, access: [read], from_claim: {claim: part_name, lookup_type: part, match_by: name}}
+  - {name: branch-by-name, subject: by-claim, type: branch, access: [read], from_claim: {claim: branch_name, lookup_type: branch, match_by: name}}
+cases:
+  - name: the grant on D1 no longer reaches P1 through I1, which is not there
+    subject: above
+    service: app
+    questions:
+      - {type: part, resource: P1, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: item, resource: I1, action: read, allowed: false, decision: resource_not_found, granted_by: [], denials: []}
+  - name: the grant on D1 still reaches the branches
+    subject: above
+    service: org
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [above-D1]}
+  - name: a whole-type rule above item reaches part through the type links
+    subject: whole
+    service: app
+    questions:
+      - {type: part, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [whole-branch], denials: []}
+  - name: the denial on D1 is assumed to cover P1, whose missing parent may lie below D1
+    subject: denied-above
+    service: app
+    questions:
+      - {type: part, resource: P1, action: read, allowed: false, decision: denied, granted_by: [dd-part], denials: [{rule: dd-deny-D1, unresolved_parent: true}]}
+  - name: the dead denial on I1 names the missing parent of P1, so it is assumed to cover P1
+    subject: denied-item
+    service: app
+    questions:
+      - {type: part, resource: P1, action: read, allowed: false, decision: denied, granted_by: [di-part], denials: [{rule: di-deny-I1, unresolved_parent: true}]}
+  - name: a claim is not matched among the resources item had, and a match below item does not climb through them
+    subject: by-claim
+    service: org
+    claims: {item_name: Item 1, part_name: Part 1, branch_name: Branch 2}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [branch-by-name]}
+before:
+  # item had its synchronizer when the resources were first synchronized and the rules written.
+  types:
+    - {name: item, service: app, sync: true, parents: [{type: branch}]}
+  resources:
+    - {type: item, id: I1, name: Item 1, parents: [{type: branch, id: B1}]}

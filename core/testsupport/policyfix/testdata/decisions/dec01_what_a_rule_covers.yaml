@@ -1,0 +1,166 @@
+# DEC01 and DEC06, what a rule covers, as the preview of a rule reports it (admin-api/tests/integration/api/enablers_test.go,
+# TestPreviewGrantSaysWhatARuleWouldDo), seen as the decisions the rule makes once it exists:
+#   - read on division D1 covers D1 and everything under it, in every service: D1, R1, R2, B1, B2, B3 and I1 — nothing of D2;
+#   - with alice's denial of read on B2 and her read+write on D1 beside it, the preview reports the denial inside the rule
+#     and the rule that already gives the same: B2 is denied to her, and both grants name the levels they give;
+#   - a denial for bob is no conflict for alice;
+#   - read on the whole type branch for the members of sales covers the four branches and the two items under them;
+#   - a permission without resources (the type feature has no synchronizer) is decided on the type as a whole.
+# The rule found by a claim, which the preview cannot count, is in dec13_who_has_access.yaml. A rule that is only previewed
+# is never created; a fixture holds rules that exist, so the previewed rule appears here as created, by a subject of its own
+# (alice-before) for the first preview and beside alice's other rules for the second.
+#
+# Also the point grant of admin-api/tests/integration/api/gaps_test.go, TestIntegrationPolicyImportRefusesARuleIdOfAnotherService,
+# whose permission lists B1 only among the branches; and, around the test (DEC06), a capability type below division that a
+# whole-type grant on division does not reach as a whole, and a whole-type rule on a capability type zone that cascades to
+# the resources of its sync lower type kiosk.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4. feature (org, no synchronizer); module <- division (org, no synchronizer); kiosk <- zone (org;
+# zone has no synchronizer, kiosk has: K1, K2, which have no parent since zone has no resources).
+contracts: [DEC01, DEC06]
+description: What a rule covers once it exists, through the hierarchy and on a type without resources.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+  - {name: feature, service: org, sync: false}
+  - {name: module, service: org, sync: false, parents: [{type: division}]}
+  - {name: zone, service: org, sync: false}
+  - {name: kiosk, service: org, sync: true, parents: [{type: zone}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+  - {type: kiosk, id: K1}
+  - {type: kiosk, id: K2}
+groups:
+  - name: sales
+    members: [{predicate: [{attr: department, op: eq, value: sales}]}]
+rules:
+  # The first preview: read on D1, as if created.
+  - {name: before-read-D1, subject: alice-before, type: division, resource: D1, access: [read]}
+  # The second preview: the same rule, beside a denial inside it and a rule that already gives the same.
+  - {name: alice-read-D1, subject: alice, type: division, resource: D1, access: [read]}
+  - {name: alice-deny-B2, subject: alice, type: branch, resource: B2, access: [read], deny: true}
+  - {name: alice-rw-D1, subject: alice, type: division, resource: D1, access: [read, write]}
+  # A denial for somebody else.
+  - {name: bob-deny-B1, subject: bob, type: branch, resource: B1, access: [read], deny: true}
+  # The group rule on the whole type.
+  - {name: sales-read-branch, member_of: sales, type: branch, access: [read]}
+  # A permission without resources.
+  - {name: alice-use-feature, subject: alice, type: feature, access: [use]}
+  # TestIntegrationPolicyImportRefusesARuleIdOfAnotherService: read on B1.
+  - {name: user-1-read-B1, subject: user-1, type: branch, resource: B1, access: [read]}
+  # Around the test: a whole-type grant on division, and one on the capability type zone.
+  - {name: div-reader-read-division, subject: div-reader, type: division, access: [read]}
+  - {name: zoner-read-zone, subject: zoner, type: zone, access: [read]}
+cases:
+  # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
+  - name: read on D1 covers D1 and everything under it
+    subject: alice-before
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [before-read-D1]}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [before-read-D1]}
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, granted_by: [before-read-D1]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [before-read-D1]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [before-read-D1]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [before-read-D1]}
+  # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
+  - name: read on D1 covers nothing of D2
+    subject: alice-before
+    questions:
+      - {type: division, resource: D2, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: rrs, resource: R3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
+  - name: read on D1 covers the item under it in another service
+    subject: alice-before
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [before-read-D1]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
+  - name: the denial inside the rule takes B2 away, whichever rule grants it
+    subject: alice
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [alice-read-D1, alice-rw-D1], denials: [{rule: alice-deny-B2}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [alice-read-D1, alice-rw-D1], denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [alice-read-D1, alice-rw-D1], denials: []}
+  - name: the denial of read leaves the write the other rule gives
+    subject: alice
+    questions:
+      - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [alice-rw-D1], denials: []}
+      - {type: division, resource: D1, action: write, allowed: true, decision: allowed, granted_by: [alice-rw-D1]}
+  - name: the rules of alice reach the item under B1 in another service
+    subject: alice
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [alice-read-D1, alice-rw-D1], denials: []}
+  # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
+  - name: the denial for somebody else grants him nothing (and takes nothing from alice, above)
+    subject: bob
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
+  # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
+  # from admin-api/tests/integration/api/enablers_test.go:TestNothingIsSaidAboutPeopleWhileTheRegistryIsOff
+  - name: read on the whole type branch covers the four branches
+    subject: dave
+    claims: {department: sales}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch]}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch]}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+      - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
+  - name: read on the whole type branch covers the two items under the branches
+    subject: dave
+    service: app
+    claims: {department: sales}
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch]}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch]}
+  # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
+  - name: a permission without resources is decided on the type as a whole
+    subject: alice
+    questions:
+      - {type: feature, action: use, allowed: true, decision: allowed, granted_by: [alice-use-feature], denials: []}
+      - {type: feature, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: feature, resource: X1, action: use, allowed: false, decision: resource_not_found}
+  - name: a permission without resources is nobody else's
+    subject: bob
+    questions:
+      - {type: feature, action: use, allowed: false, decision: no_access, granted_by: []}
+  # from admin-api/tests/integration/api/gaps_test.go:TestIntegrationPolicyImportRefusesARuleIdOfAnotherService
+  - name: a point grant covers its own resource and none of its siblings
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [user-1-read-B1]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: a whole-type grant reaches the resources of the lower sync types, not a lower type without resources as a whole
+    subject: div-reader
+    questions:
+      - {type: division, action: read, allowed: true, decision: allowed, granted_by: [div-reader-read-division]}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [div-reader-read-division]}
+      - {type: module, action: read, allowed: false, decision: no_access, granted_by: []}
+  - name: a whole-type grant on a type without resources cascades to the resources of its sync lower type
+    subject: zoner
+    questions:
+      - {type: zone, action: read, allowed: true, decision: allowed, granted_by: [zoner-read-zone]}
+      - {type: kiosk, resource: K1, action: read, allowed: true, decision: allowed, granted_by: [zoner-read-zone]}
+      - {type: kiosk, resource: K2, action: read, allowed: true, decision: allowed, granted_by: [zoner-read-zone]}
+      - {type: kiosk, action: read, allowed: false, decision: no_access, granted_by: []}

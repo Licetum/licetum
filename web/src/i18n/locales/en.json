@@ -1294,6 +1294,7 @@
   },
   "whohas": {
     "assumed": "parent not known",
+    "assumedLevels": "{{levels}}: parent not known",
     "col": {
       "people": "Known people",
       "via": "Where it comes from",

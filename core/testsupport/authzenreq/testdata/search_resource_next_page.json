@@ -1,0 +1,20 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/search/resource",
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "page": {
+      "limit": 20,
+      "token": "eyJhIjoiYjIifQ"
+    },
+    "resource": {
+      "type": "branch"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

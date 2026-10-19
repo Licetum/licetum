@@ -1,6 +1,6 @@
 # Development stack: sources are mounted into the containers, the Go apps are rebuilt by air and the
 # web interface runs the Next.js dev server — edits are picked up without rebuilding images.
-# For production, build the `runtime` target of core/Dockerfile (the check) or admin-api/Dockerfile (the admin API) (a single static binary).
+# For production, build the `runtime` target of core/Dockerfile (the PDP) or admin-api/Dockerfile (the admin API) (a single static binary).
 include:
   - infra/postgres.compose.yml
   - infra/redis.compose.yml
@@ -12,8 +12,10 @@ x-env-app: &env-app
   REDIS__URI: "${REDIS__URI:-redis://redis:6379/0}"
   # The registry of known subjects is off unless asked for; the development stack asks, so the people screens have data.
   SUBJECTS__ENABLED: "${SUBJECTS__ENABLED:-true}"
-  # The address clients reach the check API at: the AuthZEN discovery document is built from it.
-  HTTP__PUBLIC_URL: "${HTTP__PUBLIC_URL:-http://localhost:8001}"
+  # air restarts the apps on every change: no drain on shutdown in development (the default of 10 s is for a balancer).
+  SHUTDOWN__DRAIN: "${SHUTDOWN__DRAIN:-0}"
+  # The address clients reach the PDP at: the AuthZEN discovery document is built from it.
+  PDP__PUBLIC_URL: "${PDP__PUBLIC_URL:-http://localhost:8001}"
   CORS__ALLOW_ORIGINS: '${CORS__ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
   # Self-service: Licetum registers itself as a Service, and the admin API is protected by its
   # policies (see core/db/migrate.go, SeedPlatform). The defaults below use the local
@@ -47,7 +49,7 @@ x-conf-go: &conf-go
     redis:
       condition: service_healthy
 
-# The Go modules: core (MIT: the check runtime) and admin-api (AGPL: the admin API, which depends on core). Both are
+# The Go modules: core (MIT: the PDP runtime) and admin-api (AGPL: the admin API, which depends on core). Both are
 # mounted, so the admin image sees the core sources it is built against (see the replace in admin-api/go.mod).
 x-core: &core
   build:
@@ -74,9 +76,9 @@ services:
     container_name: licetum_migration
     working_dir: /src/core
     command: ["go", "run", "./cmd/licetum", "migrate"]
-  check:
+  pdp:
     <<: [*conf-go, *core]
-    container_name: licetum_check
+    container_name: licetum_pdp
     working_dir: /src/core
     # air rebuilds and restarts the app on every change under ./core.
     command:
@@ -84,10 +86,32 @@ services:
       - --tmp_dir=/tmp/air
       - --build.cmd=go build -o /tmp/air/licetum ./cmd/licetum
       - --build.entrypoint=/tmp/air/licetum
-      - --build.args_bin=check,-addr,:8001
+      - --build.args_bin=pdp,-addr,:8001
       - --build.exclude_dir=schema,tmp
+    # The probes and /metrics are on the ops port: inside the network only (expose, not ports).
+    environment:
+      <<: *env-app
+      PDP__OPS_ADDR: ":9090"
+    expose:
+      - "9090"
     ports:
       - "8001:8001"
+    depends_on:
+      postgres_init:
+        condition: service_completed_successfully
+  worker:
+    <<: [*conf-go, *core]
+    container_name: licetum_worker
+    working_dir: /src/core
+    # The synchronization worker: the PDP and the admin API queue the jobs that fetch the resource sources, this one runs
+    # them (metrics on :8002 inside the network).
+    command:
+      - air
+      - --tmp_dir=/tmp/air
+      - --build.cmd=go build -o /tmp/air/licetum ./cmd/licetum
+      - --build.entrypoint=/tmp/air/licetum
+      - --build.args_bin=worker
+      - --build.exclude_dir=schema,tmp
     depends_on:
       postgres_init:
         condition: service_completed_successfully
@@ -115,7 +139,7 @@ services:
       # admin API to sign in (the redirect URI registered at the identity provider is built from it).
       ADMIN_API_URL: "http://admin:8000"
       ADMIN_API_PUBLIC_URL: "${ADMIN_API_PUBLIC_URL:-http://localhost:8002}"
-      CHECK_API_URL: "http://check:8001"
+      CHECK_API_URL: "http://pdp:8001"
       CHECK_API_PUBLIC_URL: "${CHECK_API_PUBLIC_URL:-http://localhost:8001}"
       APP_BASE_URL: "${APP_BASE_URL:-http://localhost:3000}"
       SESSION_SECRET: "${SESSION_SECRET:-dev-only-insecure-session-secret-change-me-0123456789}"
@@ -135,7 +159,7 @@ services:
       - "3000:3000"
     depends_on:
       - admin
-      - check
+      - pdp
 
 volumes:
   go-build-cache:

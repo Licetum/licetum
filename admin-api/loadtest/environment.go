@@ -100,13 +100,13 @@ func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin stri
 	return env, nil
 }
 
-// checkServerEnv is the environment the check server is started with (see startCheck).
+// checkServerEnv is the environment the check server is started with (see startPDP).
 func checkServerEnv(e *env, opts Options) []string {
 	return []string{
-		"DB__URI=" + e.dbURI,
+		"DB__URI=" + e.checkDBURI,
 		fmt.Sprintf("DB__POOL_SIZE=%d", opts.DBPool),
 		"DB__MAX_OVERFLOW=0",
-		"REDIS__URI=" + e.redisURI,
+		"REDIS__URI=" + e.checkRedisURI,
 		"AUTH__STATE_SECRET=" + e.stateSecret,
 	}
 }

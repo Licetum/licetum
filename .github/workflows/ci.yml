@@ -34,6 +34,7 @@ jobs:
             go:
               - 'core/**'
               - 'admin-api/**'
+              - 'contracts.yaml'
               - 'Taskfile.yaml'
               - 'docker-compose.yml'
               - 'infra/**'
@@ -106,6 +107,116 @@ jobs:
             admin-api/reports/coverage.*
           if-no-files-found: ignore
 
+  # F5-9: the integration tests through PgBouncer in transaction mode with DB__PGBOUNCER=true (the simple protocol, nothing
+  # prepared). PgBouncer is the package of the runner's distribution (1.22 on Ubuntu 24.04, which has max_prepared_statements,
+  # the DBOS client prepares its statements). Each test gets a database of its own: transaction pooling does not carry the
+  # search_path of a connection. See admin-api/tests/integration/README.md.
+  # F6: the PDP reading the policy from a read replica (DB__READ_URI). A primary and a streaming replica run on the
+  # runner from the PostgreSQL binaries it ships (scripts/pg-replica.sh); pg_wal_replay_pause makes the replica lag.
+  go-test-replica:
+    name: Read replica tests
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      LICETUM_TEST_REDIS_URI: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read replica tests
+        run: task go:test:integration:replica
+
+  # F5-11: the release that came before this change still works on the schema this change migrates (expand/contract,
+  # CONTRIBUTING.md). The previous release is checked out, the migrations it embeds are replaced by the ones of this change,
+  # and it runs its own integration tests: its code and its tests on the schema this change produces. A migration that drops,
+  # renames or narrows what the previous release uses, or adds what its writes cannot fill, fails them here.
+  previous-release:
+    name: Previous release on the new schema
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      LICETUM_TEST_POSTGRES_URI: postgres://licetum:licetum@127.0.0.1:5432/postgres?sslmode=disable
+      LICETUM_TEST_REDIS_URI: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Find the previous release
+        id: previous
+        run: |
+          tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v -- '-' | head -n 1 || true)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -z "$tag" ]; then echo "::notice::there is no release yet, nothing to check"; else echo "the previous release is $tag"; fi
+
+      - uses: actions/checkout@v7
+        if: steps.previous.outputs.tag != ''
+        with:
+          ref: ${{ steps.previous.outputs.tag }}
+          path: previous
+
+      - uses: actions/setup-go@v7
+        if: steps.previous.outputs.tag != ''
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+            previous/core/go.sum
+            previous/admin-api/go.sum
+
+      - name: Start PostgreSQL
+        if: steps.previous.outputs.tag != ''
+        run: |
+          docker run -d --name postgres -p 5432:5432 -e POSTGRES_USER=licetum -e POSTGRES_PASSWORD=licetum postgres:16-alpine
+          until docker exec postgres pg_isready -U licetum -h 127.0.0.1; do sleep 1; done
+
+      # The migrations are embedded in the binary of the previous release: the ones of this change take their place.
+      - name: Give the previous release the migrations of this change
+        if: steps.previous.outputs.tag != ''
+        run: |
+          rm previous/core/db/migrations/*.sql
+          cp core/db/migrations/*.sql previous/core/db/migrations/
+
+      - name: Integration tests of the previous release (core)
+        if: steps.previous.outputs.tag != ''
+        working-directory: previous/core
+        run: go test -count=1 -timeout 30m -tags integration ./tests/integration/...
+
+      - name: Integration tests of the previous release (admin API)
+        if: steps.previous.outputs.tag != ''
+        working-directory: previous/admin-api
+        run: go test -count=1 -p 1 -timeout 45m -tags integration ./tests/integration/api/...
+
   web-check:
     name: Web lint, typecheck and build
     needs: changes
@@ -143,7 +254,7 @@ jobs:
         working-directory: web
         run: pnpm build
 
-  # The check API at the smoke volume (admin-api/loadtest): a ramp of three steps, a gate against gross regressions, not
+  # The PDP at the smoke volume (admin-api/loadtest): a ramp of three steps, a gate against gross regressions, not
   # a benchmark. A step passes on a valid window, errors within 1 %, and at least 95 % of the rate asked answered; the p99
   # of a 15-second step (about 750 requests) is not judged. The runners are shared, and the real numbers come from the
   # nightly loadtest.yml.

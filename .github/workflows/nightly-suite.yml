@@ -1,0 +1,58 @@
+name: Nightly suite
+
+# What runs every night on the epic branch until it reaches main: the integration suites through PgBouncer, the decision
+# property test over many seeds, fault injection, the multi-region environment and the load test. A schedule fires only from the default branch, so the dispatcher on main
+# (.github/workflows/nightly.yml there) calls this workflow with the ref of the epic; the workflows below are taken from the
+# same commit as this one (docs/adr/0001-regional-pdp.md, phase P0).
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test (default, the one the workflow is started on)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  pgbouncer:
+    name: PgBouncer
+    uses: ./.github/workflows/pgbouncer.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  decp:
+    name: Decision property test
+    uses: ./.github/workflows/decp.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  chaos:
+    name: Chaos
+    uses: ./.github/workflows/chaos.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  # Switched off in P2-10 (ADR 0001, section 10.7): the multi-region environment is restored in P7 with the topology.
+  multiregion:
+    if: false
+    name: Multi-region
+    uses: ./.github/workflows/multiregion.yml
+    with:
+      ref: ${{ inputs.ref || 'epic/production-load-readiness' }}
+
+  loadtest:
+    name: Load test
+    uses: ./.github/workflows/loadtest.yml
+    permissions:
+      contents: write # the medium job asks for it (only its optional publish step uses it)
+    with:
+      ref: ${{ inputs.ref }}
+      profile: medium

@@ -1,0 +1,166 @@
+# DEC02: an exception lifts a denial only strictly below it; every denial covering a resource needs its own exception
+# below it, so the deepest of the denials and exceptions above a resource decides; a tie (the same anchor, or the same
+# type) goes to the denial. The edges the worked example does not show: ties, an exception above or beside the denial,
+# alternating chains, two denials above one resource, an exception for another level, an exception without a denial.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4. Each subject holds the rules of one scenario.
+contracts: [DEC02]
+description: Exceptions lift only the denials strictly above them; the deepest decides, ties go to the denial.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+rules:
+  # An exception on the very resource of the denial is not below it: the tie goes to the denial.
+  - {name: tie-allow-D1, subject: tie, type: division, resource: D1, access: [read]}
+  - {name: tie-deny-R1, subject: tie, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: tie-except-R1, subject: tie, type: rrs, resource: R1, access: [read], exception: true}
+  # A whole-type exception on the type of a whole-type denial is not below it: the tie goes to the denial.
+  - {name: wtie-allow-branch, subject: whole-tie, type: branch, access: [read]}
+  - {name: wtie-deny-branch, subject: whole-tie, type: branch, access: [read], deny: true}
+  - {name: wtie-except-branch, subject: whole-tie, type: branch, access: [read], exception: true}
+  # An exception above the denial grants, but lifts nothing below it.
+  - {name: up-allow-D1, subject: above, type: division, resource: D1, access: [read]}
+  - {name: up-deny-B1, subject: above, type: branch, resource: B1, access: [read], deny: true}
+  - {name: up-except-R1, subject: above, type: rrs, resource: R1, access: [read], exception: true}
+  # An exception beside the denial (on a sibling) lifts nothing.
+  - {name: side-allow-D1, subject: beside, type: division, resource: D1, access: [read]}
+  - {name: side-deny-R1, subject: beside, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: side-except-R2, subject: beside, type: rrs, resource: R2, access: [read], exception: true}
+  # Denial, exception, denial, exception going down: the deepest above a resource decides.
+  - {name: chain-allow-D1, subject: chain, type: division, resource: D1, access: [read]}
+  - {name: chain-deny-D1, subject: chain, type: division, resource: D1, access: [read], deny: true}
+  - {name: chain-except-R1, subject: chain, type: rrs, resource: R1, access: [read], exception: true}
+  - {name: chain-deny-B1, subject: chain, type: branch, resource: B1, access: [read], deny: true}
+  - {name: chain-except-I1, subject: chain, type: item, resource: I1, access: [read], exception: true}
+  # The same chain without the deepest exception.
+  - {name: short-allow-D1, subject: short-chain, type: division, resource: D1, access: [read]}
+  - {name: short-deny-D1, subject: short-chain, type: division, resource: D1, access: [read], deny: true}
+  - {name: short-except-R1, subject: short-chain, type: rrs, resource: R1, access: [read], exception: true}
+  - {name: short-deny-B1, subject: short-chain, type: branch, resource: B1, access: [read], deny: true}
+  # Two denials above; an exception between them lifts the upper one only.
+  - {name: between-allow-D1, subject: between, type: division, resource: D1, access: [read]}
+  - {name: between-deny-D1, subject: between, type: division, resource: D1, access: [read], deny: true}
+  - {name: between-deny-R1, subject: between, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: between-except-R1, subject: between, type: rrs, resource: R1, access: [read], exception: true}
+  # Two denials above; an exception below both lifts both.
+  - {name: both-allow-D1, subject: below-both, type: division, resource: D1, access: [read]}
+  - {name: both-deny-D1, subject: below-both, type: division, resource: D1, access: [read], deny: true}
+  - {name: both-deny-R1, subject: below-both, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: both-except-B1, subject: below-both, type: branch, resource: B1, access: [read], exception: true}
+  # An exception for another level lifts nothing on the denied level (no access_implies in this world).
+  - {name: lvl-allow-D1, subject: other-level, type: division, resource: D1, access: [read]}
+  - {name: lvl-deny-R1, subject: other-level, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: lvl-except-B1, subject: other-level, type: branch, resource: B1, access: [write], exception: true}
+  # An exception with no denial to lift is a plain grant.
+  - {name: plain-except-B1, subject: plain, type: branch, resource: B1, access: [read], exception: true}
+  # Two exceptions below one denial, at different depths, both lift it.
+  - {name: two-allow-D1, subject: two-exceptions, type: division, resource: D1, access: [read]}
+  - {name: two-deny-D1, subject: two-exceptions, type: division, resource: D1, access: [read], deny: true}
+  - {name: two-except-R1, subject: two-exceptions, type: rrs, resource: R1, access: [read], exception: true}
+  - {name: two-except-B1, subject: two-exceptions, type: branch, resource: B1, access: [read], exception: true}
+cases:
+  - name: an exception on the anchor of the denial is a tie, which goes to the denial
+    subject: tie
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [tie-allow-D1, tie-except-R1], denials: [{rule: tie-deny-R1}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [tie-allow-D1, tie-except-R1], denials: [{rule: tie-deny-R1}]}
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed}
+  - name: a whole-type exception on the type of a whole-type denial is a tie, which goes to the denial
+    subject: whole-tie
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [wtie-allow-branch, wtie-except-branch], denials: [{rule: wtie-deny-branch}]}
+      - {type: branch, action: read, allowed: false, decision: denied, granted_by: [wtie-allow-branch, wtie-except-branch], denials: [{rule: wtie-deny-branch}]}
+  - name: a whole-type tie stays a tie on the types below
+    subject: whole-tie
+    service: app
+    questions:
+      - {type: item, resource: I4, action: read, allowed: false, decision: denied, denials: [{rule: wtie-deny-branch}]}
+  - name: an exception above the denial does not lift it
+    subject: above
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [up-allow-D1, up-except-R1], denials: [{rule: up-deny-B1}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [up-allow-D1, up-except-R1]}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed}
+  - name: an exception above the denial does not lift it for the resources of another service below the denial
+    subject: above
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [up-allow-D1, up-except-R1], denials: [{rule: up-deny-B1}]}
+  - name: an exception beside the denial does not lift it
+    subject: beside
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [side-allow-D1], denials: [{rule: side-deny-R1}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [side-allow-D1, side-except-R2]}
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed}
+  - name: in an alternating chain each resource is decided by the deepest denial or exception above it
+    subject: chain
+    questions:
+      - {type: division, resource: D1, action: read, allowed: false, decision: denied, granted_by: [chain-allow-D1], denials: [{rule: chain-deny-D1}]}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [chain-allow-D1, chain-except-R1], denials: [{rule: chain-deny-D1, lifted_by: [chain-except-R1]}]}
+      - {type: rrs, resource: R2, action: read, allowed: false, decision: denied, denials: [{rule: chain-deny-D1}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [chain-allow-D1, chain-except-R1], denials: [{rule: chain-deny-D1, lifted_by: [chain-except-R1]}, {rule: chain-deny-B1}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, denials: [{rule: chain-deny-D1, lifted_by: [chain-except-R1]}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied}
+  - name: in an alternating chain the deepest exception lifts every denial above it
+    subject: chain
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [chain-allow-D1, chain-except-R1, chain-except-I1], denials: [{rule: chain-deny-D1, lifted_by: [chain-except-R1, chain-except-I1]}, {rule: chain-deny-B1, lifted_by: [chain-except-I1]}]}
+  - name: without the deepest exception the denial below the exception stands
+    subject: short-chain
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [short-allow-D1, short-except-R1], denials: [{rule: short-deny-D1, lifted_by: [short-except-R1]}, {rule: short-deny-B1}]}
+  - name: two denials above, an exception between them lifts the upper one only
+    subject: between
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [between-allow-D1, between-except-R1], denials: [{rule: between-deny-D1, lifted_by: [between-except-R1]}, {rule: between-deny-R1}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: between-deny-D1, lifted_by: [between-except-R1]}, {rule: between-deny-R1}]}
+  - name: two denials above, an exception below both lifts both
+    subject: below-both
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [both-allow-D1, both-except-B1], denials: [{rule: both-deny-D1, lifted_by: [both-except-B1]}, {rule: both-deny-R1, lifted_by: [both-except-B1]}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: both-deny-D1}, {rule: both-deny-R1}]}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied}
+  - name: two denials above, the exception below both reaches the resources of another service below it
+    subject: below-both
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [both-allow-D1, both-except-B1]}
+  - name: an exception for another level lifts nothing on the denied level
+    subject: other-level
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [lvl-allow-D1], denials: [{rule: lvl-deny-R1}]}
+      - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, granted_by: [lvl-except-B1]}
+  - name: an exception without a denial to lift is a plain grant that covers what lies below it
+    subject: plain
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [plain-except-B1]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+  - name: an exception without a denial reaches the resources of another service below it
+    subject: plain
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [plain-except-B1]}
+  - name: two exceptions below one denial at different depths both lift it
+    subject: two-exceptions
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [two-allow-D1, two-except-R1, two-except-B1], denials: [{rule: two-deny-D1, lifted_by: [two-except-R1, two-except-B1]}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, denials: [{rule: two-deny-D1, lifted_by: [two-except-R1]}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: two-deny-D1}]}

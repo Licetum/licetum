@@ -6,14 +6,18 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	rediscontainer "github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/licetum/licetum/core/db"
 )
 
 // Environment variables that point the tests at servers which are already running instead of starting
@@ -22,6 +26,12 @@ import (
 const (
 	EnvPostgresURI = "LICETUM_TEST_POSTGRES_URI" // administrative connection string, e.g. postgres://user:pass@localhost:5432/postgres
 	EnvRedisURI    = "LICETUM_TEST_REDIS_URI"    // e.g. redis://localhost:6379/0
+	// EnvSpareRedisURI names a second running Redis that a test may break (make it read-only, stop it): the tests that
+	// need one start a container without it.
+	EnvSpareRedisURI = "LICETUM_TEST_REDIS_SPARE_URI"
+	// EnvPgBouncerAddr is the address (host:port) of a PgBouncer in transaction mode in front of the PostgreSQL of
+	// EnvPostgresURI. With it the tests connect through the pooler, as DB__PGBOUNCER says (see Infrastructure.Isolate).
+	EnvPgBouncerAddr = "LICETUM_TEST_PGBOUNCER_ADDR"
 )
 
 // Infrastructure is the disposable PostgreSQL/Redis environment used by integration tests.
@@ -86,6 +96,60 @@ func StartWith(ctx context.Context, postgresOptions ...testcontainers.ContainerC
 	return &Infrastructure{Postgres: postgresContainer, Redis: redisContainer, DBURI: dbURI, RedisURI: redisURI}, nil
 }
 
+// StartRedis starts only a Redis, for the tests that need no PostgreSQL: the server named by EnvRedisURI, or a container.
+// The returned stop function ends the container (it does nothing for a server that was already running).
+func StartRedis(ctx context.Context) (uri string, stop func(), err error) {
+	if uri = os.Getenv(EnvRedisURI); uri != "" {
+		return uri, func() {}, nil
+	}
+	container, err := rediscontainer.Run(
+		ctx,
+		"redis:7-alpine",
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30*time.Second)),
+	)
+	if err != nil {
+		return "", nil, fmt.Errorf("start redis container: %w", err)
+	}
+	uri, err = container.ConnectionString(ctx)
+	if err != nil {
+		_ = testcontainers.TerminateContainer(container)
+		return "", nil, fmt.Errorf("get redis connection string: %w", err)
+	}
+	return uri, func() { _ = testcontainers.TerminateContainer(container) }, nil
+}
+
+// StartSpareRedis starts a Redis of its own for a test that is going to break it: the server named by EnvSpareRedisURI,
+// or a container. The returned stop function ends the container; a server that was already running is only made
+// writable again (REPLICAOF NO ONE) and emptied.
+func StartSpareRedis(ctx context.Context) (uri string, stop func(), err error) {
+	if uri = os.Getenv(EnvSpareRedisURI); uri == "" {
+		container, err := rediscontainer.Run(
+			ctx,
+			"redis:7-alpine",
+			testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30*time.Second)),
+		)
+		if err != nil {
+			return "", nil, fmt.Errorf("start redis container: %w", err)
+		}
+		uri, err = container.ConnectionString(ctx)
+		if err != nil {
+			_ = testcontainers.TerminateContainer(container)
+			return "", nil, fmt.Errorf("get redis connection string: %w", err)
+		}
+		return uri, func() { _ = testcontainers.TerminateContainer(container) }, nil
+	}
+	return uri, func() {
+		opts, err := redis.ParseURL(uri)
+		if err != nil {
+			return
+		}
+		client := redis.NewClient(opts)
+		defer client.Close()
+		_ = client.Do(context.Background(), "REPLICAOF", "NO", "ONE").Err()
+		_ = client.FlushAll(context.Background()).Err()
+	}, nil
+}
+
 // startExternal creates a fresh database on the given PostgreSQL server.
 func startExternal(ctx context.Context, adminURI, redisURI string) (*Infrastructure, error) {
 	name := "licetum_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -127,4 +191,65 @@ func (i *Infrastructure) Terminate(ctx context.Context) error {
 		return err
 	}
 	return testcontainers.TerminateContainer(i.Postgres)
+}
+
+// Isolation is the database a test works in, apart from the others that share the server.
+type Isolation struct {
+	// Name is unique to the isolation: the name of its schema or of its database.
+	Name string
+	// URI is what the application connects with.
+	URI string
+	// MigrateURI is what the migrations connect with when that must be another connection (empty: URI): PostgreSQL itself
+	// when URI goes through PgBouncer.
+	MigrateURI string
+	// PgBouncer says URI goes through a PgBouncer in transaction mode (config.Database.PgBouncer).
+	PgBouncer bool
+}
+
+// Isolate gives a test a database of its own, dropped when the test ends. Without a pooler that is a schema of the
+// infrastructure's database, selected by the search_path of the connection. With one (EnvPgBouncerAddr) that is a database:
+// PgBouncer in transaction mode does not carry the search_path of a connection from one transaction to the next, and the
+// application connects through it, while the migrations go to PostgreSQL directly.
+func (i *Infrastructure) Isolate(ctx context.Context, t testing.TB) Isolation {
+	t.Helper()
+	name := fmt.Sprintf("it_%d", time.Now().UnixNano())
+	direct := db.NormalizeDSN(i.DBURI)
+	admin, err := pgx.Connect(ctx, direct)
+	if err != nil {
+		t.Fatalf("connect to PostgreSQL: %v", err)
+	}
+	u, err := url.Parse(direct)
+	if err != nil {
+		t.Fatalf("parse the database URI: %v", err)
+	}
+
+	if bouncer := os.Getenv(EnvPgBouncerAddr); bouncer != "" {
+		if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+			t.Fatalf("create the database %s: %v", name, err)
+		}
+		t.Cleanup(func() {
+			_, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+			_ = admin.Close(context.Background())
+		})
+		viaPooler, migrate := *u, *u
+		viaPooler.Host, viaPooler.Path = bouncer, "/"+name
+		migrate.Path = "/" + name
+		return Isolation{Name: name, URI: viaPooler.String(), MigrateURI: migrate.String(), PgBouncer: true}
+	}
+
+	// The public schema stays on the search path for the extensions installed there.
+	for _, stmt := range []string{"CREATE EXTENSION IF NOT EXISTS ltree SCHEMA public", "CREATE SCHEMA " + name} {
+		if _, err := admin.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA IF EXISTS dbos_"+name+" CASCADE")
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+name+" CASCADE")
+		_ = admin.Close(context.Background())
+	})
+	q := u.Query()
+	q.Set("search_path", name+",public")
+	u.RawQuery = q.Encode()
+	return Isolation{Name: name, URI: u.String()}
 }

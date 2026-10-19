@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -44,7 +45,7 @@ func NewAdminAPI(app *service.App) (http.Handler, huma.API) {
 	h := &adminHandlers{app: app}
 	tags := append(append([]*huma.Tag{}, adminTags...), adminOpsTags...)
 	return server.NewServer(app.App, "Licetum — admin", tags, func(api huma.API) {
-		server.AddBearerScheme(api, "Access token issued by the IdP of the Licetum self-service (PLATFORM__*). "+
+		httpx.AddBearerScheme(api, "Access token issued by the IdP of the Licetum self-service (PLATFORM__*). "+
 			"Permissions come from the platform policies: service, type_resource, group, group_member, role, assignment_rule.")
 		api.UseMiddleware(platformAuth(app))
 		h.registerServices(api)
@@ -859,7 +860,7 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/assignment_rule",
 		Summary:     "All access rules",
-		Description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted): such a rule does not take effect.",
+		Description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted), or a rule that looks a resource up in, or climbs through, such a type: such a rule does not take effect (a denial of that kind still applies below the links to the resources the type left).",
 		Tags:        []string{"AssignmentRule"},
 	}, requireAny(model.PlatformAssignmentRule, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.AssignmentRuleWithContext], error) {
 		out, err := h.app.ListAssignmentRules(ctx)

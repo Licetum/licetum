@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,6 @@ import (
 
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 func decodeList(t *testing.T, raw []byte) []map[string]any {
@@ -286,9 +286,7 @@ func TestRestoreAdminAccessPutsTheAdminsBack(t *testing.T) {
 	        VALUES ($1, ARRAY['*'], 'admin', '[]'::jsonb, true, 'deny')`, typeID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := redisx.BumpVersion(ctx, e.app.Redis); err != nil {
-		t.Fatal(err)
-	}
+	e.externalChange(ctx)
 	status, _ := e.do("GET", e.admin.URL+"/assignment_rule", nil)
 	if status != http.StatusForbidden {
 		t.Fatalf("locked out: want 403, got %d", status)
@@ -301,9 +299,7 @@ func TestRestoreAdminAccessPutsTheAdminsBack(t *testing.T) {
 	if report.DisabledDenials != 1 || report.Members != 2 {
 		t.Fatalf("report: %+v", report)
 	}
-	if _, err := redisx.BumpVersion(ctx, e.app.Redis); err != nil {
-		t.Fatal(err)
-	}
+	e.externalChange(ctx)
 	if status, raw := e.do("GET", e.admin.URL+"/assignment_rule", nil); status != http.StatusOK {
 		t.Fatalf("the admin is back: %d %s", status, raw)
 	}
@@ -481,6 +477,104 @@ func TestWhoHasAccessListsTheRulesAndThePeople(t *testing.T) {
 	if len(dyn) != 1 || dyn[0].(map[string]any)["rule"].(map[string]any)["rule_id"] != dynamic {
 		t.Fatalf("dynamic rules: %s", mustJSON(res))
 	}
+}
+
+// A denial on a campus reaches the room M1 for real through a link that lets only write through, and may reach it with
+// read as well through the building H9 the source of buildings does not report: one rule on one resource, so one entry,
+// with read marked as only assumed.
+func TestWhoHasAccessListsAPartlyAssumedDenialOnce(t *testing.T) {
+	w := newWorld(t)
+	w.exec(`CREATE TABLE src_campus (id text PRIMARY KEY, name text, parent_id text)`)
+	w.exec(`CREATE TABLE src_building (id text PRIMARY KEY, name text, parent_id text)`)
+	w.exec(`CREATE TABLE src_room (id text PRIMARY KEY, name text)`)
+	w.exec(`CREATE TABLE src_room_parent (id text, parent_type text, parent_id text)`)
+	w.source("campus", "U1", "Campus 1", "")
+	w.source("building", "H1", "Building 1", "U1")
+	w.exec(`INSERT INTO src_room VALUES ('M1', 'Room 1'), ('M2', 'Room 2')`)
+	// M1 lies under the campus U1 and the missing building H9; M2 under U1 only.
+	w.exec(`INSERT INTO src_room_parent VALUES ('M1', 'campus', 'U1'), ('M1', 'building', 'H9'), ('M2', 'campus', 'U1')`)
+
+	campus := w.typeResource(w.org, "campus", "")
+	building := w.typeResource(w.org, "building", campus)
+	room := w.must("POST", "/service/"+w.org+"/type_resource", map[string]any{"name": "room", "parents": []any{
+		map[string]any{"type_resource_id": campus, "inherit": []string{"write"}},
+		map[string]any{"type_resource_id": building},
+	}})["id"].(string)
+	w.typeByName["room"], w.serviceOfType["room"] = room, w.org
+	for name, probe := range map[string]string{"campus": "U1", "building": "H1"} {
+		w.must("POST", w.typePath(name)+"/resource/synchronizer", map[string]any{"config": map[string]any{
+			"kind": "sql", "dsn": w.cfg.DB.URI,
+			"query":      "SELECT id, name, parent_id FROM src_" + name + " WHERE id = :id",
+			"list_query": "SELECT id, name, parent_id FROM src_" + name,
+		}, "probe_resource_id": probe})
+	}
+	w.must("POST", w.typePath("room")+"/resource/synchronizer", map[string]any{"config": map[string]any{
+		"kind": "sql", "dsn": w.cfg.DB.URI,
+		"query":              "SELECT id, name, NULL::text AS parent_id FROM src_room WHERE id = :id",
+		"list_query":         "SELECT id, name, NULL::text AS parent_id FROM src_room",
+		"parents_list_query": "SELECT id, parent_type, parent_id FROM src_room_parent",
+	}, "probe_resource_id": "M1"})
+
+	both := w.rule("campus", "U1", map[string]any{"subject": "mallory", "access": []string{"read", "write"}, "effect": "deny"})
+	readOnly := w.rule("campus", "U1", map[string]any{"subject": "oscar", "access": []string{"read"}, "effect": "deny"})
+	every := w.rule("campus", "U1", map[string]any{"subject": "trudy", "access": []string{"*"}, "effect": "deny"})
+
+	type entry struct {
+		Via           string   `json:"via"`
+		Levels        []string `json:"levels"`
+		Assumed       bool     `json:"assumed"`
+		AssumedLevels []string `json:"assumed_levels"`
+	}
+	look := func(resource string) map[string][]entry {
+		t.Helper()
+		status, raw := w.do("GET", w.admin.URL+w.typePath("room")+"/access?resource_id="+resource, nil)
+		if status != http.StatusOK {
+			t.Fatalf("who has access to %s: %d %s", resource, status, raw)
+		}
+		var res struct {
+			Entries []struct {
+				entry
+				Rule struct {
+					RuleID string `json:"rule_id"`
+				} `json:"rule"`
+			} `json:"entries"`
+		}
+		if err := json.Unmarshal(raw, &res); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string][]entry{}
+		for _, e := range res.Entries {
+			out[e.Rule.RuleID] = append(out[e.Rule.RuleID], e.entry)
+		}
+		return out
+	}
+	expect := func(got map[string][]entry, rule, what string, want entry) {
+		t.Helper()
+		if len(got[rule]) != 1 {
+			t.Fatalf("%s: want one entry, got %+v", what, got[rule])
+		}
+		e := got[rule][0]
+		if e.Via != want.Via || !slices.Equal(e.Levels, want.Levels) || e.Assumed != want.Assumed ||
+			!slices.Equal(e.AssumedLevels, want.AssumedLevels) {
+			t.Fatalf("%s: got %+v, want %+v", what, e, want)
+		}
+	}
+
+	m1 := look("M1")
+	if len(m1) != 3 {
+		t.Fatalf("the denials covering M1: %+v", m1)
+	}
+	// write reaches for real through U1, read only through the missing building.
+	expect(m1, both, "read and write on M1", entry{Via: "ancestor", Levels: []string{"read", "write"}, AssumedLevels: []string{"read"}})
+	// Nothing reaches for real: the known link lets only write through.
+	expect(m1, readOnly, "read on M1", entry{Via: "ancestor", Levels: []string{"read"}, Assumed: true, AssumedLevels: []string{"read"}})
+	// Every level: write for real, the others only assumed.
+	expect(m1, every, "every level on M1", entry{Via: "ancestor", Levels: []string{"*", "write"}, AssumedLevels: []string{"*"}})
+
+	// M2 has no missing parent: what reaches it reaches for real.
+	m2 := look("M2")
+	expect(m2, both, "read and write on M2", entry{Via: "ancestor", Levels: []string{"write"}, AssumedLevels: []string{}})
+	expect(m2, every, "every level on M2", entry{Via: "ancestor", Levels: []string{"write"}, AssumedLevels: []string{}})
 }
 
 func mustJSON(v any) string {

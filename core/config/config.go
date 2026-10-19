@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,15 +24,94 @@ type Database struct {
 	PoolRecycle        time.Duration
 	Echo               bool
 	StatementCacheSize int
+	// SyncPoolSize is the size of the pool the synchronization transactions run on (the worker only): it is separate
+	// from the request pool, so waiting synchronizations never starve the requests.
+	SyncPoolSize int
+	// PgBouncer says the URI points at PgBouncer in transaction mode: statements go by the simple protocol and are not
+	// prepared, because a prepared statement belongs to one server connection and the next transaction may get another.
+	PgBouncer bool
+	// MigrateURI is the connection string `licetum migrate` uses, when it must differ from URI: the migrations hold a
+	// session-level advisory lock, which needs the same server connection for the whole run, so behind PgBouncer in
+	// transaction mode it points at PostgreSQL itself. Empty: URI.
+	MigrateURI string
+	// ReadURI is the connection string of the read replica the PDP reads the policy from (the snapshot, the
+	// revisions, the closure). Empty: URI, that is, one pool for everything. Writes, the synchronization and the reads that
+	// must be current (consistency=higher, a revision the replica has not reached) always use URI.
+	ReadURI string
+	// MaxReplicaLag is how far behind the primary the replica may be before LagAction applies.
+	MaxReplicaLag time.Duration
+	// LagAction is what a process does when the replica lags more than MaxReplicaLag: "unready" (readiness fails, the
+	// balancer sends the traffic to another region) or "primary" (the reads move to the primary until the replica catches up).
+	LagAction string
+	// LagInterval is how often the lag of the replica is measured.
+	LagInterval time.Duration
 }
+
+// MaxConns is how many connections the request pool of a process may hold: the pool size plus the overflow.
+func (d Database) MaxConns() int { return d.PoolSize + d.MaxOverflow }
 
 type Auth struct {
 	StateSecret string
 	StateTTL    time.Duration
+	// TokenL1Size is how many verified tokens a process keeps in memory (the first level of the token cache; the second
+	// is Redis). Zero takes the default, a negative value turns the level off.
+	TokenL1Size int
+	// JWKSTTL is how long the key set of a service is kept before it is fetched again.
+	JWKSTTL time.Duration
+	// JWKSMinRefresh is the shortest time between two fetches of the same key set: a token that names an unknown key
+	// triggers a fetch at most this often per key set URL.
+	JWKSMinRefresh time.Duration
+	// InvalidTokenTTL is how long a token that failed verification is remembered, so that the same bad token does not
+	// reach the identity provider again.
+	InvalidTokenTTL time.Duration
 }
 
 type Redis struct {
 	URI string
+	// HotTimeout is the read and write timeout of the Redis client of the check API (no retries): a slow Redis costs a
+	// request at most this much. After a few failures in a row Redis is skipped for a while (see redisx.FastFail).
+	HotTimeout time.Duration
+}
+
+// Cache tunes the in-process caches in front of Redis.
+type Cache struct {
+	// AnswerL1Size is how many computed answers a process keeps in memory. Zero takes the default, a negative value
+	// turns the level off.
+	AnswerL1Size int
+}
+
+// Snapshot tunes the in-memory copy of the policy (see engine.snapshot).
+type Snapshot struct {
+	// MaxBytes bounds the memory of the copy: a policy that would not fit is not copied, and the queries read it. Zero
+	// takes the default, a negative value turns the copy off.
+	MaxBytes int64
+	// MaxAge is the age after which the copy is read again even when the revision did not move (a change made outside
+	// the admin API does not bump it). Zero takes the default, a negative value never reads it again by age.
+	MaxAge time.Duration
+}
+
+// Revision tunes how a process follows the revision of the policy, which lives in PostgreSQL (revision_state).
+type Revision struct {
+	// PollInterval is how often a process reads the revisions: a write made through another replica reaches this process
+	// within this time.
+	PollInterval time.Duration
+	// WaitMax is how long a request that asks for at least a revision (at_least_as_fresh) waits for this process to reach
+	// it before it computes the answer from the data.
+	WaitMax time.Duration
+}
+
+// Compute tunes the computation of answers that are not cached.
+type Compute struct {
+	// Concurrency bounds the computations running at once, so that a wave of cache misses queues instead of exhausting
+	// the database pool. Zero is half of DB__POOL_SIZE.
+	Concurrency int
+}
+
+// Background tunes the work done after a request has been answered (writing the cache, refreshing a source).
+type Background struct {
+	// Workers is how many tasks run at once; Queue is how many wait. A task that finds the queue full is dropped.
+	Workers int
+	Queue   int
 }
 
 type Cors struct {
@@ -68,15 +148,49 @@ func (p Platform) IsConfigured() bool {
 }
 
 // Sync tunes resource synchronization (see service.ensureSynced and synchronizer.Adapter).
+// regionName is the form of a region name (see model.ValidRegion).
+var regionName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
 type Sync struct {
+	// WorkerRegion is the region a worker runs in (WORKER__REGION): it claims the synchronization jobs of the types whose source
+	// can be reached from there (the regions of the synchronizer, see model.Synchronizer.Regions) or from anywhere. Empty: every
+	// job. Needs the postgres engine, which claims jobs from a table; the dbos queue cannot be filtered by region.
+	WorkerRegion string
 	// FetchTTL is how long a fetched list of a source's resources is kept in Redis, so that requests
 	// in this window do not go to the source. A synchronizer's own cache_ttl overrides it; 0 — no cache.
 	FetchTTL time.Duration
-	// LockTTL is when a replica's Redis lock on a synchronization expires if its holder died.
-	LockTTL time.Duration
-	// LockWait is how long a replica waits for another replica's synchronization of the same types
-	// before it does the work itself.
-	LockWait time.Duration
+	// DBOSPoolSize is the size of the connection pool of the DBOS client of a process (engine dbos); it is outside DB__POOL_SIZE.
+	DBOSPoolSize int
+
+	// Engine runs the synchronization jobs: "dbos" (default: DBOS workflows and queue) or "postgres" (the sync_job table).
+	Engine string
+	// DBOSSchema is the schema of the DBOS system tables (engine dbos).
+	DBOSSchema string
+	// DBOSURI is the connection string of the DBOS client when it must differ from DB__URI: DBOS prepares its statements,
+	// which PgBouncer in transaction mode carries only from version 1.21 with max_prepared_statements set, so behind an older
+	// one it points at PostgreSQL itself. Empty: DB__URI.
+	DBOSURI string
+
+	// Lease is how long a worker owns a synchronization job without renewing it; it renews every Lease/3. A job whose
+	// lease ran out is taken over by another worker.
+	Lease time.Duration
+	// RequestWait is how long a request waits for a synchronization it needs (a type never synchronized, a platform type
+	// after a write) before it answers from the data that exists.
+	RequestWait time.Duration
+	// AdminWait is the same for the admin paths (resource lists, refresh): they wait for the worker longer.
+	AdminWait time.Duration
+	// StatementTimeout bounds each statement of a synchronization transaction; the lock timeout is 5 s.
+	StatementTimeout time.Duration
+	// ScheduleTick is how often the worker looks for the types that are due.
+	ScheduleTick time.Duration
+	// KeepWarm makes the worker refresh every type with a source when it is due, whether or not anybody asked lately.
+	KeepWarm bool
+	// DemandWindow is how long after a request for a type the worker keeps it fresh on its schedule.
+	DemandWindow time.Duration
+	// FreshMinInterval is the least time between two source calls for one type that the fresh requests cause.
+	FreshMinInterval time.Duration
+	// Concurrency is how many jobs a worker executes at once (default: the size of the synchronization pool).
+	Concurrency int
 }
 
 // Subjects tunes the registry of known subjects (see service.NoteSubject).
@@ -91,15 +205,58 @@ type Subjects struct {
 type Delegation struct {
 	// AuditRetentionDays is how long a record is kept; 0 keeps them for good.
 	AuditRetentionDays int
+	// AuditMode is "strict" (a call is answered only after its record is committed) or "async" (the record is
+	// buffered and written in batches: a crash loses at most the buffer of the last flush window).
+	AuditMode string
+	// AuditBuffer is how many records the async buffer holds; a record that does not fit is dropped and counted.
+	AuditBuffer int
 }
 
 type HTTP struct {
 	// Addr is the address the HTTP server listens on. Empty means the app's own default
-	// (:8000 for admin, :8001 for check).
+	// (:8000 for the admin API; the PDP has its own setting, PDP__ADDR).
 	Addr string
-	// PublicURL is the address clients reach the check API at, without a trailing slash (https://licetum.example.com).
-	// The AuthZEN discovery document is built from it; without it the document is not served.
+	// MaxInflight is how many requests a process serves at once; a request above it is refused with 503 and Retry-After
+	// (see server.WithAdmission). Zero takes the default (GOMAXPROCS × 256), a negative value turns the limit off.
+	MaxInflight int
+	// RequestTimeout is the deadline put on the context of a request. Zero takes the default of the process (10 s for the
+	// check API, 60 s for the admin API, whose requests may wait for a synchronization), a negative value sets none.
+	RequestTimeout time.Duration
+}
+
+// PDP tunes the regional PDP process (licetum pdp, see cli.Serve).
+type PDP struct {
+	// Addr is the address the PDP listens on (PDP__ADDR, default :8001). The -addr flag overrides it; HTTP__ADDR is the
+	// address of the admin API and is not read for the PDP.
+	Addr string
+	// OpsAddr is the address of the operations listener (PDP__OPS_ADDR, default :9090): the liveness and readiness probes and
+	// the metrics. They are not on Addr, so a client of the PDP cannot reach them (see server.NewOpsHandler).
+	OpsAddr string
+	// PublicURL is the identifier of the PDP that the PEPs use, without a trailing slash (PDP__PUBLIC_URL, required:
+	// https://licetum.example.com). The policy decision point of a service is PublicURL + "/service/" + slug, and the AuthZEN
+	// metadata is built from it. Only a loopback host may use http (localhost, 127.0.0.1, [::1]).
 	PublicURL string
+	// Audience is the audience a client token must carry when its issuer lists none (PDP__AUDIENCE, default PDP__PUBLIC_URL).
+	Audience string
+}
+
+// Policy tunes what the check API does while it cannot confirm that its copy of the policy is current.
+type Policy struct {
+	// MaxStaleness is how long the process goes on answering from its copy of the policy after it last read the revision
+	// of the policy from PostgreSQL. Beyond it a request is refused with 503 (policy_unavailable): the process fails
+	// closed rather than decide from rules that may have been revoked. Zero, the default, means no limit: the process then
+	// answers from its copy for as long as PostgreSQL cannot be reached, and a revocation made meanwhile is not seen. Set it
+	// where that is not acceptable.
+	MaxStaleness time.Duration
+}
+
+// Shutdown tunes how a process stops on SIGTERM (see cli.Serve).
+type Shutdown struct {
+	// Drain is how long the process says it is not ready, and goes on serving, before it stops listening: the time the
+	// balancer needs to stop sending it requests.
+	Drain time.Duration
+	// Timeout is how long the requests in progress have to finish once the process stops listening.
+	Timeout time.Duration
 }
 
 type Config struct {
@@ -112,6 +269,14 @@ type Config struct {
 	Subjects   Subjects
 	Delegation Delegation
 	HTTP       HTTP
+	Cache      Cache
+	Snapshot   Snapshot
+	Background Background
+	Revision   Revision
+	Compute    Compute
+	Policy     Policy
+	Shutdown   Shutdown
+	PDP        PDP
 }
 
 // Load reads the whole environment. Required variables are checked only for the sections the
@@ -127,13 +292,47 @@ func Load() (*Config, error) {
 			PoolRecycle:        e.seconds("DB__POOL_RECYCLE", 3600),
 			Echo:               e.bool("DB__ECHO", false),
 			StatementCacheSize: e.int("DB__STATEMENT_CACHE_SIZE", 100),
+			SyncPoolSize:       e.int("DB__SYNC_POOL_SIZE", 4),
+			PgBouncer:          e.bool("DB__PGBOUNCER", false),
+			MigrateURI:         e.str("DB__MIGRATE_URI", ""),
+			ReadURI:            e.str("DB__READ_URI", ""),
+			MaxReplicaLag:      e.duration("DB__MAX_REPLICA_LAG", 10*time.Second),
+			LagAction:          strings.ToLower(e.str("DB__LAG_ACTION", "unready")),
+			LagInterval:        e.duration("DB__LAG_INTERVAL", time.Second),
 		},
 		Auth: Auth{
 			StateSecret: e.str("AUTH__STATE_SECRET", ""),
 			StateTTL:    e.seconds("AUTH__STATE_TTL", 300),
+
+			TokenL1Size:     e.int("AUTH__TOKEN_L1_SIZE", 50_000),
+			JWKSTTL:         e.duration("AUTH__JWKS_TTL", 10*time.Minute),
+			JWKSMinRefresh:  e.duration("AUTH__JWKS_MIN_REFRESH", 30*time.Second),
+			InvalidTokenTTL: e.duration("AUTH__INVALID_TOKEN_TTL", 10*time.Second),
 		},
 		Redis: Redis{
-			URI: e.str("REDIS__URI", ""),
+			URI:        e.str("REDIS__URI", ""),
+			HotTimeout: e.duration("REDIS__HOT_TIMEOUT", 50*time.Millisecond),
+		},
+		Cache: Cache{
+			AnswerL1Size: e.int("CACHE__ANSWER_L1_SIZE", 50_000),
+		},
+		Snapshot: Snapshot{
+			MaxBytes: int64(e.int("SNAPSHOT__MAX_BYTES", 256<<20)),
+			MaxAge:   e.duration("SNAPSHOT__MAX_AGE", time.Minute),
+		},
+		Revision: Revision{
+			PollInterval: e.duration("REVISION__POLL_INTERVAL", 250*time.Millisecond),
+			WaitMax:      e.duration("REVISION__WAIT_MAX", 500*time.Millisecond),
+		},
+		Compute: Compute{Concurrency: e.int("COMPUTE__CONCURRENCY", 0)},
+		Policy:  Policy{MaxStaleness: e.duration("POLICY__MAX_STALENESS", 0)},
+		Shutdown: Shutdown{
+			Drain:   e.duration("SHUTDOWN__DRAIN", 10*time.Second),
+			Timeout: e.duration("SHUTDOWN__TIMEOUT", 30*time.Second),
+		},
+		Background: Background{
+			Workers: e.int("BACKGROUND__WORKERS", 16),
+			Queue:   e.int("BACKGROUND__QUEUE", 1024),
 		},
 		Cors: Cors{
 			AllowOrigins:     e.list("CORS__ALLOW_ORIGINS", nil),
@@ -157,9 +356,21 @@ func Load() (*Config, error) {
 			AdminClaimValues: e.list("PLATFORM__ADMIN_CLAIM_VALUES", nil),
 		},
 		Sync: Sync{
-			FetchTTL: e.seconds("SYNC__FETCH_TTL", 10),
-			LockTTL:  e.seconds("SYNC__LOCK_TTL", 60),
-			LockWait: e.seconds("SYNC__LOCK_WAIT", 30),
+			FetchTTL:         e.seconds("SYNC__FETCH_TTL", 10),
+			DBOSPoolSize:     e.int("SYNC__DBOS_POOL_SIZE", 20),
+			WorkerRegion:     strings.ToLower(e.str("WORKER__REGION", "")),
+			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "dbos")),
+			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
+			DBOSURI:          e.str("SYNC__DBOS_URI", ""),
+			Lease:            e.seconds("SYNC__LEASE", 30),
+			RequestWait:      e.seconds("SYNC__REQUEST_WAIT", 5),
+			AdminWait:        e.seconds("SYNC__ADMIN_WAIT", 30),
+			StatementTimeout: e.seconds("SYNC__STATEMENT_TIMEOUT", 120),
+			ScheduleTick:     e.seconds("SYNC__SCHEDULE_TICK", 5),
+			KeepWarm:         e.bool("SYNC__KEEP_WARM", false),
+			DemandWindow:     e.seconds("SYNC__DEMAND_WINDOW", 600),
+			FreshMinInterval: e.seconds("SYNC__FRESH_MIN_INTERVAL", 1),
+			Concurrency:      e.int("SYNC__CONCURRENCY", 0),
 		},
 		Subjects: Subjects{
 			Enabled:       e.bool("SUBJECTS__ENABLED", false),
@@ -167,17 +378,59 @@ func Load() (*Config, error) {
 		},
 		Delegation: Delegation{
 			AuditRetentionDays: e.int("DELEGATION__AUDIT_RETENTION_DAYS", 365),
+			AuditMode:          strings.ToLower(e.str("DELEGATION__AUDIT_MODE", "strict")),
+			AuditBuffer:        e.int("DELEGATION__AUDIT_BUFFER", 100_000),
 		},
 		HTTP: HTTP{
-			Addr:      e.str("HTTP__ADDR", ""),
-			PublicURL: strings.TrimRight(e.str("HTTP__PUBLIC_URL", ""), "/"),
+			Addr:           e.str("HTTP__ADDR", ""),
+			MaxInflight:    e.int("HTTP__MAX_INFLIGHT", 0),
+			RequestTimeout: e.duration("HTTP__REQUEST_TIMEOUT", 0),
+		},
+		PDP: PDP{
+			Addr:      e.str("PDP__ADDR", ":8001"),
+			OpsAddr:   e.address("PDP__OPS_ADDR", ":9090"),
+			PublicURL: strings.TrimRight(e.str("PDP__PUBLIC_URL", ""), "/"),
+			Audience:  e.str("PDP__AUDIENCE", ""),
 		},
 	}
-	if u := cfg.HTTP.PublicURL; u != "" {
-		if parsed, err := url.Parse(u); err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" ||
-			parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-			e.errs = append(e.errs, fmt.Errorf("HTTP__PUBLIC_URL must be an http(s) URL without a path, a query or a fragment, got %q", u))
+	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
+		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))
+	}
+	if cfg.DB.PoolSize < 1 {
+		e.errs = append(e.errs, fmt.Errorf("DB__POOL_SIZE must be positive, got %d", cfg.DB.PoolSize))
+	}
+	if cfg.DB.MaxOverflow < 0 {
+		e.errs = append(e.errs, fmt.Errorf("DB__MAX_OVERFLOW must not be negative, got %d", cfg.DB.MaxOverflow))
+	}
+	if a := cfg.DB.LagAction; a != "unready" && a != "primary" {
+		e.errs = append(e.errs, fmt.Errorf("DB__LAG_ACTION must be unready or primary, got %q", a))
+	}
+	if cfg.DB.MaxReplicaLag <= 0 || cfg.DB.LagInterval <= 0 {
+		e.errs = append(e.errs, fmt.Errorf("DB__MAX_REPLICA_LAG and DB__LAG_INTERVAL must be positive, got %s and %s", cfg.DB.MaxReplicaLag, cfg.DB.LagInterval))
+	}
+	if cfg.Policy.MaxStaleness < 0 {
+		e.errs = append(e.errs, fmt.Errorf("POLICY__MAX_STALENESS must not be negative (0 means no limit), got %s", cfg.Policy.MaxStaleness))
+	}
+	if cfg.Shutdown.Drain < 0 || cfg.Shutdown.Timeout <= 0 {
+		e.errs = append(e.errs, fmt.Errorf("SHUTDOWN__DRAIN must not be negative and SHUTDOWN__TIMEOUT must be positive, got %s and %s",
+			cfg.Shutdown.Drain, cfg.Shutdown.Timeout))
+	}
+	if cfg.Delegation.AuditBuffer < 1 {
+		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_BUFFER must be positive, got %d", cfg.Delegation.AuditBuffer))
+	}
+	if u := cfg.PDP.PublicURL; u != "" {
+		if err := checkPublicURL(u); err != nil {
+			e.errs = append(e.errs, err)
 		}
+	}
+	if r := cfg.Sync.WorkerRegion; r != "" && !regionName.MatchString(r) {
+		e.errs = append(e.errs, fmt.Errorf("WORKER__REGION must be lowercase letters, digits and hyphens (at most 32 characters), got %q", r))
+	}
+	if cfg.Sync.WorkerRegion != "" && cfg.Sync.Engine == "dbos" {
+		e.errs = append(e.errs, errors.New("WORKER__REGION needs SYNC__ENGINE=postgres: the dbos queue cannot be filtered by region"))
+	}
+	if cfg.Sync.Engine != "postgres" && cfg.Sync.Engine != "dbos" {
+		e.errs = append(e.errs, fmt.Errorf("SYNC__ENGINE must be postgres or dbos, got %q", cfg.Sync.Engine))
 	}
 	if len(e.errs) > 0 {
 		return nil, errors.Join(e.errs...)
@@ -197,6 +450,19 @@ func (c *Config) RequireRedis() error {
 		return errors.New("environment variable REDIS__URI is not set")
 	}
 	return nil
+}
+
+// DeprecatedSettings names the settings that are set but no longer have an effect: the Redis lock of the synchronization
+// was replaced by the job table (SYNC__LEASE), and HTTP__PUBLIC_URL became PDP__PUBLIC_URL. The processes log a warning
+// when one of them is still set, so that a deployment notices it.
+func DeprecatedSettings() []string {
+	var out []string
+	for _, name := range []string{"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "HTTP__PUBLIC_URL"} {
+		if _, ok := lookup(name); ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func (c *Config) RequireAuth() error {
@@ -232,6 +498,15 @@ func (e *envReader) str(name, def string) string {
 	return def
 }
 
+// address is str for a listen address whose empty value is the default: an empty address makes the listener take a random
+// port, which no probe or scrape finds.
+func (e *envReader) address(name, def string) string {
+	if v := e.str(name, def); strings.TrimSpace(v) != "" {
+		return v
+	}
+	return def
+}
+
 func (e *envReader) int(name string, def int) int {
 	v, ok := lookup(name)
 	if !ok || strings.TrimSpace(v) == "" {
@@ -243,6 +518,24 @@ func (e *envReader) int(name string, def int) int {
 		return def
 	}
 	return n
+}
+
+// duration reads a Go duration ("50ms", "10m"); a bare integer is a number of seconds, as in the settings above.
+func (e *envReader) duration(name string, def time.Duration) time.Duration {
+	v, ok := lookup(name)
+	v = strings.TrimSpace(v)
+	if !ok || v == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(n) * time.Second
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		e.errs = append(e.errs, fmt.Errorf("%s: expected a duration such as 50ms or 10m, got %q", name, v))
+		return def
+	}
+	return d
 }
 
 func (e *envReader) seconds(name string, def int) time.Duration {
@@ -288,4 +581,21 @@ func (e *envReader) list(name string, def []string) []string {
 		}
 	}
 	return out
+}
+
+// checkPublicURL is the rule of PDP__PUBLIC_URL: https, or http for a loopback host, and no path, query or fragment.
+func checkPublicURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || strings.ContainsAny(raw, "?#") {
+		return fmt.Errorf("PDP__PUBLIC_URL must be an https URL without a path, a query or a fragment, got %q", raw)
+	}
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if host := parsed.Hostname(); host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			return nil
+		}
+	}
+	return fmt.Errorf("PDP__PUBLIC_URL must use https (http is allowed only for localhost, 127.0.0.1 or [::1]), got %q", raw)
 }

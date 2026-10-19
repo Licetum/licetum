@@ -8,7 +8,6 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,6 +16,8 @@ import (
 	"github.com/licetum/licetum/core/engine"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 func (w *world) rule(typeName, resourceID string, extra map[string]any) string {
@@ -225,22 +226,30 @@ func TestIntegrationOrphanFailsClosed(t *testing.T) {
 	expectIDs(t, w.permission(w.org, nil), "branch", "B3", "B4", "B9")
 }
 
-// checkAccess performs POST /service/{id}/check as hierarchySubject.
+// A resource whose own parent is known can still hang below an ancestor whose parent is not: the denials that could cover
+// the missing parent reach it too (fail closed transitively), in the permission map and in a check.
+func TestIntegrationOrphanAboveFailsClosed(t *testing.T) {
+	w := newWorld(t)
+	// R9 points to the division D9 that the source of divisions does not know (yet); B9's parent R9 is known.
+	w.source("rrs", "R9", "RRS 9", "D9")
+	w.source("branch", "B9", "Branch 9", "R9")
+	w.rule("branch", "", nil)
+	w.rule("division", "D1", deny("read"))
+	// D9 may be D1 for all we know: B9 has no access until the hierarchy above R9 is known.
+	expectIDs(t, w.permission(w.org, nil), "branch", "B4")
+	res := w.checkAccess(w.org, true, map[string]any{"type": "branch", "resource_id": "B9", "action": "read"})
+	if res[0]["allowed"] != false {
+		t.Fatalf("B9 below an incomplete hierarchy must be denied: %v", res[0])
+	}
+
+	w.source("division", "D9", "Div 9", "")
+	expectIDs(t, w.permission(w.org, nil), "branch", "B4", "B9")
+}
+
+// checkAccess asks the evaluations of the checks as hierarchySubject, with consistency=higher (see checkWith).
 func (w *world) checkAccess(serviceID string, explain bool, checks ...map[string]any) []map[string]any {
 	w.t.Helper()
-	status, raw := w.do("POST", w.check.URL+"/service/"+serviceID+"/check?consistency=higher",
-		map[string]any{"checks": checks, "explain": explain},
-		"Authorization", "Bearer "+w.token(jwt.MapClaims{"preferred_username": hierarchySubject}))
-	if status != http.StatusOK {
-		w.t.Fatalf("check: %d %s", status, raw)
-	}
-	var out struct {
-		Results []map[string]any `json:"results"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		w.t.Fatal(err)
-	}
-	return out.Results
+	return w.checkWith(serviceID, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, explain, string(engine.HigherConsistency), checks...)
 }
 
 func TestIntegrationCheckExplainAuthzenMetrics(t *testing.T) {
@@ -287,38 +296,31 @@ func TestIntegrationCheckExplainAuthzenMetrics(t *testing.T) {
 	}
 
 	// AuthZEN.
-	bearer := "Bearer " + w.token(jwt.MapClaims{"preferred_username": hierarchySubject})
-	status, raw := w.do("POST", w.check.URL+"/service/"+w.org+"/access/v1/evaluation", map[string]any{
-		"subject":  map[string]any{"type": "user", "id": hierarchySubject},
-		"resource": map[string]any{"type": "branch", "id": "B3"},
-		"action":   map[string]any{"name": "read"},
-	}, "Authorization", bearer)
-	if status != http.StatusOK || !strings.Contains(string(raw), `"decision":true`) {
+	token := w.token(jwt.MapClaims{"preferred_username": hierarchySubject})
+	status, raw := w.ask(authzenreq.Evaluation(w.ref(w.org), hierarchySubject, authzenreq.On("branch", "B3"), "read"), token)
+	if allowed, err := authzenreq.Allowed(status, raw); err != nil || !allowed {
 		t.Fatalf("authzen: %d %s", status, raw)
 	}
-	status, raw = w.do("POST", w.check.URL+"/service/"+w.org+"/access/v1/evaluations", map[string]any{
+	// The batch with its subject and action given once, as defaults: a form the builders do not make.
+	status, raw = w.do("POST", w.check.URL+"/service/"+w.ref(w.org)+"/access/v1/evaluations", map[string]any{
 		"subject": map[string]any{"type": "user", "id": hierarchySubject},
 		"action":  map[string]any{"name": "read"},
 		"evaluations": []any{
 			map[string]any{"resource": map[string]any{"type": "branch", "id": "B3"}},
 			map[string]any{"resource": map[string]any{"type": "branch", "id": "B1"}},
 		},
-	}, "Authorization", bearer)
+	}, "Authorization", "Bearer "+token)
 	if status != http.StatusOK || !strings.Contains(string(raw), `[{"decision":true},{"decision":false}]`) {
 		t.Fatalf("authzen batch: %d %s", status, raw)
 	}
 	// Another subject cannot be asked about.
-	status, _ = w.do("POST", w.check.URL+"/service/"+w.org+"/access/v1/evaluation", map[string]any{
-		"subject":  map[string]any{"type": "user", "id": "someone-else"},
-		"resource": map[string]any{"type": "branch", "id": "B3"},
-		"action":   map[string]any{"name": "read"},
-	}, "Authorization", bearer)
+	status, _ = w.ask(authzenreq.Evaluation(w.ref(w.org), "someone-else", authzenreq.On("branch", "B3"), "read"), token)
 	if status != http.StatusForbidden {
 		t.Fatalf("authzen subject mismatch: %d", status)
 	}
 
 	// Metrics.
-	status, raw = w.do("GET", w.check.URL+"/metrics", nil)
+	status, raw = w.do("GET", w.ops.URL+"/metrics", nil)
 	for _, name := range []string{"licetum_check_decisions_total", "licetum_http_requests_total", "licetum_permission_compute_seconds"} {
 		if status != http.StatusOK || !strings.Contains(string(raw), name) {
 			t.Errorf("/metrics lacks %s (status %d)", name, status)

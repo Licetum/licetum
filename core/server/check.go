@@ -4,37 +4,34 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
 )
 
-// NewCheckHandler serves the runtime endpoints client services call on every request
-// (GET /service/{service_id}/permission and the single checks). It is a separate app/port (8001) so
-// that it can be scaled and deployed independently of the admin API.
-func NewCheckHandler(app *engine.App) http.Handler {
-	h, _ := NewCheckAPI(app)
-	return h
-}
-
-// ConsistencyParam is the freshness a caller asks for.
 // ServiceRefPath names the service by its id or by its slug (see engine.App.ServiceIDByRef).
 type ServiceRefPath struct {
 	ServiceRef string `path:"service_id" doc:"Service id or slug"`
 }
 
+// ConsistencyParam is the freshness a caller asks for.
 type ConsistencyParam struct {
-	Consistency    string `query:"consistency" enum:"minimize_latency,higher" default:"minimize_latency" doc:"minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"`
-	AtLeastAsFresh int64  `query:"at_least_as_fresh" required:"false" minimum:"0" doc:"The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"`
+	Consistency    string `query:"consistency" hidden:"true" enum:"minimize_latency,higher" default:"minimize_latency" doc:"minimize_latency (default) may answer from the result cache, and from the resource data as of the last synchronization: a source is asked again in the background once its throttle has run out, so an answer can lag the source by one refresh; higher skips the cache and fetches every involved source again, at the price of latency"`
+	AtLeastAsFresh int64  `query:"at_least_as_fresh" hidden:"true" required:"false" minimum:"0" doc:"The revision of an admin write, from the X-Authz-Revision header of its response. The answer then reflects that write and every write before it: when the cache is older than the revision, the answer is computed from the data"`
 }
 
-func (c ConsistencyParam) value() engine.Consistency {
+// valueIn is the freshness of the request. The one the context carries (engine.WithConsistency: set by the process that
+// serves the request, never by its caller) wins; without it the query parameter decides, minimize_latency by default.
+func (c ConsistencyParam) valueIn(ctx context.Context) engine.Consistency {
+	if v, ok := engine.ConsistencyIn(ctx); ok {
+		return v
+	}
 	if c.Consistency == string(engine.HigherConsistency) {
 		return engine.HigherConsistency
 	}
@@ -60,11 +57,11 @@ func (q PermissionQuery) filter() engine.PermissionFilter {
 }
 
 // verifiedCaller verifies the bearer token against the service and returns the service with the token's claims.
-func verifiedCaller(ctx context.Context, app *engine.App, serviceID uuid.UUID, authorization string) (*model.Service, engine.Claims, error) {
+func verifiedCaller(ctx context.Context, app pdpEngine, serviceID uuid.UUID, authorization string) (*model.Service, engine.Claims, error) {
 	if authorization == "" {
 		return nil, nil, apperr.Unauthorized(i18n.AuthHeaderRequired)
 	}
-	token, isBearer := strings.CutPrefix(authorization, "Bearer ")
+	token, isBearer := httpx.BearerToken(authorization)
 	if !isBearer {
 		return nil, nil, apperr.BadRequest(i18n.AuthHeaderRequired)
 	}
@@ -113,26 +110,16 @@ func authenticateCaller(ctx context.Context, app *engine.App, serviceID uuid.UUI
 	return subject, claims, nil
 }
 
-// NewCheckAPI is the same but also returns the huma.API (to generate OpenAPI without running a server).
-func NewCheckAPI(app *engine.App) (http.Handler, huma.API) {
-	tags := []*huma.Tag{
-		{Name: "Permission", Description: "Permission check: what the user holding this token may do with the service resources."},
-		{Name: "Check", Description: "Single access checks with explanations."},
-		{Name: authzenTag, Description: "The OpenID AuthZEN Authorization API 1.0 of a service: access evaluation and evaluations, the subject, resource and action searches, and the discovery document."},
-		{Name: "Delegated", Description: "The same questions asked on behalf of a person by a client application the service trusts, without the person's token. Every call is recorded."},
-		{Name: "System", Description: "Service endpoints."},
-	}
-	return NewServer(app, "Licetum — check", tags, func(api huma.API) {
-		AddBearerScheme(api, "Access token issued by the IdP of the service whose permissions are being checked.")
-		security := []map[string][]string{{BearerScheme: {}}}
-		authErrors := []int{http.StatusUnauthorized, http.StatusFailedDependency}
-
-		Register(api, huma.Operation{
-			OperationID: "get_permission",
-			Method:      http.MethodGet,
-			Path:        "/service/{service_id}/permission",
-			Summary:     "User permissions in a service",
-			Description: `The token is verified against the service JWKS (signature, exp/nbf/iat, issuer). The subject is the
+// registerLegacy registers the routes the check API served before AuthZEN: the permission of the token holder, the single
+// checks and the calls on behalf of a person. The PDP serves them next to AuthZEN, which answers the same questions, until
+// P2-23 deletes them.
+func registerLegacy(api huma.API, app *engine.App, security []map[string][]string, authErrors []int) {
+	Register(api, huma.Operation{
+		OperationID: "get_permission",
+		Method:      http.MethodGet,
+		Path:        "/service/{service_id}/permission",
+		Summary:     "User permissions in a service",
+		Description: `The token is verified against the service JWKS (signature, exp/nbf/iat, issuer). The subject is the
 preferred_username claim, or sub if it is missing.
 
 The response is keyed by resource type name, and the shape of each entry depends on the type mode, which is
@@ -157,41 +144,41 @@ after pages the resources of that type, sorted by id. A page that is not the las
 to read the next one. Paging needs type.
 
 Errors: 401 — the token is missing, invalid or expired; 424 — the service JWKS is unavailable.`,
-			Tags:     []string{"Permission"},
-			Security: security,
-			Errors:   authErrors,
-		}, func(ctx context.Context, in *struct {
-			ServiceRefPath
-			ConsistencyParam
-			PermissionQuery
-			Authorization string `header:"Authorization" hidden:"true"`
-		}) (*Out[engine.PermissionResult], error) {
-			ctx = in.freshness(ctx)
-			serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-			if err != nil {
-				return nil, err
-			}
-			subject, claims, err := authenticateCaller(ctx, app, serviceID, in.Authorization)
-			if err != nil {
-				return nil, err
-			}
-			env, err := requestEnv(claims, in.Context)
-			if err != nil {
-				return nil, err
-			}
-			out, err := app.PermissionPage(ctx, serviceID, subject, env, in.value(), in.filter())
-			if err != nil {
-				return nil, err
-			}
-			return OK(out)
-		})
+		Tags:     []string{"Permission"},
+		Security: security,
+		Errors:   authErrors,
+	}, func(ctx context.Context, in *struct {
+		ServiceRefPath
+		ConsistencyParam
+		PermissionQuery
+		Authorization string `header:"Authorization" hidden:"true"`
+	}) (*Out[engine.PermissionResult], error) {
+		ctx = in.freshness(ctx)
+		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
+		if err != nil {
+			return nil, err
+		}
+		subject, claims, err := authenticateCaller(ctx, app, serviceID, in.Authorization)
+		if err != nil {
+			return nil, err
+		}
+		env, err := requestEnv(app, claims, in.Context)
+		if err != nil {
+			return nil, err
+		}
+		out, err := app.PermissionPage(ctx, serviceID, subject, env, in.valueIn(ctx), in.filter())
+		if err != nil {
+			return nil, err
+		}
+		return OK(out)
+	})
 
-		Register(api, huma.Operation{
-			OperationID: "check_access",
-			Method:      http.MethodPost,
-			Path:        "/service/{service_id}/check",
-			Summary:     "Check access to resources",
-			Description: `Answers up to 100 questions "may I do X with Y" in one request, for the subject of the token.
+	Register(api, huma.Operation{
+		OperationID: "check_access",
+		Method:      http.MethodPost,
+		Path:        "/service/{service_id}/check",
+		Summary:     "Check access to resources",
+		Description: `Answers up to 100 questions "may I do X with Y" in one request, for the subject of the token.
 
 Every question names a resource type of the service, optionally a resource id, and an access level. Without a
 resource id the question is about the type as a whole (creating resources, a permission without resources): only the
@@ -203,38 +190,38 @@ exceptions lift them. The decision is the same as in GET /permission, only compu
 all of them.
 
 Errors: 401 — the token is missing, invalid or expired; 424 — the service JWKS is unavailable.`,
-			Tags:     []string{"Check"},
-			Security: security,
-			Errors:   authErrors,
-		}, func(ctx context.Context, in *struct {
-			ServiceRefPath
-			ConsistencyParam
-			Authorization string `header:"Authorization" hidden:"true"`
-			Body          model.CheckInput
-		}) (*Out[model.CheckResponse], error) {
-			ctx = in.freshness(ctx)
-			serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-			if err != nil {
-				return nil, err
-			}
-			subject, claims, err := authenticateCaller(ctx, app, serviceID, in.Authorization)
-			if err != nil {
-				return nil, err
-			}
-			if err := in.Body.Context.Validate(); err != nil {
-				return nil, err
-			}
-			env := engine.NewEnv(claims, in.Body.Context)
-			results, err := app.CheckAccess(ctx, serviceID, subject, env, in.Body.Checks, in.Body.Explain, in.value())
-			if err != nil {
-				return nil, err
-			}
-			app.LogDecisions(ctx, serviceID, subject, in.Body.Checks, results, in.value())
-			return OK(model.CheckResponse{Results: results})
-		})
+		Tags:     []string{"Check"},
+		Security: security,
+		Errors:   authErrors,
+	}, func(ctx context.Context, in *struct {
+		ServiceRefPath
+		ConsistencyParam
+		Authorization string `header:"Authorization" hidden:"true"`
+		Body          model.CheckInput
+	}) (*Out[model.CheckResponse], error) {
+		ctx = in.freshness(ctx)
+		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
+		if err != nil {
+			return nil, err
+		}
+		subject, claims, err := authenticateCaller(ctx, app, serviceID, in.Authorization)
+		if err != nil {
+			return nil, err
+		}
+		if err := in.Body.Context.Validate(); err != nil {
+			return nil, err
+		}
+		env := app.NewEnv(claims, in.Body.Context)
+		results, err := app.CheckAccess(ctx, serviceID, subject, env, in.Body.Checks, in.Body.Explain, in.valueIn(ctx))
+		if err != nil {
+			return nil, err
+		}
+		app.LogDecisions(ctx, serviceID, subject, in.Body.Checks, results, in.valueIn(ctx))
+		return OK(model.CheckResponse{Results: results})
+	})
 
-		delegateErrors := append([]int{http.StatusForbidden, http.StatusUnprocessableEntity}, authErrors...)
-		const delegateNote = `
+	delegateErrors := append([]int{http.StatusForbidden, http.StatusUnprocessableEntity}, authErrors...)
+	const delegateNote = `
 
 The caller is a client application the service trusts (its azp, or client_id, is in the service's trusted_clients), and it
 authenticates with its own token — from the same IdP and keys as a user's, typically a client-credentials token. The person is
@@ -246,111 +233,109 @@ A token of a trusted client may ask about anybody: trust a backend client, not t
 Errors: 401 — the token is missing, invalid or expired; 403 — the client is not trusted by the service; 422 — the subject
 or the claims are not acceptable; 424 — the service JWKS is unavailable.`
 
-		Register(api, huma.Operation{
-			OperationID: "delegated_check",
-			Method:      http.MethodPost,
-			Path:        "/service/{service_id}/on_behalf/check",
-			Summary:     "Check access on behalf of a person",
-			Description: `Answers up to 100 questions "may this person do X with Y" as POST /service/{id}/check does, for the person named in the body instead of the holder of the token.` + delegateNote,
-			Tags:        []string{"Delegated"},
-			Security:    security,
-			Errors:      delegateErrors,
-		}, func(ctx context.Context, in *struct {
-			ServiceRefPath
-			ConsistencyParam
-			Authorization string `header:"Authorization" hidden:"true"`
-			Body          model.DelegatedCheckInput
-		}) (*Out[model.CheckResponse], error) {
-			ctx = in.freshness(ctx)
-			serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-			if err != nil {
-				return nil, err
+	Register(api, huma.Operation{
+		OperationID: "delegated_check",
+		Method:      http.MethodPost,
+		Path:        "/service/{service_id}/on_behalf/check",
+		Summary:     "Check access on behalf of a person",
+		Description: `Answers up to 100 questions "may this person do X with Y" as POST /service/{id}/check does, for the person named in the body instead of the holder of the token.` + delegateNote,
+		Tags:        []string{"Delegated"},
+		Security:    security,
+		Errors:      delegateErrors,
+	}, func(ctx context.Context, in *struct {
+		ServiceRefPath
+		ConsistencyParam
+		Authorization string `header:"Authorization" hidden:"true"`
+		Body          model.DelegatedCheckInput
+	}) (*Out[model.CheckResponse], error) {
+		ctx = in.freshness(ctx)
+		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
+		if err != nil {
+			return nil, err
+		}
+		client, callerSubject, err := authenticateDelegate(ctx, app, serviceID, in.Authorization)
+		if err != nil {
+			return nil, err
+		}
+		claims, err := engine.PrepareDelegated(in.Body.Subject, in.Body.Claims)
+		if err != nil {
+			return nil, err
+		}
+		if err := in.Body.Context.Validate(); err != nil {
+			return nil, err
+		}
+		SetOnBehalfOf(ctx, in.Body.Subject)
+		env := app.NewEnv(claims, in.Body.Context)
+		results, err := app.CheckAccess(ctx, serviceID, in.Body.Subject, env, in.Body.Checks, in.Body.Explain, in.valueIn(ctx))
+		if err != nil {
+			return nil, err
+		}
+		allowed := 0
+		for _, r := range results {
+			if r.Allowed {
+				allowed++
 			}
-			client, callerSubject, err := authenticateDelegate(ctx, app, serviceID, in.Authorization)
-			if err != nil {
-				return nil, err
-			}
-			claims, err := engine.PrepareDelegated(in.Body.Subject, in.Body.Claims)
-			if err != nil {
-				return nil, err
-			}
-			if err := in.Body.Context.Validate(); err != nil {
-				return nil, err
-			}
-			SetOnBehalfOf(ctx, in.Body.Subject)
-			env := engine.NewEnv(claims, in.Body.Context)
-			results, err := app.CheckAccess(ctx, serviceID, in.Body.Subject, env, in.Body.Checks, in.Body.Explain, in.value())
-			if err != nil {
-				return nil, err
-			}
-			allowed := 0
-			for _, r := range results {
-				if r.Allowed {
-					allowed++
-				}
-			}
-			if err := app.RecordDelegatedCall(ctx, serviceID, engine.DelegatedCall{
-				CallerClient: client, CallerSubject: callerSubject, Subject: in.Body.Subject, Operation: "check",
-				Questions: len(results), Allowed: allowed,
-			}); err != nil {
-				return nil, err
-			}
-			app.LogDecisions(ctx, serviceID, in.Body.Subject, in.Body.Checks, results, in.value())
-			return OK(model.CheckResponse{Results: results})
-		})
+		}
+		if err := app.RecordDelegatedCall(ctx, serviceID, engine.DelegatedCall{
+			CallerClient: client, CallerSubject: callerSubject, Subject: in.Body.Subject, Operation: "check",
+			Questions: len(results), Allowed: allowed,
+		}); err != nil {
+			return nil, err
+		}
+		app.LogDecisions(ctx, serviceID, in.Body.Subject, in.Body.Checks, results, in.valueIn(ctx))
+		return OK(model.CheckResponse{Results: results})
+	})
 
-		Register(api, huma.Operation{
-			OperationID: "delegated_permission",
-			Method:      http.MethodPost,
-			Path:        "/service/{service_id}/on_behalf/permission",
-			Summary:     "A person's permissions in a service, asked on their behalf",
-			Description: `What the person named in the body may do with the resources of the service, per resource type, as GET /service/{id}/permission answers it for the holder of a token. The filters and the paging are the same (type, access, limit, after), given in the body.` + delegateNote,
-			Tags:        []string{"Delegated"},
-			Security:    security,
-			Errors:      delegateErrors,
-		}, func(ctx context.Context, in *struct {
-			ServiceRefPath
-			ConsistencyParam
-			Authorization string `header:"Authorization" hidden:"true"`
-			Body          model.DelegatedPermissionInput
-		}) (*Out[engine.PermissionResult], error) {
-			ctx = in.freshness(ctx)
-			serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
-			if err != nil {
-				return nil, err
-			}
-			client, callerSubject, err := authenticateDelegate(ctx, app, serviceID, in.Authorization)
-			if err != nil {
-				return nil, err
-			}
-			claims, err := engine.PrepareDelegated(in.Body.Subject, in.Body.Claims)
-			if err != nil {
-				return nil, err
-			}
-			if err := in.Body.Context.Validate(); err != nil {
-				return nil, err
-			}
-			SetOnBehalfOf(ctx, in.Body.Subject)
-			env := engine.NewEnv(claims, in.Body.Context)
-			filter := engine.PermissionFilter{Type: in.Body.Type, Access: in.Body.Access, Limit: in.Body.Limit, After: in.Body.After}
-			out, err := app.PermissionPage(ctx, serviceID, in.Body.Subject, env, in.value(), filter)
-			if err != nil {
-				return nil, err
-			}
-			if err := app.RecordDelegatedCall(ctx, serviceID, engine.DelegatedCall{
-				CallerClient: client, CallerSubject: callerSubject, Subject: in.Body.Subject, Operation: "permission",
-			}); err != nil {
-				return nil, err
-			}
-			return OK(out)
-		})
-
-		registerAuthzen(api, app, security, authErrors)
+	Register(api, huma.Operation{
+		OperationID: "delegated_permission",
+		Method:      http.MethodPost,
+		Path:        "/service/{service_id}/on_behalf/permission",
+		Summary:     "A person's permissions in a service, asked on their behalf",
+		Description: `What the person named in the body may do with the resources of the service, per resource type, as GET /service/{id}/permission answers it for the holder of a token. The filters and the paging are the same (type, access, limit, after), given in the body.` + delegateNote,
+		Tags:        []string{"Delegated"},
+		Security:    security,
+		Errors:      delegateErrors,
+	}, func(ctx context.Context, in *struct {
+		ServiceRefPath
+		ConsistencyParam
+		Authorization string `header:"Authorization" hidden:"true"`
+		Body          model.DelegatedPermissionInput
+	}) (*Out[engine.PermissionResult], error) {
+		ctx = in.freshness(ctx)
+		serviceID, err := app.ServiceIDByRef(ctx, in.ServiceRef)
+		if err != nil {
+			return nil, err
+		}
+		client, callerSubject, err := authenticateDelegate(ctx, app, serviceID, in.Authorization)
+		if err != nil {
+			return nil, err
+		}
+		claims, err := engine.PrepareDelegated(in.Body.Subject, in.Body.Claims)
+		if err != nil {
+			return nil, err
+		}
+		if err := in.Body.Context.Validate(); err != nil {
+			return nil, err
+		}
+		SetOnBehalfOf(ctx, in.Body.Subject)
+		env := app.NewEnv(claims, in.Body.Context)
+		filter := engine.PermissionFilter{Type: in.Body.Type, Access: in.Body.Access, Limit: in.Body.Limit, After: in.Body.After}
+		out, err := app.PermissionPage(ctx, serviceID, in.Body.Subject, env, in.valueIn(ctx), filter)
+		if err != nil {
+			return nil, err
+		}
+		if err := app.RecordDelegatedCall(ctx, serviceID, engine.DelegatedCall{
+			CallerClient: client, CallerSubject: callerSubject, Subject: in.Body.Subject, Operation: "permission",
+		}); err != nil {
+			return nil, err
+		}
+		return OK(out)
 	})
 }
 
-// requestEnv is the environment of a request: the claims of its token and the attributes given as a JSON object.
-func requestEnv(claims engine.Claims, raw string) (engine.Env, error) {
+// requestEnv is the environment of a request decided by app: the claims of its token and the attributes given as a JSON
+// object.
+func requestEnv(app *engine.App, claims engine.Claims, raw string) (engine.Env, error) {
 	attrs := model.RequestContext{}
 	if raw != "" {
 		if err := json.Unmarshal([]byte(raw), &attrs); err != nil || attrs == nil {
@@ -360,5 +345,5 @@ func requestEnv(claims engine.Claims, raw string) (engine.Env, error) {
 	if err := attrs.Validate(); err != nil {
 		return engine.Env{}, err
 	}
-	return engine.NewEnv(claims, attrs), nil
+	return app.NewEnv(claims, attrs), nil
 }

@@ -1,0 +1,65 @@
+# PostgreSQL and Redis for the installation into kind (deploy/helm/kind-test.sh): one of each, in the namespace of the release.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          args: ["-c", "max_connections=200"]
+          env:
+            - {name: POSTGRES_USER, value: licetum}
+            - {name: POSTGRES_PASSWORD, value: licetum}
+            - {name: POSTGRES_DB, value: licetum}
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec: {command: [pg_isready, -U, licetum]}
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec: {command: [redis-cli, ping]}
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: {app: redis}
+  ports:
+    - port: 6379

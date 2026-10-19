@@ -1,0 +1,151 @@
+# DEC05 on the world of the integration tests: division → rrs → branch (service org), and doc (service app) with two
+# parent types — branch, every level flowing, and division, only write flowing (graph_test.go:
+# TestIntegrationMultipleParentsAndInherit). D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3; R3 ⊃ B4.
+# X1 lies under B1 and D2, X2 under B3 (as in the test); X3 under D2 only, X4 under nothing, X5 under B4 and D2 — so X5
+# reaches D2 by two routes, through B4 (every level) and directly (write): the union lets every level through.
+#
+# A grant or a denial on a resource reaches a resource below it with the levels of its routes in the resource graph. A
+# whole-type rule covers every resource of the lower types with the levels that flow between the types (the union over
+# the routes of the type graph): division → rrs → branch → doc lets every level through, so a whole-type rule on division
+# reaches X3 (whose only parent is a division, through the write-only link) and X4 (which has no parent) with every
+# level.
+contracts: [DEC05]
+description: Several parent types with different inherit masks, on resources and on whole types, across services.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: doc, service: app, sync: true, parents: [{type: branch}, {type: division, inherit: [write]}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, name: Branch 4, parents: [{type: rrs, id: R3}]}
+  - {type: doc, id: X1, name: Doc 1, parents: [{type: branch, id: B1}, {type: division, id: D2}]}
+  - {type: doc, id: X2, name: Doc 2, parents: [{type: branch, id: B3}]}
+  - {type: doc, id: X3, name: Doc 3, parents: [{type: division, id: D2}]}
+  - {type: doc, id: X4, name: Doc 4}
+  - {type: doc, id: X5, name: Doc 5, parents: [{type: branch, id: B4}, {type: division, id: D2}]}
+rules:
+  - {name: vb-read-B1, subject: via-branch, type: branch, resource: B1, access: [read]}
+  - {name: rd2-read-D2, subject: read-D2, type: division, resource: D2, access: [read]}
+  - {name: wd2-write-D2, subject: write-D2, type: division, resource: D2, access: [write]}
+  - {name: rd1-read-D1, subject: read-D1, type: division, resource: D1, access: [read]}
+  - {name: tp-read-D1, subject: two-parents, type: division, resource: D1, access: [read]}
+  - {name: tp-write-D2, subject: two-parents, type: division, resource: D2, access: [write]}
+  - {name: rw2-D2, subject: rw-D2, type: division, resource: D2, access: [read, write]}
+  - {name: ddr-read-B1, subject: deny-read-D2, type: branch, resource: B1, access: [read]}
+  - {name: ddr-read-B4, subject: deny-read-D2, type: branch, resource: B4, access: [read]}
+  - {name: ddr-deny-D2, subject: deny-read-D2, type: division, resource: D2, access: [read], deny: true}
+  - {name: ddw-write-B1, subject: deny-write-D2, type: branch, resource: B1, access: [write]}
+  - {name: ddw-deny-D2, subject: deny-write-D2, type: division, resource: D2, access: [write], deny: true}
+  - {name: dds-rw-B1, subject: deny-star-D2, type: branch, resource: B1, access: [read, write]}
+  - {name: dds-deny-D2, subject: deny-star-D2, type: division, resource: D2, access: ["*"], deny: true}
+  - {name: wd-read-division, subject: whole-division, type: division, access: [read]}
+  - {name: wdd-read-X3, subject: whole-division-denied, type: doc, resource: X3, access: [read]}
+  - {name: wdd-deny-division, subject: whole-division-denied, type: division, access: [read], deny: true}
+cases:
+  # from graph_test.go:TestIntegrationMultipleParentsAndInherit
+  - name: through the branch parent every level is inherited
+    subject: via-branch
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: true, decision: allowed, granted_by: [vb-read-B1]}
+      - {type: doc, resource: X2, action: read, allowed: false, decision: no_access}
+  - name: a grant on a branch reaches only the docs below that branch
+    subject: via-branch
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: write, allowed: false, decision: no_access}
+      - {type: doc, resource: X3, action: read, allowed: false, decision: no_access}
+      - {type: doc, resource: X4, action: read, allowed: false, decision: no_access}
+      - {type: doc, resource: X5, action: read, allowed: false, decision: no_access}
+  # from graph_test.go:TestIntegrationMultipleParentsAndInherit
+  - name: read on D2 does not reach X1 through the write-only link
+    subject: read-D2
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: false, decision: no_access}
+  - name: read on D2 reaches X5 through B4, the route that lets every level through
+    subject: read-D2
+    service: app
+    questions:
+      - {type: doc, resource: X3, action: read, allowed: false, decision: no_access}
+      - {type: doc, resource: X5, action: read, allowed: true, decision: allowed, granted_by: [rd2-read-D2]}
+      - {type: doc, resource: X4, action: read, allowed: false, decision: no_access}
+  # from graph_test.go:TestIntegrationMultipleParentsAndInherit
+  - name: write on D2 reaches X1, and only write
+    subject: write-D2
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: write, allowed: true, decision: allowed, granted_by: [wd2-write-D2]}
+      - {type: doc, resource: X1, action: read, allowed: false, decision: no_access}
+  - name: write on D2 reaches every doc below D2
+    subject: write-D2
+    service: app
+    questions:
+      - {type: doc, resource: X3, action: write, allowed: true}
+      - {type: doc, resource: X5, action: write, allowed: true}
+      - {type: doc, resource: X2, action: write, allowed: false, decision: no_access}
+  - name: read on D1 reaches the docs below its branches
+    subject: read-D1
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: true, decision: allowed, granted_by: [rd1-read-D1]}
+      - {type: doc, resource: X2, action: read, allowed: true}
+      - {type: doc, resource: X3, action: read, allowed: false, decision: no_access}
+      - {type: doc, resource: X5, action: read, allowed: false, decision: no_access}
+  - name: each parent brings its own levels and the doc has their union
+    subject: two-parents
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: true, decision: allowed, granted_by: [tp-read-D1]}
+      - {type: doc, resource: X1, action: write, allowed: true, decision: allowed, granted_by: [tp-write-D2]}
+      - {type: doc, resource: X2, action: write, allowed: false, decision: no_access}
+  - name: of read and write on D2 only write reaches X1 and X3, both reach X5
+    subject: rw-D2
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: write, allowed: true}
+      - {type: doc, resource: X1, action: read, allowed: false, decision: no_access}
+      - {type: doc, resource: X3, action: read, allowed: false, decision: no_access}
+      - {type: doc, resource: X5, action: read, allowed: true}
+      - {type: doc, resource: X5, action: write, allowed: true}
+  - name: a denial of read on D2 does not cross the write-only link but follows the route through B4
+    subject: deny-read-D2
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: true, decision: allowed, granted_by: [ddr-read-B1]}
+      - {type: doc, resource: X5, action: read, allowed: false, decision: denied, granted_by: [ddr-read-B4], denials: [{rule: ddr-deny-D2}]}
+  - name: a denial of write on D2 crosses the write-only link
+    subject: deny-write-D2
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: write, allowed: false, decision: denied, granted_by: [ddw-write-B1], denials: [{rule: ddw-deny-D2}]}
+  - name: the wildcard on D2 reaches X1 with write only
+    subject: deny-star-D2
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: write, allowed: false, decision: denied, granted_by: [dds-rw-B1], denials: [{rule: dds-deny-D2}]}
+      - {type: doc, resource: X1, action: read, allowed: true, decision: allowed, granted_by: [dds-rw-B1]}
+  - name: a whole-type grant on division reaches every doc with the levels of the type routes
+    subject: whole-division
+    service: app
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: true, decision: allowed, granted_by: [wd-read-division]}
+      - {type: doc, resource: X2, action: read, allowed: true}
+      - {type: doc, resource: X3, action: read, allowed: true, decision: allowed, granted_by: [wd-read-division]}
+      - {type: doc, resource: X4, action: read, allowed: true, decision: allowed, granted_by: [wd-read-division]}
+      - {type: doc, resource: X5, action: read, allowed: true}
+      - {type: doc, resource: X1, action: write, allowed: false, decision: no_access}
+  - name: a whole-type denial on division reaches every doc with the levels of the type routes
+    subject: whole-division-denied
+    service: app
+    questions:
+      - {type: doc, resource: X3, action: read, allowed: false, decision: denied, granted_by: [wdd-read-X3], denials: [{rule: wdd-deny-division}]}

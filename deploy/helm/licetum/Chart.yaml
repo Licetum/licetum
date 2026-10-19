@@ -1,0 +1,11 @@
+apiVersion: v2
+name: licetum
+description: Licetum, a centralized authorization service - the PDP, the admin API, the synchronization worker and the migrations
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.30.0-0"
+keywords:
+  - authorization
+  - rbac
+home: https://github.com/Licetum/licetum

@@ -1,0 +1,118 @@
+# DEC11 at the edges: a resource with several parents of which one is missing, and the levels an assumed denial can
+# carry. A denial is assumed only for what it could reach if the missing parent were under it: through the link that
+# names the missing parent (its inherit mask), down the route from the resource that declares the link (the masks on
+# the way), and from the denial's anchor down to the missing parent's type (the masks between the types). A denial on
+# a known ancestor covers through the known routes, and is also assumed for the levels the missing parent could carry
+# that those routes do not (m8).
+#
+# doc <- folder and doc <- space: X1 has the parents F1 (known) and S9 (missing); X2 has F2 and S2, both known.
+# page <- book (the link lets only read through): P1 -> K1 (known), P9 -> K9 (missing).
+# region <- country (read only), office <- region, desk <- office (read only): O1 -> G1 (known, G1 names no country);
+# O9 -> G9 (missing); T9 -> O9.
+# building <- campus, room <- campus (write only) and room <- building: M1 -> U1 (known) and H9 (missing); M2 -> U1.
+# Each subject holds the rules of one scenario.
+contracts: [DEC11]
+description: Several parents with one missing, and the masks that bound an assumed denial.
+services: [docs]
+types:
+  - {name: space, service: docs, sync: true}
+  - {name: folder, service: docs, sync: true}
+  - {name: doc, service: docs, sync: true, parents: [{type: folder}, {type: space}]}
+  - {name: book, service: docs, sync: true}
+  - {name: page, service: docs, sync: true, parents: [{type: book, inherit: [read]}]}
+  - {name: country, service: docs, sync: true}
+  - {name: region, service: docs, sync: true, parents: [{type: country, inherit: [read]}]}
+  - {name: office, service: docs, sync: true, parents: [{type: region}]}
+  - {name: desk, service: docs, sync: true, parents: [{type: office, inherit: [read]}]}
+  - {name: campus, service: docs, sync: true}
+  - {name: building, service: docs, sync: true, parents: [{type: campus}]}
+  - {name: room, service: docs, sync: true, parents: [{type: campus, inherit: [write]}, {type: building}]}
+resources:
+  - {type: space, id: S1}
+  - {type: space, id: S2}
+  - {type: folder, id: F1}
+  - {type: folder, id: F2}
+  - {type: doc, id: X1, parents: [{type: folder, id: F1}, {type: space, id: S9}]}
+  - {type: doc, id: X2, parents: [{type: folder, id: F2}, {type: space, id: S2}]}
+  - {type: book, id: K1}
+  - {type: page, id: P1, parents: [{type: book, id: K1}]}
+  - {type: page, id: P9, parents: [{type: book, id: K9}]}
+  - {type: country, id: C1}
+  - {type: region, id: G1}
+  - {type: office, id: O1, parents: [{type: region, id: G1}]}
+  - {type: office, id: O9, parents: [{type: region, id: G9}]}
+  - {type: desk, id: T9, parents: [{type: office, id: O9}]}
+  - {type: campus, id: U1}
+  - {type: room, id: M1, parents: [{type: campus, id: U1}, {type: building, id: H9}]}
+  - {type: room, id: M2, parents: [{type: campus, id: U1}]}
+rules:
+  # A denial on a space: the missing space parent of X1 could be S1.
+  - {name: m1-allow-doc, subject: missing-space, type: doc, access: [read]}
+  - {name: m1-deny-S1, subject: missing-space, type: space, resource: S1, access: [read], deny: true}
+  # A denial on another folder: X1's folder is known and is not F2, and a folder cannot hold a space.
+  - {name: m2-allow-doc, subject: other-folder, type: doc, access: [read]}
+  - {name: m2-deny-F2, subject: other-folder, type: folder, resource: F2, access: [read], deny: true}
+  # A denial on X1's known folder covers it for real.
+  - {name: m3-allow-doc, subject: known-folder, type: doc, access: [read]}
+  - {name: m3-deny-F1, subject: known-folder, type: folder, resource: F1, access: [read], deny: true}
+  # The link that names the missing book lets only read through.
+  - {name: m5-allow-page, subject: link-mask, type: page, access: [read, write]}
+  - {name: m5-deny-K1, subject: link-mask, type: book, resource: K1, access: [read, write], deny: true}
+  # The route from the office that declares the missing region down to the desk lets only read through.
+  - {name: m6-allow-office, subject: route-mask, type: office, access: [read, write]}
+  - {name: m6-allow-desk, subject: route-mask, type: desk, access: [read, write]}
+  - {name: m6-deny-G1, subject: route-mask, type: region, resource: G1, access: [read, write], deny: true}
+  # From a country down to a region only read flows, so a denial on a country can reach the missing region with read only.
+  - {name: m7-allow-office, subject: flow-mask, type: office, access: [read, write]}
+  - {name: m7-deny-C1, subject: flow-mask, type: country, resource: C1, access: [read, write], deny: true}
+  # U1 is a known ancestor of M1 through a link that lets only write through; the missing building H9 could lie below U1
+  # and let read through as well.
+  - {name: m8-allow-room, subject: known-route-and-missing, type: room, access: [read, write]}
+  - {name: m8-deny-U1, subject: known-route-and-missing, type: campus, resource: U1, access: [read, write], deny: true}
+cases:
+  - name: one of several parents is missing and a denial could cover it
+    subject: missing-space
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: false, decision: denied, granted_by: [m1-allow-doc], denials: [{rule: m1-deny-S1, unresolved_parent: true}]}
+      - {type: doc, resource: X2, action: read, allowed: true, decision: allowed, granted_by: [m1-allow-doc]}
+  - name: a denial on the type of the known parent is decided by the known parent
+    subject: other-folder
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: true, decision: allowed, granted_by: [m2-allow-doc]}
+      - {type: doc, resource: X2, action: read, allowed: false, decision: denied, granted_by: [m2-allow-doc], denials: [{rule: m2-deny-F2}]}
+  - name: a denial on the known parent covers the resource with no assumption
+    subject: known-folder
+    questions:
+      - {type: doc, resource: X1, action: read, allowed: false, decision: denied, granted_by: [m3-allow-doc], denials: [{rule: m3-deny-F1}]}
+      - {type: doc, resource: X2, action: read, allowed: true, decision: allowed}
+  - name: the assumed denial carries only the levels of the link that names the missing parent
+    subject: link-mask
+    questions:
+      - {type: page, resource: P9, action: read, allowed: false, decision: denied, granted_by: [m5-allow-page], denials: [{rule: m5-deny-K1, unresolved_parent: true}]}
+      - {type: page, resource: P9, action: write, allowed: true, decision: allowed, granted_by: [m5-allow-page]}
+      - {type: page, resource: P1, action: read, allowed: false, decision: denied, granted_by: [m5-allow-page], denials: [{rule: m5-deny-K1}]}
+      - {type: page, resource: P1, action: write, allowed: true, decision: allowed, granted_by: [m5-allow-page]}
+  - name: the assumed denial carries only the levels of the route from the resource that declares the missing parent
+    subject: route-mask
+    questions:
+      - {type: office, resource: O9, action: read, allowed: false, decision: denied, granted_by: [m6-allow-office], denials: [{rule: m6-deny-G1, unresolved_parent: true}]}
+      - {type: office, resource: O9, action: write, allowed: false, decision: denied, granted_by: [m6-allow-office], denials: [{rule: m6-deny-G1, unresolved_parent: true}]}
+      - {type: desk, resource: T9, action: read, allowed: false, decision: denied, granted_by: [m6-allow-office, m6-allow-desk], denials: [{rule: m6-deny-G1, unresolved_parent: true}]}
+      - {type: desk, resource: T9, action: write, allowed: true, decision: allowed, granted_by: [m6-allow-desk]}
+      - {type: office, resource: O1, action: write, allowed: false, decision: denied, denials: [{rule: m6-deny-G1}]}
+  - name: the assumed denial carries only the levels that flow from its anchor down to the type of the missing parent
+    subject: flow-mask
+    questions:
+      - {type: office, resource: O9, action: read, allowed: false, decision: denied, granted_by: [m7-allow-office], denials: [{rule: m7-deny-C1, unresolved_parent: true}]}
+      - {type: office, resource: O9, action: write, allowed: true, decision: allowed, granted_by: [m7-allow-office]}
+      - {type: office, resource: O1, action: read, allowed: true, decision: allowed, granted_by: [m7-allow-office]}
+      - {type: office, resource: O1, action: write, allowed: true, decision: allowed}
+  # found by DECP (seed 161): the engine assumed nothing for a denial whose anchor is already a known ancestor, so the
+  # levels the known route does not carry escaped the denial although the missing parent could carry them
+  - name: a known route from the denial's anchor does not bound what the missing parent could carry
+    subject: known-route-and-missing
+    questions:
+      - {type: room, resource: M1, action: read, allowed: false, decision: denied, granted_by: [m8-allow-room], denials: [{rule: m8-deny-U1, unresolved_parent: true}]}
+      - {type: room, resource: M1, action: write, allowed: false, decision: denied, granted_by: [m8-allow-room], denials: [{rule: m8-deny-U1}]}
+      - {type: room, resource: M2, action: read, allowed: true, decision: allowed, granted_by: [m8-allow-room], denials: []}
+      - {type: room, resource: M2, action: write, allowed: false, decision: denied, granted_by: [m8-allow-room], denials: [{rule: m8-deny-U1}]}

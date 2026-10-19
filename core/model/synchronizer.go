@@ -2,7 +2,9 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -188,6 +190,31 @@ type SynchronizerInput struct {
 	_               struct{}           `additionalProperties:"true"`
 	Config          SynchronizerConfig `json:"config" doc:"Source configuration"`
 	ProbeResourceID string             `json:"probe_resource_id" doc:"Id of an existing resource used to check the source before saving" example:"b1"`
+	// Regions: absent keeps the regions a synchronizer has (empty on creation), an empty list clears them.
+	Regions []string `json:"regions,omitempty" required:"false" doc:"Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type. Absent on an update keeps them" example:"eu"`
+}
+
+// NormalizeRegions validates the regions of an input and returns them sorted and without repeats (nil stays nil: absent).
+func NormalizeRegions(regions []string) ([]string, error) {
+	if regions == nil {
+		return nil, nil
+	}
+	if len(regions) > 16 {
+		return nil, fmt.Errorf("regions: at most 16, got %d", len(regions))
+	}
+	out := make([]string, 0, len(regions))
+	seen := map[string]bool{}
+	for _, r := range regions {
+		if !ValidRegion(r) {
+			return nil, fmt.Errorf("regions: %q is not a region name (lowercase letters, digits and hyphens, at most 32)", r)
+		}
+		if !seen[r] {
+			seen[r] = true
+			out = append(out, r)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 func (s *SynchronizerInput) Validate() error {
@@ -235,6 +262,11 @@ func (s *SynchronizerInput) Validate() error {
 	if c.CacheTTL != nil && (*c.CacheTTL < 0 || *c.CacheTTL > MaxCacheTTL) {
 		return apperr.Unprocessable(i18n.CacheTTLInvalid, MaxCacheTTL)
 	}
+	regions, err := NormalizeRegions(s.Regions)
+	if err != nil {
+		return apperr.Unprocessable(i18n.SynchronizerRegionsInvalid, err.Error())
+	}
+	s.Regions = regions
 	return nil
 }
 
@@ -284,6 +316,23 @@ type Synchronizer struct {
 	ID             uuid.UUID          `json:"id" format:"uuid" doc:"Synchronizer id"`
 	TypeResourceID uuid.UUID          `json:"type_resource_id" format:"uuid" doc:"Resource type id"`
 	Config         SynchronizerConfig `json:"config" doc:"Source configuration"`
+	Regions        []string           `json:"regions" doc:"Regions the source can be reached from; empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type" example:"eu"`
+}
+
+// ValidRegion reports a region name: lowercase Latin letters, digits and hyphens, starting with a letter or a digit, at most 32.
+func ValidRegion(name string) bool {
+	if name == "" || len(name) > 32 {
+		return false
+	}
+	for i, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '-' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validHeaderName reports an RFC 9110 token: letters, digits and !#$%&'*+-.^_`|~.

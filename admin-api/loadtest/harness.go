@@ -25,7 +25,7 @@ import (
 const (
 	// warmUpTimeout bounds the warm-up: the first permission of a type synchronizes the whole type.
 	warmUpTimeout = 30 * time.Minute
-	// requestTimeout ends a request of the oracle that got no answer: such a request counts as a mismatch.
+	// requestTimeout ends a request of the oracle that got no answer: such a request is counted as unanswered, not as a wrong answer.
 	requestTimeout = 10 * time.Second
 	// topStatementCount is how many statements the report names.
 	topStatementCount = 8
@@ -44,10 +44,10 @@ type Options struct {
 	CheckBin      string        // the licetum binary that serves the check API
 	K6Bin         string        // the k6 binary that sends the traffic
 	OutDir        string        // where the results, the environment, the time series and the k6 logs are written
-	Mode          string        // warm (the caches answer), cold (every request is computed) or mix (a skewed traffic)
+	Mode          string        // warm (the caches answer), cold (the evaluations ask what none asked before; a search repeats per subject) or mix (a skewed traffic)
 	Seed          int64         // the seed of the choices of the traffic and of the oracle
 	Mix           Mix           // the share of each request
-	Consistency   string        // minimize_latency (caches allowed); the cold mode asks with higher
+	Consistency   string        // minimize_latency (caches allowed) or higher (every request is computed); the cold traffic sends none
 	Rate          float64       // arrivals per second of a fixed-rate run
 	Ramp          bool          // ramp the rate instead: start at RateStart, multiply by RateFactor, up to MaxSteps
 	RateStart     float64       // the first rate of a ramp
@@ -70,6 +70,13 @@ type Options struct {
 	ChaosRedisFor time.Duration // for this long
 	ChaosRedis    string        // the Redis container of the local test stack
 	RequireRate   float64       // a ramp run fails when the sustained rate is below it
+	// AddedLatency is added to every round trip from the check servers to PostgreSQL and to Redis (through Toxiproxy),
+	// from the end of the warm-up on: half in each direction. 0 puts nothing in the way.
+	AddedLatency time.Duration
+	// RampThrough keeps the ramp climbing after a step fails, up to MaxSteps, so the report also shows what the server does
+	// above its limit (the baseline asks for at least 600 requests/s measured, whether or not they are sustained). The
+	// sustained rate is still the highest step before the first one that failed.
+	RampThrough bool
 }
 
 // DefaultOptions are the settings of a run that the flags then change.
@@ -100,6 +107,16 @@ func DefaultOptions() Options {
 	}
 }
 
+// workloadOf names what the traffic of a mode asks, for Settings.Workload. The cold mode sends no consistency query, and its
+// evaluations ask questions no earlier request of the run asked (a search repeats per subject). The cold runs before that
+// asked every request with consistency=higher, carry no name, and so are never compared with these.
+func workloadOf(mode string) string {
+	if mode == "cold" {
+		return "cold-unrepeated-evaluations"
+	}
+	return ""
+}
+
 func (o Options) validate() error {
 	if err := o.Profile.validate(); err != nil {
 		return err
@@ -119,6 +136,8 @@ func (o Options) validate() error {
 		return fmt.Errorf("the warm-up is not negative")
 	case o.Concurrency < 1 || o.DBPool < 1:
 		return fmt.Errorf("concurrency and the database pool are at least 1")
+	case o.AddedLatency < 0:
+		return fmt.Errorf("the added latency is not negative")
 	case o.SLOP99 <= 0 || o.MaxErrorRate < 0:
 		return fmt.Errorf("the p99 objective is above 0 and the error budget is not negative")
 	}
@@ -155,6 +174,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			Seed:           opts.Seed,
 			Mix:            opts.Mix.String(),
 			Consistency:    opts.Consistency,
+			Workload:       workloadOf(opts.Mode),
 			Concurrency:    opts.Concurrency,
 			DBPool:         opts.DBPool,
 			AccessLog:      opts.AccessLog,
@@ -176,6 +196,8 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			RawPointsKept:  opts.RawPoints,
 			Replicas:       max(opts.Replicas, 1),
 			PauseRedisSecs: opts.ChaosRedisFor.Seconds(),
+			AddedLatencyMS: ms(opts.AddedLatency),
+			RampThrough:    opts.RampThrough,
 		},
 		Machine: machine(k6Version(k6Path)),
 	}
@@ -225,6 +247,11 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		return nil, fmt.Errorf("set the log settings of the check server: %w", err)
 	}
 
+	if opts.AddedLatency > 0 {
+		if err := e.insertLinks(); err != nil {
+			return nil, err
+		}
+	}
 	checks, err := startReplicas(ctx, e, opts)
 	if err != nil {
 		return nil, err
@@ -252,7 +279,9 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		client:      newClient(1, warmUpTimeout),
 		tokens:      tokens,
 		backend:     backend,
+		profile:     opts.Profile,
 		consistency: opts.Consistency,
+		retry:       synchronizeRetry,
 	}
 	rep.WarmUp, err = warm.warmUp(ctx)
 	if err != nil {
@@ -260,6 +289,12 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 	slog.Info("warmed up", "phases", rep.WarmUp)
 
+	if opts.AddedLatency > 0 {
+		if err := e.addLatency(opts.AddedLatency); err != nil {
+			return finishRun(ctx, rep, e, opts, err, nil)
+		}
+		slog.Info("added latency to PostgreSQL and Redis", "round_trip", opts.AddedLatency)
+	}
 	if err := applyExtraSQL(ctx, e, &rep.Settings); err != nil {
 		return finishRun(ctx, rep, e, opts, err, nil)
 	}
@@ -359,7 +394,7 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 		seed:     m.opts.Seed,
 		rate:     int(math.Round(rate)),
 		seconds:  seconds,
-		preVUs:   preallocated(int(math.Round(rate)), m.opts.Concurrency),
+		preVUs:   preallocated(int(math.Round(rate)), m.opts.Concurrency, m.opts.Mode),
 		maxVUs:   m.opts.Concurrency,
 		base:     m.check.base,
 		bases:    m.bases,
@@ -493,7 +528,7 @@ func (m measurer) ramp(ctx context.Context) ([]Measurement, error) {
 		}
 		meas.judgeStep(m.opts.MaxErrorRate, m.opts.SLOP99)
 		out = append(out, meas)
-		if !meas.passes() || ctx.Err() != nil {
+		if ctx.Err() != nil || (!meas.passes() && !m.opts.RampThrough) {
 			break
 		}
 		rate *= m.opts.RateFactor
@@ -557,10 +592,15 @@ func measurementFrom(res k6Result, w window, cores int) Measurement {
 	return m
 }
 
-// startCheck runs `licetum check` against the infrastructure of the run. Its pool is the one the options name, with no
+// startPDP runs `licetum pdp` against the infrastructure of the run, on the address PDP__ADDR names, and its operations
+// listener on PDP__OPS_ADDR (the probes and the metrics are read there). Its pool is the one the options name, with no
 // overflow, so the number of connections to PostgreSQL is the setting under test. Its output goes to check.log.
-func startCheck(ctx context.Context, e *env, opts Options, index int) (*checkServer, error) {
+func startPDP(ctx context.Context, e *env, opts Options, index int) (*checkServer, error) {
 	addr, err := freeAddr()
+	if err != nil {
+		return nil, err
+	}
+	opsAddr, err := freeAddr()
 	if err != nil {
 		return nil, err
 	}
@@ -572,13 +612,13 @@ func startCheck(ctx context.Context, e *env, opts Options, index int) (*checkSer
 	if err != nil {
 		return nil, fmt.Errorf("create the server log: %w", err)
 	}
-	bin, args := opts.CheckBin, []string{"check"}
+	bin, args := opts.CheckBin, []string{"pdp"}
 	if opts.CheckCPUs != "" {
-		bin, args = "taskset", []string{"-c", opts.CheckCPUs, opts.CheckBin, "check"}
+		bin, args = "taskset", []string{"-c", opts.CheckCPUs, opts.CheckBin, "pdp"}
 	}
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // the binary is the one the run was asked to measure
 	cmd.Env = append(os.Environ(), checkServerEnv(e, opts)...)
-	cmd.Env = append(cmd.Env, "HTTP__ADDR="+addr)
+	cmd.Env = append(cmd.Env, "PDP__ADDR="+addr, "PDP__OPS_ADDR="+opsAddr, "PDP__PUBLIC_URL=http://"+addr)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		if cerr := logFile.Close(); cerr != nil {
@@ -586,7 +626,7 @@ func startCheck(ctx context.Context, e *env, opts Options, index int) (*checkSer
 		}
 		return nil, fmt.Errorf("start %s: %w", opts.CheckBin, err)
 	}
-	cs := &checkServer{cmd: cmd, base: "http://" + addr, log: logFile, done: make(chan struct{})}
+	cs := &checkServer{cmd: cmd, base: "http://" + addr, ops: "http://" + opsAddr, log: logFile, done: make(chan struct{})}
 	go func() {
 		_ = cmd.Wait()
 		close(cs.done)
@@ -640,8 +680,14 @@ func newClient(concurrency int, timeout time.Duration) *http.Client {
 
 // preallocated is how many virtual users k6 starts before a window: the rate itself, at least 50, and never more than the
 // most it may use. A virtual user that is started during the window initializes while an arrival waits for it, and an
-// arrival that waits too long is dropped, which makes the window invalid.
-func preallocated(rate, maxVUs int) int {
+// arrival that waits too long is dropped, which makes the window invalid. The cold budgets were measured while a request
+// waited for a fresh job of the worker (seconds, by design), so the requests in flight were the rate times that wait, many
+// more than the rate; a cold request that waits for a due synchronization still can, so every virtual user it may use is
+// started before the window.
+func preallocated(rate, maxVUs int, mode string) int {
+	if mode == "cold" {
+		return maxVUs
+	}
 	return min(maxVUs, max(50, rate))
 }
 
@@ -663,7 +709,7 @@ func startReplicas(ctx context.Context, e *env, opts Options) ([]*checkServer, e
 	n := max(opts.Replicas, 1)
 	out := make([]*checkServer, 0, n)
 	for i := range n {
-		c, err := startCheck(ctx, e, opts, i)
+		c, err := startPDP(ctx, e, opts, i)
 		if err != nil {
 			for _, started := range out {
 				started.stop()

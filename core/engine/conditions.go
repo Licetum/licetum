@@ -35,10 +35,12 @@ func untilNextMinute(now time.Time) time.Duration {
 
 // ResourcesMatching returns, for every rule with a resource_where, the resources of its type that its conditions cover.
 // The attributes are the ones the synchronizers reported for the resources (resource_cache.meta), read from the local copy.
-func (a *App) ResourcesMatching(ctx context.Context, rules []model.AssignmentRule) (map[int][]graphNode, error) {
+// sourced says which types have resources (TypeGraph.IsSync): a rule on a type without a live synchronizer matches nothing,
+// whatever rows its deleted synchronizer left in the local copy.
+func (a *App) ResourcesMatching(ctx context.Context, rules []model.AssignmentRule, sourced func(uuid.UUID) bool) (map[int][]graphNode, error) {
 	out := map[int][]graphNode{}
 	for i, rule := range rules {
-		if len(rule.ResourceWhere) == 0 {
+		if len(rule.ResourceWhere) == 0 || !sourced(*rule.TypeResourceID) {
 			continue
 		}
 		nodes, err := a.resourcesWhere(ctx, *rule.TypeResourceID, rule.ResourceWhere)
@@ -66,7 +68,7 @@ func (a *App) resourcesWhere(ctx context.Context, typeID uuid.UUID, conds []mode
 	for _, clause := range containmentClauses(conds, &args) {
 		where += " AND " + clause
 	}
-	rows, err := a.DB.Query(ctx, `SELECT id, type_resource_id, external_id, name, meta FROM resource_cache WHERE `+where, args...)
+	rows, err := a.reader(ctx).Query(ctx, `SELECT id, type_resource_id, external_id, name, meta FROM resource_cache WHERE `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +131,7 @@ func (a *App) accessGroupLevels(ctx context.Context, typeIDs []uuid.UUID) (map[u
 	if len(typeIDs) == 0 {
 		return out, nil
 	}
-	rows, err := a.DB.Query(ctx,
+	rows, err := a.reader(ctx).Query(ctx,
 		`SELECT type_resource_id, name, levels FROM access_group WHERE type_resource_id = ANY($1)`, typeIDs)
 	if err != nil {
 		return nil, err

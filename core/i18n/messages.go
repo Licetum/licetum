@@ -12,6 +12,14 @@ const (
 	InternalError    Key = "internal_error"
 	RouteNotFound    Key = "route_not_found"
 	ValidationFailed Key = "validation_failed"
+	// availability: the 503 answers of a process that is not ready, cannot trust its copy of the policy, is overloaded or ran
+	// out of time for a request
+	NotReady          Key = "not_ready"
+	PolicyUnavailable Key = "policy_unavailable"
+	Overloaded        Key = "overloaded"
+	RequestTimeout    Key = "request_timeout"
+
+	SynchronizerChangeBusy Key = "synchronizer_change_busy"
 
 	// input validation
 	FieldRequired                 Key = "field_required"
@@ -47,6 +55,7 @@ const (
 	LintRuleDisabled              Key = "lint_rule_disabled"
 	LintRuleNotInForce            Key = "lint_rule_not_in_force"
 	LintRuleTargetDead            Key = "lint_rule_target_dead"
+	LintRuleLookupDead            Key = "lint_rule_lookup_dead"
 	LintRuleEveryone              Key = "lint_rule_everyone"
 	LintDenyMissingClaim          Key = "lint_deny_missing_claim"
 	LintGroupEmpty                Key = "lint_group_empty"
@@ -82,6 +91,7 @@ const (
 	ServiceSlugInvalid            Key = "service_slug_invalid"
 	ServiceSlugTaken              Key = "service_slug_taken"
 	CacheTTLInvalid               Key = "synchronizer_cache_ttl_invalid"
+	SynchronizerRegionsInvalid    Key = "synchronizer_regions_invalid"
 	SynchronizerHeaderInvalid     Key = "synchronizer_header_invalid"
 
 	// service
@@ -165,6 +175,14 @@ const (
 	AuthzenFieldRequired      Key = "authzen_field_required"
 	AuthzenPageInvalid        Key = "authzen_page_invalid"
 	AuthzenMetadataDisabled   Key = "authzen_metadata_disabled"
+	AuthzenSubjectTypeInvalid Key = "authzen_subject_type_invalid"
+	AuthzenLicetumInvalid     Key = "authzen_licetum_invalid"
+
+	// PEP directory: the issuers, the clients of the services and their API keys
+	PEPKeyLimit      Key = "pep_key_limit"
+	PEPClientInvalid Key = "pep_client_invalid"
+	PEPNotFound      Key = "pep_not_found"
+	PEPIssuerInUse   Key = "pep_issuer_in_use"
 )
 
 var catalog = map[Key]Text{
@@ -182,6 +200,31 @@ var catalog = map[Key]Text{
 		EN: "Validation failed",
 		RU: "Ошибка валидации",
 		ZH: "验证失败",
+	},
+	NotReady: {
+		EN: "The service is not ready to take requests",
+		RU: "Сервис не готов принимать запросы",
+		ZH: "服务尚未准备好接收请求",
+	},
+	PolicyUnavailable: {
+		EN: "The policy store cannot be reached or confirmed to be current, the request is refused; retry it shortly",
+		RU: "Хранилище политик недоступно или его актуальность не подтверждена, запрос отклонён; повторите его чуть позже",
+		ZH: "无法访问策略存储或无法确认其为最新，请求已被拒绝；请稍后重试",
+	},
+	Overloaded: {
+		EN: "The service is overloaded, retry the request shortly",
+		RU: "Сервис перегружен, повторите запрос чуть позже",
+		ZH: "服务过载，请稍后重试",
+	},
+	RequestTimeout: {
+		EN: "The request took too long and was cancelled, retry it",
+		RU: "Запрос выполнялся слишком долго и был отменён, повторите его",
+		ZH: "请求耗时过长已被取消，请重试",
+	},
+	SynchronizerChangeBusy: {
+		EN: "The part of the resource hierarchy this type belongs to is being synchronized, retry the change shortly",
+		RU: "Часть иерархии ресурсов, к которой относится этот тип, сейчас синхронизируется, повторите изменение чуть позже",
+		ZH: "此类型所属的资源层级部分正在同步，请稍后重试该更改",
 	},
 
 	FieldRequired: {
@@ -323,6 +366,11 @@ var catalog = map[Key]Text{
 		EN: "Rule %s names a resource, but its type has no synchronizer: it decides nothing",
 		RU: "Правило %s указывает ресурс, но у его типа нет синхронизатора: оно ничего не решает",
 		ZH: "规则 %s 指定了资源，但其类型没有同步器：它不做任何决定",
+	},
+	LintRuleLookupDead: {
+		EN: "Rule %s looks its resource up in a type that has no synchronizer, or climbs through one: it finds no resource there (a denial still applies below the links to the resources that type left)",
+		RU: "Правило %s ищет ресурс в типе без синхронизатора или проходит через такой тип: оно не находит там ресурса (запрет по-прежнему действует ниже ссылок на ресурсы, которые тип оставил)",
+		ZH: "规则 %s 在没有同步器的类型中查找资源，或经过这样的类型：它在那里找不到资源（拒绝规则在指向该类型所遗留资源的链接之下仍然适用）",
 	},
 	LintRuleEveryone: {
 		EN: "Rule %s grants its access to everyone who signs in",
@@ -503,6 +551,11 @@ var catalog = map[Key]Text{
 		EN: "config.cache_ttl must be between 0 and %d seconds",
 		RU: "config.cache_ttl должен быть от 0 до %d секунд",
 		ZH: "config.cache_ttl 必须在 0 到 %d 秒之间",
+	},
+	SynchronizerRegionsInvalid: {
+		EN: "regions: at most 16 names of lowercase letters, digits and hyphens (up to 32 characters each); %s",
+		RU: "regions: не более 16 имён из строчных латинских букв, цифр и дефисов (до 32 символов каждое); %s",
+		ZH: "regions：最多 16 个名称，由小写字母、数字和连字符组成（每个最长 32 个字符）；%s",
 	},
 	ServiceUpdateEmpty: {
 		EN: "At least one field must be set",
@@ -871,8 +924,38 @@ var catalog = map[Key]Text{
 		ZH: "分页令牌无效，或请求与签发该令牌的请求不一致",
 	},
 	AuthzenMetadataDisabled: {
-		EN: "The AuthZEN discovery document is not available: HTTP__PUBLIC_URL is not set",
-		RU: "Документ обнаружения AuthZEN недоступен: не задан HTTP__PUBLIC_URL",
-		ZH: "AuthZEN 发现文档不可用：未设置 HTTP__PUBLIC_URL",
+		EN: "The AuthZEN discovery document is not available: PDP__PUBLIC_URL is not set",
+		RU: "Документ обнаружения AuthZEN недоступен: не задан PDP__PUBLIC_URL",
+		ZH: "AuthZEN 发现文档不可用：未设置 PDP__PUBLIC_URL",
+	},
+	AuthzenSubjectTypeInvalid: {
+		EN: "subject.type must be 1 to 64 bytes, and not group",
+		RU: "subject.type должен занимать от 1 до 64 байт и не быть group",
+		ZH: "subject.type 必须为 1 到 64 个字节，且不能是 group",
+	},
+	AuthzenLicetumInvalid: {
+		EN: "The licetum settings of the context must be an object with min_revision (a revision, as a string of digits) and explain (a boolean), and no other field",
+		RU: "Настройки licetum в контексте должны быть объектом с полями min_revision (версия, строкой из цифр) и explain (логическое значение) и без других полей",
+		ZH: "上下文中的 licetum 设置必须是对象，只能包含 min_revision（由数字组成的字符串形式的版本号）和 explain（布尔值）",
+	},
+	PEPKeyLimit: {
+		EN: "The PEP client has reached its limit of %d active API keys: revoke one first",
+		RU: "Достигнут лимит действующих ключей API клиента PEP (%d): сначала отзовите один ключ",
+		ZH: "PEP 客户端的有效 API 密钥已达上限（%d 个）：请先吊销一个",
+	},
+	PEPClientInvalid: {
+		EN: "The PEP client is not valid: its kind, issuer, client id or operations do not fit, or its service has a client with the same name or identity",
+		RU: "Клиент PEP недействителен: тип, издатель, идентификатор клиента или операции не подходят, либо у сервиса уже есть клиент с тем же именем или идентификатором",
+		ZH: "PEP 客户端无效：其类型、颁发者、客户端 ID 或操作不匹配，或其服务已有同名或同一标识的客户端",
+	},
+	PEPNotFound: {
+		EN: "PEP object %s not found",
+		RU: "Объект PEP %s не найден",
+		ZH: "未找到 PEP 对象 %s",
+	},
+	PEPIssuerInUse: {
+		EN: "The PEP issuer %s is used by a client",
+		RU: "Издатель PEP %s используется клиентом",
+		ZH: "PEP 颁发者 %s 正被某个客户端使用",
 	},
 }

@@ -1,0 +1,326 @@
+# DEC13, explanations. The decision is allowed, denied (a level is granted and a denial that nothing lifts takes it
+# away), no_access (nothing grants the level), resource_not_found or type_not_found (a type of another service counts as
+# none: a check names the types of the service asked). granted_by names every allow rule that grants the level, through
+# the level hierarchy of the decided type too, exceptions included, whether or not a denial takes it away; denials names
+# every denial that reaches the resource with the level or a level it includes, with the exceptions that lift it
+# (lifted_by; none when it stands) and unresolved_parent when it reaches the resource only because a parent link at or
+# above it is unresolved. A question about a type as a whole is explained by the rules on that very type. What nothing
+# asks about is empty: a decision of no_access, resource_not_found or type_not_found has no granting rule. A denial that
+# applies only because a condition reads an attribute the request does not carry is marked missing_attribute.
+#
+# A rule written inline has one instance per anchor, so its denial is listed once per anchor and denied level, and an
+# exception once per anchor among those that lift it: the engine runner checks it on every explanation (Answer.Repeated),
+# which pins the counts graph_test.go:TestIntegrationCheckExplainAuthzenMetrics asserts on B1 (one denial) and on B2 (one
+# exception lifting it). The reference evaluator names a rule once and says nothing of the counts.
+#
+# Two shapes are left out, where the engine and the reference evaluator explain differently. The denials of a no_access
+# answer are not expected here: the engine lists none (it explains the levels it granted), the reference evaluator lists
+# the denials that reach the resource. And no rule here denies through several anchors of which some are lifted and some
+# stand: the engine lists the rule once per anchor (lifted and standing), the reference evaluator once, as standing.
+#
+# division <- rrs <- branch (service org), item <- branch (service app), doc <- branch (org, write includes read) and the
+# capability feature (org, no synchronizer). D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3; R3 ⊃ B4; B1 ⊃ I1, DOC1;
+# B2 ⊃ DOC2; B4 ⊃ I4; B9 names the rrs R9 that no source reports (an unresolved link). Each subject holds the rules of
+# one scenario; a rule over the claims or the request names whom it is for in its conditions.
+contracts: [DEC13]
+description: Explanations name the granting rules, every denial with the exceptions that lift it, and assumed denials.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+  - {name: doc, service: org, sync: true, parents: [{type: branch}], implies: {write: [read]}}
+  - {name: feature, service: org, sync: false}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: branch, id: B9, parents: [{type: rrs, id: R9}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+  - {type: doc, id: DOC1, parents: [{type: branch, id: B1}]}
+  - {type: doc, id: DOC2, parents: [{type: branch, id: B2}]}
+rules:
+  # graph_test.go:TestIntegrationCheckExplainAuthzenMetrics: read on D1, a denial on R1, an exception on B2.
+  - {name: ex-allow-D1, subject: explain, type: division, resource: D1, access: [read]}
+  - {name: ex-deny-R1, subject: explain, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: ex-except-B2, subject: explain, type: branch, resource: B2, access: [read], exception: true}
+  # conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue: read on every branch for one person
+  # from inside a network.
+  - name: ctx-allow-branch
+    predicate:
+      - {attr: preferred_username, op: eq, value: ctx-user}
+      - {attr: ip, source: context, op: in_cidr, value: 10.0.0.0/8}
+    type: branch
+    access: [read]
+  # phase1_test.go:TestSimulationAnswersForClaimsWithoutAToken: read on every branch for the sales department.
+  - {name: sim-sales-branch, predicate: [{attr: department, op: eq, value: sales}], type: branch, access: [read]}
+  # conditions_test.go:TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt: read on every branch, a
+  # denial on B2 from a network that applies when the address is not known, and one on B3 that skips it. In the test the
+  # denials are for everyone (a predicate); here the network is a guard of a rule of the subject, so that they reach no
+  # other case of the fixture.
+  - {name: miss-allow-branch, subject: missing, type: branch, access: [read]}
+  - name: miss-deny-B2
+    subject: missing
+    type: branch
+    resource: B2
+    access: [read]
+    deny: true
+    requires_predicate: [{attr: ip, source: context, op: in_cidr, value: 10.99.0.0/16}]
+  - name: miss-skip-B3
+    subject: missing
+    type: branch
+    resource: B3
+    access: [read]
+    deny: true
+    on_missing: skip
+    requires_predicate: [{attr: ip, source: context, op: in_cidr, value: 10.99.0.0/16}]
+  # Every rule that grants a level is named: a point above, the whole type, a point on the resource; not a rule of
+  # another level, nor one beside.
+  - {name: many-D1, subject: many, type: division, resource: D1, access: [read]}
+  - {name: many-R1, subject: many, type: rrs, resource: R1, access: [read]}
+  - {name: many-branch, subject: many, type: branch, access: [read]}
+  - {name: many-B1-write, subject: many, type: branch, resource: B1, access: [write]}
+  - {name: many-B3, subject: many, type: branch, resource: B3, access: [read]}
+  # Granting write on a doc grants read: the rule is named for read too.
+  - {name: imp-DOC1-write, subject: implier, type: doc, resource: DOC1, access: [write]}
+  - {name: imp-doc-read, subject: implier, type: doc, access: [read]}
+  - {name: imp-B2-write, subject: implier, type: branch, resource: B2, access: [write]}
+  # Denying read on a doc denies write: the denial is named for write too.
+  - {name: id-allow-doc, subject: implied-deny, type: doc, access: [write]}
+  - {name: id-deny-DOC1, subject: implied-deny, type: doc, resource: DOC1, access: [read], deny: true}
+  # The wildcard denial is named for every level.
+  - {name: wild-allow-branch, subject: wild, type: branch, access: [read, write]}
+  - {name: wild-deny-B2, subject: wild, type: branch, resource: B2, access: ["*"], deny: true}
+  # Two denials above B1, the upper one lifted by an exception between them, the lower one standing.
+  - {name: md-allow-D1, subject: mixed-denials, type: division, resource: D1, access: [read]}
+  - {name: md-deny-D1, subject: mixed-denials, type: division, resource: D1, access: [read], deny: true}
+  - {name: md-except-R1, subject: mixed-denials, type: rrs, resource: R1, access: [read], exception: true}
+  - {name: md-deny-B1, subject: mixed-denials, type: branch, resource: B1, access: [read], deny: true}
+  # One denial lifted by two exceptions at different depths.
+  - {name: tl-allow-D1, subject: two-lifts, type: division, resource: D1, access: [read]}
+  - {name: tl-deny-D1, subject: two-lifts, type: division, resource: D1, access: [read], deny: true}
+  - {name: tl-except-R1, subject: two-lifts, type: rrs, resource: R1, access: [read], exception: true}
+  - {name: tl-except-B1, subject: two-lifts, type: branch, resource: B1, access: [read], exception: true}
+  # An exception on the anchor of the denial grants, but does not lift it (a tie).
+  - {name: tie-allow-D1, subject: tie, type: division, resource: D1, access: [read]}
+  - {name: tie-deny-R1, subject: tie, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: tie-except-R1, subject: tie, type: rrs, resource: R1, access: [read], exception: true}
+  # A denial of one level is not named for another.
+  - {name: lv-allow-D1, subject: levels, type: division, resource: D1, access: [read, write]}
+  - {name: lv-deny-R1, subject: levels, type: rrs, resource: R1, access: [write], deny: true}
+  # B9 may lie under R1: the denial on R1 is assumed; an exception on B9 itself does not lift it.
+  - {name: ok-allow-branch, subject: orphan-kept, type: branch, access: [read]}
+  - {name: ok-deny-R1, subject: orphan-kept, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: ok-except-B9, subject: orphan-kept, type: branch, resource: B9, access: [read], exception: true}
+  # A whole-type exception on branch lies below any rrs: it lifts the denial on R1, assumed or not.
+  - {name: ol-except-branch, subject: orphan-lifted, type: branch, access: [read], exception: true}
+  - {name: ol-deny-R1, subject: orphan-lifted, type: rrs, resource: R1, access: [read], deny: true}
+  # An assumed denial and a real one on the same resource.
+  - {name: ob-allow-branch, subject: orphan-both, type: branch, access: [read]}
+  - {name: ob-deny-R1, subject: orphan-both, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: ob-deny-B9, subject: orphan-both, type: branch, resource: B9, access: [read], deny: true}
+  # Questions about a type as a whole, and about its resources.
+  - {name: wh-allow-branch, subject: whole, type: branch, access: [read, write]}
+  - {name: wh-deny-branch, subject: whole, type: branch, access: [write], deny: true}
+  - {name: wh-except-branch, subject: whole, type: branch, access: [write], exception: true}
+  - {name: wh-admin-B1, subject: whole, type: branch, resource: B1, access: [admin]}
+  - {name: wh-audit-division, subject: whole, type: division, access: [audit]}
+  # A capability.
+  - {name: cap-allow, subject: cap, type: feature, access: [use, admin]}
+  - {name: cap-deny, subject: cap, type: feature, access: [admin], deny: true}
+  # A denial alone.
+  - {name: do-deny-R1, subject: deny-only, type: rrs, resource: R1, access: [read], deny: true}
+cases:
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationCheckExplainAuthzenMetrics
+  - name: the six decisions, the denial that stands and the exception that lifts it
+    subject: explain
+    questions:
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [ex-allow-D1], denials: []}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [ex-allow-D1], denials: [{rule: ex-deny-R1, missing_attribute: false}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [ex-allow-D1, ex-except-B2], denials: [{rule: ex-deny-R1, lifted_by: [ex-except-B2], missing_attribute: false}]}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: branch, resource: NOPE, action: read, allowed: false, decision: resource_not_found, granted_by: [], denials: []}
+      - {type: nothing, action: read, allowed: false, decision: type_not_found, granted_by: [], denials: []}
+  - name: a type of another service is not a type of the service asked
+    subject: explain
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: type_not_found, granted_by: [], denials: []}
+  - name: the explanation names the rules above the resource from another service
+    subject: explain
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [ex-allow-D1], denials: [{rule: ex-deny-R1}]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: type_not_found, granted_by: [], denials: []}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: a rule that reads the request is named when it grants
+    subject: ctx-user
+    claims: {preferred_username: ctx-user}
+    context: {ip: "10.1.2.3"}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [ctx-allow-branch], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [ctx-allow-branch], denials: []}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: from outside the network the rule grants nothing
+    subject: ctx-user
+    claims: {preferred_username: ctx-user}
+    context: {ip: "192.168.0.1"}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
+  - name: without the address the rule grants nothing
+    subject: ctx-user
+    claims: {preferred_username: ctx-user}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
+  # from admin-api/tests/integration/api/phase1_test.go:TestSimulationAnswersForClaimsWithoutAToken (the test asks the
+  # admin simulation, which decides like the check)
+  - name: a claim that matches is answered with the rule that grants
+    subject: dave
+    claims: {department: sales}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [sim-sales-branch], denials: []}
+  # from admin-api/tests/integration/api/phase1_test.go:TestSimulationAnswersForClaimsWithoutAToken
+  - name: another department is granted nothing
+    subject: dave
+    claims: {department: hr}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt
+  - name: a denial applied on a missing attribute is named (the denial that skips it is not)
+    subject: missing
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-deny-B2, missing_attribute: true}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [miss-allow-branch], denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [miss-allow-branch], denials: []}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, denials: []}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt
+  - name: from an address outside the denied network no denial is named
+    subject: missing
+    context: {ip: "10.1.1.1"}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [miss-allow-branch], denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt
+  - name: from an address inside the denied network both denials are named
+    subject: missing
+    context: {ip: "10.99.4.4"}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-deny-B2, missing_attribute: false}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [miss-allow-branch], denials: [{rule: miss-skip-B3, missing_attribute: false}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, denials: []}
+  - name: every rule that grants the level is named, and only those
+    subject: many
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [many-D1, many-R1, many-branch], denials: []}
+      - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, granted_by: [many-B1-write], denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [many-D1, many-branch, many-B3], denials: []}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [many-branch], denials: []}
+  - name: the rules above a resource of another service are named
+    subject: many
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [many-D1, many-R1, many-branch], denials: []}
+      - {type: item, resource: I1, action: write, allowed: true, decision: allowed, granted_by: [many-B1-write], denials: []}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [many-branch], denials: []}
+  - name: a rule that grants a level including the asked one is named, by the hierarchy of the decided type
+    subject: implier
+    questions:
+      - {type: doc, resource: DOC1, action: read, allowed: true, decision: allowed, granted_by: [imp-DOC1-write, imp-doc-read], denials: []}
+      - {type: doc, resource: DOC1, action: write, allowed: true, decision: allowed, granted_by: [imp-DOC1-write], denials: []}
+      - {type: doc, resource: DOC2, action: read, allowed: true, decision: allowed, granted_by: [imp-doc-read, imp-B2-write], denials: []}
+      - {type: doc, resource: DOC2, action: write, allowed: true, decision: allowed, granted_by: [imp-B2-write], denials: []}
+      # branch has no level hierarchy: write on B2 does not grant read on B2.
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [imp-B2-write], denials: []}
+  - name: a denial of a level the asked one includes is named
+    subject: implied-deny
+    questions:
+      - {type: doc, resource: DOC1, action: write, allowed: false, decision: denied, granted_by: [id-allow-doc], denials: [{rule: id-deny-DOC1}]}
+      - {type: doc, resource: DOC1, action: read, allowed: false, decision: denied, granted_by: [id-allow-doc], denials: [{rule: id-deny-DOC1}]}
+      - {type: doc, resource: DOC2, action: write, allowed: true, decision: allowed, granted_by: [id-allow-doc], denials: []}
+  - name: a wildcard denial is named for every level
+    subject: wild
+    questions:
+      - {type: branch, resource: B2, action: write, allowed: false, decision: denied, granted_by: [wild-allow-branch], denials: [{rule: wild-deny-B2}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [wild-allow-branch], denials: [{rule: wild-deny-B2}]}
+      - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, granted_by: [wild-allow-branch], denials: []}
+  - name: every denial is named, lifted or standing, and one that stands decides
+    subject: mixed-denials
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [md-allow-D1, md-except-R1], denials: [{rule: md-deny-D1, lifted_by: [md-except-R1]}, {rule: md-deny-B1}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [md-allow-D1, md-except-R1], denials: [{rule: md-deny-D1, lifted_by: [md-except-R1]}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [md-allow-D1], denials: [{rule: md-deny-D1}]}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [md-allow-D1, md-except-R1], denials: [{rule: md-deny-D1, lifted_by: [md-except-R1]}]}
+      - {type: division, resource: D1, action: read, allowed: false, decision: denied, granted_by: [md-allow-D1], denials: [{rule: md-deny-D1}]}
+  - name: every exception that lifts a denial is named with it
+    subject: two-lifts
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [tl-allow-D1, tl-except-R1, tl-except-B1], denials: [{rule: tl-deny-D1, lifted_by: [tl-except-R1, tl-except-B1]}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [tl-allow-D1, tl-except-R1], denials: [{rule: tl-deny-D1, lifted_by: [tl-except-R1]}]}
+  - name: every exception that lifts a denial is named with it in another service
+    subject: two-lifts
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [tl-allow-D1, tl-except-R1, tl-except-B1], denials: [{rule: tl-deny-D1, lifted_by: [tl-except-R1, tl-except-B1]}]}
+  - name: an exception that does not lift the denial is a grant only
+    subject: tie
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [tie-allow-D1, tie-except-R1], denials: [{rule: tie-deny-R1}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [tie-allow-D1, tie-except-R1], denials: [{rule: tie-deny-R1}]}
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, granted_by: [tie-allow-D1], denials: []}
+  - name: a denial of another level is not named
+    subject: levels
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [lv-allow-D1], denials: []}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, granted_by: [lv-allow-D1], denials: [{rule: lv-deny-R1}]}
+  - name: a denial assumed for an unresolved parent is named so, and an exception on the orphan does not lift it
+    subject: orphan-kept
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [ok-allow-branch, ok-except-B9], denials: [{rule: ok-deny-R1, unresolved_parent: true}]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [ok-allow-branch], denials: [{rule: ok-deny-R1}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [ok-allow-branch], denials: []}
+  - name: an assumed denial lifted by a whole-type exception is named with the exception
+    subject: orphan-lifted
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: true, decision: allowed, granted_by: [ol-except-branch], denials: [{rule: ol-deny-R1, lifted_by: [ol-except-branch], unresolved_parent: true}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [ol-except-branch], denials: [{rule: ol-deny-R1, lifted_by: [ol-except-branch]}]}
+  - name: an assumed denial and a real one are told apart
+    subject: orphan-both
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [ob-allow-branch], denials: [{rule: ob-deny-R1, unresolved_parent: true}, {rule: ob-deny-B9}]}
+  - name: a type as a whole is explained by the rules on that type only
+    subject: whole
+    questions:
+      - {type: branch, action: read, allowed: true, decision: allowed, granted_by: [wh-allow-branch], denials: []}
+      - {type: branch, action: write, allowed: false, decision: denied, granted_by: [wh-allow-branch, wh-except-branch], denials: [{rule: wh-deny-branch}]}
+      - {type: branch, action: admin, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: branch, action: audit, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: division, action: audit, allowed: true, decision: allowed, granted_by: [wh-audit-division], denials: []}
+  - name: the resources of the type are explained by the rules on them and above them
+    subject: whole
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [wh-allow-branch], denials: []}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, granted_by: [wh-allow-branch, wh-except-branch], denials: [{rule: wh-deny-branch}]}
+      - {type: branch, resource: B1, action: admin, allowed: true, decision: allowed, granted_by: [wh-admin-B1], denials: []}
+      - {type: branch, resource: B1, action: audit, allowed: true, decision: allowed, granted_by: [wh-audit-division], denials: []}
+  - name: a capability is explained by its rules
+    subject: cap
+    questions:
+      - {type: feature, action: use, allowed: true, decision: allowed, granted_by: [cap-allow], denials: []}
+      - {type: feature, action: admin, allowed: false, decision: denied, granted_by: [cap-allow], denials: [{rule: cap-deny}]}
+      - {type: feature, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
+  - name: a denial with nothing to take away leaves no_access, not denied
+    subject: deny-only
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access, granted_by: []}

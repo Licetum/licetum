@@ -132,7 +132,9 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 			return err
 		}
 		report.DisabledDenials = int(tag.RowsAffected())
-		return nil
+		// The rules changed: every replica must read them again.
+		_, bumpErr := BumpRevision(ctx, tx, ScopeRules)
+		return bumpErr
 	})
 	return report, err
 }

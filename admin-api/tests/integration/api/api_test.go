@@ -22,15 +22,16 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/licetum/licetum/admin-api/api"
@@ -59,10 +60,19 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// syncEngine is the engine of the synchronization the suite runs against: LICETUM_SYNC_ENGINE=postgres, or dbos (the default).
+func syncEngine() string {
+	if v := os.Getenv("LICETUM_SYNC_ENGINE"); v != "" {
+		return v
+	}
+	return "dbos"
+}
+
 type env struct {
 	t     *testing.T
 	admin *httptest.Server
 	check *httptest.Server
+	ops   *httptest.Server // the operations listener of the same PDP: probes and metrics (server.NewOpsHandler)
 	mock  *httptest.Server
 	key   *rsa.PrivateKey
 	app   *service.App
@@ -70,39 +80,39 @@ type env struct {
 	cfg   *config.Config
 	// adminToken is sent to the admin API by default (see do).
 	adminToken string
+	// stopWorker stops the worker the test process runs (a test that needs the jobs to wait calls it).
+	stopWorker func()
+}
+
+// startWorker runs a synchronization worker on app until the returned function is called or the test ends.
+func startWorker(t *testing.T, app *engine.App) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = app.RunWorker(ctx)
+	}()
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func setup(t *testing.T) *env {
-	dbURI, redisURI := testInfrastructure.DBURI, testInfrastructure.RedisURI
+	redisURI := testInfrastructure.RedisURI
 	ctx := context.Background()
 
-	// An isolated schema per run.
-	schema := fmt.Sprintf("it_%d", time.Now().UnixNano())
-	adminConn, err := pgx.Connect(ctx, db.NormalizeDSN(dbURI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminConn.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS ltree SCHEMA public"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminConn.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = adminConn.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-		_ = adminConn.Close(context.Background())
-	})
-
-	u, err := url.Parse(db.NormalizeDSN(dbURI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := u.Query()
-	// public stays on the path: extensions (ltree) may already be installed there.
-	q.Set("search_path", schema+",public")
-	u.RawQuery = q.Encode()
+	// An isolated schema per run (a database of its own behind PgBouncer).
+	iso := testInfrastructure.Isolate(ctx, t)
 
 	e := &env{t: t}
+	var err error
 	e.key, err = rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -114,9 +124,11 @@ func setup(t *testing.T) *env {
 	// platform admin.
 	m := e.mock.URL
 	cfg := &config.Config{
-		DB:   config.Database{URI: u.String(), PoolSize: 5},
+		DB:   config.Database{URI: iso.URI, PoolSize: 5, PgBouncer: iso.PgBouncer, MigrateURI: iso.MigrateURI},
 		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Cors: config.Cors{AllowOrigins: []string{"http://localhost:5173"}},
+		// Tests that ask for higher consistency in a loop must not be spaced out to one source call per second.
+		Sync: config.Sync{FreshMinInterval: time.Millisecond, Engine: syncEngine(), DBOSSchema: "dbos_" + iso.Name},
 		// The registry of known subjects is on, as by default.
 		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
 		Platform: config.Platform{
@@ -127,14 +139,14 @@ func setup(t *testing.T) *env {
 			AdminClaimValues: []string{"admin"},
 		},
 	}
+	if err := db.RunMigrate(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
 	pool, err := db.Connect(ctx, cfg.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if err := db.Migrate(ctx, pool, cfg); err != nil {
-		t.Fatal(err)
-	}
 
 	rdb, err := redisx.Connect(ctx, redisURI)
 	if err != nil {
@@ -147,15 +159,30 @@ func setup(t *testing.T) *env {
 
 	app := service.New(engine.New(pool, rdb, cfg))
 	t.Cleanup(app.Close)
+	// The synchronization jobs are executed by a worker; the test process runs one next to the APIs it serves.
+	e.stopWorker = startWorker(t, app.App)
 	e.app = app
 	e.pool = pool
 	e.cfg = cfg
 	e.admin = newTestServer(t, api.NewAdminHandler(app))
-	e.check = newTestServer(t, server.NewCheckHandler(app.App))
+	e.check = newTestServer(t, server.NewPDPHandler(app.App))
+	e.ops = newTestServer(t, server.NewOpsHandler(app.App))
 	t.Cleanup(e.admin.Close)
 	t.Cleanup(e.check.Close)
+	t.Cleanup(e.ops.Close)
 	e.adminToken = e.token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
 	return e
+}
+
+// externalChange tells the app about a change made to the policy by other means than the admin API (SQL in a test, or
+// restore-admin in another process): the revision is bumped as every write does, and the app reads it again at once.
+func (e *env) externalChange(ctx context.Context) {
+	e.t.Helper()
+	revision, err := db.BumpRevision(ctx, e.pool, db.ScopeRules)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.app.AfterWrite(ctx, revision)
 }
 
 func newTestServer(t *testing.T, handler http.Handler) *httptest.Server {
@@ -254,6 +281,13 @@ func (e *env) token(claims jwt.MapClaims) string {
 
 func (e *env) do(method, url string, body any, headers ...string) (int, []byte) {
 	e.t.Helper()
+	status, _, raw := e.doWithHeader(method, url, body, headers...)
+	return status, raw
+}
+
+// doWithHeader is do with the headers of the answer too: the code of an AuthZEN error is in its Licetum-Error-Code header.
+func (e *env) doWithHeader(method, url string, body any, headers ...string) (int, http.Header, []byte) {
+	e.t.Helper()
 	var reader *bytes.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -291,7 +325,7 @@ func (e *env) do(method, url string, body any, headers ...string) (int, []byte) 
 	if _, err := io.Copy(&buf, resp.Body); err != nil {
 		e.t.Fatalf("read response: %v", err)
 	}
-	return resp.StatusCode, buf.Bytes()
+	return resp.StatusCode, resp.Header, buf.Bytes()
 }
 
 // must performs an admin API request that must return 200 and returns the decoded JSON.
@@ -313,17 +347,6 @@ func (e *env) must(method, path string, body any) map[string]any {
 		e.t.Fatalf("decode %s %s response: %v (%s)", method, path, err, raw)
 	}
 	return out
-}
-
-func (e *env) permission(serviceID, token string) (int, map[string]any) {
-	e.t.Helper()
-	status, raw := e.do(http.MethodGet, e.check.URL+"/service/"+serviceID+"/permission", nil,
-		"Authorization", "Bearer "+token)
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		e.t.Fatalf("decode permission response: %v (%s)", err, raw)
-	}
-	return status, out
 }
 
 func expectJSON(t *testing.T, name string, got any, wantJSON string) {
@@ -390,36 +413,41 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "u1", "department": "sales", "branch_name": "Branch3"})
 	bob := e.token(jwt.MapClaims{"sub": "bob", "level": 5})
 
-	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a claim.
-	status, perm := e.permission(filials, alice)
-	if status != http.StatusOK {
-		t.Fatalf("permission: %d %v", status, perm)
+	// permissions is what a person may do in a service: for each type that has resources they have a level on, those
+	// resources with their levels (the searches of the AuthZEN API, one per level the test grants).
+	permissions := func(ref, token string, types ...string) map[string][]listedResource {
+		out := map[string][]listedResource{}
+		for _, typ := range types {
+			if list := e.listedLevels(ref, token, typ, "read", "write", "audit"); len(list) > 0 {
+				out[typ] = list
+			}
+		}
+		return out
 	}
-	expectJSON(t, "alice@filials", perm, `{
-		"division": {"type":"sync","resources":[{"id":"d1","name":"North","access":["read"]}]},
-		"branch": {"type":"sync","resources":[
+
+	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a claim.
+	expectJSON(t, "alice@filials", permissions("filials", alice, "division", "branch"), `{
+		"division": [{"id":"d1","name":"North","access":["read"]}],
+		"branch": [
 			{"id":"b1","name":"Branch1","access":["read"]},
 			{"id":"b2","name":"Branch2","access":["read"]},
 			{"id":"b3","name":"Branch3","access":["audit"]}
-		]}}`)
+		]}`)
 	// The cascade crosses service boundaries: division(filials) -> branch -> planogram(replan).
-	_, perm = e.permission(replan, alice)
-	expectJSON(t, "alice@replan", perm, `{"planogram": {"type":"sync","resources":[
+	expectJSON(t, "alice@replan", permissions("replan", alice, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["read"]},
-		{"id":"p3","name":"Plano3","access":["audit"]}]}}`)
+		{"id":"p3","name":"Plano3","access":["audit"]}]}`)
 	// bob: predicate level in [5,6] (an int claim is compared as a string) — the whole planogram type.
-	_, perm = e.permission(replan, bob)
-	expectJSON(t, "bob@replan", perm, `{"planogram": {"type":"sync","resources":[
+	expectJSON(t, "bob@replan", permissions("replan", bob, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["write"]},
-		{"id":"p3","name":"Plano3","access":["write"]}]}}`)
+		{"id":"p3","name":"Plano3","access":["write"]}]}`)
 
 	// Changing a rule invalidates the permission cache immediately (version in Redis).
 	e.must("PATCH", "/assignment_rule/"+directRule,
 		map[string]any{"type_resource_id": division, "resource_id": "d2", "access": []string{"read", "write"}, "subject": "alice"})
-	_, perm = e.permission(filials, alice)
-	expectJSON(t, "alice@filials after patch", perm, `{
-		"division": {"type":"sync","resources":[{"id":"d2","name":"South","access":["read","write"]}]},
-		"branch": {"type":"sync","resources":[{"id":"b3","name":"Branch3","access":["audit","read","write"]}]}}`)
+	expectJSON(t, "alice@filials after patch", permissions("filials", alice, "division", "branch"), `{
+		"division": [{"id":"d2","name":"South","access":["read","write"]}],
+		"branch": [{"id":"b3","name":"Branch3","access":["audit","read","write"]}]}`)
 
 	// Deleting a referenced type is blocked, with the list of reasons.
 	status, raw := e.do("DELETE", e.admin.URL+"/service/"+filials+"/type_resource/"+branch, nil)
@@ -435,11 +463,11 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 
 	// Garbage tokens get 401 and do not open the circuit breaker for valid users.
 	for i := range 6 {
-		if status, _ := e.permission(filials, fmt.Sprintf("garbage.%d.x", i)); status != http.StatusUnauthorized {
+		if status, _ := e.permission("filials", fmt.Sprintf("garbage.%d.x", i)); status != http.StatusUnauthorized {
 			t.Fatalf("garbage token: want 401, got %d", status)
 		}
 	}
-	if status, _ := e.permission(filials, alice); status != http.StatusOK {
+	if status, _ := e.permission("filials", alice); status != http.StatusOK {
 		t.Fatalf("a valid token must still pass after garbage tokens, got %d", status)
 	}
 
@@ -560,23 +588,31 @@ func TestIntegrationSchemaValidation(t *testing.T) {
 		}
 	}
 
-	// Docs and spec.
-	for _, srv := range []*httptest.Server{e.admin, e.check} {
-		status, raw := e.do("GET", srv.URL+"/openapi.json", nil)
-		var spec struct {
-			OpenAPI string         `json:"openapi"`
-			Paths   map[string]any `json:"paths"`
-		}
-		if status != http.StatusOK || json.Unmarshal(raw, &spec) != nil || spec.OpenAPI != "3.1.0" || len(spec.Paths) == 0 {
-			t.Fatalf("openapi.json: %d %.200s", status, raw)
-		}
-		if status, _ := e.do("GET", srv.URL+"/docs", nil); status != http.StatusOK {
-			t.Fatalf("/docs: %d", status)
+	// Docs and spec: the admin API serves them. The PDP's public port serves neither (its document is what `licetum openapi pdp`
+	// prints, checked below), and its probes and metrics are on the operations listener.
+	status, raw := e.do("GET", e.admin.URL+"/openapi.json", nil)
+	var spec struct {
+		OpenAPI string         `json:"openapi"`
+		Paths   map[string]any `json:"paths"`
+	}
+	if status != http.StatusOK || json.Unmarshal(raw, &spec) != nil || spec.OpenAPI != "3.1.0" || len(spec.Paths) == 0 {
+		t.Fatalf("openapi.json: %d %.200s", status, raw)
+	}
+	if status, _ := e.do("GET", e.admin.URL+"/docs", nil); status != http.StatusOK {
+		t.Fatalf("/docs: %d", status)
+	}
+	for _, path := range []string{"/openapi.json", "/docs", "/healthz", "/readyz", "/metrics"} {
+		if status, _ := e.do("GET", e.check.URL+path, nil); status != http.StatusNotFound {
+			t.Fatalf("the PDP's public port answers %s with %d, want 404", path, status)
 		}
 	}
-	_, raw := e.do("GET", e.check.URL+"/openapi.json", nil)
-	if !strings.Contains(string(raw), `"get_permission"`) || !strings.Contains(string(raw), `"bearer"`) {
-		t.Fatal("the check API spec lacks get_permission or the bearer security scheme")
+	_, pdp := server.NewPDPAPI(e.app.App)
+	doc, err := server.LocalizedSpec(pdp, i18n.Default, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), `"authzen_evaluation"`) || !strings.Contains(string(doc), `"bearer"`) {
+		t.Fatal("the PDP spec lacks authzen_evaluation or the bearer security scheme")
 	}
 }
 

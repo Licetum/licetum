@@ -1,22 +1,27 @@
 package loadtest
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
-	"strings"
 	"time"
+
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// Oracle is the correctness check of a measured window: a sample of the answers the check API gave during the load,
+// Oracle is the correctness check of a measured window: a sample of the answers the AuthZEN API gave during the load,
 // compared with the decisions the generated policy must give.
 type Oracle struct {
-	Checked    int        `json:"checked"`
-	Mismatches int        `json:"mismatches"`
+	Checked int `json:"checked"`
+	// Mismatches are the answers the server gave (HTTP 200) that differ from the expected decision: wrong answers.
+	Mismatches int `json:"mismatches"`
+	// Unanswered are the questions that got no decision: a transport error, a timeout, a status other than 200, or an
+	// evaluation the API could not decide (it answers decision false with context.error, which is not a denial). They are
+	// failures of availability, which the error rate and the latency of the window show, not wrong answers.
+	Unanswered int        `json:"unanswered,omitempty"`
 	Granted    int        `json:"expected_granted"`
 	Examples   []Mismatch `json:"examples,omitempty"`
 }
@@ -86,6 +91,17 @@ func (p Profile) expectedAllowed(u, d int) bool {
 	return granted && (!denied || lifted)
 }
 
+// readableBy is how many documents subject u may read under the generated policy: the documents expectedAllowed grants it.
+func (p Profile) readableBy(u int) int {
+	n := 0
+	for d := range p.documents() {
+		if p.expectedAllowed(u, d) {
+			n++
+		}
+	}
+	return n
+}
+
 // oracleSample is a pair the sampler asks about: a subject, and a document it may or may not read. The sample mixes the
 // documents a subject owns, the documents of its department's folders, and any document, so that both answers occur.
 func (p Profile) oracleSample(rnd *rand.Rand) (int, int) {
@@ -115,9 +131,9 @@ func (p Profile) oracleSample(rnd *rand.Rand) (int, int) {
 	}
 }
 
-// runOracle asks the check API about sampled pairs at the given rate until stop is closed, and compares each answer with
-// expectedAllowed. The requests are real checks with the subject's token, so they load the server as one more client;
-// they are counted apart from the k6 traffic.
+// runOracle asks the AuthZEN API about sampled pairs at the given rate until stop is closed, and compares each answer
+// with expectedAllowed. The requests are real evaluations with the subject's token, so they load the server as one more
+// client; they are counted apart from the k6 traffic.
 func runOracle(ctx context.Context, base, service string, p Profile, tokens []string, seed uint64, rate float64, stop <-chan struct{}) Oracle {
 	var out Oracle
 	if rate <= 0 || len(tokens) == 0 {
@@ -137,16 +153,21 @@ func runOracle(ctx context.Context, base, service string, p Profile, tokens []st
 		}
 		u, d := p.oracleSample(rnd)
 		expected := p.expectedAllowed(u, d)
-		got, status, err := askCheck(ctx, client, base, service, tokens[u], fmt.Sprintf("d-%d", d))
+		got, status, err := askEvaluation(ctx, client, base, service, subjectName(u), tokens[u], fmt.Sprintf("d-%d", d))
 		out.Checked++
 		if expected {
 			out.Granted++
 		}
-		if err != nil || status != http.StatusOK || got != expected {
+		unanswered := err != nil || status != http.StatusOK
+		if unanswered {
+			out.Unanswered++
+		}
+		wrong := !unanswered && got != expected
+		if wrong {
 			out.Mismatches++
 			if len(out.Examples) < 10 {
 				out.Examples = append(out.Examples, Mismatch{
-					Subject: fmt.Sprintf("user-%d", u), Document: fmt.Sprintf("d-%d", d),
+					Subject: subjectName(u), Document: fmt.Sprintf("d-%d", d),
 					Expected: expected, Got: got, Status: status,
 				})
 			}
@@ -154,16 +175,15 @@ func runOracle(ctx context.Context, base, service string, p Profile, tokens []st
 	}
 }
 
-// askCheck asks one question and returns the decision.
-func askCheck(ctx context.Context, client *http.Client, base, service, token, doc string) (bool, int, error) {
-	body := fmt.Sprintf(`{"checks":[{"type":"document","resource_id":%q,"action":"read"}]}`, doc)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/service/"+service+"/check?consistency=minimize_latency",
-		strings.NewReader(body))
+// askEvaluation asks whether the subject may read the document, with the subject's own token, and returns the decision.
+// A question that got no decision returns a status other than 200 (the API refused or failed it), or an error: a
+// transport failure, an answer that is not one, or an evaluation the API could not decide (decision false with
+// context.error), which must not be mistaken for a denial.
+func askEvaluation(ctx context.Context, client *http.Client, base, service, subject, token, doc string) (bool, int, error) {
+	req, err := newRequest(ctx, base, authzenreq.Evaluation(service, subject, authzenreq.On(documentType, doc), readAction), token)
 	if err != nil {
 		return false, 0, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, 0, err
@@ -173,16 +193,10 @@ func askCheck(ctx context.Context, client *http.Client, base, service, token, do
 	if err != nil {
 		return false, resp.StatusCode, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return false, resp.StatusCode, nil
+	allowed, err := authzenreq.Allowed(resp.StatusCode, raw)
+	var refused *authzenreq.StatusError
+	if errors.As(err, &refused) {
+		return false, refused.Status, nil
 	}
-	var answer struct {
-		Results []struct {
-			Allowed bool `json:"allowed"`
-		} `json:"results"`
-	}
-	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&answer); err != nil || len(answer.Results) != 1 {
-		return false, resp.StatusCode, fmt.Errorf("unexpected answer: %s", head(raw))
-	}
-	return answer.Results[0].Allowed, resp.StatusCode, nil
+	return allowed, resp.StatusCode, err
 }

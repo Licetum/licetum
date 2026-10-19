@@ -4,8 +4,13 @@ components:
       additionalProperties: false
       properties:
         assumed:
-          description: A denial that applies because the resource has a parent that is not in the cache yet
+          description: "A denial that applies only because the resource has a parent that is not in the cache yet: none of its levels reaches the resource for real"
           type: boolean
+        assumed_levels:
+          description: The levels of a denial that reach the resource only because it has a parent that is not in the cache yet (fail closed); the other levels reach it for real
+          items:
+            type: string
+          type: array
         expires_at:
           description: When the rule stops; null — never
           format: date-time
@@ -65,6 +70,7 @@ components:
         - expires_at
         - valid_from
         - assumed
+        - assumed_levels
         - people
         - people_total
       type: object
@@ -595,7 +601,7 @@ components:
             - string
             - "null"
         target_valid:
-          description: "Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted"
+          description: "Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted — and for a resource_from_claim that looks a resource up in, or climbs through, such a type. A denial of that kind still applies below the links to the resources the type left"
           type: boolean
         type_resource_id:
           description: Resource type id of the inline permission; null for a role rule
@@ -2170,6 +2176,17 @@ components:
         - op
         - value
       type: object
+    ReadyOutputBody:
+      additionalProperties: false
+      properties:
+        status:
+          description: ok when the process may take requests
+          examples:
+            - ok
+          type: string
+      required:
+        - status
+      type: object
     RefreshTokenInput:
       additionalProperties: true
       properties:
@@ -2479,7 +2496,7 @@ components:
           description: Name of the service that owns the resource type
           type: string
         target_valid:
-          description: "Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer (see AssignmentRule.target_valid)"
+          description: "Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer, or that looks a resource up in, or climbs through, such a type (see AssignmentRule.target_valid)"
           type: boolean
         type_resource_id:
           description: Resource type id
@@ -2965,6 +2982,15 @@ components:
           description: Synchronizer id
           format: uuid
           type: string
+        regions:
+          description: Regions the source can be reached from; empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type
+          examples:
+            - - eu
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         type_resource_id:
           description: Resource type id
           format: uuid
@@ -2973,6 +2999,7 @@ components:
         - id
         - type_resource_id
         - config
+        - regions
       type: object
     SynchronizerConfig:
       additionalProperties: true
@@ -3041,6 +3068,15 @@ components:
           examples:
             - b1
           type: string
+        regions:
+          description: Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type. Absent on an update keeps them
+          examples:
+            - - eu
+          items:
+            type: string
+          type:
+            - array
+            - "null"
       required:
         - config
         - probe_resource_id
@@ -3303,7 +3339,7 @@ openapi: 3.1.0
 paths:
   /assignment_rule:
     get:
-      description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted): such a rule does not take effect."
+      description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted), or a rule that looks a resource up in, or climbs through, such a type: such a rule does not take effect (a denial of that kind still applies below the links to the resources the type left)."
       operationId: list_assignment_rules
       responses:
         "200":
@@ -4801,6 +4837,55 @@ paths:
       summary: My access to the platform
       tags:
         - Platform
+  /readyz:
+    get:
+      description: |-
+        Answers 200 when the process may take requests and 503 when it may not: PostgreSQL does not answer within a second,
+        the schema of the database is older than the release (run `licetum migrate`), the copy of the policy is not loaded yet, or
+        the process is shutting down and waits for the balancer to stop sending it requests. A schema newer than the release is
+        fine. Redis is not checked: without it the process still answers, only slower (see the metric licetum_degraded).
+        The result is reused for a second. Use it as the readiness probe and `/healthz` as the liveness probe.
+      operationId: readyz
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyOutputBody"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Readiness check
+      tags:
+        - System
   /role:
     get:
       operationId: list_roles

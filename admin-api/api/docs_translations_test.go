@@ -63,12 +63,12 @@ func docStrings(t *testing.T, doc []byte) map[string]bool {
 	return out
 }
 
-// TestDocsTranslationsComplete: every English string of the two OpenAPI documents has a translation in each of the other
+// TestContract_API02_DocsTranslationsComplete: every English string of the two OpenAPI documents has a translation in each of the other
 // languages, and no translation is left over from a string the documents no longer have.
-func TestDocsTranslationsComplete(t *testing.T) {
+func TestContract_API02_DocsTranslationsComplete(t *testing.T) {
 	app := service.New(engine.New(nil, nil, &config.Config{}))
 	english := map[string]bool{}
-	for _, build := range []func(*service.App) (http.Handler, huma.API){NewAdminAPI, checkAPIOf} {
+	for _, build := range []func(*service.App) (http.Handler, huma.API){NewAdminAPI, pdpAPIOf} {
 		_, api := build(app)
 		doc, err := server.LocalizedSpec(api, i18n.Default, false)
 		if err != nil {
@@ -106,7 +106,7 @@ func TestDocsTranslationsComplete(t *testing.T) {
 	}
 }
 
-// checkAPIOf builds the check API for the documentation test: it lives in the core and takes the engine.
-func checkAPIOf(app *service.App) (http.Handler, huma.API) {
-	return server.NewCheckAPI(app.App)
+// pdpAPIOf builds the PDP API for the documentation test: it lives in the core and takes the engine.
+func pdpAPIOf(app *service.App) (http.Handler, huma.API) {
+	return server.NewPDPAPI(app.App)
 }

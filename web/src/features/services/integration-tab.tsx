@@ -101,7 +101,7 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
               })
             : JSON.stringify({
                 subject: { type: 'user', id: 'me' },
-                resource: { type: own[0]?.name ?? 'TYPE' },
+                resource: { type: own[0]?.name ?? 'TYPE', id: '*' },
                 action: { name: 'read' },
               });
       const res = await fetch(`/api/check/service/${encodeURIComponent(service.slug)}/${path}`, {
