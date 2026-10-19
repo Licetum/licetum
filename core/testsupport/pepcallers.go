@@ -74,6 +74,36 @@ func (p *PEPCallers) Prepare(path, token string, body any) (credential string, p
 	return key, withClaims(body, claims)
 }
 
+// EnsureAll makes the client and the key of every live service now, instead of at the first question about it, and tells the apps. A
+// test that is about to stop the replay of a read replica calls it first: a client made while the replica lags is unknown to a PDP
+// that reads its directory from the replica.
+func (p *PEPCallers) EnsureAll() {
+	rows, err := p.pool.Query(context.Background(), `SELECT slug FROM service WHERE deleted_at IS NULL`)
+	if err != nil {
+		p.tb.Fatalf("list the services: %v", err)
+	}
+	var slugs []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			rows.Close()
+			p.tb.Fatalf("read a service: %v", err)
+		}
+		slugs = append(slugs, slug)
+	}
+	rows.Close()
+	for _, slug := range slugs {
+		p.credential(slug)
+	}
+}
+
+// Notify tells the apps that the directory of PEPs changed, as a new client does.
+func (p *PEPCallers) Notify() {
+	if p.changed != nil {
+		p.changed()
+	}
+}
+
 // serviceOfAuthzenPath is the reference of the service (slug or id) of a path below /service/<ref>/access/v1/.
 func serviceOfAuthzenPath(path string) (string, bool) {
 	if i := strings.IndexByte(path, '?'); i >= 0 {

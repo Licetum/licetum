@@ -663,11 +663,41 @@ func (c *Cluster) startReadReplica(dbURI string) {
 	}
 }
 
-// PauseReplay stops the read replica applying the changes it receives: from now on it lags behind the primary.
+// PauseReplay stops the read replica applying the changes it receives: from now on it lags behind the primary. The PEP clients of the
+// services are made first and the replica replays them, because the PDP reads its directory of PEP clients from the replica: a
+// client made while it lags would be unknown to the PDP, and every question of the test would be a 401.
 func (c *Cluster) PauseReplay() {
 	c.T.Helper()
+	if c.callers != nil {
+		c.callers.EnsureAll()
+		c.waitReplicaHas(`SELECT count(*) FROM pep_credential`)
+		c.callers.Notify()
+	}
 	if _, err := c.ReplicaPool.Exec(context.Background(), `SELECT pg_wal_replay_pause()`); err != nil {
 		c.T.Fatalf("pause the replay: %v", err)
+	}
+}
+
+// waitReplicaHas waits until the count that the query gives is the same on the read replica as on the primary.
+func (c *Cluster) waitReplicaHas(query string) {
+	c.T.Helper()
+	ctx := db.Uncounted(context.Background())
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		var onPrimary, onReplica int
+		if err := c.Pool.QueryRow(ctx, query).Scan(&onPrimary); err != nil {
+			c.T.Fatalf("count on the primary: %v", err)
+		}
+		if err := c.ReplicaPool.QueryRow(ctx, query).Scan(&onReplica); err != nil {
+			c.T.Fatalf("count on the replica: %v", err)
+		}
+		if onPrimary == onReplica {
+			return
+		}
+		if time.Now().After(deadline) {
+			c.T.Fatalf("the replica has %d rows where the primary has %d after 20s", onReplica, onPrimary)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
