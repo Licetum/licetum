@@ -93,3 +93,31 @@ export const policyTestFileSchema = z.object({ cases: z.array(policyTestCaseSche
 export const policyDocumentShapeSchema = z
   .object({ format: z.string(), service: z.string() })
   .loose();
+
+const anchorSchema = z.object({ resource_id: z.string().nullable(), type: z.string() });
+const ruleRefSchema = z.object({
+  access: z.array(z.string()),
+  anchor: anchorSchema,
+  applies_to: z.string(),
+  effect: z.enum(['allow', 'deny']),
+  exception: z.boolean(),
+  rule_id: z.string(),
+});
+
+/**
+ * The explanation of a decision (`context.reason_admin` of an AuthZEN evaluation of the simulation, the `Explanation` of the
+ * admin API). The context of an answer is an open object, so the explanation is parsed from it, not cast.
+ */
+export const explanationSchema = z.object({
+  decision: z.enum(['allowed', 'denied', 'no_access', 'resource_not_found', 'type_not_found']),
+  granted_by: z.array(ruleRefSchema),
+  denials: z.array(
+    z.object({
+      level: z.string(),
+      lifted_by: z.array(ruleRefSchema),
+      missing_attribute: z.boolean(),
+      rule: ruleRefSchema,
+      unresolved_parent: z.boolean(),
+    }),
+  ),
+});

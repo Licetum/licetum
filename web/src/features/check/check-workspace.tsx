@@ -29,9 +29,16 @@ import type {
 } from '@/api/admin/model';
 import { useCreatePolicyScenario } from '@/api/admin/policy/policy';
 import { useListResourcesOfType } from '@/api/admin/resource/resource';
-import { useSimulateCheck, useSimulatePermission } from '@/api/admin/simulation/simulation';
+import { useSimulateEvaluations, useSimulatePermission } from '@/api/admin/simulation/simulation';
 import { DecisionTag, EmptyBlock, errorDetail, PageHeader } from '@/components/kit';
 import type { Rule } from '@/domain/rule';
+import {
+  checkResultOf,
+  evaluationError,
+  evaluationsRequest,
+  propertiesOf,
+  type Properties,
+} from '@/lib/authzen';
 
 import { useAllTypes, useGroupNames, useRules, useServices } from '../data/queries';
 import { levelsOf } from '../grant/grant-model';
@@ -57,29 +64,6 @@ const question = (init: Partial<Question> = {}): Question => ({
   ...init,
 });
 
-/** A value typed as `[a, b]` is a list, anything else is a string: the rules compare claims as text. */
-function parseValue(value: string): string | string[] {
-  const v = value.trim();
-  if (v.startsWith('[') && v.endsWith(']')) {
-    try {
-      const parsed: unknown = JSON.parse(v);
-      if (Array.isArray(parsed)) return parsed.map(String);
-    } catch {
-      return v
-        .slice(1, -1)
-        .split(',')
-        .map((x) => x.trim())
-        .filter(Boolean);
-    }
-  }
-  return v;
-}
-
-const toObject = (pairs: Pair[]) =>
-  Object.fromEntries(
-    pairs.filter((p) => p.key.trim()).map((p) => [p.key.trim(), parseValue(p.value)]),
-  );
-
 export function CheckWorkspace() {
   const { t } = useTranslation();
   const params = useSearchParams();
@@ -103,7 +87,7 @@ export function CheckWorkspace() {
   ]);
   const [listType, setListType] = useState<string | undefined>(params.get('type') ?? undefined);
 
-  const check = useSimulateCheck();
+  const check = useSimulateEvaluations();
   const createScenario = useCreatePolicyScenario();
   const permission = useSimulatePermission();
   const [lastRun, setLastRun] = useState<{ questions: Question[]; subject: string } | null>(null);
@@ -123,12 +107,10 @@ export function CheckWorkspace() {
   const rulesById = useMemo(() => new Map((rules.data ?? []).map((r) => [r.id, r])), [rules.data]);
 
   const ready = !!service && subject.trim() !== '';
-  // The token of a person always carries their username: memberships "by name" match it.
-  const body = {
-    subject: subject.trim(),
-    claims: { preferred_username: subject.trim(), ...toObject(claims) },
-    context: toObject(context),
-  };
+  // The claims of the person and the attributes of the request, as the simulation of the PDP takes them: the person's
+  // username is added by the PDP when the claims do not carry it.
+  const properties: Properties = propertiesOf(claims);
+  const attributes: Properties = propertiesOf(context);
 
   const run = async () => {
     if (!service) return;
@@ -139,20 +121,21 @@ export function CheckWorkspace() {
       setLastRun({ questions: asked, subject: subject.trim() });
       await check.mutateAsync({
         serviceId: service.id,
-        data: {
-          ...body,
-          explain: true,
-          checks: asked.map((q) => ({
-            type: q.type!,
-            action: q.action,
-            resource_id: q.resource.trim() || null,
-          })),
-        },
+        data: evaluationsRequest(
+          { person: subject.trim(), properties, context: attributes },
+          asked.map((q) => ({ type: q.type!, resource: q.resource, action: q.action })),
+        ),
       });
     } else {
       await permission.mutateAsync({
         serviceId: service.id,
-        data: { ...body, type: listType, limit: listType ? 200 : undefined },
+        data: {
+          subject: subject.trim(),
+          claims: { preferred_username: subject.trim(), ...properties },
+          context: attributes,
+          type: listType,
+          limit: listType ? 200 : undefined,
+        },
       });
     }
   };
@@ -179,8 +162,8 @@ export function CheckWorkspace() {
         data: {
           name: `${subject.trim()} · ${q.type}${q.resource ? ` ${q.resource}` : ''} · ${q.action}`,
           subject: subject.trim(),
-          claims: { preferred_username: subject.trim(), ...toObject(claims) },
-          context: toObject(context),
+          claims: { preferred_username: subject.trim(), ...properties },
+          context: attributes,
           checks: [
             {
               type: q.type,
@@ -387,20 +370,24 @@ export function CheckWorkspace() {
       {mode === 'one' && check.data && lastRun && (
         <Flex vertical gap={12}>
           {lastRun.questions.map((q, i) => {
-            const result = (check.data.data as { results: CheckResult[] }).results?.[i];
-            return result ? (
+            const answer = check.data.status === 200 ? check.data.data.evaluations?.[i] : undefined;
+            if (!answer) return null;
+            const problem = evaluationError(answer);
+            return problem ? (
+              <Alert key={q.id} type="error" showIcon title={problem} />
+            ) : (
               <Verdict
                 key={q.id}
                 q={q}
                 subject={lastRun.subject}
                 serviceName={service?.name ?? ''}
-                result={result}
+                result={checkResultOf(answer)}
                 resolve={(ref) => rulesById.get(ref.rule_id)}
-                onSave={() => saveAsTest(q, result.allowed)}
+                onSave={() => saveAsTest(q, answer.decision)}
                 onShare={() => void shareLink()}
                 resourceName={q.resourceName ?? q.resource}
               />
-            ) : null;
+            );
           })}
         </Flex>
       )}

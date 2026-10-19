@@ -26,6 +26,8 @@ type authzenCaller struct {
 	claims    engine.Claims
 	// pep is set when the caller is a PEP client: the people it asks about come from the body, never from the credential.
 	pep *engine.PEPCaller
+	// simulated is set for the simulation of an administrator: nothing is recorded, neither the decisions nor the audit.
+	simulated bool
 
 	// The client application of the token, when the service trusts it (see engine.AuthorizeDelegate); asked once.
 	trustChecked bool
@@ -123,6 +125,9 @@ func (c *authzenCaller) note(sp speaker, questions, allowed int) {
 
 // flush writes the audit of the calls made on behalf of people: a call that cannot be recorded is not answered.
 func (c *authzenCaller) flush(ctx context.Context, operation string) error {
+	if c.simulated {
+		return nil
+	}
 	for _, subject := range c.delegated {
 		t := c.tally[subject]
 		if err := c.app.RecordDelegatedCall(ctx, c.serviceID, engine.DelegatedCall{

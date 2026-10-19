@@ -15,8 +15,12 @@ Next.js 16 (App Router) + Ant Design 6 + TanStack Query. The visual system is in
   on every request, so the access token this client gets must be a JWT whose `aud` contains `ADMIN_AUTH__AUDIENCE`.
 - **The browser talks to the API only through `/api/admin/*`** (`src/app/api/admin/[...path]/route.ts`): the server adds the
   bearer token, renews it with the refresh token when it is about to expire, and refuses sign-in endpoints and
-  cross-origin writes. `/api/check/*` is the same for "try it with your token" and `/api/discover` reads the OIDC discovery
-  document of an issuer.
+  cross-origin writes. `/api/check/*` is the same for "try it with a credential" (an API key of a PEP client, or the token of a
+  registered issuer) and `/api/discover` reads the OIDC discovery document of an issuer.
+- **AuthZEN requests are built in one place**: `src/lib/authzen.ts` writes the evaluation, batch and search requests of the
+  PDP for the Check page (which sends them to the simulation, `/service/{id}/simulate/access/v1/*`, and draws the verdict from
+  `context.reason_admin`) and for the snippets and the tester of the Integration page. `tests/authzen.test.ts` holds each
+  request to the AuthZEN specification (contract WEB03).
 - **The API client is generated** from `../admin-api/schema/admin.yaml` by orval (`pnpm orval`, into `src/api`, not
   committed). Server data is read with TanStack Query; a write is followed by `useRefreshAll()`.
 - **Data from outside is parsed, not cast**: `src/lib/schemas.ts` (zod) holds the shape of the token answers, the
@@ -37,7 +41,7 @@ src/components/     providers, kit (page header, tags, empty/error blocks), bran
 src/lib/            session, env, access, undo notice, URL state
 src/i18n/           ru, en and zh dictionaries (en is the source); scripts/check-locales.mjs checks them
 src/theme/          the visual system as an Ant Design theme
-tests/              Jest tests: domain helpers, grant form model, schemas, session cookie, the OIDC sign-in
+tests/              Jest tests: domain helpers, grant form model, schemas, session cookie, the OIDC sign-in, the AuthZEN builders
                     (oidc.test.ts); tests/ui renders components
                     with mocked data (no browser, no running stack)
 ```

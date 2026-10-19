@@ -724,6 +724,12 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   the `pep` scope, then `App.AfterPEPWrite`. The change log does not record them (nor does a rollback restore them). The key is in the answer that issues it
   (`Cache-Control: no-store`) and nowhere else; a client has two active keys at most (409), and a revoked key, a disabled or a deleted client is refused by every replica
   within the revision poll interval (PEP02, `cluster/pep_test.go`).
+- **Simulation for administrators** (`core/server/simulate.go`, `admin-api/api/admin_ops.go`, tag `Simulation`): `POST /service/{service_id}/simulate/access/v1/{evaluation,evaluations,search/{resource,action,subject}}`
+  take the AuthZEN requests of the PDP and answer as it does, for the person and the claims the request names (`subject.properties` as they are given),
+  with `consistency=higher` (the data as it is now) and the explanation always on (`context.reason_admin`). They run the code of the PDP routes on a
+  synthetic caller (`authzenCaller.simulated`): no PEP authentication, no decision log, no audit; the policy is the read right on the service
+  (`requireResource(PlatformService, read, "service_id")`). `simulate_check` and `simulate_permission` stay until stage 2c. In the web interface
+  `web/src/lib/authzen.ts` builds every AuthZEN request (Check page, Integration page snippets and its "try it", `tests/authzen.test.ts`, contract WEB03).
 - **Calls on behalf of a person** (`service/delegation.go`, `api/check.go`): `POST /service/{id}/on_behalf/check` and `…/permission` answer
   as the check and the permission do, for the `subject` and the `claims` named in the body instead of the holder of the token. The caller
   sends its own token (same IdP and keys as a user's, typically client-credentials); `AuthorizeDelegate` takes its client from `azp`, then

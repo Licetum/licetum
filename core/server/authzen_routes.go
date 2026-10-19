@@ -130,32 +130,11 @@ has its message as a JSON string, and its code in the Licetum-Error-Code header.
 		if err != nil {
 			return nil, err
 		}
-		if len(body.Evaluations) == 0 {
-			single := model.AuthzenEvaluationRequest{Subject: body.Subject, Resource: body.Resource, Action: body.Action, Context: body.Context}
-			evals, err := caller.evaluate(ctx, in.valueIn(ctx), []model.AuthzenEvaluationRequest{single}, model.AuthzenEvaluationsRequest{}, settings.Explain, model.AuthzenExecuteAll)
-			if err != nil {
-				return nil, err
-			}
-			if evals[0].err != nil {
-				return nil, evals[0].err
-			}
-			if err := caller.flush(ctx, "check"); err != nil {
-				return nil, err
-			}
-			return OK(model.AuthzenEvaluationsResponse{Decision: &evals[0].resp.Decision, Context: evals[0].resp.Context})
-		}
-		semantic := model.AuthzenExecuteAll
-		if body.Options != nil && body.Options.EvaluationsSemantic != "" {
-			semantic = body.Options.EvaluationsSemantic
-		}
-		evals, err := caller.evaluate(ctx, in.valueIn(ctx), body.Evaluations, body, settings.Explain, semantic)
+		out, err := caller.evaluations(ctx, in.valueIn(ctx), body, settings.Explain)
 		if err != nil {
 			return nil, err
 		}
-		if err := caller.flush(ctx, "check"); err != nil {
-			return nil, err
-		}
-		return OK(model.AuthzenEvaluationsResponse{Evaluations: applySemantic(semantic, evals, i18n.FromContext(ctx))})
+		return OK(*out)
 	})
 
 	const searchNote = `

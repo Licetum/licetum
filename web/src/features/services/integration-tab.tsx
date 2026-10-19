@@ -7,6 +7,7 @@ import {
   Flex,
   Input,
   Segmented,
+  Select,
   Table,
   Typography,
   message,
@@ -15,52 +16,21 @@ import { Copy } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import {
+  AUTHZEN_OPERATIONS,
+  AUTHZEN_PATHS,
+  PLACEHOLDERS,
+  pdpUrl,
+  requestOf,
+  snippet,
+  type AuthzenOperation,
+  type Lang,
+  type Sample,
+} from '@/lib/authzen';
+
 import { useAllTypes } from '../data/queries';
 import { DelegationSection } from './delegation-section';
 import { useService } from './service-frame';
-
-type Mode = 'permission' | 'check' | 'authzen';
-type Lang = 'curl' | 'go' | 'ts' | 'python';
-
-function snippet(mode: Mode, lang: Lang, base: string, slug: string, type: string): string {
-  const url =
-    mode === 'permission'
-      ? `${base}/service/${slug}/permission`
-      : mode === 'check'
-        ? `${base}/service/${slug}/check`
-        : `${base}/service/${slug}/access/v1/evaluation`;
-  const body =
-    mode === 'check'
-      ? { checks: [{ type, resource_id: 'RESOURCE_ID', action: 'read' }], explain: true }
-      : mode === 'authzen'
-        ? {
-            subject: { type: 'user', id: 'USERNAME' },
-            resource: { type, id: 'RESOURCE_ID' },
-            action: { name: 'read' },
-          }
-        : null;
-  const json = body ? JSON.stringify(body, null, 2) : '';
-  const post = mode !== 'permission';
-
-  if (lang === 'curl') {
-    return post
-      ? `curl -X POST '${url}' \\\n  -H "Authorization: Bearer $TOKEN" \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify(body)}'`
-      : `curl '${url}' \\\n  -H "Authorization: Bearer $TOKEN"`;
-  }
-  if (lang === 'go') {
-    return post
-      ? `body := strings.NewReader(\`${JSON.stringify(body)}\`)\nreq, _ := http.NewRequest(http.MethodPost, "${url}", body)\nreq.Header.Set("Authorization", "Bearer "+token)\nreq.Header.Set("Content-Type", "application/json")\nres, err := http.DefaultClient.Do(req)`
-      : `req, _ := http.NewRequest(http.MethodGet, "${url}", nil)\nreq.Header.Set("Authorization", "Bearer "+token)\nres, err := http.DefaultClient.Do(req)`;
-  }
-  if (lang === 'ts') {
-    return post
-      ? `const res = await fetch('${url}', {\n  method: 'POST',\n  headers: { Authorization: \`Bearer \${token}\`, 'Content-Type': 'application/json' },\n  body: JSON.stringify(${json.replace(/\n/g, '\n  ')}),\n});\nconst answer = await res.json();`
-      : `const res = await fetch('${url}', { headers: { Authorization: \`Bearer \${token}\` } });\nconst permissions = await res.json();`;
-  }
-  return post
-    ? `import requests\n\nres = requests.post(\n    "${url}",\n    headers={"Authorization": f"Bearer {token}"},\n    json=${json.replace(/\n/g, '\n    ')},\n)\nanswer = res.json()`
-    : `import requests\n\nres = requests.get("${url}", headers={"Authorization": f"Bearer {token}"})\npermissions = res.json()`;
-}
 
 /** How the code of a service asks Licetum: ready-made calls with the service's own slug and type names, and a way to try one. */
 export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
@@ -70,8 +40,12 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
   const [api, holder] = message.useMessage();
   const own = (types.data ?? []).filter((x) => x.service_id === service.id);
 
-  const [mode, setMode] = useState<Mode>('permission');
+  const [operation, setOperation] = useState<AuthzenOperation>('evaluation');
   const [lang, setLang] = useState<Lang>('curl');
+  const [person, setPerson] = useState('');
+  const [typeName, setTypeName] = useState<string | undefined>(undefined);
+  const [resource, setResource] = useState('');
+  const [action, setAction] = useState('read');
   const [token, setToken] = useState('');
   const [answer, setAnswer] = useState<{
     status: number;
@@ -80,39 +54,39 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
   } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const type = typeName ?? own[0]?.name ?? '';
+  // What is tried is what is shown, with the placeholders of the example filled in by what was typed.
+  const sample: Sample = { person, type, resource, action: action.trim() || 'read' };
+  const shown: Sample = {
+    ...sample,
+    person: person.trim() || PLACEHOLDERS.person,
+    type: type || PLACEHOLDERS.type,
+    resource: resource.trim() || (operation === 'search_resource' ? '' : PLACEHOLDERS.resource),
+  };
+
   const code = useMemo(
-    () => snippet(mode, lang, checkUrl, service.slug, own[0]?.name ?? 'TYPE'),
-    [mode, lang, checkUrl, service.slug, own],
+    () => snippet(lang, pdpUrl(checkUrl, service.slug, operation), requestOf(operation, shown)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shown is derived from the fields below
+    [lang, checkUrl, service.slug, operation, person, type, resource, action],
   );
 
+  const needsPerson = operation !== 'search_subject';
   const run = async () => {
     setBusy(true);
     setAnswer(null);
     try {
-      const path =
-        mode === 'permission' ? 'permission' : mode === 'check' ? 'check' : 'access/v1/evaluation';
-      const body =
-        mode === 'permission'
-          ? undefined
-          : mode === 'check'
-            ? JSON.stringify({
-                checks: [{ type: own[0]?.name ?? 'TYPE', action: 'read' }],
-                explain: true,
-              })
-            : JSON.stringify({
-                subject: { type: 'user', id: 'me' },
-                resource: { type: own[0]?.name ?? 'TYPE', id: '*' },
-                action: { name: 'read' },
-              });
-      const res = await fetch(`/api/check/service/${encodeURIComponent(service.slug)}/${path}`, {
-        method: mode === 'permission' ? 'GET' : 'POST',
-        headers: {
-          'x-test-token': token.trim(),
-          ...(body ? { 'content-type': 'application/json' } : {}),
-          'accept-language': document.documentElement.lang,
+      const res = await fetch(
+        `/api/check/service/${encodeURIComponent(service.slug)}/${AUTHZEN_PATHS[operation]}`,
+        {
+          method: 'POST',
+          headers: {
+            'x-test-token': token.trim(),
+            'content-type': 'application/json',
+            'accept-language': document.documentElement.lang,
+          },
+          body: JSON.stringify(requestOf(operation, { ...sample, person: person.trim() })),
         },
-        body,
-      });
+      );
       const text = await res.text();
       let pretty = text;
       try {
@@ -140,13 +114,12 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
       <Flex gap={12} wrap align="center">
         <Segmented
           aria-label={t('integration.modeLabel')}
-          value={mode}
-          onChange={(v) => setMode(v as Mode)}
-          options={[
-            { label: t('integration.mode.permission'), value: 'permission' },
-            { label: t('integration.mode.check'), value: 'check' },
-            { label: 'AuthZEN', value: 'authzen' },
-          ]}
+          value={operation}
+          onChange={(v) => setOperation(v as AuthzenOperation)}
+          options={AUTHZEN_OPERATIONS.map((op) => ({
+            label: t(`integration.op.${op}`),
+            value: op,
+          }))}
         />
         <Segmented
           aria-label={t('integration.lang')}
@@ -161,8 +134,54 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
         />
       </Flex>
       <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-        {t(`integration.about.${mode}`)}
+        {t(`integration.about.${operation}`)}
       </Typography.Text>
+      <Flex gap={12} wrap align="flex-end">
+        {needsPerson && (
+          <Field label={t('integration.sample.person')}>
+            <Input
+              aria-label={t('integration.sample.person')}
+              placeholder={PLACEHOLDERS.person}
+              className="mono"
+              style={{ width: 180 }}
+              value={person}
+              onChange={(e) => setPerson(e.target.value)}
+            />
+          </Field>
+        )}
+        <Field label={t('integration.sample.type')}>
+          <Select
+            aria-label={t('integration.sample.type')}
+            style={{ width: 200 }}
+            value={type || undefined}
+            onChange={setTypeName}
+            options={own.map((x) => ({ value: x.name, label: x.name }))}
+          />
+        </Field>
+        {operation !== 'search_resource' && (
+          <Field label={t('integration.sample.resource')}>
+            <Input
+              aria-label={t('integration.sample.resource')}
+              placeholder={PLACEHOLDERS.resource}
+              className="mono"
+              style={{ width: 220 }}
+              value={resource}
+              onChange={(e) => setResource(e.target.value)}
+            />
+          </Field>
+        )}
+        {operation !== 'search_action' && (
+          <Field label={t('integration.sample.action')}>
+            <Input
+              aria-label={t('integration.sample.action')}
+              className="mono"
+              style={{ width: 120 }}
+              value={action}
+              onChange={(e) => setAction(e.target.value)}
+            />
+          </Field>
+        )}
+      </Flex>
 
       <div style={{ position: 'relative' }}>
         <pre
@@ -216,7 +235,12 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
           spellCheck={false}
         />
         <Flex gap={8} style={{ marginTop: 8 }} align="center">
-          <Button type="primary" disabled={!token.trim()} loading={busy} onClick={() => void run()}>
+          <Button
+            type="primary"
+            disabled={!token.trim() || !type || (needsPerson && !person.trim())}
+            loading={busy}
+            onClick={() => void run()}
+          >
             {t('integration.try.run')}
           </Button>
           {answer && (
@@ -253,6 +277,14 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
                 title={t('integration.try.401')}
               />
             )}
+            {answer.status === 403 && (
+              <Alert
+                style={{ marginTop: 8 }}
+                type="warning"
+                showIcon
+                title={t('integration.try.403')}
+              />
+            )}
             {answer.status === 424 && (
               <Alert
                 style={{ marginTop: 8 }}
@@ -271,7 +303,7 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
           size="small"
           pagination={false}
           rowKey="code"
-          dataSource={['200', '401', '403', '404', '424'].map((code) => ({ code }))}
+          dataSource={['200', '400', '401', '403', '424', '429'].map((code) => ({ code }))}
           columns={[
             {
               title: t('integration.codes.status'),
@@ -316,5 +348,14 @@ export function IntegrationTab({ checkUrl }: { checkUrl: string }) {
         </Descriptions.Item>
       </Descriptions>
     </Flex>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: 'var(--licetum-muted)', marginBottom: 4 }}>{label}</div>
+      {children}
+    </div>
   );
 }

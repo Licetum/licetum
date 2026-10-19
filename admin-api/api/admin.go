@@ -62,6 +62,7 @@ func NewAdminAPI(app *service.App) (http.Handler, huma.API) {
 		h.registerPolicy(api)
 		h.registerPEP(api)
 		h.registerDirectory(api)
+		h.registerSimulation(api)
 	})
 }
 

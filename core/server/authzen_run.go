@@ -161,6 +161,38 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 	return evals, nil
 }
 
+// evaluations answers a batch request: the evaluations with the defaults of the top level and the semantic of the options, or,
+// when the request has no evaluations, its top-level fields as one evaluation, answered with its decision alone. The audit of the
+// calls made on behalf of people is written before the answer is returned.
+func (c *authzenCaller) evaluations(ctx context.Context, consistency engine.Consistency, body model.AuthzenEvaluationsRequest, explain bool) (*model.AuthzenEvaluationsResponse, error) {
+	if len(body.Evaluations) == 0 {
+		single := model.AuthzenEvaluationRequest{Subject: body.Subject, Resource: body.Resource, Action: body.Action, Context: body.Context}
+		evals, err := c.evaluate(ctx, consistency, []model.AuthzenEvaluationRequest{single}, model.AuthzenEvaluationsRequest{}, explain, model.AuthzenExecuteAll)
+		if err != nil {
+			return nil, err
+		}
+		if evals[0].err != nil {
+			return nil, evals[0].err
+		}
+		if err := c.flush(ctx, "check"); err != nil {
+			return nil, err
+		}
+		return &model.AuthzenEvaluationsResponse{Decision: &evals[0].resp.Decision, Context: evals[0].resp.Context}, nil
+	}
+	semantic := model.AuthzenExecuteAll
+	if body.Options != nil && body.Options.EvaluationsSemantic != "" {
+		semantic = body.Options.EvaluationsSemantic
+	}
+	evals, err := c.evaluate(ctx, consistency, body.Evaluations, body, explain, semantic)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.flush(ctx, "check"); err != nil {
+		return nil, err
+	}
+	return &model.AuthzenEvaluationsResponse{Evaluations: applySemantic(semantic, evals, i18n.FromContext(ctx))}, nil
+}
+
 // decide answers the evaluations at idx with one CheckAccess call: they carry the same person and the same attributes.
 func (c *authzenCaller) decide(ctx context.Context, consistency engine.Consistency, explain bool, evals []evaluation, idx []int) error {
 	first := evals[idx[0]]
@@ -173,7 +205,9 @@ func (c *authzenCaller) decide(ctx context.Context, consistency engine.Consisten
 	if err != nil {
 		return err
 	}
-	c.app.LogDecisions(ctx, c.serviceID, first.sp.subject, group, results, consistency)
+	if !c.simulated {
+		c.app.LogDecisions(ctx, c.serviceID, first.sp.subject, group, results, consistency)
+	}
 	allowed := 0
 	for j, i := range idx {
 		evals[i].resp = model.AuthzenEvaluationResponse{Decision: results[j].Allowed}

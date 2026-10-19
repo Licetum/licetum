@@ -21,7 +21,7 @@ var adminOpsTags = []*huma.Tag{
 	{Name: "Batch", Description: "Several writes in one transaction, and the history of the policy: reverting one change, or rolling back to a position of the change log."},
 	{Name: "Policy", Description: "The tools of a service's policy: tests with their coverage, the linter, and the export and import of the policy as a document."},
 	{Name: "Log settings", Description: "The structure of the process logs: format, the fields and their names, the event categories, the treatment of the subject and the sampling of allowed decisions."},
-	{Name: "Subject", Description: "The registry of known subjects: who has been seen in verified tokens, with the claims the policy reads and the groups they are in."},
+	{Name: "Subject", Description: "The subject directory of a service: the people its application sent, with their properties and the groups they are in."},
 	{Name: "Simulation", Description: "What a subject with given claims would be allowed to do, without a token: for administrators checking the rules."},
 }
 
@@ -134,6 +134,14 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 			return nil, err
 		}
 		return server.OK(out)
+	})
+}
+
+// registerSimulation registers the simulation of the AuthZEN API for the administrators: the requests and the answers of the PDP,
+// for the subject and the properties a request names (core/server/simulate.go). Reading the service is the right it needs.
+func (h *adminHandlers) registerSimulation(api huma.API) {
+	server.RegisterSimulation(api, h.app.App, h.app.Cfg, func(op huma.Operation) huma.Operation {
+		return withPolicy(op, requireResource(model.PlatformService, model.ActionRead, "service_id"))
 	})
 }
 

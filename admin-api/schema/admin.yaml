@@ -642,6 +642,291 @@ components:
         - resource_where
         - subject_kind
       type: object
+    AuthzenAction:
+      additionalProperties: true
+      properties:
+        name:
+          description: Access level
+          examples:
+            - write
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+      required:
+        - name
+      type: object
+    AuthzenActionSearchRequest:
+      additionalProperties: true
+      properties:
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The resource (resource.type is required; an empty resource.id, or *, is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenActionSearchResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The access levels the subject has on the resource
+          items:
+            $ref: "#/components/schemas/AuthzenAction"
+          type: array
+      required:
+        - results
+      type: object
+    AuthzenEvaluationRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level asked for (action.name is required)
+        context:
+          additionalProperties: {}
+          description: "The attributes of the request that the rules may read (conditions with source context). context.licetum holds the settings of Licetum: {\"explain\": true} adds the explanation of the decision to the response context"
+          type: object
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: What is accessed (resource.type and resource.id are required; * is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenEvaluationResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: "With explain: reason_admin holds the explanation. In a batch, error holds the status and the message of an evaluation that could not be decided (the decision is then false); a short-circuited batch names the semantic in reason"
+          type: object
+        decision:
+          description: Whether the access is granted
+          type: boolean
+      required:
+        - decision
+      type: object
+    AuthzenEvaluationsRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: Default action
+        context:
+          additionalProperties: {}
+          description: Default context
+          type: object
+        evaluations:
+          description: "The evaluations, up to 100. Absent or empty: the top-level subject, resource, action and context are one evaluation, and the answer is a single decision"
+          items:
+            $ref: "#/components/schemas/AuthzenEvaluationRequest"
+          maxItems: 100
+          type:
+            - array
+            - "null"
+        options:
+          $ref: "#/components/schemas/AuthzenOptions"
+          description: How the evaluations are executed
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: Default resource
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: Default subject
+      type: object
+    AuthzenEvaluationsResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: "With explain: reason_admin holds the explanation of the decision of a request without evaluations"
+          type: object
+        decision:
+          description: The decision of a request without evaluations; absent when evaluations were given
+          type: boolean
+        evaluations:
+          description: Decisions in the order asked (fewer when the semantic stopped the batch)
+          items:
+            $ref: "#/components/schemas/AuthzenEvaluationResponse"
+          type:
+            - array
+            - "null"
+      type: object
+    AuthzenOptions:
+      additionalProperties: true
+      properties:
+        evaluations_semantic:
+          description: execute_all (the default) answers every evaluation; deny_on_first_deny stops after the first denial or error; permit_on_first_permit stops after the first permit. The evaluations after the one that stops the batch are not answered
+          enum:
+            - execute_all
+            - deny_on_first_deny
+            - permit_on_first_permit
+          type: string
+      type: object
+    AuthzenPageRequest:
+      additionalProperties: true
+      properties:
+        limit:
+          description: At most this many results; absent or 0 — the most the service gives in one page (1000)
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+        token:
+          description: The next_token of the previous page. The subject, resource, action, context and limit must be the same as in the request that gave it
+          type: string
+      type: object
+    AuthzenPageResponse:
+      additionalProperties: false
+      properties:
+        count:
+          description: The number of results on this page
+          format: int64
+          type: integer
+        next_token:
+          description: Pass it as page.token to read the next page; empty on the last page
+          type: string
+        total:
+          description: The number of results of the whole search at the time of the request; absent when the search does not know it (the resource and the subject searches)
+          format: int64
+          type: integer
+      required:
+        - next_token
+        - count
+      type: object
+    AuthzenResource:
+      additionalProperties: true
+      properties:
+        id:
+          description: Resource id in the external system. An evaluation requires it, and * names the type as a whole; the action search reads an empty id or * as the type as a whole; the resource search ignores it
+          examples:
+            - b1
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Ignored in a request; the resource search returns the name of the resource here
+          type: object
+        type:
+          description: Name of the resource type in the service
+          examples:
+            - branch
+          type: string
+      required:
+        - type
+      type: object
+    AuthzenResourceSearchRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level (action.name is required)
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The type of the resources searched for (resource.type is required; resource.id is ignored)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenResourceSearchResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The resources the subject may do the action on; properties.name is the name of the resource
+          items:
+            $ref: "#/components/schemas/AuthzenResource"
+          type: array
+      required:
+        - results
+      type: object
+    AuthzenSubject:
+      additionalProperties: true
+      properties:
+        id:
+          description: "Subject id: 1 to 256 bytes, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it. It is the subject of the bearer token (preferred_username, or sub) unless the caller is a client application the service trusts"
+          examples:
+            - alice
+          type: string
+        properties:
+          additionalProperties: {}
+          description: "The claims of a person other than the holder of the token, given by a trusted client: at most 100 claims and 16 KiB of JSON. Ignored for the holder of the token, whose claims come from the token"
+          type: object
+        type:
+          description: "Subject type (not interpreted): 1 to 64 bytes, and not group"
+          examples:
+            - user
+          type: string
+      required:
+        - type
+      type: object
+    AuthzenSubjectSearchRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level (action.name is required)
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The resource (resource.type is required; an empty resource.id, or *, is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: "The subject: only its type is used (subject.type is required; subject.id is ignored)"
+      type: object
+    AuthzenSubjectSearchResponse:
+      additionalProperties: false
+      properties:
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The subjects that may do the action on the resource
+          items:
+            $ref: "#/components/schemas/AuthzenSubject"
+          type: array
+      required:
+        - results
+      type: object
     BatchInput:
       additionalProperties: true
       properties:
@@ -8020,6 +8305,430 @@ paths:
       summary: Run policy tests
       tags:
         - Policy
+  /service/{service_id}/simulate/access/v1/evaluation:
+    post:
+      description: |-
+        Decides whether the subject may perform the action on the resource, as the PDP would. subject.id is the person simulated and subject.properties are their claims, taken as they are given. The answer always carries its explanation in context.reason_admin.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_evaluation
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenEvaluationRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenEvaluationResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Simulate an AuthZEN access evaluation
+      tags:
+        - Simulation
+  /service/{service_id}/simulate/access/v1/evaluations:
+    post:
+      description: |-
+        Decides up to 100 evaluations in one request, with the defaults of the top level and the evaluations_semantic of the options, as the PDP would. subject.id is the person simulated and subject.properties are their claims, taken as they are given. Each answer carries its explanation in context.reason_admin.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_evaluations
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenEvaluationsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenEvaluationsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Simulate AuthZEN access evaluations (batch)
+      tags:
+        - Simulation
+  /service/{service_id}/simulate/access/v1/search/action:
+    post:
+      description: |-
+        Lists the actions (access levels) the subject may perform on the resource; without resource.id the resource is the type as a whole. subject.id is the person simulated and subject.properties are their claims, taken as they are given.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are
+        more results; send it back as page.token with the same request.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_search_action
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenActionSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenActionSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Simulate an AuthZEN action search
+      tags:
+        - Simulation
+  /service/{service_id}/simulate/access/v1/search/resource:
+    post:
+      description: |-
+        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. subject.id is the person simulated and subject.properties are their claims, taken as they are given.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are
+        more results; send it back as page.token with the same request.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_search_resource
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenResourceSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenResourceSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Simulate an AuthZEN resource search
+      tags:
+        - Simulation
+  /service/{service_id}/simulate/access/v1/search/subject:
+    post:
+      description: |-
+        Lists the people of the subject directory of the service, of the type subject.type, who may perform the action on the resource, decided with their stored properties; subject.id is not used.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are
+        more results; send it back as page.token with the same request.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_search_subject
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenSubjectSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenSubjectSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Simulate an AuthZEN subject search
+      tags:
+        - Simulation
   /service/{service_id}/simulate/check:
     post:
       description: Answers checks as a subject with the given claims would get them, without a token. The rules and their results are the real ones; the claims are taken as they are given, so the call is for administrators. Simulated answers are not logged as decisions.
@@ -10543,7 +11252,7 @@ tags:
     name: Policy
   - description: "The structure of the process logs: format, the fields and their names, the event categories, the treatment of the subject and the sampling of allowed decisions."
     name: Log settings
-  - description: "The registry of known subjects: who has been seen in verified tokens, with the claims the policy reads and the groups they are in."
+  - description: "The subject directory of a service: the people its application sent, with their properties and the groups they are in."
     name: Subject
   - description: "What a subject with given claims would be allowed to do, without a token: for administrators checking the rules."
     name: Simulation

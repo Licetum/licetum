@@ -641,39 +641,52 @@
   },
   "integration": {
     "about": {
-      "authzen": "The same question in the OpenID AuthZEN 1.0 format, for clients that already speak it.",
-      "check": "Answers up to 100 questions “may the person do this on that”, optionally with an explanation.",
-      "permission": "Returns, for each type, the resources the person may use and their levels. Use it to filter a list."
+      "evaluation": "One question in the OpenID AuthZEN 1.0 format: may the person do this on that. Add context.licetum.explain to get the reasons.",
+      "evaluations": "Up to 100 such questions in one request, with a default subject. The semantic in the options can stop the batch at the first denial or permit.",
+      "search_resource": "The resources of the type the person may do the action with, a page at a time. Use it to filter a list.",
+      "search_action": "The access levels the person has on the resource, or on the type as a whole when no resource is named.",
+      "search_subject": "The people of the service’s directory who may do the action on the resource. Needs the people to have been sent to the directory."
     },
-    "api": "Check API",
+    "api": "PDP address",
     "codes": {
       "200": "The answer",
-      "401": "No token, or the token is invalid or expired",
-      "403": "The request is valid but not allowed for this caller",
-      "404": "The service doesn’t exist",
-      "424": "The sign-in provider of the service doesn’t answer",
+      "400": "The request is not valid",
+      "401": "No credential, or the API key or the token is invalid or expired",
+      "403": "The credential is valid but gives nothing on this service: it belongs to another service, is disabled or lacks the operation",
+      "424": "The keys of the token’s issuer can’t be read",
+      "429": "Too many requests from this client; try again after the time in Retry-After",
       "meaning": "Meaning",
       "status": "Code",
       "title": "Response codes"
     },
     "fresh": {
-      "body": "Answers are cached for up to 60 seconds. After changing permissions pass the X-Authz-Revision header of the write response as at_least_as_fresh, or use consistency=higher.",
+      "body": "Answers are cached for up to 60 seconds. After changing permissions put the X-Authz-Revision header of the write response into context.licetum.min_revision, and the answer reflects the change.",
       "title": "Freshness of the answers"
     },
-    "hint": "How the code of this service asks Licetum what a person may do. The calls below carry the service’s own name and types.",
+    "hint": "How the code of this service asks Licetum what a person may do, in the OpenID AuthZEN 1.0 format. The calls below carry the service’s own name and types; the credential is the API key of a PEP client of the service.",
     "lang": "Language",
-    "mode": {
-      "check": "Can X do Y on Z (one question)",
-      "permission": "What a person can do (list)"
-    },
     "modeLabel": "What to ask",
+    "op": {
+      "evaluation": "May X do Y on Z",
+      "evaluations": "Many questions",
+      "search_resource": "Which resources",
+      "search_action": "Which actions",
+      "search_subject": "Which people"
+    },
+    "sample": {
+      "action": "Action",
+      "person": "Person",
+      "resource": "Resource id",
+      "type": "Type"
+    },
     "try": {
-      "401": "The token was rejected: it is expired, or issued by another provider than the one this service is connected to.",
-      "424": "The sign-in provider of the service doesn’t answer, so tokens can’t be verified.",
-      "hint": "The token is used for this one request and is not stored. Paste the token your service gets from its identity provider.",
+      "401": "The credential was rejected: the key is wrong or revoked, or the token is expired or of an issuer that is not registered.",
+      "403": "The credential gives nothing on this service: check that its client belongs to it, is enabled and may do this operation.",
+      "424": "The keys of the issuer of the token can’t be read, so the token can’t be verified.",
+      "hint": "The credential is used for this one request and is not stored. Paste the API key of a PEP client of the service, or a token of a registered issuer.",
       "run": "Try",
-      "title": "Try it with your token",
-      "token": "Access token"
+      "title": "Try it with a credential",
+      "token": "API key or access token"
     }
   },
   "logs": {
