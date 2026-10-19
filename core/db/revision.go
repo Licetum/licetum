@@ -16,6 +16,9 @@ const (
 	ScopeRules = "rules"
 	// ScopeLogSettings numbers the changes of the log settings: a process that sees it move loads them.
 	ScopeLogSettings = "log_settings"
+	// ScopePEP numbers the changes of the PEP directory: the issuers, the clients of the services and their API keys (see
+	// pep.go). They change no decision, so they have a scope of their own: a key rotation must not flush the answers.
+	ScopePEP = "pep"
 	// dataScopePrefix starts the scope of the resource data of a service.
 	dataScopePrefix = "data:"
 )
@@ -82,6 +85,8 @@ type Revisions struct {
 	Rules int64
 	// LogSettings is the revision of ScopeLogSettings.
 	LogSettings int64
+	// PEP is the revision of ScopePEP.
+	PEP int64
 	// Data is the revision of the resource data of each service (its id as text); a service that is absent has 0.
 	Data map[string]int64
 }
@@ -106,6 +111,8 @@ func LoadRevisions(ctx context.Context, q Querier) (Revisions, error) {
 			out.Rules = revision
 		} else if scope == ScopeLogSettings {
 			out.LogSettings = revision
+		} else if scope == ScopePEP {
+			out.PEP = revision
 		}
 	}
 	return out, rows.Err()

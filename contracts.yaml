@@ -628,7 +628,7 @@ contracts:
     oracle: RFC 7519 / RFC 9068
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: PEP02
     statement: API keys are stored as hashes, rotate with two active keys, and a revoked key is refused by every PDP within the revocation SLO.
     oracle: status codes over time
@@ -640,7 +640,7 @@ contracts:
     oracle: fetches counted by the fake IdP
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: PEP04
     statement: The keys of a PEP issuer reach the PDP only through the replicated state; the PDP never calls the IdP.
     oracle: connections of the PDP

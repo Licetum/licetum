@@ -42,6 +42,7 @@ type cacheState struct {
 	// ok is false when the revisions could not be read: the answer is computed and not kept.
 	ok      bool
 	version int64            // the revision of the rules
+	pep     int64            // the revision of the PEP directory (see PEPDirectory); no answer key depends on it
 	data    map[string]int64 // service id -> revision of its resource data (absent: 0)
 	attrs   []string
 	// attrsOK says the attribute names are those of this revision (otherwise they are read from the rules).
@@ -63,7 +64,7 @@ func (a *App) readCacheState(ctx context.Context) cacheState {
 		return cacheState{}
 	}
 	a.noteLogSettingsRevision(rev.LogSettings)
-	state := cacheState{ok: true, version: rev.Rules, data: rev.Data}
+	state := cacheState{ok: true, version: rev.Rules, data: rev.Data, pep: rev.PEP}
 	state.tag = dataTag(state.data)
 	if memo := a.attrsMemo.Load(); memo != nil && memo.revision == rev.Rules {
 		state.attrs, state.attrsOK = memo.attrs, true
