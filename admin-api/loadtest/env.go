@@ -2,8 +2,6 @@ package loadtest
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -31,20 +29,15 @@ type env struct {
 	// the Toxiproxy links in front of them. The harness itself (seeding, the admin writes) always goes direct.
 	checkDBURI, checkRedisURI string
 	// links are the proxies in front of PostgreSQL and Redis (nil without added latency).
-	links       []*support.Link
-	stateSecret string
-	closers     []func() error
+	links   []*support.Link
+	closers []func() error
 }
 
 // newEnv connects to the infrastructure the same way the binaries do (config from the environment, migrations, the
 // engine), so the seeding goes through the same code the admin API runs.
 func newEnv(ctx context.Context, infra *support.Infrastructure) (*env, error) {
-	secret, err := randomHex(32)
-	if err != nil {
-		return nil, err
-	}
-	e := &env{dbURI: infra.DBURI, redisURI: infra.RedisURI, checkDBURI: infra.DBURI, checkRedisURI: infra.RedisURI, stateSecret: secret}
-	for name, value := range map[string]string{"DB__URI": e.dbURI, "REDIS__URI": e.redisURI, "AUTH__STATE_SECRET": secret} {
+	e := &env{dbURI: infra.DBURI, redisURI: infra.RedisURI, checkDBURI: infra.DBURI, checkRedisURI: infra.RedisURI}
+	for name, value := range map[string]string{"DB__URI": e.dbURI, "REDIS__URI": e.redisURI} {
 		if err := os.Setenv(name, value); err != nil {
 			return nil, fmt.Errorf("set %s: %w", name, err)
 		}
@@ -130,11 +123,3 @@ func (e *env) close() {
 func subjectName(i int) string { return fmt.Sprintf("user-%d", i) }
 
 func departmentName(g int) string { return fmt.Sprintf("dept-%d", g) }
-
-func randomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("random bytes: %w", err)
-	}
-	return hex.EncodeToString(b), nil
-}

@@ -7,7 +7,6 @@ package api_test
 // and HTTP server, as separate pods would be.
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
@@ -102,6 +102,7 @@ func (e *env) syncFixture(name string, src *source) *syncFixture {
 // replica is another process on the same database: a check API (or a worker) with its own pools. url is its public port;
 // ops is its operations listener (the probes and the metrics).
 type replica struct {
+	env *env
 	app *engine.App
 	url string
 	ops string
@@ -138,14 +139,14 @@ func (e *env) newApp(role engine.Role, tune func(*config.Config)) *engine.App {
 		app.SyncDB = syncPool
 	}
 	e.t.Cleanup(app.Close)
-	return app
+	return e.track(app)
 }
 
 func (e *env) checkReplica(tune func(*config.Config)) *replica {
 	app := e.newApp(engine.RolePDP, tune)
-	srv := newTestServer(e.t, server.NewPDPHandler(app))
+	srv := newTestServer(e.t, harness.Levers(server.NewPDPHandler(app)))
 	ops := newTestServer(e.t, server.NewOpsHandler(app))
-	return &replica{app: app, url: srv.URL, ops: ops.URL}
+	return &replica{env: e, app: app, url: srv.URL, ops: ops.URL}
 }
 
 // worker starts another worker; the default one of the test is stopped first when replace is set.
@@ -160,17 +161,7 @@ func (e *env) worker(tune func(*config.Config), hooks engine.SyncHooks) (*engine
 func (r *replica) permission(t *testing.T, f *syncFixture, opts ...authzenreq.Option) (int, string, http.Header) {
 	t.Helper()
 	search := authzenreq.SearchResource(f.slug, authzenreq.SubjectOf(f.alice), "branch", "read", opts...)
-	payload, err := json.Marshal(search.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req, err := http.NewRequest(search.Method, r.url+search.Path, bytes.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+f.alice)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(r.env.pdpRequest(r.url, search, f.alice))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -658,9 +649,9 @@ func TestSyncPDPRoleCannotWriteTheGraph(t *testing.T) {
 	})
 
 	restricted := e.restrictedApp(role)
-	srv := newTestServer(t, server.NewPDPHandler(restricted))
+	srv := newTestServer(t, harness.Levers(server.NewPDPHandler(restricted)))
 	ops := newTestServer(t, server.NewOpsHandler(restricted))
-	r := &replica{app: restricted, url: srv.URL, ops: ops.URL}
+	r := &replica{env: e, app: restricted, url: srv.URL, ops: ops.URL}
 
 	// The first request asks for the synchronization; the worker (the owner) applies it; the restricted role only reads.
 	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b2"`) {
@@ -701,7 +692,7 @@ func (e *env) restrictedApp(role string) *engine.App {
 	app := engine.New(pool, rdb, &cfg)
 	app.Role = engine.RolePDP
 	e.t.Cleanup(app.Close)
-	return app
+	return e.track(app)
 }
 
 // F3-9: a write in the admin API does not make the worker ask the sources of other services.

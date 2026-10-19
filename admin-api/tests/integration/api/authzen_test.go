@@ -22,11 +22,11 @@ import (
 
 func (w *world) authzen(path string, body any, claims jwt.MapClaims) (int, map[string]any) {
 	w.t.Helper()
-	headers := []string{}
+	headers := []string{authzenreq.ConsistencyHeader, "higher"}
 	if claims != nil {
 		headers = append(headers, "Authorization", "Bearer "+w.token(claims))
 	}
-	status, header, raw := w.doWithHeader(http.MethodPost, w.check.URL+"/service/"+w.org+"/access/v1/"+path+"?consistency=higher", body, headers...)
+	status, header, raw := w.doWithHeader(http.MethodPost, w.check.URL+"/service/"+w.ref(w.org)+"/access/v1/"+path, body, headers...)
 	return status, authzenAnswer(w.t, status, header, raw)
 }
 
@@ -83,16 +83,16 @@ func TestAuthzenEvaluationsSemanticsAndErrors(t *testing.T) {
 		t.Fatalf("permit_on_first_permit stops at the first permit: %v", got)
 	}
 
-	// An evaluation that names somebody else is a denial with its error, not a failure of the batch.
-	other := map[string]any{"subject": map[string]any{"type": "user", "id": "someone-else"}, "resource": b3["resource"], "action": b3["action"]}
+	// An evaluation that cannot be decided (its subject looks like a group) is a denial with its error, not a failure of the batch.
+	other := map[string]any{"subject": map[string]any{"type": "user", "id": "group:ops"}, "resource": b3["resource"], "action": b3["action"]}
 	out := batch("", b3, other, authzenEval("nothing", "*", "read"))
 	items := out["evaluations"].([]any)
 	if len(items) != 3 || items[0].(map[string]any)["decision"] != true {
 		t.Fatalf("batch with a bad evaluation: %v", out)
 	}
 	errInfo := items[1].(map[string]any)["context"].(map[string]any)["error"].(map[string]any)
-	if items[1].(map[string]any)["decision"] != false || errInfo["status"] != float64(http.StatusForbidden) {
-		t.Fatalf("a subject the caller may not ask about: %v", items[1])
+	if items[1].(map[string]any)["decision"] != false || errInfo["status"] != float64(http.StatusBadRequest) {
+		t.Fatalf("a subject that cannot be asked about: %v", items[1])
 	}
 	if items[2].(map[string]any)["decision"] != false {
 		t.Fatalf("an unknown type is a denial: %v", items[2])
@@ -104,7 +104,7 @@ func TestAuthzenEvaluationsSemanticsAndErrors(t *testing.T) {
 		t.Fatalf("evaluations without evaluations: %d %v", status, single)
 	}
 
-	// What is not valid is a 400 (the specification has no 422), what is not allowed a 403, no token a 401.
+	// What is not valid is a 400 (the specification has no 422), no credential a 401.
 	status, _ = w.authzen("evaluation", map[string]any{"subject": subject, "resource": map[string]any{"id": "B3"}, "action": b3["action"]}, self)
 	if status != http.StatusBadRequest {
 		t.Fatalf("a resource without a type: %d", status)
@@ -118,13 +118,13 @@ func TestAuthzenEvaluationsSemanticsAndErrors(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("an unknown semantic: %d", status)
 	}
-	status, _ = w.authzen("evaluation", map[string]any{"subject": map[string]any{"type": "user", "id": "someone-else"},
+	status, _ = w.authzen("evaluation", map[string]any{"subject": map[string]any{"type": "user", "id": "group:ops"},
 		"resource": b3["resource"], "action": b3["action"]}, self)
-	if status != http.StatusForbidden {
-		t.Fatalf("another subject for a client that is not trusted: %d", status)
+	if status != http.StatusBadRequest {
+		t.Fatalf("a subject that looks like a group: %d", status)
 	}
 	if status, _ = w.authzen("evaluation", map[string]any{"subject": subject, "resource": b3["resource"], "action": b3["action"]}, nil); status != http.StatusUnauthorized {
-		t.Fatalf("no token: %d", status)
+		t.Fatalf("no credential: %d", status)
 	}
 }
 
@@ -208,85 +208,30 @@ func TestAuthzenSearches(t *testing.T) {
 	if got := actions(map[string]any{"type": "branch", "id": "B4"}); len(got) != 0 {
 		t.Fatalf("actions on B4: %v", got)
 	}
-
-	// Subjects: only a trusted client may ask, and only the people of the directory of the service are listed.
-	status, _ = w.authzen("search/subject", map[string]any{"subject": map[string]any{"type": "user"},
-		"resource": map[string]any{"type": "branch", "id": "B1"}, "action": map[string]any{"name": "read"}}, self)
-	if status != http.StatusForbidden {
-		t.Fatalf("subject search by a client that is not trusted: %d", status)
-	}
-	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend"}})
-	w.sendPeople(w.org, person("dave", "Dave", nil))
-	w.grant(map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "subject": "dave", "access": []string{"read"}})
-	trusted := jwt.MapClaims{"azp": "docs-backend", "sub": "svc-docs-backend"}
-	status, out = w.authzen("search/subject", map[string]any{"subject": map[string]any{"type": "user"},
-		"resource": map[string]any{"type": "branch", "id": "B1"}, "action": map[string]any{"name": "read"}}, trusted)
-	// user-1 reads B1 through D1 but is not in the directory, so only dave is listed.
-	found := map[string]map[string]any{}
-	results, _ := out["results"].([]any)
-	for _, r := range results {
-		entry := r.(map[string]any)
-		found[entry["id"].(string)] = entry
-	}
-	dave, ok := found["dave"]
-	if status != http.StatusOK || !ok || len(found) != 1 || dave["type"] != "user" || dave["properties"].(map[string]any)["name"] != "Dave" {
-		t.Fatalf("subject search: %d %v", status, out)
-	}
-	if _, stranger := found["svc-docs-backend"]; stranger {
-		t.Fatalf("the client itself has no access: %v", out)
-	}
-}
-
-func TestAuthzenTrustedClientAsksAboutAPerson(t *testing.T) {
-	w := newWorld(t)
-	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1", "subject": "dave", "access": []string{"read"}})
-	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend"}})
-	trusted := jwt.MapClaims{"azp": "docs-backend", "sub": "svc-docs-backend"}
-	dave := map[string]any{"type": "user", "id": "dave"}
-
-	status, out := w.authzen("evaluation", map[string]any{"subject": dave, "resource": map[string]any{"type": "branch", "id": "B1"},
-		"action": map[string]any{"name": "read"}}, trusted)
-	if status != http.StatusOK || out["decision"] != true {
-		t.Fatalf("a trusted client asks about dave: %d %v", status, out)
-	}
-	status, out = w.authzen("search/resource", map[string]any{"subject": dave, "resource": map[string]any{"type": "branch"},
-		"action": map[string]any{"name": "read"}}, trusted)
-	if status != http.StatusOK || len(out["results"].([]any)) != 3 {
-		t.Fatalf("resources of dave: %d %v", status, out)
-	}
-	// A client that is not trusted may not.
-	status, _ = w.authzen("evaluation", map[string]any{"subject": dave, "resource": map[string]any{"type": "branch", "id": "B1"},
-		"action": map[string]any{"name": "read"}}, jwt.MapClaims{"azp": "stranger", "sub": "svc"})
-	if status != http.StatusForbidden {
-		t.Fatalf("a stranger asks about dave: %d", status)
-	}
-
-	// The calls are audited like the calls on behalf of a person.
-	calls := w.must("GET", "/service/"+w.org+"/delegated_calls", nil)["items"].([]any)
-	if len(calls) != 2 {
-		t.Fatalf("two calls were answered: %v", calls)
-	}
 }
 
 func TestAuthzenMetadata(t *testing.T) {
 	w := newWorld(t)
-	status, header, raw := w.doWithHeader("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.org, nil)
+	status, header, raw := w.doWithHeader("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.ref(w.org), nil)
 	requireAuthzenError(t, status, header, raw, http.StatusNotFound, "authzen_metadata_disabled")
 
 	w.cfg.PDP.PublicURL = "https://licetum.test"
-	status, raw = w.do("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.org, nil)
+	status, raw = w.do("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.ref(w.org), nil)
 	if status != http.StatusOK {
 		t.Fatalf("metadata: %d %s", status, raw)
 	}
 	doc := decodeMap(t, raw)
-	// The identifier of the PDP names the service by its slug (ADR 0001, 7.2); the slug becomes fixed in P3 (ADM11). The path takes the id too.
+	// The identifier of the PDP names the service by its slug (ADR 0001, 7.2); the slug becomes fixed in P3 (ADM11).
 	pdp := "https://licetum.test/service/org"
 	if doc["policy_decision_point"] != pdp || doc["access_evaluation_endpoint"] != pdp+"/access/v1/evaluation" ||
 		doc["search_resource_endpoint"] != pdp+"/access/v1/search/resource" {
 		t.Fatalf("metadata: %v", doc)
 	}
-	status, header, raw = w.doWithHeader("GET", w.check.URL+"/.well-known/authzen-configuration/service/00000000-0000-0000-0000-000000000000", nil)
-	requireAuthzenError(t, status, header, raw, http.StatusNotFound, "service_not_found")
+	// The path takes the slug only: the id of a service that exists is not one.
+	for _, ref := range []string{w.org, "nowhere"} {
+		status, header, raw = w.doWithHeader("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+ref, nil)
+		requireAuthzenError(t, status, header, raw, http.StatusNotFound, "service_not_found")
+	}
 }
 
 // TestContract_DIR01_SubjectSearchListsTheAllowedEntriesOfTheDirectoryOfTheService: the people of the directory of the service, of

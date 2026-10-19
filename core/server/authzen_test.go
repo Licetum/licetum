@@ -185,17 +185,17 @@ func TestApplySemantic(t *testing.T) {
 
 func TestApplySemanticErrorsAreDenials(t *testing.T) {
 	list := evals(true, false)
-	list[1].err = apperr.Forbidden(i18n.AuthzenSubjectMismatch)
+	list[1].err = apperr.Forbidden(i18n.AuthzenForbidden)
 	list[1].resp = model.AuthzenEvaluationResponse{}
 
 	out := applySemantic(model.AuthzenExecuteAll, list, i18n.EN)
 	errInfo, _ := out[1].Context["error"].(map[string]any)
-	if out[1].Decision || errInfo["status"] != http.StatusForbidden || !strings.Contains(errInfo["message"].(string), "subject.id") {
+	if out[1].Decision || errInfo["status"] != http.StatusForbidden || errInfo["message"] != "The client may not do this" {
 		t.Fatalf("an evaluation that could not be decided is a denial with its error: %+v", out[1])
 	}
 	// The message is in the language of the request.
 	ru := applySemantic(model.AuthzenExecuteAll, list, i18n.RU)
-	if msg := ru[1].Context["error"].(map[string]any)["message"].(string); !strings.Contains(msg, "Bearer") && !strings.Contains(msg, "bearer") {
+	if msg := ru[1].Context["error"].(map[string]any)["message"].(string); msg != "Клиенту это не разрешено" {
 		t.Errorf("the message must be localized: %q", msg)
 	}
 	// An error stops deny_on_first_deny, and keeps its error next to the reason.
@@ -210,7 +210,7 @@ func TestApplySemanticErrorsAreDenials(t *testing.T) {
 		t.Errorf("permit_on_first_permit: %s", got)
 	}
 	// The shared error is not changed by the language of a request.
-	if list[1].err.Detail != apperr.Forbidden(i18n.AuthzenSubjectMismatch).Detail {
+	if list[1].err.Detail != apperr.Forbidden(i18n.AuthzenForbidden).Detail {
 		t.Error("the error must not be localized in place")
 	}
 }
@@ -245,7 +245,7 @@ func TestBadRequestKeepsOtherStatuses(t *testing.T) {
 	if got := badRequest(apperr.Unprocessable(i18n.ContextInvalid)); got.Status != http.StatusBadRequest {
 		t.Errorf("422 -> %d", got.Status)
 	}
-	if got := badRequest(apperr.Forbidden(i18n.AuthzenSubjectMismatch)); got.Status != http.StatusForbidden {
+	if got := badRequest(apperr.Forbidden(i18n.AuthzenForbidden)); got.Status != http.StatusForbidden {
 		t.Errorf("403 -> %d", got.Status)
 	}
 }
@@ -314,14 +314,6 @@ func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
 				t.Fatalf("code %q, want %s: %s", code, c.code, body)
 			}
 		})
-	}
-}
-
-func TestOtherOperationsKeepTheirValidationStatus(t *testing.T) {
-	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
-	status, body, _ := post(t, h, "/service/orders/check", `{"checks":[]}`)
-	if status != http.StatusUnprocessableEntity {
-		t.Fatalf("the check API keeps its 422: %d %v", status, body)
 	}
 }
 

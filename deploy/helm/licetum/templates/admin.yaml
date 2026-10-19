@@ -61,9 +61,6 @@ spec:
           env:
             {{- include "licetum.secretEnv" (dict "root" . "key" "DB__URI") | nindent 12 }}
             {{- include "licetum.secretEnv" (dict "root" . "key" "REDIS__URI") | nindent 12 }}
-            {{- include "licetum.secretEnv" (dict "root" . "key" "AUTH__STATE_SECRET") | nindent 12 }}
-            - name: CORS__ALLOW_ORIGINS
-              value: {{ .Values.admin.corsAllowOrigins | quote }}
           startupProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 2

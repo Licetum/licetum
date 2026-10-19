@@ -2,11 +2,10 @@
 
 package api_test
 
-// Tests of F4: background writes off the request path (issue #36). Names carry the criterion they prove.
+// Tests of F4: work off the request path (issue #36): retention, the log settings, the change log. Names carry the criterion they prove.
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -15,10 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/licetum/licetum/admin-api/service"
-	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/logx"
@@ -43,104 +39,20 @@ func (w *world) countRows(query string, args ...any) int {
 	return n
 }
 
-func TestF4_2_AsyncAuditLosesNothingOnGracefulShutdown(t *testing.T) {
-	w := newWorld(t)
-	org := uuid.MustParse(w.org)
-	app := w.replica(func(c *config.Config) { c.Delegation.AuditMode = "async"; c.Delegation.AuditBuffer = 100_000 })
-
-	const calls = 1200 // more than one statement (500 rows) and more than one flush window
-	for i := 0; i < calls; i++ {
-		err := app.RecordDelegatedCall(context.Background(), org, engine.DelegatedCall{
-			CallerClient: "docs", Subject: fmt.Sprintf("u%d", i), Operation: "check", Questions: 1, Allowed: 1})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	app.Close() // the buffer is flushed on Close
-	if got := w.countRows(`SELECT count(*) FROM delegated_call`); got != calls {
-		t.Fatalf("stored %d records, answered %d", got, calls)
-	}
-}
-
-func TestF4_1_AsyncAuditDoesNotWaitForTheDatabase(t *testing.T) {
-	w := newWorld(t)
-	org := uuid.MustParse(w.org)
-	app := w.replica(func(c *config.Config) { c.Delegation.AuditMode = "async"; c.Delegation.AuditBuffer = 100_000 })
-
-	// Hold every insert: a record that waited for the write would not return.
-	tx, err := w.pool.Begin(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(context.Background(), `LOCK TABLE delegated_call IN ACCESS EXCLUSIVE MODE`); err != nil {
-		t.Fatal(err)
-	}
-	start := time.Now()
-	for i := 0; i < 100; i++ {
-		if err := app.RecordDelegatedCall(context.Background(), org, engine.DelegatedCall{CallerClient: "docs", Subject: "u", Operation: "check"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if d := time.Since(start); d > 200*time.Millisecond {
-		t.Fatalf("100 async records took %s with the table locked", d)
-	}
-	_ = tx.Rollback(context.Background())
-}
-
-func TestF4_1_StrictAuditIsWrittenBeforeTheAnswer(t *testing.T) {
-	w := newWorld(t)
-	org := uuid.MustParse(w.org)
-	if err := w.app.RecordDelegatedCall(context.Background(), org, engine.DelegatedCall{CallerClient: "docs", Subject: "u", Operation: "check"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := w.countRows(`SELECT count(*) FROM delegated_call`); got != 1 {
-		t.Fatalf("strict mode wrote %d records on return, want 1", got)
-	}
-}
-
-func TestF4_2_AsyncAuditCountsWhatItDrops(t *testing.T) {
-	w := newWorld(t)
-	org := uuid.MustParse(w.org)
-	app := w.replica(func(c *config.Config) { c.Delegation.AuditMode = "async"; c.Delegation.AuditBuffer = 3 })
-
-	tx, err := w.pool.Begin(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(context.Background(), `LOCK TABLE delegated_call IN ACCESS EXCLUSIVE MODE`); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 5; i++ {
-		_ = app.RecordDelegatedCall(context.Background(), org, engine.DelegatedCall{CallerClient: "docs", Subject: "u", Operation: "check"})
-	}
-	text := scrape(app)
-	if v := harness.MetricValue(text, "licetum_audit_dropped_total "); v != 2 {
-		t.Fatalf("dropped = %v, want 2\n%s", v, grepLines(text, "licetum_audit"))
-	}
-	if v := harness.MetricValue(text, "licetum_audit_buffer_records "); v != 3 {
-		t.Fatalf("buffered = %v, want 3", v)
-	}
-	_ = tx.Rollback(context.Background())
-	app.Close()
-	if got := w.countRows(`SELECT count(*) FROM delegated_call`); got != 3 {
-		t.Fatalf("stored %d, want the 3 that were buffered", got)
-	}
-}
-
 func TestF4_4_RetentionRemovesOldRecordsInChunks(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
 	if _, err := w.pool.Exec(ctx, `
-		INSERT INTO delegated_call (at, service_id, caller_client, subject, operation)
-		SELECT now() - interval '400 days', $1, 'c', 's' || g, 'check' FROM generate_series(1, 25000) g`, w.org); err != nil {
+		INSERT INTO known_subject (subject, last_seen)
+		SELECT 's' || g, now() - interval '400 days' FROM generate_series(1, 25000) g`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.pool.Exec(ctx, `INSERT INTO delegated_call (service_id, caller_client, subject, operation) VALUES ($1, 'c', 'fresh', 'check')`, w.org); err != nil {
+	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject) VALUES ('fresh')`); err != nil {
 		t.Fatal(err)
 	}
-	app := w.replica(func(c *config.Config) { c.Delegation.AuditRetentionDays = 365 })
+	app := w.replica(func(c *config.Config) {})
 	app.RunRetention(ctx)
-	if got := w.countRows(`SELECT count(*) FROM delegated_call`); got != 1 {
+	if got := w.countRows(`SELECT count(*) FROM known_subject`); got != 1 {
 		t.Fatalf("%d records left, want only the fresh one", got)
 	}
 }
@@ -160,45 +72,30 @@ func TestF4_4_RetentionDropsWhatIsLeftOfTheRetiredRegistryAfterNinetyDays(t *tes
 	}
 }
 
-func TestF4_2_StrictAuditFailsTheCallWhenTheRecordCannotBeWritten(t *testing.T) {
-	w := newWorld(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // the database cannot be reached: the insert fails, and so must the call
-	err := w.app.RecordDelegatedCall(ctx, uuid.MustParse(w.org), engine.DelegatedCall{CallerClient: "docs", Subject: "u", Operation: "check"})
-	if err == nil {
-		t.Fatal("strict mode answered a call whose record was not written")
-	}
-	if got := w.countRows(`SELECT count(*) FROM delegated_call`); got != 0 {
-		t.Fatalf("%d records stored", got)
-	}
-}
-
 func TestF4_4_RetentionRunsOncePerIntervalAcrossReplicas(t *testing.T) {
 	w := newWorld(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	old := func() {
-		if _, err := w.pool.Exec(ctx, `
-			INSERT INTO delegated_call (at, service_id, caller_client, subject, operation)
-			VALUES (now() - interval '400 days', $1, 'c', 'old', 'check')`, w.org); err != nil {
+	old := func(subject string) {
+		if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject, last_seen) VALUES ($1, now() - interval '400 days')`, subject); err != nil {
 			t.Fatal(err)
 		}
 	}
-	tune := func(c *config.Config) { c.Delegation.AuditRetentionDays = 365 }
+	tune := func(c *config.Config) {}
 	a, b := w.replica(tune), w.replica(tune)
 
-	old()
+	old("old-1")
 	go a.WatchRetention(ctx)
-	for deadline := time.Now().Add(5 * time.Second); w.countRows(`SELECT count(*) FROM delegated_call`) != 0; time.Sleep(50 * time.Millisecond) {
+	for deadline := time.Now().Add(5 * time.Second); w.countRows(`SELECT count(*) FROM known_subject`) != 0; time.Sleep(50 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatal("the first replica did not apply the retention")
 		}
 	}
 	// Within the interval another replica leaves the table alone.
-	old()
+	old("old-2")
 	go b.WatchRetention(ctx)
 	time.Sleep(time.Second)
-	if got := w.countRows(`SELECT count(*) FROM delegated_call`); got != 1 {
+	if got := w.countRows(`SELECT count(*) FROM known_subject`); got != 1 {
 		t.Fatalf("a second replica applied the retention within the interval: %d records", got)
 	}
 }

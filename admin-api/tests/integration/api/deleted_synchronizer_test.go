@@ -22,6 +22,7 @@ import (
 
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // partBelowItem adds the type part (service app) below item: its source names I1 as the parent of P1.
@@ -101,8 +102,8 @@ func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) 
 	authzen := func(path string, body map[string]any) map[string]any {
 		t.Helper()
 		body["subject"] = subject
-		status, raw := w.do(http.MethodPost, w.check.URL+"/service/"+w.appSvc+"/access/v1/"+path+"?consistency=higher", body,
-			"Authorization", self)
+		status, raw := w.do(http.MethodPost, w.check.URL+"/service/"+w.ref(w.appSvc)+"/access/v1/"+path, body,
+			"Authorization", self, authzenreq.ConsistencyHeader, "higher")
 		if status != http.StatusOK {
 			t.Fatalf("authzen %s: %d %s", path, status, raw)
 		}
@@ -192,13 +193,17 @@ func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) 
 	}
 
 	// The admin simulation.
-	sim := w.must("POST", "/service/"+w.appSvc+"/simulate/check", map[string]any{
-		"subject": hierarchySubject, "claims": map[string]any{"preferred_username": hierarchySubject},
-		"checks": questions, "explain": true,
-	})
+	simQuestions := make([]authzenreq.Question, len(questions))
+	for i, q := range questions {
+		simQuestions[i] = authzenreq.Question{Resource: authzenreq.On(q["type"].(string), q["resource_id"].(string)), Action: "read"}
+	}
+	status, sim := w.simulate(authzenreq.Evaluations(w.appSvc, hierarchySubject, simQuestions))
+	if status != http.StatusOK {
+		t.Fatalf("the simulation: %d %v", status, sim)
+	}
 	var simulated []map[string]any
-	for _, r := range sim["results"].([]any) {
-		simulated = append(simulated, r.(map[string]any))
+	for _, r := range sim["evaluations"].([]any) {
+		simulated = append(simulated, map[string]any{"explanation": reasonOf(r.(map[string]any))})
 	}
 	if got := decisions(simulated); !slices.Equal(got, gone) {
 		t.Fatalf("the simulation: %v", got)

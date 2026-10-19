@@ -5,7 +5,6 @@ secrets:
   dbUri: postgres://licetum:licetum@db-primary.example.internal:5432/licetum
   dbReadUri: postgres://licetum:licetum@db-replica.example.internal:5432/licetum
   redisUri: redis://redis.example.internal:6379/0
-  authStateSecret: ci-only-state-secret
 platform:
   url: https://admin.example.com
   icon: https://admin.example.com/favicon.ico

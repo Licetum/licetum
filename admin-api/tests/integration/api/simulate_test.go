@@ -7,6 +7,7 @@ package api_test
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -18,13 +19,16 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
+// serviceSegment is the service of a path of the PDP; the simulation of the admin API takes the id of the service there.
+var serviceSegment = regexp.MustCompile(`^/service/([^/]+)/`)
+
 // simulate sends a request that authzenreq built for the PDP to the simulation of the service, as the holder of the headers: the
-// same body at the same endpoint below /simulate, on the admin API.
+// same body at the same endpoint below /simulate, on the admin API. The reference of the service in the request is its id.
 func (w *world) simulate(req authzenreq.Request, headers ...string) (int, map[string]any) {
 	w.t.Helper()
-	path := strings.Replace(req.Path, "/service/"+w.org+"/", "/service/"+w.org+"/simulate/", 1)
+	path := serviceSegment.ReplaceAllString(req.Path, "/service/$1/simulate/")
 	if path == req.Path {
-		w.t.Fatalf("the request is not about the service %s: %s", w.org, req.Path)
+		w.t.Fatalf("the request is not about a service: %s", req.Path)
 	}
 	status, header, raw := w.doWithHeader(req.Method, w.admin.URL+path, req.Body, headers...)
 	return status, authzenAnswer(w.t, status, header, raw)
@@ -64,9 +68,8 @@ func TestSimulationAnswersLikeThePDPForThePropertiesGivenAndExplains(t *testing.
 	client := w.pepClient(w.org, "evaluator", db.PEPKindAPIKey, engine.PEPEvaluate)
 	key, _ := w.pepKey(client)
 	for _, id := range []string{"B1", "B3"} {
-		question := authzenreq.Evaluation(w.org, hierarchySubject, authzenreq.On("branch", id), "read")
-		pdp, header, raw := w.askWithHeader(question, key)
-		simulated, sim := w.simulate(question)
+		pdp, header, raw := w.askWithHeader(authzenreq.Evaluation(w.ref(w.org), hierarchySubject, authzenreq.On("branch", id), "read"), key)
+		simulated, sim := w.simulate(authzenreq.Evaluation(w.org, hierarchySubject, authzenreq.On("branch", id), "read"))
 		if pdp != http.StatusOK || simulated != http.StatusOK {
 			t.Fatalf("%s: the PDP says %d, the simulation %d", id, pdp, simulated)
 		}
@@ -142,6 +145,10 @@ func TestSimulationIsForAdministratorsAndChecksTheShapeOfTheRequest(t *testing.T
 	}
 	if status, _ := w.simulate(question, "Authorization", stranger); status != http.StatusForbidden {
 		t.Errorf("a stranger simulates: %d", status)
+	}
+	// The subject search lists the people of the directory: the right to read the service is not enough for it.
+	if status, _ := w.simulate(authzenreq.SearchSubject(w.org, authzenreq.On("branch", "B1"), "read"), "Authorization", reader); status != http.StatusForbidden {
+		t.Errorf("a reader of the service searches the subjects of the directory: %d", status)
 	}
 	if status, _ := w.simulate(question, "Authorization", ""); status != http.StatusUnauthorized {
 		t.Errorf("without a token: %d", status)

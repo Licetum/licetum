@@ -1,5 +1,5 @@
 // Package config reads settings from environment variables grouped by prefix (DB__, AUTH__,
-// REDIS__, CORS__, PLATFORM__, HTTP__). Names are case-insensitive. Lists (CORS__ALLOW_ORIGINS,
+// REDIS__, PLATFORM__, HTTP__). Names are case-insensitive. Lists (
 // PLATFORM__ADMIN_CLAIM_VALUES, ...) are accepted both as a JSON array (`["http://a","http://b"]`)
 // and comma-separated.
 package config
@@ -51,19 +51,11 @@ type Database struct {
 func (d Database) MaxConns() int { return d.PoolSize + d.MaxOverflow }
 
 type Auth struct {
-	StateSecret string
-	StateTTL    time.Duration
-	// TokenL1Size is how many verified tokens a process keeps in memory (the first level of the token cache; the second
-	// is Redis). Zero takes the default, a negative value turns the level off.
-	TokenL1Size int
-	// JWKSTTL is how long the key set of a service is kept before it is fetched again.
+	// JWKSTTL is how long the key set of an identity provider is kept before it is fetched again.
 	JWKSTTL time.Duration
 	// JWKSMinRefresh is the shortest time between two fetches of the same key set: a token that names an unknown key
 	// triggers a fetch at most this often per key set URL.
 	JWKSMinRefresh time.Duration
-	// InvalidTokenTTL is how long a token that failed verification is remembered, so that the same bad token does not
-	// reach the identity provider again.
-	InvalidTokenTTL time.Duration
 }
 
 type Redis struct {
@@ -112,13 +104,6 @@ type Background struct {
 	// Workers is how many tasks run at once; Queue is how many wait. A task that finds the queue full is dropped.
 	Workers int
 	Queue   int
-}
-
-type Cors struct {
-	AllowOrigins     []string
-	AllowCredentials bool
-	AllowMethods     []string
-	AllowHeaders     []string
 }
 
 // Platform is the self-service config: Licetum registers itself as a Service to grant permissions
@@ -212,17 +197,6 @@ type Sync struct {
 	Concurrency int
 }
 
-// Delegation tunes the audit of the calls made on behalf of a person (see service.RecordDelegatedCall).
-type Delegation struct {
-	// AuditRetentionDays is how long a record is kept; 0 keeps them for good.
-	AuditRetentionDays int
-	// AuditMode is "strict" (a call is answered only after its record is committed) or "async" (the record is
-	// buffered and written in batches: a crash loses at most the buffer of the last flush window).
-	AuditMode string
-	// AuditBuffer is how many records the async buffer holds; a record that does not fit is dropped and counted.
-	AuditBuffer int
-}
-
 type HTTP struct {
 	// Addr is the address the HTTP server listens on. Empty means the app's own default
 	// (:8000 for the admin API; the PDP has its own setting, PDP__ADDR).
@@ -292,11 +266,9 @@ type Config struct {
 	DB         Database
 	Auth       Auth
 	Redis      Redis
-	Cors       Cors
 	Platform   Platform
 	AdminAuth  AdminAuth
 	Sync       Sync
-	Delegation Delegation
 	HTTP       HTTP
 	Cache      Cache
 	Snapshot   Snapshot
@@ -331,13 +303,9 @@ func Load() (*Config, error) {
 			LagInterval:        e.duration("DB__LAG_INTERVAL", time.Second),
 		},
 		Auth: Auth{
-			StateSecret: e.str("AUTH__STATE_SECRET", ""),
-			StateTTL:    e.seconds("AUTH__STATE_TTL", 300),
 
-			TokenL1Size:     e.int("AUTH__TOKEN_L1_SIZE", 50_000),
-			JWKSTTL:         e.duration("AUTH__JWKS_TTL", 10*time.Minute),
-			JWKSMinRefresh:  e.duration("AUTH__JWKS_MIN_REFRESH", 30*time.Second),
-			InvalidTokenTTL: e.duration("AUTH__INVALID_TOKEN_TTL", 10*time.Second),
+			JWKSTTL:        e.duration("AUTH__JWKS_TTL", 10*time.Minute),
+			JWKSMinRefresh: e.duration("AUTH__JWKS_MIN_REFRESH", 30*time.Second),
 		},
 		Redis: Redis{
 			URI:        e.str("REDIS__URI", ""),
@@ -363,12 +331,6 @@ func Load() (*Config, error) {
 		Background: Background{
 			Workers: e.int("BACKGROUND__WORKERS", 16),
 			Queue:   e.int("BACKGROUND__QUEUE", 1024),
-		},
-		Cors: Cors{
-			AllowOrigins:     e.list("CORS__ALLOW_ORIGINS", nil),
-			AllowCredentials: e.bool("CORS__ALLOW_CREDENTIALS", false),
-			AllowMethods:     e.list("CORS__ALLOW_METHODS", []string{"*"}),
-			AllowHeaders:     e.list("CORS__ALLOW_HEADERS", []string{"*"}),
 		},
 		Platform: Platform{
 			Name: e.str("PLATFORM__NAME", "Licetum"),
@@ -402,11 +364,6 @@ func Load() (*Config, error) {
 			FreshMinInterval: e.seconds("SYNC__FRESH_MIN_INTERVAL", 1),
 			Concurrency:      e.int("SYNC__CONCURRENCY", 0),
 		},
-		Delegation: Delegation{
-			AuditRetentionDays: e.int("DELEGATION__AUDIT_RETENTION_DAYS", 365),
-			AuditMode:          strings.ToLower(e.str("DELEGATION__AUDIT_MODE", "strict")),
-			AuditBuffer:        e.int("DELEGATION__AUDIT_BUFFER", 100_000),
-		},
 		HTTP: HTTP{
 			Addr:           e.str("HTTP__ADDR", ""),
 			MaxInflight:    e.int("HTTP__MAX_INFLIGHT", 0),
@@ -420,9 +377,6 @@ func Load() (*Config, error) {
 			SearchScanBudget: e.int("PDP__SEARCH_SCAN_BUDGET", DefaultSearchScanBudget),
 		},
 		PEP: PEP{RateLimit: e.int("PEP__RATE_LIMIT", 0), Burst: e.int("PEP__RATE_BURST", 0)},
-	}
-	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
-		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))
 	}
 	if cfg.DB.PoolSize < 1 {
 		e.errs = append(e.errs, fmt.Errorf("DB__POOL_SIZE must be positive, got %d", cfg.DB.PoolSize))
@@ -442,9 +396,6 @@ func Load() (*Config, error) {
 	if cfg.Shutdown.Drain < 0 || cfg.Shutdown.Timeout <= 0 {
 		e.errs = append(e.errs, fmt.Errorf("SHUTDOWN__DRAIN must not be negative and SHUTDOWN__TIMEOUT must be positive, got %s and %s",
 			cfg.Shutdown.Drain, cfg.Shutdown.Timeout))
-	}
-	if cfg.Delegation.AuditBuffer < 1 {
-		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_BUFFER must be positive, got %d", cfg.Delegation.AuditBuffer))
 	}
 	if u := cfg.PDP.PublicURL; u != "" {
 		if err := checkPublicURL(u); err != nil {
@@ -500,7 +451,9 @@ func (c *Config) RequireRedis() error {
 
 // DeprecatedSettings names the settings that are set but no longer have an effect: the Redis lock of the synchronization
 // was replaced by the job table (SYNC__LEASE), HTTP__PUBLIC_URL became PDP__PUBLIC_URL, and the OAuth client of the
-// self-service (PLATFORM__AUTHORIZATION_URL and the rest) gave way to ADMIN_AUTH__*. The processes log a warning when one
+// self-service (PLATFORM__AUTHORIZATION_URL and the rest) gave way to ADMIN_AUTH__*, and the settings of the authentication of
+// people by the token of a service (AUTH__STATE_*, AUTH__TOKEN_L1_SIZE, AUTH__INVALID_TOKEN_TTL), of the calls on behalf of a
+// person (DELEGATION__*) and of CORS went with those features. The processes log a warning when one
 // of them is still set, so that a deployment notices it.
 func DeprecatedSettings() []string {
 	var out []string
@@ -511,6 +464,11 @@ func DeprecatedSettings() []string {
 		"PLATFORM__CLIENT_SECRET",
 		// The registry of known subjects gave way to the subject directory of each service.
 		"SUBJECTS__ENABLED", "SUBJECTS__RETENTION_DAYS",
+		// The PDP takes no token of a person (PEP clients authenticate), so the sign-in state, the token caches, the calls on behalf
+		// of a person and their audit, and the CORS of the browser are gone: the browser reaches the admin API through its BFF.
+		"AUTH__STATE_SECRET", "AUTH__STATE_TTL", "AUTH__TOKEN_L1_SIZE", "AUTH__INVALID_TOKEN_TTL",
+		"DELEGATION__AUDIT_RETENTION_DAYS", "DELEGATION__AUDIT_MODE", "DELEGATION__AUDIT_BUFFER",
+		"CORS__ALLOW_ORIGINS", "CORS__ALLOW_CREDENTIALS", "CORS__ALLOW_METHODS", "CORS__ALLOW_HEADERS",
 	} {
 		if _, ok := lookup(name); ok {
 			out = append(out, name)
@@ -524,13 +482,6 @@ func DeprecatedSettings() []string {
 func (c *Config) RequireAdminAuth() error {
 	if !c.AdminAuth.IsConfigured() {
 		return errors.New("ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL are required: administrators sign in at that identity provider")
-	}
-	return nil
-}
-
-func (c *Config) RequireAuth() error {
-	if c.Auth.StateSecret == "" {
-		return errors.New("environment variable AUTH__STATE_SECRET is not set")
 	}
 	return nil
 }

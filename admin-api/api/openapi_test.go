@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -145,7 +146,12 @@ func TestLocalizedDocsHonorQueryAndAcceptLanguage(t *testing.T) {
 }
 
 func TestValidationErrorsAreLocalizedAndMachineReadable(t *testing.T) {
-	handler := docsHandler(t)
+	// A route that asks for nothing but a service id, so that nothing stands before its validation: every operation of the admin
+	// API but the platform id is behind the policy of the platform.
+	handler, _ := server.NewServer(&engine.App{Cfg: &config.Config{}}, "probe", nil, func(api huma.API) {
+		server.Register(api, huma.Operation{OperationID: "probe", Method: http.MethodGet, Path: "/service/{service_id}/probe"},
+			func(ctx context.Context, in *ServicePath) (*server.Out[string], error) { return server.OK("ok") })
+	})
 	for _, tt := range []struct {
 		language i18n.Lang
 		accept   string
@@ -156,7 +162,7 @@ func TestValidationErrorsAreLocalizedAndMachineReadable(t *testing.T) {
 		{i18n.ZH, "zh-CN", "验证失败"},
 	} {
 		record := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/service/not-a-uuid/oauth/login", nil)
+		req := httptest.NewRequest(http.MethodGet, "/service/not-a-uuid/probe", nil)
 		if tt.accept != "" {
 			req.Header.Set("Accept-Language", tt.accept)
 		}

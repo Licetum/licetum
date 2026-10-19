@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -22,7 +21,7 @@ var adminOpsTags = []*huma.Tag{
 	{Name: "Policy", Description: "The tools of a service's policy: tests with their coverage, the linter, and the export and import of the policy as a document."},
 	{Name: "Log settings", Description: "The structure of the process logs: format, the fields and their names, the event categories, the treatment of the subject and the sampling of allowed decisions."},
 	{Name: "Subject", Description: "The subject directory of a service: the people its application sent, with their properties and the groups they are in."},
-	{Name: "Simulation", Description: "What a subject with given claims would be allowed to do, without a token: for administrators checking the rules."},
+	{Name: "Simulation", Description: "What a subject with given properties would be allowed to do, asked as the AuthZEN API of the PDP asks it and without a PEP client: for administrators checking the rules."},
 }
 
 // ChangesQuery is the filter of GET /changes.
@@ -86,69 +85,17 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 		}
 		return server.OK(out)
 	})
-
-	server.Register(api, withPolicy(huma.Operation{
-		OperationID: "simulate_check",
-		Method:      http.MethodPost,
-		Path:        "/service/{service_id}/simulate/check",
-		Summary:     "Simulate checks for a subject",
-		Description: "Answers checks as a subject with the given claims would get them, without a token. The rules and their results are the real ones; the claims are taken as they are given, so the call is for administrators. Simulated answers are not logged as decisions.",
-		Tags:        []string{"Simulation"},
-	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *struct {
-		ServicePath
-		Body model.SimulateCheckInput
-	}) (*server.Out[model.CheckResponse], error) {
-		if err := in.Body.Context.Validate(); err != nil {
-			return nil, err
-		}
-		env := engine.NewEnv(claimsOf(in.Body.Claims), in.Body.Context)
-		results, err := h.app.SimulateCheck(ctx, in.ServiceID, in.Body.Subject, env, in.Body.Checks, in.Body.Explain)
-		if err != nil {
-			return nil, err
-		}
-		return server.OK(model.CheckResponse{Results: results})
-	})
-
-	server.Register(api, withPolicy(huma.Operation{
-		OperationID: "simulate_permission",
-		Method:      http.MethodPost,
-		Path:        "/service/{service_id}/simulate/permission",
-		Summary:     "Simulate the permissions of a subject",
-		Description: "The permissions of a subject with the given claims, filtered and paged like GET /service/{service_id}/permission, without a token. The call is for administrators.",
-		Tags:        []string{"Simulation"},
-		Errors:      []int{http.StatusUnprocessableEntity},
-	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *struct {
-		ServicePath
-		Body model.SimulatePermissionInput
-	}) (*server.Out[engine.PermissionResult], error) {
-		f := engine.PermissionFilter{Type: in.Body.Type, Access: in.Body.Access, After: in.Body.After}
-		if in.Body.Limit != nil {
-			f.Limit = *in.Body.Limit
-		}
-		if err := in.Body.Context.Validate(); err != nil {
-			return nil, err
-		}
-		env := engine.NewEnv(claimsOf(in.Body.Claims), in.Body.Context)
-		out, err := h.app.PermissionPage(ctx, in.ServiceID, in.Body.Subject, env, engine.MinimizeLatency, f)
-		if err != nil {
-			return nil, err
-		}
-		return server.OK(out)
-	})
 }
 
 // registerSimulation registers the simulation of the AuthZEN API for the administrators: the requests and the answers of the PDP,
-// for the subject and the properties a request names (core/server/simulate.go). Reading the service is the right it needs.
+// for the subject and the properties a request names (core/server/simulate.go). Reading the service is the right it needs, except for
+// the subject search, which lists the people of the directory of the service and so needs what the directory itself needs (until the
+// roles of P4: the right to read the memberships).
 func (h *adminHandlers) registerSimulation(api huma.API) {
 	server.RegisterSimulation(api, h.app.App, h.app.Cfg, func(op huma.Operation) huma.Operation {
+		if op.OperationID == "simulate_search_subject" {
+			return withPolicy(op, requireWholeType(model.PlatformGroupMember, model.ActionRead))
+		}
 		return withPolicy(op, requireResource(model.PlatformService, model.ActionRead, "service_id"))
 	})
-}
-
-// claimsOf turns the claims of a request into the claims of a computation (never nil).
-func claimsOf(claims map[string]any) engine.Claims {
-	if claims == nil {
-		return engine.Claims{}
-	}
-	return engine.Claims(claims)
 }

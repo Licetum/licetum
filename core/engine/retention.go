@@ -46,14 +46,10 @@ func (a *App) runRetentionGuarded(ctx context.Context) {
 	a.RunRetention(ctx)
 }
 
-// RunRetention removes the delegated-call records, the rows left in the retired registry of known subjects, and the directory entries
-// that were not sent within the retention period of their service, chunk by chunk until nothing is left.
+// RunRetention removes the rows left in the retired registry of known subjects, and the directory entries that were not sent
+// within the retention period of their service, chunk by chunk until nothing is left. The audit of the calls on behalf of a person
+// is gone with those calls: nothing writes delegated_call, and its table goes with the schema of P3.
 func (a *App) RunRetention(ctx context.Context) {
-	if days := a.Cfg.Delegation.AuditRetentionDays; days > 0 {
-		a.pruneInChunks(ctx, "delegated_call", `
-			DELETE FROM delegated_call WHERE ctid IN (
-				SELECT ctid FROM delegated_call WHERE at < now() - make_interval(days => $1) LIMIT $2)`, days)
-	}
 	// The registry of known subjects is gone (the subject directory replaced it) and nothing writes its table any more; what the
 	// previous release left in it is dropped after the period it was kept for. The table itself goes with the schema of P3.
 	a.pruneInChunks(ctx, "known_subject", `

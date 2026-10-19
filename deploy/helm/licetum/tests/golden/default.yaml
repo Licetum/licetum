@@ -173,13 +173,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: AUTH__STATE_SECRET
-            - name: CORS__ALLOW_ORIGINS
-              value: "[]"
           startupProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 2
@@ -308,11 +301,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: AUTH__STATE_SECRET
           startupProbe:
             httpGet: {path: /readyz, port: ops}
             periodSeconds: 2
@@ -430,11 +418,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: AUTH__STATE_SECRET
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5
@@ -508,7 +491,6 @@ type: Opaque
 stringData:
   DB__URI: "postgres://licetum:licetum@db-primary.example.internal:5432/licetum"
   REDIS__URI: "redis://redis.example.internal:6379/0"
-  AUTH__STATE_SECRET: "ci-only-state-secret"
   DB__READ_URI: "postgres://licetum:licetum@db-replica.example.internal:5432/licetum"
 ---
 # Source: licetum/templates/configmap.yaml
@@ -615,11 +597,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: AUTH__STATE_SECRET
           resources:
             limits:
               memory: 256Mi

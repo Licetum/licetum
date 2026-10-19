@@ -16,14 +16,15 @@ import (
 	"testing"
 )
 
-// The ratchet against the routes that AuthZEN replaces. The check API serves /service/{ref}/permission, /check and
-// /on_behalf/…, and the simulations of the admin API end the same way (/simulate/check, /simulate/permission). AuthZEN serves
-// the same questions under /access/v1/. The tests and the load test move to AuthZEN; this file keeps them from moving back,
-// and from spelling the AuthZEN paths outside the request builders of core/testsupport/authzenreq.
+// The ratchet against the routes that AuthZEN replaced. The check API served /service/{ref}/permission, /check and
+// /on_behalf/…, and the simulations of the admin API ended the same way (/simulate/check, /simulate/permission); AuthZEN serves
+// the same questions under /access/v1/ (contract AZ10 pins the routes the servers have). The tests and the load test ask
+// AuthZEN; this file keeps them from going back to the old routes, and from spelling the AuthZEN paths outside the request
+// builders of core/testsupport/authzenreq.
 //
 // The lines that send an old route, or spell an AuthZEN path, are counted per file. A file that is not in allowed may have
 // none. A listed file must have exactly the lines it is allowed: a new line fails, and so does a removed one, so the list can
-// only shrink. The routes go with P2-23, which deletes this file with them.
+// only shrink.
 
 // self is this file, which names the routes it looks for.
 const self = "tests/oldendpoints_test.go"
@@ -41,22 +42,15 @@ type allowance struct {
 	why           string
 }
 
-// allowed lists the files that still hold old routes or raw AuthZEN paths, and the phase that removes each of them. legacy:2c
-// lines go with the routes in P2-23. The other entries are permanent exceptions, and their reasons say why: the k6 generator is
-// JavaScript and builds its AuthZEN paths itself, and a test that refuses the retired operation names names them.
+// allowed lists the files that still hold old routes or raw AuthZEN paths, and why. The k6 generator is JavaScript and builds its
+// AuthZEN paths itself, and a test that refuses the retired operation names names them; the rest are lines to build with authzenreq.
 var allowed = map[string]allowance{
-	"loadtest/k6/check.js":                               {0, 4, "k6 is JavaScript: it builds its AuthZEN paths itself, not with authzenreq (a permanent exception)"},
+	"loadtest/k6/check.js":                               {0, 3, "k6 is JavaScript: it builds its AuthZEN paths itself, not with authzenreq (a permanent exception)"},
 	"loadtest/loadtest_test.go":                          {1, 0, "the names of the retired requests that ParseMix refuses (a test that they are refused)"},
-	"tests/integration/api/conditions_test.go":           {1, 0, "legacy:2c: the admin simulation of a check goes with P2-23"},
-	"tests/integration/api/consistency_lever_test.go":    {5, 1, "legacy:2c: the lever of the old routes (P2-23); one raw AuthZEN path of the batch of one"},
-	"tests/integration/api/delegation_test.go":           {2, 0, "legacy:2c: on_behalf goes with the delegated calls (P2-23)"},
-	"tests/integration/api/deleted_synchronizer_test.go": {1, 1, "legacy:2c: the admin simulation (P2-23); one AuthZEN path built from a variable"},
+	"tests/integration/api/deleted_synchronizer_test.go": {0, 1, "one AuthZEN path built from a variable, to build with authzenreq"},
 	"tests/integration/api/graph_test.go":                {0, 1, "a raw AuthZEN path of the evaluations, to build with authzenreq"},
-	"tests/integration/api/phase1_test.go":               {5, 0, "legacy:2c: the PermissionPages walk and the admin simulations (P2-23)"},
 	"tests/integration/contracts/ask_test.go":            {0, 1, "a raw AuthZEN path expected from Ask, to build with authzenreq"},
-	"tests/integration/contracts/legacy.go":              {2, 0, "legacy:2c: the second opinions of the runner (SecondOpinion), deleted with the routes (P2-23)"},
 	"tests/integration/harness/requests_test.go":         {0, 2, "the expected wire paths of the harness requests, to take from authzenreq"},
-	"tests/multiregion/stack_test.go":                    {1, 0, "legacy:2c: the multi-region stack reads /permission; off from P2-10, gone with P2-23"},
 }
 
 // finding is one line that the ratchet counts.

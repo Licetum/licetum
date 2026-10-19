@@ -23,7 +23,7 @@ region: ""
 publicUrl: ""
 
 # The secrets. Either name a Secret that holds the keys below (existingSecret, the way to go in production) or give the values and
-# the chart creates one. DB__URI, REDIS__URI and AUTH__STATE_SECRET are required; DB__READ_URI, DB__MIGRATE_URI and, for the
+# the chart creates one. DB__URI and REDIS__URI are required; DB__READ_URI, DB__MIGRATE_URI and, for the
 # web interface, SESSION_SECRET and OIDC_CLIENT_SECRET (absent for a public client) are optional.
 existingSecret: ""
 secrets:
@@ -31,7 +31,6 @@ secrets:
   dbReadUri: ""
   dbMigrateUri: ""
   redisUri: ""
-  authStateSecret: ""
   sessionSecret: ""
   oidcClientSecret: ""
 
@@ -117,7 +116,6 @@ admin:
   resources:
     requests: {cpu: 250m, memory: 256Mi}
     limits: {memory: 512Mi}
-  corsAllowOrigins: '[]'
   service:
     type: ClusterIP
     annotations: {}

@@ -8,6 +8,7 @@ package api_test
 // tests assert on, so that the wire format is written in that package and nowhere here.
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -41,6 +42,12 @@ func (e *env) ask(r authzenreq.Request, token string, headers ...string) (int, [
 // askWithHeader is ask with the headers of the answer, for the tests that assert an AuthZEN error (requireAuthzenError).
 func (e *env) askWithHeader(r authzenreq.Request, token string, headers ...string) (int, http.Header, []byte) {
 	e.t.Helper()
+	// The headers of the request (the lever of authzenreq.Fresh) go first, so that the caller's own headers win.
+	var own []string
+	for k, v := range r.Header {
+		own = append(own, k, v[0])
+	}
+	headers = append(own, headers...)
 	if token != "" {
 		headers = append([]string{"Authorization", "Bearer " + token}, headers...)
 	}
@@ -221,4 +228,31 @@ func (e *env) listedLevels(ref, token, resourceType string, actions ...string) [
 		}
 	}
 	return out
+}
+
+// pdpRequest is the HTTP request that sends the question to the PDP at base (the address of a replica) as the holder of the token
+// asks it (see askWithHeader), for a test that sends it with a client of its own.
+func (e *env) pdpRequest(base string, r authzenreq.Request, token string) *http.Request {
+	e.t.Helper()
+	var headers []string
+	for k, v := range r.Header {
+		headers = append(headers, k, v[0])
+	}
+	if token != "" {
+		headers = append(headers, "Authorization", "Bearer "+token)
+	}
+	headers, body := e.asPEP(base+r.Path, headers, r.Body)
+	payload, err := json.Marshal(body)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	req, err := http.NewRequest(r.Method, base+r.Path, bytes.NewReader(payload))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+	return req
 }

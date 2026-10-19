@@ -253,13 +253,6 @@ spec:
                 secretKeyRef:
                   name: licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: AUTH__STATE_SECRET
-            - name: CORS__ALLOW_ORIGINS
-              value: "[\"https://app.example.com\"]"
           startupProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 2
@@ -388,11 +381,6 @@ spec:
                 secretKeyRef:
                   name: licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: AUTH__STATE_SECRET
             - name: HTTP__MAX_INFLIGHT
               value: "512"
           startupProbe:
@@ -602,11 +590,6 @@ spec:
                 secretKeyRef:
                   name: licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: AUTH__STATE_SECRET
             - name: WORKER__REGION
               value: "eu"
           readinessProbe:
@@ -849,11 +832,6 @@ spec:
                 secretKeyRef:
                   name: licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: AUTH__STATE_SECRET
           resources:
             limits:
               memory: 256Mi

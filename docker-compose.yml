@@ -8,13 +8,11 @@ include:
 
 x-env-app: &env-app
   DB__URI: "${DB__URI:-postgresql://authz:authz@postgres:5432/authz_db}"
-  AUTH__STATE_SECRET: "${AUTH__STATE_SECRET:-dev-only-insecure-state-secret-change-me}"
   REDIS__URI: "${REDIS__URI:-redis://redis:6379/0}"
   # air restarts the apps on every change: no drain on shutdown in development (the default of 10 s is for a balancer).
   SHUTDOWN__DRAIN: "${SHUTDOWN__DRAIN:-0}"
   # The address clients reach the PDP at: the AuthZEN discovery document is built from it.
   PDP__PUBLIC_URL: "${PDP__PUBLIC_URL:-http://localhost:8001}"
-  CORS__ALLOW_ORIGINS: '${CORS__ALLOW_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}'
   # Administrators sign in at an OpenID Connect provider (ADMIN_AUTH__*, the local Dex by default): the admin API verifies their
   # bearer tokens against its keys, and the web interface is the OIDC client (OIDC_* of the web service below). The audience is the
   # client id of the web interface, which Dex puts into the aud of its tokens. Override the variables in .env to use another IdP.

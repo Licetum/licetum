@@ -158,8 +158,7 @@ func TestIntegrationRollbackRestoresThePolicyAtAPosition(t *testing.T) {
 
 	// A rollback over a change that cannot be undone (a service created after the position) applies nothing.
 	w.must("POST", "/service/", map[string]any{"name": "late", "url": w.mock.URL + "/app", "icon": w.mock.URL + "/icon.png",
-		"authorization_url": w.mock.URL + "/realm/auth", "token_url": w.mock.URL + "/realm/token",
-		"jwks_url": w.mock.URL + "/jwks", "issuer": w.mock.URL + "/realm", "slug": "late", "client_id": "late", "client_secret": "s"})
+		"slug": "late"})
 	before := w.lastChangeID()
 	w.must("DELETE", "/assignment_rule/"+keep, nil)
 	w.must("DELETE", "/assignment_rule/"+roleRule, nil)

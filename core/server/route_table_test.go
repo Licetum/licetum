@@ -18,11 +18,12 @@ import (
 
 var update = flag.Bool("update", false, "rewrite the golden files of testdata")
 
-// TestPDPRouteTable compares the route table of the PDP's public port, one route per line ("METHOD path", sorted), with
-// testdata/pdp_routes.golden. The routes are the operations of the Huma API that NewPDPAPI registers: an http.ServeMux does
-// not list its patterns, and the public handler adds nothing but the JSON 404 for every other path. A route added or removed
-// on purpose is recorded with go test -update.
-func TestPDPRouteTable(t *testing.T) {
+// TestContract_AZ10_ThePublicPortServesExactlyTheAuthzenRoutes compares the route table of the PDP's public port, one route per
+// line ("METHOD path", sorted), with testdata/pdp_routes.golden, and holds every route to be one of AuthZEN: an evaluation or a
+// search of a service, or the discovery document. The routes are the operations of the Huma API that NewPDPAPI registers: an
+// http.ServeMux does not list its patterns, and the public handler adds nothing but the JSON 404 for every other path. A route
+// added or removed on purpose is recorded with go test -update; a route that is not AuthZEN fails whatever the golden says.
+func TestContract_AZ10_ThePublicPortServesExactlyTheAuthzenRoutes(t *testing.T) {
 	_, api := NewPDPAPI(engine.New(nil, nil, &config.Config{}))
 	var routes []string
 	for path, item := range api.OpenAPI().Paths {
@@ -42,6 +43,11 @@ func TestPDPRouteTable(t *testing.T) {
 		}
 	}
 	sort.Strings(routes)
+	for _, r := range routes {
+		if !strings.Contains(r, "/access/v1/") && !strings.HasPrefix(r, "GET /.well-known/authzen-configuration/") {
+			t.Errorf("%s is not a route of AuthZEN", r)
+		}
+	}
 	got := strings.Join(routes, "\n") + "\n"
 
 	file := filepath.Join("testdata", "pdp_routes.golden")

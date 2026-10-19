@@ -46,7 +46,7 @@ type Environment struct {
 }
 
 // environmentPrefixes are the settings of the product the report records (secrets are masked, see maskSetting).
-var environmentPrefixes = []string{"DB__", "REDIS__", "SYNC__", "DELEGATION__", "LOG__", "AUTH__", "HTTP__", "LICETUM_", "GOMAXPROCS", "GOGC", "GOMEMLIMIT"}
+var environmentPrefixes = []string{"DB__", "REDIS__", "SYNC__", "LOG__", "AUTH__", "HTTP__", "LICETUM_", "GOMAXPROCS", "GOGC", "GOMEMLIMIT"}
 
 // collectEnvironment writes what can be read about the host, the tools and the infrastructure of the run.
 func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin string) (Environment, error) {
@@ -108,7 +108,6 @@ func checkServerEnv(e *env, opts Options) []string {
 		fmt.Sprintf("DB__POOL_SIZE=%d", opts.DBPool),
 		"DB__MAX_OVERFLOW=0",
 		"REDIS__URI=" + e.checkRedisURI,
-		"AUTH__STATE_SECRET=" + e.stateSecret,
 		"PEP__RATE_LIMIT=0",
 	}
 }

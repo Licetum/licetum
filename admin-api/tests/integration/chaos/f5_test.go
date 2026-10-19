@@ -606,7 +606,7 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 		sent.Add(1)
 		target := up[i%len(up)]
 		token := tokens[i%30]
-		req, err := harness.HTTPRequest(context.Background(), target, harness.Branches(p.Slug, token), token)
+		req, err := c.HTTPRequest(context.Background(), target, harness.Branches(p.Slug, token), token)
 		if err != nil {
 			return 0, err
 		}

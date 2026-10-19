@@ -26,9 +26,9 @@ The chaos tests run only nightly, the multi-region environment is switched off u
 cluster of its own (`harness.StartReplicas`, one PDP replica, a database per fixture): the services by slug, the types with their
 parents, inherit masks and `access_implies`, an http synchronizer per type with resources fed by the fake source (names, the declared
 parents, by the name of the parent type, and the attributes; a parent no resource has is an unresolved link), and the policy through
-`POST /batch`. `Loaded.Ask(case)` asks the questions of a case through `POST /service/{slug}/access/v1/evaluations?consistency=higher` with
+`POST /batch`. `Loaded.Ask(case)` asks the questions of a case through `POST /service/{slug}/access/v1/evaluations` under the lever `harness.Higher()` with
 `explain` (requests built by `core/testsupport/authzenreq`, the explanation read from `context.reason_admin`; an evaluation the API
-could not decide is a failure, not a denial), as the case's subject (`preferred_username`) with its claims in the token and the
+could not decide is a failure, not a denial), as the case's subject (`subject.id`, which is `preferred_username`) with its claims as `subject.properties` and the
 request attributes in the context, at the case's time: the replica's clock (`engine.App.SetClock`) is the time of the case, so the
 validity windows and the conditions on the hour are decided then. The answers name the rules of the fixture. `contracts.Compare`
 lists every difference from the expectations; `Loaded.ReplaceRules` swaps the policy (and the resources) on the same types, for the
@@ -40,11 +40,6 @@ lists it, a type without resources as a whole exactly when the action is among i
 a resource of a type without resources and `type_not_found` are not compared; a `resource_not_found` on a resource of a type with
 resources is the exception: the resource search of its type and action must not list the resource). The evaluations decide the
 asked resources (`CoversOf`), the searches every resource (`coverNodes`): the cross-check keeps the two paths equal.
-
-While the PDP has the routes that AuthZEN replaces, `Loaded.SecondOpinion(case, answers)` asks the case through `POST
-/service/{slug}/check` and `GET /service/{slug}/permission` too and lists every difference from the evaluations, and every question on
-which the permission list disagrees with them (including what the searches state more weakly: the mode of a type, a resource listed
-twice). It lives in `contracts/legacy.go` and goes with those routes.
 
 | test | what it proves |
 |---|---|
@@ -93,12 +88,12 @@ c.Replicas[1].Warm(c, harness.Branches(p.Slug, alice), alice) // until the cost 
   (`c.RedisFault`) for the replicas: `Latency`, `Cut`, `BlackHole`, `Reset`. Toxiproxy runs inside the test process (the
   toxiproxy server library, driven through its HTTP API), so no extra image is needed. `harness.WithReplicaRedis(uri)` points
   the replicas at another Redis, for the read-only test (`REPLICAOF` to an address nobody serves).
-- **Levers.** The freshness of a request is `?consistency=higher` for its caller, and `engine.WithConsistency` in the context for
-  the process that serves it (it wins over the query, and no network input sets it). `harness.Levers(handler)` is the test-only
+- **Levers.** The freshness of a request is `engine.WithConsistency` in the context of the process that serves it (no network
+  input sets it; the PDP has no parameter for it). `harness.Levers(handler)` is the test-only
   wrapper that turns the header `X-Test-Consistency` (`higher` or `minimize_latency`) into it; it lives under `tests/`, so no
   binary has it. The PDP replicas of the harness are behind it, and a test asks for the freshest answer with the lever
-  (`Replica.Fresh`, or `harness.Higher()` as the last argument of `Send`, `Try` and `HTTPRequest`), not with `?consistency=higher`,
-  so that no test depends on a parameter of the API. The revision to reflect is `authzenreq.AtLeast(rev)` (`Replica.Permission` asks for the last
+  (`Replica.Fresh`, or `harness.Higher()` as the last argument of `Send`, `Try` and `HTTPRequest`), so that no test depends on a
+  parameter of the API (there is none). The revision to reflect is `authzenreq.AtLeast(rev)` (`Replica.Permission` asks for the last
   write of the test). A test that needs to know whether an answer lacked the data of a type reads `Trace.SyncPending()` of its own
   `engine.WithTrace`.
 

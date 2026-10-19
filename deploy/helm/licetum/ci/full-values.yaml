@@ -22,8 +22,6 @@ pdp:
 worker:
   engine: postgres
   regionAware: true
-admin:
-  corsAllowOrigins: '["https://app.example.com"]'
 web:
   enabled: true
   appBaseUrl: https://app.example.com

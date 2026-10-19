@@ -9,25 +9,17 @@ import (
 )
 
 func TestLoadListsAndDefaults(t *testing.T) {
-	t.Setenv("CORS__ALLOW_ORIGINS", `["http://a", "http://b"]`)
-	t.Setenv("cors__allow_headers", "X-A, X-B")
-	t.Setenv("AUTH__STATE_TTL", "60")
 	t.Setenv("DB__ECHO", "yes")
+	t.Setenv("platform__admin_claim_values", "a, b")
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(cfg.Cors.AllowOrigins, []string{"http://a", "http://b"}) {
-		t.Errorf("AllowOrigins = %v", cfg.Cors.AllowOrigins)
+	if !slices.Equal(cfg.Platform.AdminClaimValues, []string{"a", "b"}) {
+		t.Errorf("AdminClaimValues (case-insensitive name, CSV) = %v", cfg.Platform.AdminClaimValues)
 	}
-	if !slices.Equal(cfg.Cors.AllowHeaders, []string{"X-A", "X-B"}) {
-		t.Errorf("AllowHeaders (case-insensitive name, CSV) = %v", cfg.Cors.AllowHeaders)
-	}
-	if !slices.Equal(cfg.Cors.AllowMethods, []string{"*"}) {
-		t.Errorf("AllowMethods default = %v", cfg.Cors.AllowMethods)
-	}
-	if cfg.Auth.StateTTL != time.Minute || !cfg.DB.Echo || cfg.DB.PoolSize != 10 {
+	if !cfg.DB.Echo || cfg.DB.PoolSize != 10 || cfg.Auth.JWKSTTL != 10*time.Minute {
 		t.Errorf("wrong values: %+v", cfg)
 	}
 	if cfg.AdminAuth.IsConfigured() {
@@ -36,8 +28,7 @@ func TestLoadListsAndDefaults(t *testing.T) {
 	if cfg.AdminAuth.SubjectClaim != "preferred_username" {
 		t.Errorf("the default subject claim is %q", cfg.AdminAuth.SubjectClaim)
 	}
-	if cfg.Platform.AdminClaim != "preferred_username" || cfg.Platform.AdminGroupName != "Platform administrator" ||
-		cfg.Platform.AdminClaimValues != nil {
+	if cfg.Platform.AdminClaim != "preferred_username" || cfg.Platform.AdminGroupName != "Platform administrator" {
 		t.Errorf("wrong platform admin defaults: %+v", cfg.Platform)
 	}
 }
@@ -186,8 +177,8 @@ func TestLoadFastReadPathSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Snapshot.MaxBytes != 256<<20 || cfg.Revision.PollInterval != 250*time.Millisecond || cfg.Revision.WaitMax != 500*time.Millisecond || cfg.Snapshot.MaxAge != time.Minute ||
-		cfg.Auth.TokenL1Size != 50_000 || cfg.Cache.AnswerL1Size != 50_000 ||
-		cfg.Auth.JWKSTTL != 10*time.Minute || cfg.Auth.JWKSMinRefresh != 30*time.Second || cfg.Auth.InvalidTokenTTL != 10*time.Second ||
+		cfg.Cache.AnswerL1Size != 50_000 ||
+		cfg.Auth.JWKSTTL != 10*time.Minute || cfg.Auth.JWKSMinRefresh != 30*time.Second ||
 		cfg.Background.Workers != 16 || cfg.Background.Queue != 1024 || cfg.Redis.HotTimeout != 50*time.Millisecond {
 		t.Errorf("wrong defaults: %+v %+v %+v %+v %+v", cfg.Snapshot, cfg.Auth, cfg.Cache, cfg.Background, cfg.Redis)
 	}
@@ -198,8 +189,6 @@ func TestLoadFastReadPathSettings(t *testing.T) {
 	t.Setenv("COMPUTE__CONCURRENCY", "3")
 	t.Setenv("AUTH__JWKS_TTL", "300") // a bare number is seconds, as in the other settings
 	t.Setenv("AUTH__JWKS_MIN_REFRESH", "5s")
-	t.Setenv("AUTH__INVALID_TOKEN_TTL", "2s")
-	t.Setenv("AUTH__TOKEN_L1_SIZE", "10")
 	t.Setenv("CACHE__ANSWER_L1_SIZE", "20")
 	t.Setenv("BACKGROUND__WORKERS", "4")
 	t.Setenv("BACKGROUND__QUEUE", "8")
@@ -209,8 +198,7 @@ func TestLoadFastReadPathSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Snapshot.MaxBytes != 1<<20 || cfg.Revision.PollInterval != 100*time.Millisecond || cfg.Revision.WaitMax != time.Second || cfg.Compute.Concurrency != 3 || cfg.Auth.JWKSTTL != 5*time.Minute ||
-		cfg.Auth.JWKSMinRefresh != 5*time.Second || cfg.Auth.InvalidTokenTTL != 2*time.Second ||
-		cfg.Auth.TokenL1Size != 10 || cfg.Cache.AnswerL1Size != 20 ||
+		cfg.Auth.JWKSMinRefresh != 5*time.Second || cfg.Cache.AnswerL1Size != 20 ||
 		cfg.Background.Workers != 4 || cfg.Background.Queue != 8 || cfg.Redis.HotTimeout != 75*time.Millisecond {
 		t.Errorf("wrong values: %+v %+v %+v %+v %+v", cfg.Snapshot, cfg.Auth, cfg.Cache, cfg.Background, cfg.Redis)
 	}
@@ -419,5 +407,22 @@ func TestDeprecatedSettingsNameTheOAuthClientOfTheSelfService(t *testing.T) {
 	got := config.DeprecatedSettings()
 	if !slices.Contains(got, "PLATFORM__CLIENT_SECRET") || !slices.Contains(got, "PLATFORM__ISSUER") {
 		t.Errorf("DeprecatedSettings = %v", got)
+	}
+}
+
+// The settings of the features 2c took out are still read for the warning, whatever they hold.
+func TestDeprecatedSettingsNameTheFeaturesOfTheTokenOfAService(t *testing.T) {
+	for _, name := range []string{"AUTH__STATE_SECRET", "AUTH__TOKEN_L1_SIZE", "DELEGATION__AUDIT_MODE", "CORS__ALLOW_ORIGINS"} {
+		t.Setenv(name, "x")
+	}
+	got := config.DeprecatedSettings()
+	for _, name := range []string{"AUTH__STATE_SECRET", "AUTH__TOKEN_L1_SIZE", "DELEGATION__AUDIT_MODE", "CORS__ALLOW_ORIGINS"} {
+		if !slices.Contains(got, name) {
+			t.Errorf("%s is not named as deprecated: %v", name, got)
+		}
+	}
+	// Loading does not fail on them: a deployment that still sets them starts and logs the warning.
+	if _, err := config.Load(); err != nil {
+		t.Errorf("a deprecated setting must not stop the start: %v", err)
 	}
 }

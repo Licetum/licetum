@@ -9,7 +9,6 @@ image:
 secrets:
   dbUri: postgres://licetum:licetum@postgres:5432/licetum?sslmode=disable
   redisUri: redis://redis:6379/0
-  authStateSecret: kind-only-state-secret
 platform:
   url: http://admin.invalid
   icon: http://admin.invalid/favicon.ico

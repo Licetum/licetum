@@ -19,12 +19,10 @@ func (a *App) CreateService(ctx context.Context, in *model.ServiceInput) (*model
 	var resp model.ServiceResponse
 	err := a.mutate(ctx, func(q db.Querier) (change, error) {
 		s, err := engine.ScanService(q.QueryRow(ctx, `
-			INSERT INTO service (name, slug, url, icon, authorization_url, token_url, jwks_url, issuer, client_id, client_secret, trusted_clients)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			INSERT INTO service (name, slug, url, icon)
+			VALUES ($1, $2, $3, $4)
 			RETURNING `+engine.ServiceColumns,
-			in.Name, in.Slug, derefString(in.URL), derefString(in.Icon), in.AuthorizationURL, in.TokenURL, in.JwksURL, in.Issuer, in.ClientID,
-			// An empty secret means a public client (PKCE): stored as NULL.
-			emptyToNil(in.ClientSecret), nonNilStrings(in.TrustedClients),
+			in.Name, in.Slug, derefString(in.URL), derefString(in.Icon),
 		))
 		if db.IsUniqueViolation(err) {
 			return change{}, apperr.Conflict(i18n.ServiceSlugTaken, in.Slug)
@@ -74,22 +72,13 @@ func (a *App) UpdateService(ctx context.Context, serviceID uuid.UUID, in *model.
 		// COALESCE: nil PATCH fields keep their current value.
 		s, err := engine.ScanService(q.QueryRow(ctx, `
 			UPDATE service SET
-				name              = COALESCE($2, name),
-				url               = COALESCE($3, url),
-				icon              = COALESCE($4, icon),
-				authorization_url = COALESCE($5, authorization_url),
-				token_url         = COALESCE($6, token_url),
-				jwks_url          = COALESCE($7, jwks_url),
-				issuer            = COALESCE($8, issuer),
-				client_id         = COALESCE($9, client_id),
-				slug              = COALESCE($12, slug),
-				trusted_clients   = COALESCE($13, trusted_clients),
-				-- not sent: keep; null or empty: remove (a public client, PKCE); otherwise replace
-				client_secret     = CASE WHEN $11 THEN NULLIF($10, '') ELSE client_secret END
+				name = COALESCE($2, name),
+				url  = COALESCE($3, url),
+				icon = COALESCE($4, icon),
+				slug = COALESCE($5, slug)
 			WHERE id = $1 AND deleted_at IS NULL
 			RETURNING `+engine.ServiceColumns,
-			serviceID, in.Name, in.URL, in.Icon, in.AuthorizationURL, in.TokenURL, in.JwksURL, in.Issuer, in.ClientID,
-			in.ClientSecret.Value, in.ClientSecret.Set, in.Slug, in.TrustedClients,
+			serviceID, in.Name, in.URL, in.Icon, in.Slug,
 		))
 		if db.IsUniqueViolation(err) {
 			return change{}, apperr.Conflict(i18n.ServiceSlugTaken, derefString(in.Slug))
@@ -101,7 +90,7 @@ func (a *App) UpdateService(ctx context.Context, serviceID uuid.UUID, in *model.
 			return change{}, err
 		}
 		resp = s.Response()
-		// services are the entities of the platform "service" policy; the change log keeps no client secret
+		// services are the entities of the platform "service" policy
 		return change{entity: "service", entityID: serviceID, serviceID: &serviceID, action: actionUpdate,
 			before: old.Response(), after: resp}, nil
 	})
@@ -144,24 +133,9 @@ func (a *App) DeleteService(ctx context.Context, serviceID uuid.UUID) (uuid.UUID
 	return serviceID, nil
 }
 
-// nonNilStrings is the list for a text[] column: an empty list, never NULL.
-func nonNilStrings(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
-}
-
 func derefString(s *string) string {
 	if s == nil {
 		return ""
 	}
 	return *s
-}
-
-func emptyToNil(s *string) *string {
-	if s == nil || *s == "" {
-		return nil
-	}
-	return s
 }

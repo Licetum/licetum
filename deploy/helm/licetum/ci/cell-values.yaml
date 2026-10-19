@@ -4,7 +4,6 @@ publicUrl: https://licetum.example.com
 secrets:
   dbUri: postgres://licetum:licetum@10.30.0.5:5432/licetum
   redisUri: redis://10.30.1.5:6379/0
-  authStateSecret: ci-only-state-secret
 platform:
   url: https://admin.cn.example.com
   icon: https://admin.cn.example.com/favicon.ico

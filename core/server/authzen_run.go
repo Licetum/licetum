@@ -139,10 +139,7 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 			Subject string
 			Claims  engine.Claims
 			Attrs   model.RequestContext
-		}{Subject: e.sp.subject, Attrs: e.attrs}
-		if e.sp.delegated {
-			key.Claims = e.sp.claims
-		}
+		}{Subject: e.sp.subject, Claims: e.sp.claims, Attrs: e.attrs}
 		raw, err := json.Marshal(key)
 		if err != nil {
 			return nil, err
@@ -162,8 +159,7 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 }
 
 // evaluations answers a batch request: the evaluations with the defaults of the top level and the semantic of the options, or,
-// when the request has no evaluations, its top-level fields as one evaluation, answered with its decision alone. The audit of the
-// calls made on behalf of people is written before the answer is returned.
+// when the request has no evaluations, its top-level fields as one evaluation, answered with its decision alone.
 func (c *authzenCaller) evaluations(ctx context.Context, consistency engine.Consistency, body model.AuthzenEvaluationsRequest, explain bool) (*model.AuthzenEvaluationsResponse, error) {
 	if len(body.Evaluations) == 0 {
 		single := model.AuthzenEvaluationRequest{Subject: body.Subject, Resource: body.Resource, Action: body.Action, Context: body.Context}
@@ -174,9 +170,6 @@ func (c *authzenCaller) evaluations(ctx context.Context, consistency engine.Cons
 		if evals[0].err != nil {
 			return nil, evals[0].err
 		}
-		if err := c.flush(ctx, "check"); err != nil {
-			return nil, err
-		}
 		return &model.AuthzenEvaluationsResponse{Decision: &evals[0].resp.Decision, Context: evals[0].resp.Context}, nil
 	}
 	semantic := model.AuthzenExecuteAll
@@ -185,9 +178,6 @@ func (c *authzenCaller) evaluations(ctx context.Context, consistency engine.Cons
 	}
 	evals, err := c.evaluate(ctx, consistency, body.Evaluations, body, explain, semantic)
 	if err != nil {
-		return nil, err
-	}
-	if err := c.flush(ctx, "check"); err != nil {
 		return nil, err
 	}
 	return &model.AuthzenEvaluationsResponse{Evaluations: applySemantic(semantic, evals, i18n.FromContext(ctx))}, nil
@@ -208,17 +198,12 @@ func (c *authzenCaller) decide(ctx context.Context, consistency engine.Consisten
 	if !c.simulated {
 		c.app.LogDecisions(ctx, c.serviceID, first.sp.subject, group, results, consistency)
 	}
-	allowed := 0
 	for j, i := range idx {
 		evals[i].resp = model.AuthzenEvaluationResponse{Decision: results[j].Allowed}
-		if results[j].Allowed {
-			allowed++
-		}
 		if explain && results[j].Explanation != nil {
 			evals[i].resp.Context = map[string]any{"reason_admin": results[j].Explanation}
 		}
 	}
-	c.note(first.sp, len(idx), allowed)
 	return nil
 }
 
@@ -439,7 +424,6 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 	for i, h := range page.Hits {
 		out.Results[i] = model.AuthzenResource{Type: in.Resource.Type, ID: h.ID, Properties: map[string]any{"name": h.Name}}
 	}
-	c.note(sp, 0, 0)
 	return out, nil
 }
 
@@ -467,7 +451,6 @@ func (c *authzenCaller) searchActions(ctx context.Context, consistency engine.Co
 	for i, l := range page {
 		out.Results[i] = model.AuthzenAction{Name: l}
 	}
-	c.note(sp, 0, 0)
 	return out, nil
 }
 
@@ -522,21 +505,12 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 
 // searchSubjects lists the people of the directory of the service (the type of subject.type) that may do the action on the
 // resource (ADR 0001, 7.6). The directory is what the application sent; a person who is not in it is never found, and an empty
-// directory gives an empty result. Only a PEP client with the search_subject operation, or a client application the service
-// trusts, may ask: the answer names other people.
+// directory gives an empty result. Only a PEP client with the search_subject operation may ask: the answer names other people.
 func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenSubjectSearchResponse, error) {
 	s, aerr := parseSearch("subject", in)
 	if aerr != nil {
 		return nil, aerr
 	}
-	if c.pep == nil {
-		client, err := c.trusted()
-		if err != nil {
-			return nil, err
-		}
-		SetRequestUser(ctx, "client:"+client)
-	}
-
 	out := &model.AuthzenSubjectSearchResponse{Results: []model.AuthzenSubject{}}
 	question := []model.CheckRequest{{Type: in.Resource.Type, Action: in.Action.Name, ResourceID: resourceIDOf(in.Resource)}}
 
@@ -589,9 +563,6 @@ scan:
 		}
 		out.Results = append(out.Results, subject)
 	}
-	// The search is about nobody in particular: the audit names it with a wildcard.
-	c.delegated = append(c.delegated, "*")
-	c.tally["*"] = &delegatedTally{questions: scanned, allowed: len(found)}
 	return out, nil
 }
 
@@ -613,7 +584,7 @@ func (c *authzenCaller) decideKnown(ctx context.Context, consistency engine.Cons
 	eg.SetLimit(authzenScanWorkers)
 	for i, e := range batch {
 		eg.Go(func() error {
-			claims, err := engine.PrepareDelegated(e.ID, engine.Claims(e.Properties))
+			claims, err := subjectClaims(e.ID, e.Properties)
 			if err != nil {
 				return nil
 			}

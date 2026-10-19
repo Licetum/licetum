@@ -24,12 +24,13 @@ cd core && go run ./cmd/licetum migrate        # the schema and the platform sel
 cd ../admin-api
 export DB__URI=postgresql://authz:authz@localhost:5432/authz_db
 export REDIS__URI=redis://localhost:6379/0
-export CORS__ALLOW_ORIGINS=http://localhost:3000   # the origin of the web interface
+export ADMIN_AUTH__ISSUER=http://localhost:5556/dex ADMIN_AUTH__AUDIENCE=licetum-local ADMIN_AUTH__JWKS_URL=http://localhost:5556/dex/keys
 go run ./cmd/licetum-admin admin
 ```
 
-The variables are the same as for the core (see [`../core/README.md`](../core/README.md#configuration)). The web
-interface must be in `CORS__ALLOW_ORIGINS`: its sign-in redirect is checked against that list.
+The variables are the same as for the core (see [`../core/README.md`](../core/README.md#configuration)). Administrators
+sign in at the OpenID Connect provider of `ADMIN_AUTH__*`; the browser reaches the admin API only through the web
+interface's server, so the API has no CORS setting.
 
 The API documents itself like FastAPI: Swagger UI at `/docs` (`/docs?lang=ru` or `zh` for the translations) and the
 OpenAPI 3.1 spec at `/openapi.json` and `/openapi.yaml`. `schema/admin.yaml` is the exported spec; the web interface

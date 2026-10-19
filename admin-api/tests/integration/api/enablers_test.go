@@ -42,39 +42,26 @@ func decodeMap(t *testing.T, raw []byte) map[string]any {
 
 func TestServiceAddressIsOptionalAndNeverRequested(t *testing.T) {
 	e := setup(t)
-	m := e.mock.URL
-	base := func(name string) map[string]any {
-		return map[string]any{
-			"name": name, "slug": name, "authorization_url": m + "/realm/auth", "token_url": m + "/realm/token",
-			"jwks_url": m + "/jwks", "issuer": m + "/realm", "client_id": name,
-		}
-	}
+	base := func(name string) map[string]any { return map[string]any{"name": name, "slug": name} }
 
-	// No address and no icon, and a public client.
+	// No address and no icon.
 	created := e.must("POST", "/service", base("bare"))
 	if created["url"] != nil || created["icon"] != nil {
 		t.Fatalf("the address and the icon are optional: %+v", created)
 	}
-	if created["has_client_secret"] != false {
-		t.Fatalf("a client without a secret is public: %+v", created)
-	}
 
 	// An address that nothing answers is accepted: it is only shown, never requested.
 	dead := base("dead")
-	dead["url"], dead["icon"], dead["client_secret"] = "http://127.0.0.1:1/app", "http://127.0.0.1:1/icon.png", "s"
+	dead["url"], dead["icon"] = "http://127.0.0.1:1/app", "http://127.0.0.1:1/icon.png"
 	got := e.must("POST", "/service", dead)
-	if got["has_client_secret"] != true || strings.TrimRight(got["url"].(string), "/") != "http://127.0.0.1:1/app" {
+	if strings.TrimRight(got["url"].(string), "/") != "http://127.0.0.1:1/app" {
 		t.Fatalf("service with a dead address: %+v", got)
 	}
 
-	// An empty string removes the address; the secret is never returned, only whether it is stored.
+	// An empty string removes the address.
 	updated := e.must("PATCH", "/service/"+got["id"].(string), map[string]any{"url": "", "icon": ""})
-	if updated["url"] != nil || updated["icon"] != nil || updated["has_client_secret"] != true {
+	if updated["url"] != nil || updated["icon"] != nil {
 		t.Fatalf("after removing the address: %+v", updated)
-	}
-	cleared := e.must("PATCH", "/service/"+got["id"].(string), map[string]any{"client_secret": nil})
-	if cleared["has_client_secret"] != false {
-		t.Fatalf("after removing the secret: %+v", cleared)
 	}
 }
 

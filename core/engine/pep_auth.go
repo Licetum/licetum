@@ -2,12 +2,13 @@ package engine
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/apperr"
@@ -29,34 +30,25 @@ const (
 // apiKeyPrefix starts every API key of a PEP (lct_<16 hex digits>_<43 characters>, see pepauth.NewAPIKey).
 const apiKeyPrefix = "lct_"
 
-// ErrNotPEPCredential says that a credential is not one of a PEP: it is neither an API key nor a token of a registered issuer. Until
-// the authentication by the token of the service goes (the removals of stage 2c), the caller may be a person with such a token.
-var ErrNotPEPCredential = errors.New("the credential is not a PEP credential")
-
 // PEPCaller is a PEP client that authenticated, and may do the operation it asked for on the service.
 type PEPCaller struct {
 	Client    db.PEPClient
 	ServiceID uuid.UUID
 }
 
-// AuthenticatePEP authenticates the holder of a credential as a PEP client of the service named by serviceRef (its id or its
-// slug), and checks that the client may do the operation.
+// AuthenticatePEP authenticates the holder of a credential as a PEP client of the service named by serviceRef (its slug), and
+// checks that the client may do the operation.
 //
-//   - A credential that is not a PEP credential is ErrNotPEPCredential.
-//   - A PEP credential that is not valid (a key the directory does not know or whose secret is wrong, a token that does not verify)
-//     is a 401, and a token whose issuer cannot be read is a 424.
+//   - A credential that is not valid is a 401: a key the directory does not know or whose secret is wrong, a token that does not
+//     verify, one of an issuer that is not registered, and anything that is neither an API key nor a token. A token whose issuer
+//     cannot be read is a 424.
 //   - A valid credential that does not give the operation is the same 403 authzen_forbidden whatever the reason: the service does
 //     not exist, the client is not registered for it or is disabled, or the operation is not among its operations. The answer does not
 //     tell a caller which services exist (ADR 0001, 7.10).
 func (a *App) AuthenticatePEP(ctx context.Context, credential, serviceRef, operation string) (*PEPCaller, error) {
 	dir, err := a.PEPDirectory(ctx)
 	if err != nil {
-		if strings.HasPrefix(credential, apiKeyPrefix) {
-			return nil, err
-		}
-		// A token cannot be told from a person's without the directory, which this process neither holds nor can load: it is taken
-		// for a person's, whose check has its own way through a database that does not answer.
-		return nil, ErrNotPEPCredential
+		return nil, err
 	}
 
 	var client db.PEPClient
@@ -73,7 +65,7 @@ func (a *App) AuthenticatePEP(ctx context.Context, credential, serviceRef, opera
 		iss, ok := unverifiedIssuer(credential)
 		verifier := dir.Verifiers[iss]
 		if !ok || verifier == nil {
-			return nil, ErrNotPEPCredential
+			return nil, apperr.InvalidToken(i18n.TokenInvalid)
 		}
 		verified, err := verifier.Verify(ctx, credential)
 		if err != nil {
@@ -142,12 +134,22 @@ func apiKeyClient(dir *PEPDirectory, key string, now time.Time) (db.PEPClient, e
 }
 
 // unverifiedIssuer reads the iss of a token without verifying it, to find the verifier of that issuer. Nothing it returns is
-// trusted: the verifier checks the token.
+// trusted: it only chooses the verifier, which checks the signature, the issuer, the audience and the times of the token. The payload
+// is read by hand, so that no parser that skips the signature check is in the path of a credential.
 func unverifiedIssuer(token string) (string, bool) {
-	claims := jwt.MapClaims{}
-	if _, _, err := jwt.NewParser().ParseUnverified(token, claims); err != nil {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
 		return "", false
 	}
-	iss, ok := claims["iss"].(string)
-	return iss, ok && iss != ""
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", false
+	}
+	var claims struct {
+		Iss string `json:"iss"`
+	}
+	if json.Unmarshal(payload, &claims) != nil {
+		return "", false
+	}
+	return claims.Iss, claims.Iss != ""
 }

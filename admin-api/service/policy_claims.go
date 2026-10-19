@@ -5,50 +5,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/licetum/licetum/core/engine"
-
 	"github.com/google/uuid"
 
+	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
 )
-
-// Calls made on behalf of a person. A service names the client applications it trusts (the azp of their tokens); such a
-// client may ask what a person may do without holding the person's token, naming the person and the claims their token
-// would carry. The caller authenticates with its own token (the same IdP and keys as a user's), and every call is kept.
-
-// ListDelegatedCalls pages the audit of a service, the latest first; before is the id the page starts under (0: the
-// latest).
-func (a *App) ListDelegatedCalls(ctx context.Context, serviceID uuid.UUID, limit int, before int64) (*model.DelegatedCallList, error) {
-	if _, err := a.GetExistingService(ctx, a.DB, serviceID); err != nil {
-		return nil, err
-	}
-	rows, err := a.DB.Query(ctx, `
-		SELECT id, at, caller_client, caller_subject, subject, operation, questions, allowed, request_id
-		FROM delegated_call
-		WHERE service_id = $1 AND ($2 = 0 OR id < $2)
-		ORDER BY id DESC LIMIT $3`, serviceID, before, limit+1)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := &model.DelegatedCallList{Items: []model.DelegatedCall{}}
-	for rows.Next() {
-		var c model.DelegatedCall
-		if err := rows.Scan(&c.ID, &c.At, &c.CallerClient, &c.CallerSubject, &c.Subject, &c.Operation, &c.Questions, &c.Allowed, &c.RequestID); err != nil {
-			return nil, err
-		}
-		out.Items = append(out.Items, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out.Items) > limit {
-		out.Items = out.Items[:limit]
-		next := out.Items[limit-1].ID
-		out.NextBefore = &next
-	}
-	return out, nil
-}
 
 // PolicyClaims lists the claims and request attributes the policy of a service reads: the conditions of the enabled rules
 // that apply to its resource types (and to those above them) and of their guards, the claim-based targets of those rules

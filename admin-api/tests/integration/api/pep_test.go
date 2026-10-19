@@ -147,11 +147,9 @@ func TestPEPAPIKeyAuthenticatesAndTheBodyNamesThePerson(t *testing.T) {
 	if w.decisionOf(status, raw) {
 		t.Fatal("somebody else, who has no rule, may read B1")
 	}
-	// The slug and the id of the service name the same service.
-	status, _, raw = w.evaluate(w.org, key, hierarchySubject)
-	if !w.decisionOf(status, raw) {
-		t.Fatalf("the service by id: %s", raw)
-	}
+	// The path names the service by its slug only: the id is a reference nobody has, and gets the one refusal.
+	status, header, raw := w.evaluate(w.org, key, hierarchySubject)
+	requireAuthzenError(t, status, header, raw, http.StatusForbidden, "authzen_forbidden")
 
 	// A key whose secret is wrong, one whose id nobody holds, and one that is not a key at all, are not authenticated.
 	secret := key[len("lct_")+16+1:] // the secret is base64url, which has underscores of its own
@@ -219,9 +217,9 @@ func TestPEPTokenOfARegisteredIssuerAuthenticatesItsClient(t *testing.T) {
 		}
 	}
 
-	// A person's token still works where no PEP client is involved: until the person's way goes (stage 2c) it is the token of the service.
-	status, header, raw := w.evaluate("org", w.token(jwt.MapClaims{"preferred_username": hierarchySubject}), hierarchySubject)
-	if !w.decisionOf(status, raw) {
-		t.Fatalf("the holder of a person's token may read B1: %d %v %s", status, header, raw)
-	}
+	// A person's token is no credential of the PDP. The test helpers turn it into the question of a PEP client, so it is sent as it is
+	// (legacyToken) to see what the PDP itself says: a 401, the same as for any token of an issuer nobody registered.
+	person := w.token(jwt.MapClaims{"preferred_username": hierarchySubject})
+	status, header, raw := w.askWithHeader(authzenreq.Evaluation("org", hierarchySubject, authzenreq.On("branch", "B1"), "read"), person, legacyToken, "1")
+	requireAuthzenError(t, status, header, raw, http.StatusUnauthorized, "token_invalid")
 }

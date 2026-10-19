@@ -2,8 +2,8 @@ package model
 
 // The OpenID AuthZEN Authorization API 1.0, served per service: the service is in the path, the resource type is the
 // name of a resource type of that service, the resource id is the resource id in the external system ("*" — the type as
-// a whole), the action name is an access level. The subject is the caller (subject.id is the subject of the bearer
-// token), or — for a client application the service trusts — any person, with the claims given as subject.properties.
+// a whole), the action name is an access level. The subject is a person of the application that calls (a PEP client of the
+// service), with the claims the rules read given as subject.properties.
 //
 // Each endpoint has its own request type. Validate checks a request as its endpoint states it: which fields are
 // required, which are ignored, and the bounds of the subject and of the context. A validation error is apperr 422; the
@@ -43,8 +43,8 @@ const (
 type AuthzenSubject struct {
 	_          struct{}       `additionalProperties:"true"`
 	Type       string         `json:"type" doc:"Subject type (not interpreted): 1 to 64 bytes, and not group" example:"user"`
-	ID         string         `json:"id" required:"false" doc:"Subject id: 1 to 256 bytes, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it. It is the subject of the bearer token (preferred_username, or sub) unless the caller is a client application the service trusts" example:"alice"`
-	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The claims of a person other than the holder of the token, given by a trusted client: at most 100 claims and 16 KiB of JSON. Ignored for the holder of the token, whose claims come from the token"`
+	ID         string         `json:"id" required:"false" doc:"Subject id: 1 to 256 bytes, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it" example:"alice"`
+	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"`
 }
 
 // AuthzenResource is the resource of an evaluation or of a search.

@@ -17,9 +17,6 @@ import (
 
 const (
 	serviceSlug = "loadtest"
-	// loadtestIssuer is the address the OAuth configuration of the service points at. The PDP takes no token of a person,
-	// so nothing in a run reaches it.
-	loadtestIssuer = "https://idp.loadtest.invalid"
 	// pepClientName is the name of the PEP client the traffic asks as.
 	pepClientName = "loadtest"
 	// probe ids are the resources the synchronizers check their source with before they are saved.
@@ -96,13 +93,8 @@ func createSource(ctx context.Context, e *env, p Profile, fx *fixture) error {
 // synchronizers, which read the tables above.
 func createServiceAndTypes(ctx context.Context, e *env, _ Profile, fx *fixture) error {
 	svcIn := &model.ServiceInput{
-		Name:             "Load test",
-		Slug:             serviceSlug,
-		AuthorizationURL: loadtestIssuer + "/authorize",
-		TokenURL:         loadtestIssuer + "/token",
-		JwksURL:          loadtestIssuer + "/jwks",
-		Issuer:           loadtestIssuer,
-		ClientID:         "licetum-loadtest",
+		Name: "Load test",
+		Slug: serviceSlug,
 	}
 	if err := svcIn.Validate(); err != nil {
 		return fmt.Errorf("the service: %w", err)

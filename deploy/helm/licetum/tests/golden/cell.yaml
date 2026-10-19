@@ -230,13 +230,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: AUTH__STATE_SECRET
-            - name: CORS__ALLOW_ORIGINS
-              value: "[]"
           startupProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 2
@@ -365,11 +358,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: AUTH__STATE_SECRET
           startupProbe:
             httpGet: {path: /readyz, port: ops}
             periodSeconds: 2
@@ -487,11 +475,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: AUTH__STATE_SECRET
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5
@@ -565,7 +548,6 @@ type: Opaque
 stringData:
   DB__URI: "postgres://licetum:licetum@10.30.0.5:5432/licetum"
   REDIS__URI: "redis://10.30.1.5:6379/0"
-  AUTH__STATE_SECRET: "ci-only-state-secret"
 ---
 # Source: licetum/templates/configmap.yaml
 apiVersion: v1
@@ -671,11 +653,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: AUTH__STATE_SECRET
           resources:
             limits:
               memory: 256Mi

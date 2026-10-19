@@ -29,8 +29,9 @@ import (
 
 const (
 	fakeServiceRef = "orders"
-	fakeToken      = "caller-token"
-	fakeCaller     = "alice@acmecorp.com"
+	// fakeKey is the API key of the PEP client every fake PDP knows: it may do every operation on the fake service.
+	fakeKey    = "lct_0123456789abcdef_fake-secret"
+	fakeCaller = "alice@acmecorp.com"
 )
 
 var fakeServiceID = uuid.MustParse("2f4f0c1a-6f7e-4b7b-9f31-3c2d5e6a7b8c")
@@ -66,6 +67,7 @@ type fakeSearch struct {
 
 func newFakePDP(grants ...[4]string) *fakePDP {
 	f := &fakePDP{grants: map[[4]string]bool{}}
+	f.withPEPClient(fakeKey, "fake", engine.PEPEvaluate, engine.PEPSearchResource, engine.PEPSearchAction, engine.PEPSearchSubject, engine.PEPExplain)
 	for _, g := range grants {
 		f.grants[g] = true
 	}
@@ -77,17 +79,6 @@ func (f *fakePDP) ServiceIDByRef(_ context.Context, ref string) (uuid.UUID, erro
 		return uuid.Nil, apperr.NotFound(i18n.ServiceNotFound, ref)
 	}
 	return fakeServiceID, nil
-}
-
-func (f *fakePDP) GetServiceForCheck(_ context.Context, serviceID uuid.UUID) (*model.Service, error) {
-	return &model.Service{ID: serviceID}, nil
-}
-
-func (f *fakePDP) VerifyToken(_ context.Context, _ *model.Service, token string) (engine.Claims, error) {
-	if token != fakeToken {
-		return nil, apperr.InvalidToken(i18n.TokenInvalid)
-	}
-	return engine.Claims{"preferred_username": fakeCaller}, nil
 }
 
 func (f *fakePDP) NewEnv(claims engine.Claims, attrs map[string]any) engine.Env {
@@ -144,10 +135,6 @@ func (f *fakePDP) DirectoryAfter(context.Context, uuid.UUID, string, *db.Directo
 	return nil, nil
 }
 
-func (f *fakePDP) RecordDelegatedCall(context.Context, uuid.UUID, engine.DelegatedCall) error {
-	return nil
-}
-
 // authzenTestAPI serves the AuthZEN operations of a pdpEngine: the handlers, their errors and their documentation as the PDP
 // registers them. The middleware of the server (the request id, the admission) is not part of it: see TestContract_AZ07.
 func authzenTestAPI(eng pdpEngine, cfg *config.Config) http.Handler {
@@ -157,11 +144,11 @@ func authzenTestAPI(eng pdpEngine, cfg *config.Config) http.Handler {
 	return mux
 }
 
-// authzenCall sends an AuthZEN request with the token of the fake caller.
+// authzenCall sends an AuthZEN request with the key of the fake PEP client.
 func authzenCall(h http.Handler, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+fakeToken)
+	req.Header.Set("Authorization", "Bearer "+fakeKey)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -261,7 +248,8 @@ func TestContract_AZ02_DefaultsAndSemanticsAsTheSpecification(t *testing.T) {
 func TestContract_AZ03_ShortCircuitEvaluatesNothingAfterTheStop(t *testing.T) {
 	grants := [][4]string{{fakeCaller, "can_read", "todo", "1"}, {fakeCaller, "can_read", "todo", "3"}}
 	item := func(id string) string { return fmt.Sprintf(`{"resource":{"type":"todo","id":%q}}`, id) }
-	other := `{"subject":{"type":"user","id":"bob"},"resource":{"type":"todo","id":"1"}}`
+	// A subject that looks like a group cannot be asked about: the evaluation is a denial with an error.
+	other := `{"subject":{"type":"user","id":"group:ops"},"resource":{"type":"todo","id":"1"}}`
 	for _, c := range []struct {
 		name      string
 		semantic  string
@@ -412,9 +400,15 @@ func TestAuthzenErrorsHaveAStringBodyAndACode(t *testing.T) {
 			t.Errorf("WWW-Authenticate %q, want Bearer", got)
 		}
 	})
-	t.Run("another person without a trusted client is a 403", func(t *testing.T) {
+	t.Run("a credential that is not one of a PEP is a 401", func(t *testing.T) {
+		rec := authzenCallAs(h, path, valid, "Bearer a-token-of-a-person")
+		check(t, rec, http.StatusUnauthorized, "token_invalid")
+	})
+	t.Run("the person is the one the body names, whoever holds the key", func(t *testing.T) {
 		body := `{"subject":{"type":"user","id":"bob"},"resource":{"type":"todo","id":"1"},"action":{"name":"can_read"}}`
-		check(t, authzenCall(h, path, body), http.StatusForbidden, "authzen_subject_mismatch")
+		if rec := authzenCall(h, path, body); rec.Code != http.StatusOK {
+			t.Fatalf("a PEP client asks about another person: %d %s", rec.Code, rec.Body)
+		}
 	})
 	t.Run("a request that is not valid is a 400", func(t *testing.T) {
 		check(t, authzenCall(h, path, `{"subject":{"type":"user","id":"a"},"resource":{"type":"todo"},"action":{"name":"r"}}`), http.StatusBadRequest, "authzen_field_required")
@@ -436,15 +430,12 @@ func TestRequestIDLogCopyIsEscapedAndBounded(t *testing.T) {
 	}
 }
 
-// AuthenticatePEP answers as the engine does for the clients of the fake service: a credential that is not one of the fake is not
-// a PEP credential (an API key that is not known is a 401), and every refusal of a known client is the same 403.
+// AuthenticatePEP answers as the engine does for the clients of the fake service: a credential that is not one of the fake is a
+// 401, and every refusal of a known client is the same 403.
 func (f *fakePDP) AuthenticatePEP(_ context.Context, credential, serviceRef, operation string) (*engine.PEPCaller, error) {
 	client, ok := f.pepClients[credential]
 	if !ok {
-		if strings.HasPrefix(credential, "lct_") {
-			return nil, apperr.InvalidToken(i18n.TokenInvalid)
-		}
-		return nil, engine.ErrNotPEPCredential
+		return nil, apperr.InvalidToken(i18n.TokenInvalid)
 	}
 	if serviceRef != fakeServiceRef || !client.Enabled || !slices.Contains(client.Operations, operation) {
 		return nil, apperr.Forbidden(i18n.AuthzenForbidden)

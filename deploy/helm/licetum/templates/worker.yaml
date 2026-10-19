@@ -60,7 +60,6 @@ spec:
           env:
             {{- include "licetum.secretEnv" (dict "root" . "key" "DB__URI") | nindent 12 }}
             {{- include "licetum.secretEnv" (dict "root" . "key" "REDIS__URI") | nindent 12 }}
-            {{- include "licetum.secretEnv" (dict "root" . "key" "AUTH__STATE_SECRET") | nindent 12 }}
             {{- if .Values.worker.regionAware }}
             - name: WORKER__REGION
               value: {{ required "region is required when worker.regionAware is set" .Values.region | quote }}

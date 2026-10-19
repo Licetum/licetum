@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/config"
-	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
 )
@@ -49,8 +48,7 @@ more results; send it back as page.token with the same request.`
 		})
 	}
 	simulated := func(serviceID uuid.UUID) *authzenCaller {
-		return &authzenCaller{app: app, cfg: cfg, serviceID: serviceID, simulated: true, tally: map[string]*delegatedTally{},
-			pep: &engine.PEPCaller{ServiceID: serviceID, Client: db.PEPClient{Name: "simulation", ServiceID: serviceID}}}
+		return &authzenCaller{app: app, cfg: cfg, serviceID: serviceID, simulated: true}
 	}
 
 	Register(api, op("simulate_evaluation", "/evaluation", "Simulate an AuthZEN access evaluation",

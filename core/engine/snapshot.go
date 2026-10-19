@@ -111,18 +111,6 @@ func itemBytes(p *model.RolePermission) int64 {
 	return n
 }
 
-// ServiceCheckColumns are the columns of a service the check API needs: the address of its JWKS, its issuer and its
-// trusted clients, but not its client secret, which stays out of the memory of the check path.
-const ServiceCheckColumns = `id, name, slug, url, icon, authorization_url, token_url, jwks_url, issuer, client_id, trusted_clients`
-
-// ScanServiceCheck reads the ServiceCheckColumns.
-func ScanServiceCheck(row pgx.Row) (*model.Service, error) {
-	var s model.Service
-	err := row.Scan(&s.ID, &s.Name, &s.Slug, &s.URL, &s.Icon, &s.AuthorizationURL, &s.TokenURL, &s.JwksURL,
-		&s.Issuer, &s.ClientID, &s.TrustedClients)
-	return &s, err
-}
-
 // loadSnapshot reads the whole policy in one read-only transaction (so that every table is seen at the same moment) and
 // labels it with revision. It returns errSnapshotTooLarge when the policy would not fit max bytes.
 func (a *App) loadSnapshot(ctx context.Context, revision, max int64) (*snapshot, error) {
@@ -169,12 +157,12 @@ func (a *App) loadSnapshot(ctx context.Context, revision, max int64) (*snapshot,
 	}
 
 	// Services.
-	rowsOf, err := tx.Query(ctx, `SELECT `+ServiceCheckColumns+` FROM service WHERE deleted_at IS NULL`)
+	rowsOf, err := tx.Query(ctx, `SELECT `+ServiceColumns+` FROM service WHERE deleted_at IS NULL`)
 	if err != nil {
 		return nil, err
 	}
 	for rowsOf.Next() {
-		s, err := ScanServiceCheck(rowsOf)
+		s, err := ScanService(rowsOf)
 		if err != nil {
 			rowsOf.Close()
 			return nil, err

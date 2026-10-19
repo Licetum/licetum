@@ -586,7 +586,7 @@ contracts:
     oracle: the route table
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ11
     statement: An unknown type or resource is decision false, not an error.
     oracle: the specification

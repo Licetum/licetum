@@ -1,6 +1,11 @@
 {
   "method": "POST",
-  "path": "/service/orders/access/v1/search/subject?consistency=higher",
+  "path": "/service/orders/access/v1/search/subject",
+  "header": {
+    "X-Test-Consistency": [
+      "higher"
+    ]
+  },
   "body": {
     "action": {
       "name": "read"

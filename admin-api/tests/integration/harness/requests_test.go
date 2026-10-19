@@ -33,7 +33,7 @@ func TestBranchesIsTheSearchOfTheReadableBranchesOfTheHolderOfTheToken(t *testin
 	if string(got) != string(wanted) {
 		t.Fatalf("Branches = %s\nwant      %s", got, wanted)
 	}
-	if req.Method != http.MethodPost || req.Path != "/service/org/access/v1/search/resource?at_least_as_fresh=7" {
+	if req.Method != http.MethodPost || req.Path != "/service/org/access/v1/search/resource" {
 		t.Fatalf("Branches sends %s %s", req.Method, req.Path)
 	}
 }

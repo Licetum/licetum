@@ -1,8 +1,8 @@
 # Decision tables
 
 The fixtures of the decision contracts (DEC01–DEC13 of `contracts.yaml`; the format is `core/testsupport/policyfix`). Each one
-is checked twice: by the engine through the check API (`admin-api/tests/integration/contracts`, with the permission list of
-every case cross-checked) and by the reference evaluator (`core/testsupport/refeval`).
+is checked twice: by the engine through the AuthZEN API (`admin-api/tests/integration/contracts`, with the searches of
+every case cross-checked against the evaluations) and by the reference evaluator (`core/testsupport/refeval`).
 
 A fixture is one state. A state that only a change made after the first synchronization can reach — a resource its source
 no longer reports, a synchronizer or a parent type deleted, the levels of an access group changed under its rules — is
@@ -43,7 +43,6 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationTypeModes | dec06_not_sync, dec06_synchronizer_deleted (and dec06_below_a_deleted_synchronizer: a type below it, whose resources name the rows it left, and dec06_denials_that_lose_their_type: the denials that read its resources), dec06_type_without_synchronizer, dec01_what_a_rule_covers, dec05_cross_service_cascade (the refused point rule, target_valid and the PATCH of the dead rule are not decisions) |
 | TestIntegrationTypeResourceNameUnique | not a decision test |
 | TestIntegrationSynchronizerSecrets | not a decision test |
-| TestIntegrationOAuthRefresh | not a decision test |
 
 ### conditions_test.go
 

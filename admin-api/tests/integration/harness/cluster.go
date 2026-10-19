@@ -153,7 +153,6 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		DB: config.Database{URI: dbURI, PoolSize: 5, PgBouncer: iso.PgBouncer, MigrateURI: iso.MigrateURI},
 		// The DBOS tables of the cluster live in a schema of their own, dropped with it.
 		Sync: config.Sync{DBOSSchema: "dbos_" + iso.Name},
-		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
 		Platform: config.Platform{
 			Name: "Licetum", URL: c.IdP.AppURL(), Icon: c.IdP.IconURL(),
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username", AdminClaimValues: []string{"admin"},
@@ -511,7 +510,7 @@ func (r *Replica) Do(c *Cluster, method, path, token string, body any) *Result {
 // answer with the Trace of the request.
 func (r *Replica) Send(c *Cluster, req authzenreq.Request, token string, levers ...Lever) *Result {
 	c.T.Helper()
-	return r.request(c, req.Method, req.Path, token, req.Body, questionHeader(levers))
+	return r.request(c, req.Method, req.Path, token, req.Body, questionHeader(req.Header, levers))
 }
 
 // base is the address a path of the replica is asked at: the probes and the metrics are on the operations listener, the rest
@@ -540,7 +539,7 @@ func (r *Replica) request(c *Cluster, method, path, token string, body any, head
 func (r *Replica) Try(c *Cluster, req authzenreq.Request, token string, timeout time.Duration, levers ...Lever) (status int, body []byte, err error) {
 	c.T.Helper()
 	client := &http.Client{Timeout: timeout}
-	status, body, _, err = c.send(client, req.Method, r.Server.URL+req.Path, token, req.Body, "", questionHeader(levers))
+	status, body, _, err = c.send(client, req.Method, r.Server.URL+req.Path, token, req.Body, "", questionHeader(req.Header, levers))
 	return status, body, err
 }
 

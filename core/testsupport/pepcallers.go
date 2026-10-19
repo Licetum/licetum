@@ -23,6 +23,7 @@ var pepOperations = []string{"evaluate", "search_resource", "search_action", "se
 // the mock identity provider, with the claims the rules read): the PDP does not take such a token, so a request that carries one
 // is sent as the PEP client of the service it is about, with the person as the subject of the body and the claims of the token as
 // the properties of the subject. One client, with an API key and every operation, is made per service when it is first needed.
+// The token of a client application (it names its client in azp) and an API key are sent as they are.
 type PEPCallers struct {
 	tb   testing.TB
 	pool *pgxpool.Pool
@@ -31,12 +32,15 @@ type PEPCallers struct {
 
 	mu   sync.Mutex
 	keys map[uuid.UUID]string
+	// byRef is the key that was last used for a reference (a slug or an id) that named a service then: a PEP keeps its key after the
+	// service is renamed or deleted, and what the PDP then answers a client that has the key is what a test of that wants to see.
+	byRef map[string]string
 }
 
 // NewPEPCallers makes the callers of the tests on the database of pool. changed is called after a client is made, so that the apps
 // read the directory at once instead of at their next poll of the revisions.
 func NewPEPCallers(tb testing.TB, pool *pgxpool.Pool, changed func()) *PEPCallers {
-	return &PEPCallers{tb: tb, pool: pool, changed: changed, keys: map[uuid.UUID]string{}}
+	return &PEPCallers{tb: tb, pool: pool, changed: changed, keys: map[uuid.UUID]string{}, byRef: map[string]string{}}
 }
 
 // credentialClaims are the claims that identify a token and not a person: they are not sent as properties.
@@ -56,6 +60,11 @@ func (p *PEPCallers) Prepare(path, token string, body any) (credential string, p
 	claims, ok := claimsOf(token)
 	if !ok {
 		// Not a token of the mock provider: whatever it is, it is the PDP's to refuse.
+		return token, body
+	}
+	if _, client := claims["azp"]; client {
+		// The token of a client application (a PEP that authenticates with a token of its issuer) is a credential of its own, not
+		// a person.
 		return token, body
 	}
 	key, ok := p.credential(ref)
@@ -85,17 +94,22 @@ func serviceOfAuthzenPath(path string) (string, bool) {
 	return ref, true
 }
 
-// credential is the API key of the client of the service named by ref, made when it is first asked for. A service nobody has
-// (an unknown reference) has none: the request is sent with its token, and the PDP refuses it.
+// credential is the API key of the client of the service named by ref, made when it is first asked for. A reference that names no
+// service now gets the key it last named one with; a reference that never did has none: the request is sent with its token, and
+// the PDP refuses it.
 func (p *PEPCallers) credential(ref string) (string, bool) {
 	ctx := context.Background()
 	var id uuid.UUID
 	if err := p.pool.QueryRow(ctx, `SELECT id FROM service WHERE deleted_at IS NULL AND (slug = $1 OR id::text = $1)`, ref).Scan(&id); err != nil {
-		return "", false
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		key, ok := p.byRef[ref]
+		return key, ok
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if key, ok := p.keys[id]; ok {
+		p.byRef[ref] = key
 		return key, true
 	}
 	client := RegisterPEPClient(p.tb, p.pool, db.PEPClient{
@@ -103,6 +117,7 @@ func (p *PEPCallers) credential(ref string) (string, bool) {
 	})
 	key, _ := IssueTestAPIKey(p.tb, p.pool, client.ID)
 	p.keys[id] = key
+	p.byRef[ref] = key
 	if p.changed != nil {
 		p.changed()
 	}

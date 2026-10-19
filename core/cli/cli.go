@@ -39,7 +39,7 @@ func LoadConfig(requireAll bool) (*config.Config, error) {
 		return nil, err
 	}
 	if requireAll {
-		if err := errors.Join(cfg.RequireRedis(), cfg.RequireAuth()); err != nil {
+		if err := cfg.RequireRedis(); err != nil {
 			return nil, err
 		}
 	}

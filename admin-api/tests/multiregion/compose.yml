@@ -20,7 +20,6 @@ x-go: &go
   restart: on-failure
 
 x-env: &env
-  AUTH__STATE_SECRET: multiregion-state-secret
   SHUTDOWN__DRAIN: 1s
   SHUTDOWN__TIMEOUT: 10s
   SYNC__ENGINE: postgres

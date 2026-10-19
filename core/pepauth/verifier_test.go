@@ -78,6 +78,10 @@ func craftToken(t *testing.T, header, claims map[string]any, signature string) s
 func TestContract_PEP01_AcceptsOnlyAllowedJWTs(t *testing.T) {
 	idp := idpWithKeys(t)
 	at := func(d time.Duration) int64 { return time.Now().Add(d).Unix() }
+	// atCeil is at rounded up to the second. A time in claims has whole seconds, so at(-59 * time.Second) can be almost 60 seconds
+	// ago, and a loaded machine that signs and verifies a little later than that sees the token past its leeway; a case that must
+	// be accepted at the edge of the leeway is made with atCeil, which has a full second of margin for the time the test takes.
+	atCeil := func(d time.Duration) int64 { return time.Now().Add(d).Add(time.Second).Unix() }
 	none := func(alg string) string {
 		return craftToken(t, map[string]any{"alg": alg, "typ": "JWT"},
 			map[string]any{"iss": idp.Issuer(), "sub": "pep-service", "aud": testPDP, "exp": at(time.Hour)}, "")
@@ -146,7 +150,7 @@ func TestContract_PEP01_AcceptsOnlyAllowedJWTs(t *testing.T) {
 			return rsToken(idp, pdpClaims(jwt.MapClaims{"exp": at(-time.Hour)}))
 		}, false},
 		{"a token that expired 59 seconds ago", pepauth.IssuerConfig{}, func() string {
-			return rsToken(idp, pdpClaims(jwt.MapClaims{"exp": at(-59 * time.Second)}))
+			return rsToken(idp, pdpClaims(jwt.MapClaims{"exp": atCeil(-59 * time.Second)}))
 		}, true},
 		{"a token that expired 61 seconds ago", pepauth.IssuerConfig{}, func() string {
 			return rsToken(idp, pdpClaims(jwt.MapClaims{"exp": at(-61 * time.Second)}))
