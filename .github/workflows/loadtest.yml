@@ -1,6 +1,6 @@
 name: Load test
 
-# The check API at the policy sizes of admin-api/loadtest, nightly and on demand. Each run ramps the traffic up until a
+# The PDP at the policy sizes of admin-api/loadtest, nightly and on demand. Each run ramps the traffic up until a
 # step misses its objective, and writes the result to the job summary and to the artifact. The runner is the same size
 # every night, so the numbers can be compared from one night to the next.
 #

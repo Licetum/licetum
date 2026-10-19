@@ -592,9 +592,10 @@ func measurementFrom(res k6Result, w window, cores int) Measurement {
 	return m
 }
 
-// startCheck runs `licetum check` against the infrastructure of the run. Its pool is the one the options name, with no
-// overflow, so the number of connections to PostgreSQL is the setting under test. Its output goes to check.log.
-func startCheck(ctx context.Context, e *env, opts Options, index int) (*checkServer, error) {
+// startPDP runs `licetum pdp` against the infrastructure of the run, on the address PDP__ADDR names. Its pool is the one the
+// options name, with no overflow, so the number of connections to PostgreSQL is the setting under test. Its output goes to
+// check.log.
+func startPDP(ctx context.Context, e *env, opts Options, index int) (*checkServer, error) {
 	addr, err := freeAddr()
 	if err != nil {
 		return nil, err
@@ -607,13 +608,13 @@ func startCheck(ctx context.Context, e *env, opts Options, index int) (*checkSer
 	if err != nil {
 		return nil, fmt.Errorf("create the server log: %w", err)
 	}
-	bin, args := opts.CheckBin, []string{"check"}
+	bin, args := opts.CheckBin, []string{"pdp"}
 	if opts.CheckCPUs != "" {
-		bin, args = "taskset", []string{"-c", opts.CheckCPUs, opts.CheckBin, "check"}
+		bin, args = "taskset", []string{"-c", opts.CheckCPUs, opts.CheckBin, "pdp"}
 	}
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // the binary is the one the run was asked to measure
 	cmd.Env = append(os.Environ(), checkServerEnv(e, opts)...)
-	cmd.Env = append(cmd.Env, "HTTP__ADDR="+addr)
+	cmd.Env = append(cmd.Env, "PDP__ADDR="+addr)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		if cerr := logFile.Close(); cerr != nil {
@@ -704,7 +705,7 @@ func startReplicas(ctx context.Context, e *env, opts Options) ([]*checkServer, e
 	n := max(opts.Replicas, 1)
 	out := make([]*checkServer, 0, n)
 	for i := range n {
-		c, err := startCheck(ctx, e, opts, i)
+		c, err := startPDP(ctx, e, opts, i)
 		if err != nil {
 			for _, started := range out {
 				started.stop()

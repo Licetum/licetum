@@ -13,7 +13,7 @@ ns=${NAMESPACE:-licetum-ci}
 release=licetum
 chart=licetum
 values=(-f $chart/ci/kind-values.yaml)
-check=http://$release-check:8001
+pdp=http://$release-pdp:8001
 admin=http://$release-admin:8000
 
 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
@@ -31,9 +31,9 @@ kubectl -n "$ns" get pods
 
 log "smoke: the probes, the discovery document, the platform"
 curl_pod smoke "set -e
-curl -fsS $check/healthz > /dev/null
-curl -fsS $check/readyz > /dev/null
-curl -fsS $check/.well-known/authzen-configuration/service/licetum | grep -q evaluation
+curl -fsS $pdp/healthz > /dev/null
+curl -fsS $pdp/readyz > /dev/null
+curl -fsS $pdp/.well-known/authzen-configuration/service/licetum | grep -q evaluation
 curl -fsS $admin/readyz > /dev/null
 curl -fsS $admin/platform | grep -q admin_group_id
 echo smoke ok"
@@ -42,15 +42,17 @@ migrations() { kubectl -n "$ns" get jobs -l app.kubernetes.io/component=migrate 
 before=$(migrations | python3 -c 'import json,sys; j=json.load(sys.stdin)["items"]; print(len(j), j[0]["metadata"]["uid"] if j else "")')
 echo "migration jobs before the upgrade: $before"
 
+# The load asks the discovery document: unauthenticated, served on the public port, and built from HTTP__PUBLIC_URL, so a pod that
+# came up without its public URL fails the test too.
 log "rolling upgrade under load (about 100 requests a second)"
 kubectl -n "$ns" run load --restart=Never --image=curlimages/curl:8.10.1 --command -- sh -c "
 for i in \$(seq 1 150); do
-  seq 1 100 | xargs -P 25 -I{} sh -c 'curl -s -o /dev/null -w \"%{http_code}\\n\" --max-time 5 $check/healthz || echo curl-failed'
+  seq 1 100 | xargs -P 25 -I{} sh -c 'curl -s -o /dev/null -w \"%{http_code}\\n\" --max-time 5 $pdp/.well-known/authzen-configuration/service/licetum || echo curl-failed'
   sleep 0.2
 done | sort | uniq -c"
 sleep 5
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-helm upgrade $release $chart -n "$ns" "${values[@]}" --set-string check.podAnnotations.rollout="$(date +%s)" --wait --timeout 6m
+helm upgrade $release $chart -n "$ns" "${values[@]}" --set-string pdp.podAnnotations.rollout="$(date +%s)" --wait --timeout 6m
 kubectl -n "$ns" wait --for=jsonpath='{.status.phase}'=Succeeded pod/load --timeout=600s
 result=$(kubectl -n "$ns" logs load)
 echo "$result"

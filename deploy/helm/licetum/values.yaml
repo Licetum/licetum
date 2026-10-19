@@ -1,7 +1,7 @@
 # Licetum: one release is one region (or one cell). Run it in every region with its own db.readUri and redis.uri; the pods that
 # write (admin, worker, migrate) belong in the region of the primary only. docs/deployment.md describes the topology.
 
-# The image of the check API, the worker and the migrations (the core module), of the admin API, and of the web interface.
+# The image of the PDP, the worker and the migrations (the core module), of the admin API, and of the web interface.
 image:
   core:
     repository: ghcr.io/licetum/licetum
@@ -19,7 +19,7 @@ imagePullSecrets: []
 # worker.regionAware is set.
 region: ""
 
-# The address clients reach the check API at (HTTP__PUBLIC_URL): the AuthZEN discovery document is built from it.
+# The address clients reach the PDP at (HTTP__PUBLIC_URL): the AuthZEN discovery document is built from it.
 publicUrl: ""
 
 # The secrets. Either name a Secret that holds the keys below (existingSecret, the way to go in production) or give the values and
@@ -42,7 +42,7 @@ db:
   poolSize: 10
   maxOverflow: 20
   syncPoolSize: 4
-  # Reading from a replica (secrets.dbReadUri set): how far behind the replica may be, and what the check API does beyond it:
+  # Reading from a replica (secrets.dbReadUri set): how far behind the replica may be, and what the PDP does beyond it:
   # "unready" (the pod leaves the rotation) or "primary" (the reads move to the primary meanwhile).
   maxReplicaLag: 10s
   lagAction: unready
@@ -73,9 +73,9 @@ policyMaxStaleness: ""
 # Extra environment variables for every pod (name: value).
 env: {}
 
-# The check API: the only thing clients call at request time. It reads the policy from the replica (secrets.dbReadUri) and writes
-# nothing to the graph.
-check:
+# The PDP (the AuthZEN decision point): the only thing clients call at request time. It reads the policy from the replica
+# (secrets.dbReadUri) and writes nothing to the graph.
+pdp:
   replicas: 2
   port: 8001
   resources:
@@ -164,7 +164,7 @@ web:
     tls: []
 
 ingress:
-  # An Ingress for the check API.
+  # An Ingress for the PDP.
   enabled: false
   className: ""
   host: ""
@@ -181,7 +181,7 @@ podAntiAffinity:
   enabled: true
   topologyKey: kubernetes.io/hostname
 
-# NetworkPolicy: the check pods may talk to PostgreSQL, Redis, the identity provider and the sources, and to nothing else;
+# NetworkPolicy: the PDP pods may talk to PostgreSQL, Redis, the identity provider and the sources, and to nothing else;
 # ingress only on their port. Give the CIDRs and ports (a policy cannot name a managed database by its host name).
 networkPolicy:
   enabled: false

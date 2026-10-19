@@ -128,21 +128,21 @@ Content-Type: application/json
 task dev
 ```
 
-Команда поднимает PostgreSQL, Redis, локальный провайдер Dex OIDC, API проверки, административный API и веб-интерфейс
+Команда поднимает PostgreSQL, Redis, локальный провайдер Dex OIDC, PDP, административный API и веб-интерфейс
 с горячей перезагрузкой для Go-сервисов и веб-интерфейса.
 
 | Компонент | Адрес |
 |---|---|
 | Веб-интерфейс | http://localhost:3000 |
 | Административный API | http://localhost:8002 |
-| API проверки | http://localhost:8001 |
+| PDP | http://localhost:8001 |
 
 Войдите на http://localhost:3000 как `admin@example.com` с паролем `password`. Эти данные предназначены
 только для разработки.
 
 Чтобы запускать Go-бинарники без Docker, см. руководства для [core](../core/README.md) и
 [admin API](../admin-api/README.md). Каждый из них может вывести свою спецификацию OpenAPI без сервера:
-`licetum openapi check` — для API проверки, `licetum-admin openapi admin` — для административного API.
+`licetum openapi pdp` — для PDP, `licetum-admin openapi admin` — для административного API.
 
 ## Чем Licetum не является
 
@@ -155,7 +155,7 @@ task dev
 
 ## Документация
 
-- [core/](../core/README.md): движок, API проверки, схема базы данных и миграции (MIT).
+- [core/](../core/README.md): движок, PDP, схема базы данных и миграции (MIT).
 - [admin-api/](../admin-api/README.md): административный API, инструменты политики и бинарник `licetum-admin`
   (AGPL-3.0).
 - [web/](../web/README.md): административный интерфейс (AGPL-3.0).
@@ -166,7 +166,7 @@ task dev
 
 - [licetum](https://github.com/Licetum/licetum): этот репозиторий, с движком, API и веб-интерфейсом.
 - [licetum-go-sdk](https://github.com/Licetum/licetum-go-sdk), [licetum-ts-sdk](https://github.com/Licetum/licetum-ts-sdk),
-  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk): клиентские библиотеки для API проверки
+  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk): клиентские библиотеки для PDP
   (будут опубликованы; у каждой будет свой файл лицензии).
 - [licetum-helm](https://github.com/Licetum/licetum-helm): Helm-чарт.
 - [licetum-docs](https://github.com/Licetum/licetum-docs): документация.
@@ -180,7 +180,7 @@ task dev
 
 Licetum состоит из трёх частей, у каждой своя лицензия (см. [LICENSE](../LICENSE)):
 
-- [`core/`](../core/LICENSE): движок, API проверки, схема базы данных и среда выполнения. Лицензия MIT.
+- [`core/`](../core/LICENSE): движок, PDP, схема базы данных и среда выполнения. Лицензия MIT.
 - [`admin-api/`](../admin-api/LICENSE): административный API. GNU Affero General Public License v3.0 only.
 - [`web/`](../web/LICENSE): административный интерфейс. GNU Affero General Public License v3.0 only.
 

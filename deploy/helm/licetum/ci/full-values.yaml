@@ -15,7 +15,7 @@ platform:
   jwksUrl: https://idp.example.com/keys
   issuer: https://idp.example.com
   clientId: licetum
-check:
+pdp:
   maxInflight: "512"
   autoscaling:
     targetInflight: 200

@@ -299,7 +299,7 @@ func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
 
 	r := &Replica{Index: index, App: app, Pool: pool, Redis: rdb}
 	// Levers: a test sets the freshness of a request with a header (Higher), not with a parameter of the API.
-	handler := Levers(server.NewCheckHandler(app))
+	handler := Levers(server.NewPDPHandler(app))
 	// The Trace of a request is created here, so the test can read what the request cost; the server keeps it.
 	r.Server = serve(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		ctx, trace := engine.WithTrace(req.Context())

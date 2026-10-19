@@ -1121,8 +1121,8 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 	if err != nil {
 		return nil, err
 	}
-	if a.Role == RoleCheck {
-		return nil, errors.New("the check role does not write the resource graph")
+	if a.Role == RolePDP {
+		return nil, errors.New("the pdp role does not write the resource graph")
 	}
 	sync, err := a.ActiveSynchronizer(ctx, typeResourceID)
 	if err != nil {

@@ -21,7 +21,7 @@ import (
 )
 
 // The DBOS engine (SYNC__ENGINE=dbos) runs the synchronization jobs as DBOS workflows on a database-backed queue, in place
-// of the sync_job table. The check and admin processes enqueue through a DBOS client and wait for the workflow; the worker
+// of the sync_job table. The PDP and admin processes enqueue through a DBOS client and wait for the workflow; the worker
 // launches the DBOS runtime and executes them. What stays the same: one job per type shared by all callers (the DBOS
 // deduplication id, policy "return existing"), the state in sync_state, and the apply transaction.
 //

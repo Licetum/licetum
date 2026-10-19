@@ -123,7 +123,7 @@ func (a *App) checkDatabase(ctx context.Context) error {
 	}
 	pool := a.DB
 	if a.ReadDB != nil && a.Role != RoleWorker {
-		pool = a.ReadDB // the pool a check process serves from
+		pool = a.ReadDB // the pool the PDP serves from
 	}
 	version, err := db.SchemaVersion(ctx, pool)
 	if err != nil {

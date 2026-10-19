@@ -39,7 +39,7 @@ spec:
             - name: ADMIN_API_PUBLIC_URL
               value: {{ required "web.adminApiPublicUrl is required when the web interface is enabled" .Values.web.adminApiPublicUrl | quote }}
             - name: CHECK_API_URL
-              value: {{ printf "http://%s-check:%v" (include "licetum.fullname" .) .Values.check.port | quote }}
+              value: {{ printf "http://%s-pdp:%v" (include "licetum.fullname" .) .Values.pdp.port | quote }}
             - name: CHECK_API_PUBLIC_URL
               value: {{ required "web.checkApiPublicUrl is required when the web interface is enabled" .Values.web.checkApiPublicUrl | quote }}
             - name: APP_BASE_URL

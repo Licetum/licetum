@@ -21,15 +21,15 @@ import (
 // lives in the sync_state table, in step with the data it describes: the worker writes both in one transaction. A
 // Redis flush or a failover loses nothing and starts no synchronization.
 
-// Role is what a process does with the synchronization. Only a worker applies it; the check and the admin processes ask
+// Role is what a process does with the synchronization. Only a worker applies it; the PDP and the admin processes ask
 // for it (see Ensure) and read what the worker wrote.
 type Role int
 
 const (
 	// RoleAny is an engine without a restriction: tests, tools and library use.
 	RoleAny Role = iota
-	// RoleCheck is the permission-check API: it never writes the resource graph.
-	RoleCheck
+	// RolePDP is the regional PDP (licetum pdp): it never writes the resource graph.
+	RolePDP
 	// RoleAdmin is the admin API: it asks for synchronizations, and refreshes a single resource inline (resolve).
 	RoleAdmin
 	// RoleWorker executes the synchronization jobs.
@@ -38,8 +38,8 @@ const (
 
 func (r Role) String() string {
 	switch r {
-	case RoleCheck:
-		return "check"
+	case RolePDP:
+		return "pdp"
 	case RoleAdmin:
 		return "admin"
 	case RoleWorker:

@@ -60,13 +60,13 @@ func TestRequestTimeoutDefaultsByRole(t *testing.T) {
 		set  time.Duration
 		want time.Duration
 	}{
-		{RoleCheck, 0, 10 * time.Second},
+		{RolePDP, 0, 10 * time.Second},
 		{RoleAdmin, 0, 60 * time.Second},
 		{RoleWorker, 0, 60 * time.Second},
 		{RoleAny, 0, 0}, // tests and tools: none unless asked for
-		{RoleCheck, 3 * time.Second, 3 * time.Second},
+		{RolePDP, 3 * time.Second, 3 * time.Second},
 		{RoleAdmin, 3 * time.Second, 3 * time.Second},
-		{RoleCheck, -1, 0},
+		{RolePDP, -1, 0},
 	} {
 		a := &App{Role: c.role, Cfg: &config.Config{HTTP: config.HTTP{RequestTimeout: c.set}}}
 		if got := a.RequestTimeout(); got != c.want {
