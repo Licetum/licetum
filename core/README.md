@@ -12,7 +12,7 @@ The admin API (`admin-api/`, AGPL-3.0-only) is a separate module that depends on
 
 | Command | What it does |
 |---|---|
-| `licetum pdp` | the PDP: the permission API, `GET /service/{id}/permission` and the check endpoints (default `:8001`) |
+| `licetum pdp` | the PDP: the permission API, `GET /service/{id}/permission` and the check endpoints (default `:8001`); its probes and `/metrics` are on the ops port (`PDP__OPS_ADDR`, default `:9090`) |
 | `licetum migrate` | applies the database migrations and seeds the platform self-service (idempotent) |
 | `licetum openapi pdp [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server, database or Redis |
 
@@ -28,9 +28,9 @@ go run ./cmd/licetum migrate
 go run ./cmd/licetum pdp
 ```
 
-The PDP has its own docs, like FastAPI: Swagger UI at `/docs` and the OpenAPI 3.1 spec at `/openapi.json`
-(and `/openapi.yaml`). The spec is generated from the Go structs that handle requests (Huma v2), so it cannot drift
-from the code. Without a server:
+The PDP serves no docs and no OpenAPI document on its ports: its public port has the AuthZEN API and the legacy routes,
+and its ops listener the probes and the metrics. The spec is generated from the Go structs that handle requests (Huma v2),
+so it cannot drift from the code; `licetum openapi pdp` prints it, without a server:
 
 ```bash
 go run ./cmd/licetum openapi pdp -yaml > pdp.openapi.yaml   # -lang ru|zh for the translations
@@ -40,7 +40,8 @@ go run ./cmd/licetum openapi pdp -yaml > pdp.openapi.yaml   # -lang ru|zh for th
 `task check`) fails when it is out of date.
 
 Logs are JSON on stdout. `LOG__LEVEL=debug` enables debug logs, and `DB__ECHO=true` adds the SQL.
-The address is set with `-addr :9000`, or with `PDP__ADDR` (the PDP) or `HTTP__ADDR` (the other processes).
+The address is set with `-addr :9000`, or with `PDP__ADDR` (the PDP) or `HTTP__ADDR` (the other processes). The probes and
+`/metrics` of the PDP are on its ops port, set with `PDP__OPS_ADDR` (default `:9090`), see [Probes](#probes).
 
 ## AuthZEN
 
@@ -90,7 +91,7 @@ lists accept a JSON array or a comma-separated string.
 | `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
 | | The retention of both runs in the **worker** only (`licetum worker`): give it the same `SUBJECTS__RETENTION_DAYS` and `DELEGATION__AUDIT_RETENTION_DAYS` as the other processes, or the defaults (90 and 365 days) apply. |
 | `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person), `DELEGATION__AUDIT_MODE` (`strict`, default: the record is committed before the answer; `async`: buffered and written in batches), `DELEGATION__AUDIT_BUFFER` (async buffer size, default 100000) |
-| `PDP__ADDR`, `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address: `PDP__ADDR` for the PDP (default `:8001`), `HTTP__ADDR` for the admin API and the worker; the address clients reach the PDP at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
+| `PDP__ADDR`, `PDP__OPS_ADDR`, `HTTP__ADDR`, `HTTP__PUBLIC_URL` | the listen address: `PDP__ADDR` for the PDP (default `:8001`: the AuthZEN API and the legacy routes only), `PDP__OPS_ADDR` for its probes and `/metrics` (default `:9090`), `HTTP__ADDR` for the admin API and the worker; the address clients reach the PDP at (`https://licetum.example.com`), which the AuthZEN discovery document is built from |
 | `HTTP__MAX_INFLIGHT`, `HTTP__REQUEST_TIMEOUT` | admission control: the requests served at once (default `GOMAXPROCS × 256`, a negative value removes the limit) and the deadline of a request (default `10s` for the PDP, `60s` for the admin API, a negative value sets none) |
 | `POLICY__MAX_STALENESS` | how long a process goes on answering from its copy of the policy when it cannot confirm it against PostgreSQL; beyond it requests fail closed (503 `policy_unavailable`). Default `0`: **no limit** — the process answers for as long as PostgreSQL is unreachable and does not see a revocation made meanwhile; set it where that is not acceptable |
 | `SHUTDOWN__DRAIN`, `SHUTDOWN__TIMEOUT` | on SIGTERM: how long the process is not ready but serves (default `10s`) and how long it waits for the requests in progress (default `30s`) |
@@ -121,6 +122,9 @@ Redis. The pieces, all per process:
 ## Resilience and operations
 
 ### Probes
+
+The PDP serves its probes and `/metrics` on the ops listener, `PDP__OPS_ADDR` (default `:9090`), and on no other: the public
+listener (`PDP__ADDR`) serves the AuthZEN API and the legacy routes only. The probes below are on the ops port:
 
 - `GET /healthz` is liveness: 200 while the process answers, whatever its dependencies do. Use it for the liveness probe.
 - `GET /readyz` is readiness: 200 when PostgreSQL answers within a second, the schema of the database is **at least** the version
@@ -372,8 +376,8 @@ Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/
   many as hang below the type (of the order of a second for 200 000).
 - Predicate regular expressions run on RE2: backreferences and lookaround are not supported. An invalid regular
   expression is rejected when the rule is saved (422).
-- Swagger UI at `/docs` loads its scripts from a CDN (unpkg). In an isolated network the page does not render, but
-  `/openapi.json` always works.
+- The admin API's Swagger UI at `/docs` loads its scripts from a CDN (unpkg). In an isolated network the page does not
+  render, but the admin API's `/openapi.json` always works.
 
 ## License
 

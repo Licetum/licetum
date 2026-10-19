@@ -30,7 +30,8 @@ The backend is written in Go (`backend/`), one binary with subcommands:
   permission items, assignment_rules, oauth callback, platform self-service). Port 8000. Routes: `internal/api/admin.go`.
 - `licetum pdp` — the PDP, the single runtime endpoint client services actually call at request time
   (`GET /service/{service_id}/permission`), kept in its own process/port (8001, `-addr` or `PDP__ADDR` overrides it) so it can be
-  scaled/deployed independently of the admin surface. Route: `internal/api/check.go`.
+  scaled/deployed independently of the admin surface. Its probes and `/metrics` are on the ops port (9090, `PDP__OPS_ADDR`), never on
+  this one. Route: `internal/api/check.go`.
 - `licetum worker` — the synchronization worker: executes the jobs that fetch the resource sources into the local copy, and keeps the
   types in use fresh on a schedule. Metrics on :8002. The PDP and admin processes never apply a synchronization.
 - `licetum migrate` — apply DB migrations and seed the platform self-service.
@@ -126,7 +127,8 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   `mutate` or the batch, which do); a change made by other means (`restore-admin` does bump) shows up at `SNAPSHOT__MAX_AGE` at the latest.
   `consistency=higher` does not use the snapshot (`cacheState.forConsistency`): it reads everything with queries, as before the snapshot.
 - Resilience and operations (F5; `core/README.md` has the user-facing description):
-  - **Probes** (`engine/ready.go`, `server.NewServer`): `GET /healthz` has no dependency; `GET /readyz` (`App.Ready`) is 200 when the process is
+  - **Probes** (`engine/ready.go`, `server.NewServer`), on the PDP's ops listener (`PDP__OPS_ADDR`, 9090; the public listener has none):
+    `GET /healthz` has no dependency; `GET /readyz` (`App.Ready`) is 200 when the process is
     not draining (`App.SetDraining`), PostgreSQL answers one statement within 1 s (`db.SchemaVersion`, result reused for 1 s, not counted in the
     metrics) with the schema **at least** `db.LatestMigration()` (a newer one is fine: the previous release stays ready during a rolling
     update), and the view holds its snapshot (or the policy is deliberately not copied: `oversized`). Redis is not part of it. The worker has
@@ -243,7 +245,7 @@ the web interface sends extra form fields. Path-param structs that are embedded 
 or Huma won't see their fields.
 
 Settings: `config.Load()` reads env vars with the same prefixes as before (`DB__`, `AUTH__`,
-`REDIS__`, `CORS__`, `PLATFORM__`, `SYNC__`, plus `HTTP__ADDR`); names are case-insensitive, lists accept a
+`REDIS__`, `CORS__`, `PLATFORM__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR` and `PDP__OPS_ADDR`); names are case-insensitive, lists accept a
 JSON array or CSV. `DB__URI` may keep the SQLAlchemy `+asyncpg` suffix (`db.NormalizeDSN`).
 `PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback.
 
@@ -671,7 +673,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   returned (a call that cannot be recorded is not answered; `GET /service/{id}/delegated_calls` pages it;
   `DELEGATION__AUDIT_RETENTION_DAYS`, default 365). `DELEGATION__AUDIT_MODE=async` (default `strict`) buffers the record (`DELEGATION__AUDIT_BUFFER`, default 100 000) and writes it with one multi-row INSERT every 500 ms or at 500 records (`engine/audit.go`); a full buffer drops and counts (`licetum_audit_dropped_total`, `licetum_audit_buffer_records`, `licetum_audit_lag_seconds`), `Close` flushes. `NoteSubject` fills a buffer flushed every second in batches of 500; the upsert only changes a row older than 10 minutes, so replicas change it once per interval. Retention (`engine/retention.go`) runs in the `worker` only, hourly, in 10 000-row chunks, under a Redis lock (once per interval across workers). A log-settings change bumps `revision_state` scope `log_settings` in its transaction; every process applies it from the revision poll (`WatchRevision`, no ticker of its own). `WaitChanges` shares one `max(id)` query per second per process between all waiters. The access log names the client as `user` and the person as `on_behalf_of`. Known
   limit: a user token of a trusted client is not told apart from its own client-credentials token, so trust a backend client.
-- `GET /metrics` on both apps (Prometheus, own registry per `App`, `service/metrics.go`): permission
+- `GET /metrics` on the PDP's ops port and on the admin API (Prometheus, own registry per `App`, `service/metrics.go`): permission
   compute time and cache hit/miss/bypass, the in-process caches (`licetum_l1_cache_total`), JWKS fetches (`licetum_jwks_fetch_total`),
   dropped background work (`licetum_background_dropped_total`), requests that had no policy snapshot (`licetum_snapshot_fallback_total`),
   Redis commands skipped by the fast-fail (`licetum_redis_skipped_total`), check decisions, source fetch time and sync results,

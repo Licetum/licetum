@@ -1,5 +1,5 @@
 {{- if .Values.networkPolicy.enabled }}
-{{- /* The PDP pods: ingress on their port only; egress to PostgreSQL, Redis, the identity provider and the sources, DNS. */}}
+{{- /* The PDP pods: ingress on their ports only; egress to PostgreSQL, Redis, the identity provider and the sources, DNS. */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -19,6 +19,21 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    {{- /* The ops port (probes and /metrics) takes the peers of the public port; Prometheus scrapes it from its namespace. */}}
+    - ports:
+        - port: {{ .Values.pdp.opsPort }}
+          protocol: TCP
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace | quote }}
+      ports:
+        - port: {{ .Values.pdp.opsPort }}
+          protocol: TCP
   egress:
     {{- if .Values.networkPolicy.dns }}
     - to:

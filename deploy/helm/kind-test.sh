@@ -14,6 +14,7 @@ release=licetum
 chart=licetum
 values=(-f $chart/ci/kind-values.yaml)
 pdp=http://$release-pdp:8001
+pdp_ops=http://$release-pdp:9090
 admin=http://$release-admin:8000
 
 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
@@ -29,10 +30,11 @@ log "install"
 helm upgrade --install $release $chart -n "$ns" "${values[@]}" --wait --timeout 6m
 kubectl -n "$ns" get pods
 
-log "smoke: the probes, the discovery document, the platform"
+log "smoke: the probes and the metrics of the PDP (ops port), the discovery document, the platform"
 curl_pod smoke "set -e
-curl -fsS $pdp/healthz > /dev/null
-curl -fsS $pdp/readyz > /dev/null
+curl -fsS $pdp_ops/healthz > /dev/null
+curl -fsS $pdp_ops/readyz > /dev/null
+curl -fsS $pdp_ops/metrics | grep -q licetum_http_inflight
 curl -fsS $pdp/.well-known/authzen-configuration/service/licetum | grep -q evaluation
 curl -fsS $admin/readyz > /dev/null
 curl -fsS $admin/platform | grep -q admin_group_id

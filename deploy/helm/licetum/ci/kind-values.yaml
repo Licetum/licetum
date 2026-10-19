@@ -23,6 +23,7 @@ shutdown:
   timeout: 15
 pdp:
   replicas: 3
+  opsPort: 9090
   autoscaling:
     enabled: false
   resources:

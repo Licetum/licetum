@@ -45,7 +45,7 @@ func (o observer) read(ctx context.Context) (counters, error) {
 			return counters{}, err
 		}
 		cpu += used
-		one, err := scrape(ctx, c.base)
+		one, err := scrape(ctx, c.ops)
 		if err != nil {
 			return counters{}, err
 		}
@@ -133,9 +133,9 @@ func procCPU(pid int) (float64, error) {
 	return (utime + stime) / clockTicks, nil
 }
 
-// scrape reads /metrics of the check server.
-func scrape(ctx context.Context, base string) (map[string]float64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/metrics", nil)
+// scrape reads /metrics of the check server, on its ops listener.
+func scrape(ctx context.Context, ops string) (map[string]float64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ops+"/metrics", nil)
 	if err != nil {
 		return nil, err
 	}

@@ -99,10 +99,12 @@ func (e *env) syncFixture(name string, src *source) *syncFixture {
 	return &syncFixture{service: org, slug: name, typ: typ, src: src, alice: e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub"})}
 }
 
-// replica is another process on the same database: a check API (or a worker) with its own pools.
+// replica is another process on the same database: a check API (or a worker) with its own pools. url is its public port;
+// ops is its operations listener (the probes and the metrics).
 type replica struct {
 	app *engine.App
 	url string
+	ops string
 }
 
 func (e *env) newApp(role engine.Role, tune func(*config.Config)) *engine.App {
@@ -142,7 +144,8 @@ func (e *env) newApp(role engine.Role, tune func(*config.Config)) *engine.App {
 func (e *env) checkReplica(tune func(*config.Config)) *replica {
 	app := e.newApp(engine.RolePDP, tune)
 	srv := newTestServer(e.t, server.NewPDPHandler(app))
-	return &replica{app: app, url: srv.URL}
+	ops := newTestServer(e.t, server.NewOpsHandler(app))
+	return &replica{app: app, url: srv.URL, ops: ops.URL}
 }
 
 // worker starts another worker; the default one of the test is stopped first when replace is set.
@@ -453,7 +456,7 @@ func TestSyncWithoutWorkersTheCheckKeepsAnswering(t *testing.T) {
 		}
 		time.Sleep(1100 * time.Millisecond)
 	}
-	_, metrics := e.do(http.MethodGet, r.url+"/metrics", nil)
+	_, metrics := e.do(http.MethodGet, r.ops+"/metrics", nil)
 	age := metricValue(string(metrics), "licetum_sync_queue_age_seconds")
 	if age < 1 {
 		t.Fatalf("licetum_sync_queue_age_seconds = %v, want it to grow while no worker runs\n%s", age, metrics)
@@ -656,7 +659,8 @@ func TestSyncPDPRoleCannotWriteTheGraph(t *testing.T) {
 
 	restricted := e.restrictedApp(role)
 	srv := newTestServer(t, server.NewPDPHandler(restricted))
-	r := &replica{app: restricted, url: srv.URL}
+	ops := newTestServer(t, server.NewOpsHandler(restricted))
+	r := &replica{app: restricted, url: srv.URL, ops: ops.URL}
 
 	// The first request asks for the synchronization; the worker (the owner) applies it; the restricted role only reads.
 	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b2"`) {

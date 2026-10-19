@@ -27,14 +27,18 @@ import (
 type region struct {
 	name   string
 	checks []string // the base URLs of the check replicas
+	ops    []string // the operations listeners of the check replicas (the probes), in the order of checks
 	admin  string   // the admin API of the region ("" when it has none)
 	proxy  string   // the suffix of its proxies in toxiproxy.json (b, c); "" for the region of the primary
 }
 
 var (
-	regionA = region{name: "a", checks: []string{"http://127.0.0.1:18011", "http://127.0.0.1:18012"}, admin: "http://127.0.0.1:18000"}
-	regionB = region{name: "b", checks: []string{"http://127.0.0.1:18021", "http://127.0.0.1:18022"}, admin: "http://127.0.0.1:18010", proxy: "b"}
-	regionC = region{name: "c", checks: []string{"http://127.0.0.1:18031", "http://127.0.0.1:18032"}, proxy: "c"}
+	regionA = region{name: "a", checks: []string{"http://127.0.0.1:18011", "http://127.0.0.1:18012"},
+		ops: []string{"http://127.0.0.1:19011", "http://127.0.0.1:19012"}, admin: "http://127.0.0.1:18000"}
+	regionB = region{name: "b", checks: []string{"http://127.0.0.1:18021", "http://127.0.0.1:18022"},
+		ops: []string{"http://127.0.0.1:19021", "http://127.0.0.1:19022"}, admin: "http://127.0.0.1:18010", proxy: "b"}
+	regionC = region{name: "c", checks: []string{"http://127.0.0.1:18031", "http://127.0.0.1:18032"},
+		ops: []string{"http://127.0.0.1:19031", "http://127.0.0.1:19032"}, proxy: "c"}
 	regions = []region{regionA, regionB, regionC}
 )
 
@@ -111,7 +115,7 @@ func waitForStack(limit time.Duration) error {
 		pending = pending[:0]
 		urls := []string{regionA.admin}
 		for _, r := range regions {
-			urls = append(urls, r.checks...)
+			urls = append(urls, r.ops...)
 		}
 		for _, u := range urls {
 			resp, err := httpClient.Get(u + "/readyz")

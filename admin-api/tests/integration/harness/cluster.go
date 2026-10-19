@@ -82,13 +82,15 @@ type Cluster struct {
 	configure      []func(*config.Config)
 }
 
-// Replica is one check API instance: its own App, database pool, Redis client and HTTP server.
+// Replica is one check API instance: its own App, database pool, Redis client and HTTP servers. Server is the public port
+// (the AuthZEN and the legacy routes); Ops is the operations listener, where the probes and the metrics are.
 type Replica struct {
 	Index  int
 	App    *engine.App
 	Pool   *pgxpool.Pool
 	Redis  *redis.Client
 	Server *httptest.Server
+	Ops    *httptest.Server
 
 	traces sync.Map // request id -> *engine.Trace
 	seq    atomic.Int64
@@ -233,9 +235,9 @@ func (c *Cluster) AddReplica() *Replica {
 }
 
 // Stop ends the replica as the process does on SIGTERM (cli.StopServing): it says it is not ready, serves for the drain,
-// stops listening and waits for the requests in progress.
+// stops listening and waits for the requests in progress. The operations listener stops last.
 func (r *Replica) Stop(drain, timeout time.Duration) error {
-	return cli.StopServing(r.Server.Config, r.App, config.Shutdown{Drain: drain, Timeout: timeout}, nil)
+	return cli.StopServing(r.Server.Config, r.Ops.Config, r.App, config.Shutdown{Drain: drain, Timeout: timeout}, nil)
 }
 
 // startWorker runs the synchronization worker of the cluster: the check and admin processes only ask for synchronizations.
@@ -308,6 +310,8 @@ func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
 		}
 		handler.ServeHTTP(w, req.WithContext(ctx))
 	}))
+	// The probes and the metrics are on the operations listener of the PDP, as the process serves them (PDP__OPS_ADDR).
+	r.Ops = serve(t, server.NewOpsHandler(app))
 	return r
 }
 
@@ -485,10 +489,20 @@ func (r *Replica) Send(c *Cluster, req authzenreq.Request, token string, levers 
 	return r.request(c, req.Method, req.Path, token, req.Body, questionHeader(levers))
 }
 
+// base is the address a path of the replica is asked at: the probes and the metrics are on the operations listener, the rest
+// on the public port.
+func (r *Replica) base(path string) string {
+	switch path {
+	case "/healthz", "/readyz", "/metrics":
+		return r.Ops.URL
+	}
+	return r.Server.URL
+}
+
 func (r *Replica) request(c *Cluster, method, path, token string, body any, header http.Header) *Result {
 	c.T.Helper()
 	id := "harness-" + strconv.Itoa(r.Index) + "-" + strconv.FormatInt(r.seq.Add(1), 10)
-	status, raw, answered := c.do(method, r.Server.URL+path, token, body, id, header)
+	status, raw, answered := c.do(method, r.base(path)+path, token, body, id, header)
 	res := &Result{Status: status, Body: raw, Header: answered}
 	if v, ok := r.traces.LoadAndDelete(id); ok {
 		res.Trace = v.(*engine.Trace)
@@ -525,10 +539,10 @@ func (r *Replica) Permission(c *Cluster, serviceRef, token string) *Result {
 	return r.Send(c, c.PermissionRequest(serviceRef, token), token)
 }
 
-// Metrics is the text of GET /metrics of the replica.
+// Metrics is the text of GET /metrics of the replica, read on its operations listener.
 func (r *Replica) Metrics(c *Cluster) string {
 	c.T.Helper()
-	_, raw, _ := c.do(http.MethodGet, r.Server.URL+"/metrics", "", nil, "", nil)
+	_, raw, _ := c.do(http.MethodGet, r.Ops.URL+"/metrics", "", nil, "", nil)
 	return string(raw)
 }
 

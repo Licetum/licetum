@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -86,7 +87,8 @@ func Failover(ctx context.Context, args []string) error {
 
 // Serve runs an HTTP application until the context ends. name is the application's name in the logs and its role; the
 // address is the -addr flag, else the application's own setting (PDP__ADDR for the PDP, HTTP__ADDR for the admin API), else
-// defaultAddr. build creates the handler from the engine.
+// defaultAddr. build creates the handler from the engine. The PDP also serves its operations endpoints on PDP__OPS_ADDR
+// (server.NewOpsHandler).
 func Serve(ctx context.Context, name string, args []string, defaultAddr string, build func(*engine.App) http.Handler, logs *logx.Switch) error {
 	cfg, err := LoadConfig(true)
 	if err != nil {
@@ -173,6 +175,30 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// The PDP's operations endpoints (the probes and the metrics) have a listener of their own. It is bound before the public one,
+	// so that a port already in use fails the process at start, and it is shut down last (StopServing).
+	var ops *http.Server
+	if name == "pdp" {
+		ops = &http.Server{
+			Addr:              cfg.PDP.OpsAddr,
+			Handler:           server.NewOpsHandler(app),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      60 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		}
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", ops.Addr)
+		if err != nil {
+			return fmt.Errorf("operations listener: %w", err)
+		}
+		go func() {
+			slog.Info("listening", "app", name, "addr", ln.Addr().String(), "role", "operations")
+			if err := ops.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("the operations listener stopped", "app", name, "error", err)
+			}
+		}()
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("listening", "app", name, "addr", *addr)
@@ -188,7 +214,7 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	case <-ctx.Done():
 	}
 
-	return StopServing(srv, app, cfg.Shutdown, errCh)
+	return StopServing(srv, ops, app, cfg.Shutdown, errCh)
 }
 
 // StopServing is the shutdown after SIGTERM, in the order that lets the balancer take the pod out without a request lost:
@@ -196,12 +222,13 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 //  1. readiness turns false (GET /readyz is 503) and the responses carry Connection: close, so the clients move to other
 //     pods; the process goes on serving what still arrives;
 //  2. it waits SHUTDOWN__DRAIN, the time the balancer needs to notice;
-//  3. it stops listening and waits SHUTDOWN__TIMEOUT for the requests in progress (http.Server.Shutdown);
+//  3. it stops listening and waits SHUTDOWN__TIMEOUT for the requests in progress (http.Server.Shutdown); then the operations
+//     listener of the PDP (ops, nil for the admin API) stops, last, so that its probes answer through the whole drain;
 //  4. the caller closes the engine (the background work, the buffers) and the connections.
 //
 // The pod needs terminationGracePeriodSeconds of at least drain + timeout + 10, and a preStop sleep of the drain when the
 // balancer is told of the pod's end only by the pod's deletion.
-func StopServing(srv *http.Server, app *engine.App, cfg config.Shutdown, errCh <-chan error) error {
+func StopServing(srv, ops *http.Server, app *engine.App, cfg config.Shutdown, errCh <-chan error) error {
 	slog.Info("shutting down: not ready, serving while the balancer stops sending requests", "drain", cfg.Drain, "timeout", cfg.Timeout)
 	app.SetDraining()
 	if cfg.Drain > 0 {
@@ -217,8 +244,17 @@ func StopServing(srv *http.Server, app *engine.App, cfg config.Shutdown, errCh <
 	slog.Info("shutting down: stopped listening, waiting for the requests in progress")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	err := srv.Shutdown(shutdownCtx)
+	if err != nil {
 		_ = srv.Close() // the requests that did not finish in time are cut off
+	}
+	// The operations listener stops after the public one: its probes answer through the drain, /readyz says 503 from SetDraining on.
+	if ops != nil {
+		if opsErr := ops.Shutdown(shutdownCtx); opsErr != nil {
+			_ = ops.Close()
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 	return nil

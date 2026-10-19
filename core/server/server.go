@@ -117,8 +117,9 @@ func newHumaError(status int, msg string, errs ...error) *apperr.Error {
 }
 
 // newAPI creates a Huma API on top of the standard ServeMux. Huma's own /openapi and /docs
-// routes are disabled: docs.go serves them with ?lang= support.
-func newAPI(mux *http.ServeMux, title string, tags []*huma.Tag) huma.API {
+// routes are disabled: docs.go serves them with ?lang= support. Every operation names itself in the access log line.
+// Huma also serves the component schemas of the document under /schemas by default; schemas says whether that stays on.
+func newAPI(mux *http.ServeMux, title string, tags []*huma.Tag, schemas bool) huma.API {
 	cfg := huma.DefaultConfig(title, Version)
 	// No $schema field in responses and no Link headers: the response shapes are part of the API
 	// contract (kept from the legacy Python version).
@@ -128,7 +129,17 @@ func newAPI(mux *http.ServeMux, title string, tags []*huma.Tag) huma.API {
 	cfg.Tags = tags
 	cfg.OpenAPIPath = ""
 	cfg.DocsPath = ""
-	return humago.New(mux, cfg)
+	if !schemas {
+		cfg.SchemasPath = ""
+	}
+	api := humago.New(mux, cfg)
+	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
+		if info := requestInfoFrom(ctx.Context()); info != nil {
+			info.operation = ctx.Operation().OperationID
+		}
+		next(ctx)
+	})
+	return api
 }
 
 // Errors documented on every operation (like the APIRouter defaults in the Python version).
@@ -493,17 +504,23 @@ func withAdmission(app *engine.App, next http.Handler) http.Handler {
 	})
 }
 
-// NewServer assembles the common stack: Huma API + /healthz + localized docs + JSON 404 + middleware.
-func NewServer(app *engine.App, title string, tags []*huma.Tag, registerRoutes func(api huma.API)) (http.Handler, huma.API) {
+// newRouteTable is the route table of an application: the Huma API on a mux, with the operations registerRoutes adds, and the
+// JSON 404 for the paths none of them serves. The probes, the docs and the metrics are not part of it: NewServer adds them
+// to the admin API, and the PDP's public port has none of them (its operations are on the ops listener, see NewOpsHandler).
+// schemas keeps the component schemas under /schemas (the admin API serves them; the PDP does not).
+func newRouteTable(title string, tags []*huma.Tag, schemas bool, registerRoutes func(api huma.API)) (*http.ServeMux, huma.API) {
 	mux := http.NewServeMux()
-	api := newAPI(mux, title, tags)
-	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
-		if info := requestInfoFrom(ctx.Context()); info != nil {
-			info.operation = ctx.Operation().OperationID
-		}
-		next(ctx)
-	})
+	api := newAPI(mux, title, tags, schemas)
 	registerRoutes(api)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSONError(w, apperr.NotFound(i18n.RouteNotFound).Localize(i18n.FromContext(r.Context())))
+	})
+	return mux, api
+}
+
+// registerProbes registers the liveness probe (GET /healthz) and the readiness probe (GET /readyz). The admin API serves them on
+// its port; the PDP serves them on its ops listener (NewOpsHandler).
+func registerProbes(api huma.API, app *engine.App) {
 	Register(api, huma.Operation{
 		OperationID: "healthz",
 		Method:      http.MethodGet,
@@ -540,11 +557,21 @@ The result is reused for a second. Use it as the readiness probe and ` + "`/heal
 		out.Body.Status = "ok"
 		return out, nil
 	})
+}
+
+// withStack puts the middleware of the public port around a route table: admission, the access log and the recovery from
+// panics, gzip, CORS, the trailing slash and the language of the answers.
+func withStack(app *engine.App, routes http.Handler) http.Handler {
+	return withAdmission(app, logAndRecover(app, httpx.WithGzip(withCORS(app.Cfg.Cors, stripTrailingSlash(withLang(routes))))))
+}
+
+// NewServer assembles the stack of the admin API: the route table with the probes, the localized docs and the metrics, and
+// the middleware of the public port.
+func NewServer(app *engine.App, title string, tags []*huma.Tag, registerRoutes func(api huma.API)) (http.Handler, huma.API) {
+	mux, api := newRouteTable(title, tags, true, registerRoutes)
+	registerProbes(api, app)
 	registerDocs(mux, api)
 	// Prometheus metrics; not part of the API description.
 	mux.Handle("GET /metrics", app.MetricsHandler())
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeJSONError(w, apperr.NotFound(i18n.RouteNotFound).Localize(i18n.FromContext(r.Context())))
-	})
-	return withAdmission(app, logAndRecover(app, httpx.WithGzip(withCORS(app.Cfg.Cors, stripTrailingSlash(withLang(mux)))))), api
+	return withStack(app, mux), api
 }

@@ -1,6 +1,6 @@
 // licetum is the runtime of Licetum, the part client services call on every request:
 //
-//	licetum pdp               — the regional PDP: AuthZEN and the permission API (default :8001)
+//	licetum pdp               — the regional PDP: AuthZEN and the permission API (default :8001), probes and metrics on :9090
 //	licetum worker            — synchronization worker: executes the jobs that fetch the resource sources (default :8002, metrics)
 //	licetum migrate           — apply DB migrations and seed the self-service
 //	licetum failover          — raise every revision after a replica was promoted (see docs/deployment.md)
@@ -31,7 +31,7 @@ import (
 const usage = `Usage: licetum <command> [flags]
 
 Commands:
-  pdp       run the regional PDP: AuthZEN and the permission API (default :8001)
+  pdp       run the regional PDP: AuthZEN and the permission API (default :8001); probes and metrics on PDP__OPS_ADDR (default :9090)
   worker    run the synchronization worker (metrics on :8002)
   migrate   apply DB migrations and seed the self-service
   failover  raise every revision of the policy after a replica was promoted (docs/deployment.md)

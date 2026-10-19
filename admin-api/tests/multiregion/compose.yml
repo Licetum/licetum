@@ -133,11 +133,12 @@ services:
       REDIS__URI: redis://redis-a:6379/0
     depends_on:
       migrate: {condition: service_completed_successfully}
-    ports: ["18011:8001"]
+    # The operations listener (probes, metrics) is published on 1901x: stack_test.go reads it there.
+    ports: ["18011:8001", "19011:9090"]
     networks: [net-a]
   check-a2:
     <<: *check-a
-    ports: ["18012:8001"]
+    ports: ["18012:8001", "19012:9090"]
 
   # ----- the link between the proxies and every region
   toxiproxy:
@@ -174,11 +175,11 @@ services:
       REDIS__URI: redis://redis-b:6379/0
     depends_on:
       pg-replica-b: {condition: service_started}
-    ports: ["18021:8001"]
+    ports: ["18021:8001", "19021:9090"]
     networks: [net-b]
   check-b2:
     <<: *check-b
-    ports: ["18022:8001"]
+    ports: ["18022:8001", "19022:9090"]
   # The administration of a region that is not the primary's: its writes cross the link.
   admin-b:
     <<: *go
@@ -217,11 +218,11 @@ services:
       REDIS__URI: redis://redis-c:6379/0
     depends_on:
       pg-replica-c: {condition: service_started}
-    ports: ["18031:8001"]
+    ports: ["18031:8001", "19031:9090"]
     networks: [net-c]
   check-c2:
     <<: *check-c
-    ports: ["18032:8001"]
+    ports: ["18032:8001", "19032:9090"]
 
 networks:
   net-a: {}

@@ -53,7 +53,7 @@ func (w *leverWorld) send(base string, r authzenreq.Request, token string, heade
 // bypasses are the answers that skipped the result caches so far, as the check API counts them.
 func (w *leverWorld) bypasses() (permission, check float64) {
 	w.t.Helper()
-	status, raw := w.do(http.MethodGet, w.check.URL+"/metrics", nil)
+	status, raw := w.do(http.MethodGet, w.ops.URL+"/metrics", nil)
 	if status != http.StatusOK {
 		w.t.Fatalf("metrics: %d", status)
 	}

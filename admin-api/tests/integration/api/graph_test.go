@@ -320,7 +320,7 @@ func TestIntegrationCheckExplainAuthzenMetrics(t *testing.T) {
 	}
 
 	// Metrics.
-	status, raw = w.do("GET", w.check.URL+"/metrics", nil)
+	status, raw = w.do("GET", w.ops.URL+"/metrics", nil)
 	for _, name := range []string{"licetum_check_decisions_total", "licetum_http_requests_total", "licetum_permission_compute_seconds"} {
 		if status != http.StatusOK || !strings.Contains(string(raw), name) {
 			t.Errorf("/metrics lacks %s (status %d)", name, status)

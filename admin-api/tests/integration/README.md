@@ -60,6 +60,10 @@ database pool, Redis client and HTTP server, on one shared PostgreSQL schema and
 admin API that sets the policy up, a fake identity provider (`support.IdP`) and a fake source of resources (`support.Source`).
 Tests of a package run one after another: they share the Redis.
 
+Each replica has two listeners, as the PDP does: the public one (`Replica.Server`, the AuthZEN and legacy routes, and nothing else)
+and the ops one (`Replica.Ops`, `/healthz`, `/readyz` and `/metrics`). `Replica.Do` and `Replica.Metrics` send each path to the
+right one, so the tests that read `/readyz` or `/metrics` of a replica do not name the listener themselves.
+
 ```go
 c := harness.StartReplicas(t, infra, 3)
 p := c.SeedPolicy("org", 0)                      // a service, two types fed by c.Source over HTTP, a rule for "alice"

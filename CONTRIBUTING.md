@@ -128,8 +128,8 @@ an existing value. A rename is a new column, a copy, a switch of the readers, an
 statements (a table rewrite, an index on a large table) need `CREATE INDEX CONCURRENTLY` or batches, because they hold
 locks that the pods of the previous release wait on.
 
-The check API reports ready (`/readyz`) when the schema is **at least** the version it was built for, so pods of the
-previous release stay in service while the new schema is applied. `licetum migrate` takes an advisory lock, so several
+The PDP reports ready (`/readyz` on its ops port, `PDP__OPS_ADDR`, `:9090` by default) when the schema is **at least** the
+version it was built for, so pods of the previous release stay in service while the new schema is applied. `licetum migrate` takes an advisory lock, so several
 runs started together (one per pod) apply each migration once; it needs a connection that lasts for the whole run, which
 behind PgBouncer in transaction mode means `DB__MIGRATE_URI` pointing at PostgreSQL itself.
 

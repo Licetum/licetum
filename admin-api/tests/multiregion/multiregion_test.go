@@ -92,10 +92,10 @@ func TestF6_4_LagMakesRegionBNotReadyAndItRecovers(t *testing.T) {
 	setLink(t, regionB, true, 12*time.Second)
 	mustAdmin(t, regionA.admin, "POST", "/assignment_rule", rule("lagging", nil))
 	eventually(t, 15*time.Second, "region B to report itself not ready", func() bool {
-		return ready(regionB.checks[0]) == http.StatusServiceUnavailable
+		return ready(regionB.ops[0]) == http.StatusServiceUnavailable
 	})
 	setLink(t, regionB, true, 0)
-	eventually(t, 60*time.Second, "region B to be ready again", func() bool { return ready(regionB.checks[0]) == http.StatusOK })
+	eventually(t, 60*time.Second, "region B to be ready again", func() bool { return ready(regionB.ops[0]) == http.StatusOK })
 }
 
 func TestF6_5_ACutLinkFailsRegionBClosedAfterTheLimitAndItCatchesUp(t *testing.T) {

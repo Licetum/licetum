@@ -122,7 +122,7 @@ func (f *fakePDP) RecordDelegatedCall(context.Context, uuid.UUID, engine.Delegat
 // registers them. The middleware of the server (the request id, the admission) is not part of it: see TestContract_AZ07.
 func authzenTestAPI(eng pdpEngine, cfg *config.Config) http.Handler {
 	mux := http.NewServeMux()
-	api := newAPI(mux, "Licetum PDP", nil)
+	api := newAPI(mux, "Licetum PDP", nil, false)
 	registerAuthzen(api, eng, cfg, []map[string][]string{{httpx.BearerScheme: {}}}, []int{http.StatusUnauthorized, http.StatusFailedDependency})
 	return mux
 }
@@ -278,7 +278,8 @@ func TestContract_AZ03_ShortCircuitEvaluatesNothingAfterTheStop(t *testing.T) {
 func TestContract_AZ07_RequestIDIsReturnedVerbatimWhenSafe(t *testing.T) {
 	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
 	get := func(id string) string {
-		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		// The public port serves no operation of its own any more: the 404 of the route table goes through the same stack.
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.Header.Set("X-Request-ID", id)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)

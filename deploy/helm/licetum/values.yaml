@@ -78,6 +78,8 @@ env: {}
 pdp:
   replicas: 2
   port: 8001
+  # The ops port (PDP__OPS_ADDR): /healthz, /readyz and /metrics only. The probes and the scrape use it; clients never do.
+  opsPort: 9090
   resources:
     requests: {cpu: 500m, memory: 256Mi}
     limits: {memory: 512Mi}
@@ -182,11 +184,13 @@ podAntiAffinity:
   topologyKey: kubernetes.io/hostname
 
 # NetworkPolicy: the PDP pods may talk to PostgreSQL, Redis, the identity provider and the sources, and to nothing else;
-# ingress only on their port. Give the CIDRs and ports (a policy cannot name a managed database by its host name).
+# ingress only on their ports. Give the CIDRs and ports (a policy cannot name a managed database by its host name).
 networkPolicy:
   enabled: false
-  # Where clients and the probes come from (empty: from anywhere in the cluster).
+  # Where clients and the probes come from (empty: from anywhere in the cluster). The ops port takes the same peers.
   ingressFrom: []
+  # The namespace of Prometheus: it scrapes /metrics on the ops port, and that is all it reaches there.
+  monitoringNamespace: monitoring
   dbCidrs: []
   dbPort: 5432
   redisCidrs: []
