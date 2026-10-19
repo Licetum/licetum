@@ -112,7 +112,7 @@ func verifyFailure(err error) error {
 	return apperr.InvalidToken(i18n.TokenInvalid)
 }
 
-// apiKeyClient authenticates an API key: the key id names a credential the directory holds, and the sha256 of the secret equals
+// apiKeyClient authenticates an API key: the key id names a credential the directory holds, and the hash of the secret equals
 // the one stored (in constant time). A key that does not authenticate, for whatever reason, is the same 401; an unknown key id still
 // costs one comparison, so the answer does not tell a key id that exists from one that does not by its time.
 func apiKeyClient(dir *PEPDirectory, key string, now time.Time) (db.PEPClient, error) {

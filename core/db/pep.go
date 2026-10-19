@@ -72,7 +72,7 @@ type PEPClient struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// PEPCredential is an API key of a client (pep_credential): the sha256 of its secret. The key itself is never stored.
+// PEPCredential is an API key of a client (pep_credential): the keyed SHA-256 (HMAC) of its random part. The key itself is never stored.
 type PEPCredential struct {
 	KeyID     string     `json:"key_id"`
 	ClientID  uuid.UUID  `json:"client_id"`
