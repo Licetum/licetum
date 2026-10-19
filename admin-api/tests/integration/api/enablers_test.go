@@ -42,39 +42,26 @@ func decodeMap(t *testing.T, raw []byte) map[string]any {
 
 func TestServiceAddressIsOptionalAndNeverRequested(t *testing.T) {
 	e := setup(t)
-	m := e.mock.URL
-	base := func(name string) map[string]any {
-		return map[string]any{
-			"name": name, "slug": name, "authorization_url": m + "/realm/auth", "token_url": m + "/realm/token",
-			"jwks_url": m + "/jwks", "issuer": m + "/realm", "client_id": name,
-		}
-	}
+	base := func(name string) map[string]any { return map[string]any{"name": name, "slug": name} }
 
-	// No address and no icon, and a public client.
+	// No address and no icon.
 	created := e.must("POST", "/service", base("bare"))
 	if created["url"] != nil || created["icon"] != nil {
 		t.Fatalf("the address and the icon are optional: %+v", created)
 	}
-	if created["has_client_secret"] != false {
-		t.Fatalf("a client without a secret is public: %+v", created)
-	}
 
 	// An address that nothing answers is accepted: it is only shown, never requested.
 	dead := base("dead")
-	dead["url"], dead["icon"], dead["client_secret"] = "http://127.0.0.1:1/app", "http://127.0.0.1:1/icon.png", "s"
+	dead["url"], dead["icon"] = "http://127.0.0.1:1/app", "http://127.0.0.1:1/icon.png"
 	got := e.must("POST", "/service", dead)
-	if got["has_client_secret"] != true || strings.TrimRight(got["url"].(string), "/") != "http://127.0.0.1:1/app" {
+	if strings.TrimRight(got["url"].(string), "/") != "http://127.0.0.1:1/app" {
 		t.Fatalf("service with a dead address: %+v", got)
 	}
 
-	// An empty string removes the address; the secret is never returned, only whether it is stored.
+	// An empty string removes the address.
 	updated := e.must("PATCH", "/service/"+got["id"].(string), map[string]any{"url": "", "icon": ""})
-	if updated["url"] != nil || updated["icon"] != nil || updated["has_client_secret"] != true {
+	if updated["url"] != nil || updated["icon"] != nil {
 		t.Fatalf("after removing the address: %+v", updated)
-	}
-	cleared := e.must("PATCH", "/service/"+got["id"].(string), map[string]any{"client_secret": nil})
-	if cleared["has_client_secret"] != false {
-		t.Fatalf("after removing the secret: %+v", cleared)
 	}
 }
 
@@ -360,56 +347,14 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// salesWorld is the hierarchy world with a group of everyone from sales, and a person of it seen by the check API.
+// salesWorld is the hierarchy world with a group of everyone from sales, and a person of it in the directory of the service org.
 func salesWorld(t *testing.T) (w *world, group string) {
 	w = newWorld(t)
 	group = w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+group+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
-	dave := w.token(jwt.MapClaims{"preferred_username": "dave", "name": "Dave Sales", "sub": "dave", "department": "sales", "secret_claim": "x"})
-	if status, _ := w.env.permission(w.org, dave); status != http.StatusOK {
-		t.Fatalf("permission as dave: %d", status)
-	}
-	waitFor(t, "dave in the registry", func() bool {
-		status, raw := w.do("GET", w.admin.URL+"/subject?search=dave", nil)
-		return status == http.StatusOK && decodeMap(t, raw)["total"] == float64(1)
-	})
+	w.sendPeople(w.org, person("dave", "Dave Sales", map[string]any{"department": "sales", "secret_claim": "x"}))
 	return w, group
-}
-
-func TestKnownSubjectsAreNotedAndForgotten(t *testing.T) {
-	w, group := salesWorld(t)
-
-	detail := w.must("GET", "/subject/dave", nil)
-	if detail["name"] != "Dave Sales" {
-		t.Fatalf("name: %+v", detail)
-	}
-	claims := detail["claims"].(map[string]any)
-	if claims["department"] != "sales" {
-		t.Fatalf("the claim the policy reads is kept: %+v", claims)
-	}
-	if _, kept := claims["secret_claim"]; kept {
-		t.Fatalf("a claim no rule reads must not be kept: %+v", claims)
-	}
-	groups := detail["groups"].([]any)
-	if len(groups) != 1 || groups[0].(map[string]any)["id"] != group {
-		t.Fatalf("groups of dave: %+v", groups)
-	}
-
-	list := w.must("GET", "/subject", nil)
-	if list["enabled"] != true || list["total"].(float64) < 1 {
-		t.Fatalf("list: %+v", list)
-	}
-
-	w.must("DELETE", "/subject/dave", nil)
-	status, raw := w.do("GET", w.admin.URL+"/subject/dave", nil)
-	requireErrorCode(t, status, raw, http.StatusNotFound, "subject_not_found")
-
-	// Somebody without the right to manage memberships does not see the people.
-	nobody := w.token(jwt.MapClaims{"preferred_username": "nobody", "sub": "nobody"})
-	if status, _ := w.do("GET", w.admin.URL+"/subject", nil, "Authorization", "Bearer "+nobody); status != http.StatusForbidden {
-		t.Fatalf("the registry is for administrators: %d", status)
-	}
 }
 
 func TestWhoHasAccessListsTheRulesAndThePeople(t *testing.T) {
@@ -452,7 +397,7 @@ func TestWhoHasAccessListsTheRulesAndThePeople(t *testing.T) {
 	if who["kind"] != "group" || who["group"].(map[string]any)["name"] != "sales" {
 		t.Fatalf("who the group rule applies to: %+v", who)
 	}
-	// dave is from sales, so the group rule reaches him; the registry knows him.
+	// dave is from sales, so the group rule reaches him; the directory of the service has him.
 	if byRule[everyone]["people_total"] != float64(1) || byRule[everyone]["people"].([]any)[0].(map[string]any)["subject"] != "dave" {
 		t.Fatalf("people of the group rule: %+v", byRule[everyone])
 	}
@@ -667,32 +612,77 @@ func mustBody(status int, raw []byte) []byte {
 
 func uuidNil() string { return "00000000-0000-0000-0000-000000000000" }
 
-func TestNothingIsSaidAboutPeopleWhileTheRegistryIsOff(t *testing.T) {
-	w, group := salesWorld(t) // dave is in the registry, which is on while the world is built
-	w.cfg.Subjects.Enabled = false
-	w.grant(map[string]any{"type_resource_id": w.branch, "member_of_group_id": group, "access": []string{"read"}})
+// TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsServices: whom a rule reaches (who-has-access, preview) are
+// the people of the directories of the services of its types, decided with their stored properties; a service with an empty
+// directory has no people, and the directory of another service is not counted.
+func TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsServices(t *testing.T) {
+	w, group := salesWorld(t) // dave is in the directory of org, from sales
+	branchRule := w.grant(map[string]any{"type_resource_id": w.branch, "member_of_group_id": group, "access": []string{"write"}})
+	itemRule := w.grant(map[string]any{"type_resource_id": w.item, "member_of_group_id": group, "access": []string{"read"}})
 
-	res := w.must("POST", "/assignment_rule/preview", map[string]any{
-		"type_resource_id": w.branch, "member_of_group_id": group, "access": []string{"read"}})
-	people := res["people"].(map[string]any)
-	if people["enabled"] != false || people["registry"] != float64(0) || people["total"] != float64(0) {
-		t.Fatalf("preview people with the registry off: %+v", people)
-	}
-
-	status, raw := w.do("GET", w.admin.URL+w.typePath("branch")+"/access?resource_id=B1", nil)
-	if status != http.StatusOK {
-		t.Fatalf("who has access: %d %s", status, raw)
-	}
-	look := decodeMap(t, raw)
-	if look["people"].(map[string]any)["enabled"] != false {
-		t.Fatalf("people with the registry off: %s", raw)
-	}
-	for _, e := range look["entries"].([]any) {
-		if e.(map[string]any)["people_total"] != float64(0) {
-			t.Fatalf("an entry names people with the registry off: %s", raw)
+	peopleOf := func(res map[string]any, rule string) (int, []string) {
+		for _, x := range res["entries"].([]any) {
+			entry := x.(map[string]any)
+			if entry["rule"].(map[string]any)["rule_id"] == rule {
+				var names []string
+				for _, p := range entry["people"].([]any) {
+					names = append(names, p.(map[string]any)["subject"].(string))
+				}
+				return int(entry["people_total"].(float64)), names
+			}
 		}
+		t.Fatalf("rule %s is not among the entries: %s", rule, mustJSON(res))
+		return 0, nil
 	}
-	if list := w.must("GET", "/subject", nil); list["enabled"] != false {
-		t.Fatalf("the list says the registry is on: %+v", list)
+	lookItem := func() map[string]any {
+		return w.must("GET", w.typePath("item")+"/access?resource_id=I1", nil)
+	}
+
+	// The rule on the item type belongs to the service app, whose directory is empty: nobody, though dave is a member of sales
+	// in the directory of org, and the rule on the branch type (org) reaches him.
+	res := lookItem()
+	if n, who := peopleOf(res, branchRule); n != 1 || strings.Join(who, ",") != "dave" {
+		t.Fatalf("the rule of org reaches %d (%v), want dave", n, who)
+	}
+	if n, who := peopleOf(res, itemRule); n != 0 || len(who) != 0 {
+		t.Fatalf("the rule of app reaches %d (%v) from an empty directory", n, who)
+	}
+
+	// dave in the directory of app with the properties of someone from hr is another entry: not a member of sales there.
+	w.sendPeople(w.appSvc, person("dave", "Dave of app", map[string]any{"department": "hr"}), person("erin", "Erin", map[string]any{"department": "sales"}))
+	res = lookItem()
+	if n, who := peopleOf(res, itemRule); n != 1 || strings.Join(who, ",") != "erin" {
+		t.Fatalf("the rule of app reaches %d (%v), want erin only", n, who)
+	}
+	if n, who := peopleOf(res, branchRule); n != 1 || strings.Join(who, ",") != "dave" {
+		t.Fatalf("the directory of app counted for the rule of org: %d (%v)", n, who)
+	}
+	info := res["people"].(map[string]any)
+	if info["registry"] != float64(3) { // dave of org, dave and erin of app
+		t.Fatalf("the rules were tried on %v people, want the 3 of the two directories", info["registry"])
+	}
+
+	// A role with items in both services reaches the people of both, a person of both counted once.
+	role := w.must("POST", "/role", map[string]any{"name": "both"})["id"].(string)
+	w.must("POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.branch, "access": []string{"read"}})
+	w.must("POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.item, "access": []string{"read"}})
+	w.sendPeople(w.appSvc, person("dave", "Dave of app", map[string]any{"department": "sales"}))
+	preview := w.must("POST", "/assignment_rule/preview", map[string]any{"role_id": role, "member_of_group_id": group})
+	people := preview["people"].(map[string]any)
+	var sample []string
+	for _, p := range people["sample"].([]any) {
+		sample = append(sample, p.(map[string]any)["subject"].(string))
+	}
+	slices.Sort(sample)
+	if people["total"] != float64(2) || strings.Join(sample, ",") != "dave,erin" {
+		t.Fatalf("the role reaches %v (%v), want dave and erin, dave once", people["total"], sample)
+	}
+
+	// The preview of a rule on a type of a service nobody sent people to: nobody, and nothing is said about people.
+	third := w.newService("quiet")
+	quiet := w.typeResource(third, "doc", "")
+	none := w.must("POST", "/assignment_rule/preview", map[string]any{"type_resource_id": quiet, "member_of_group_id": group, "access": []string{"read"}})
+	if p := none["people"].(map[string]any); p["total"] != float64(0) || p["registry"] != float64(0) {
+		t.Fatalf("a service with an empty directory has people: %+v", p)
 	}
 }

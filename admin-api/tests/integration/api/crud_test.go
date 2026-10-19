@@ -14,8 +14,7 @@ import (
 func servicePayload(e *env, name string) map[string]any {
 	return map[string]any{
 		"name": name, "url": e.mock.URL + "/app", "icon": e.mock.URL + "/icon.png",
-		"authorization_url": e.mock.URL + "/realm/auth", "token_url": e.mock.URL + "/realm/token",
-		"jwks_url": e.mock.URL + "/jwks", "issuer": e.mock.URL + "/realm", "slug": name, "client_id": name, "client_secret": "secret",
+		"slug": name,
 	}
 }
 
@@ -66,8 +65,8 @@ func TestServiceCRUDCoversSuccessNotFoundMalformedIDAndAuthorization(t *testing.
 		t.Fatalf("created service %q is absent from list: %s", serviceID, raw)
 	}
 
-	// Partial update changes only supplied fields and null explicitly clears the secret.
-	updated := e.must(http.MethodPatch, "/service/"+serviceID, map[string]any{"name": "orders-v2", "client_secret": nil})
+	// Partial update changes only the supplied fields.
+	updated := e.must(http.MethodPatch, "/service/"+serviceID, map[string]any{"name": "orders-v2"})
 	if updated["name"] != "orders-v2" {
 		t.Fatalf("updated service = %+v", updated)
 	}

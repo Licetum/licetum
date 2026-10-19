@@ -14,14 +14,6 @@ type CheckRequest struct {
 	Action     string  `json:"action" doc:"Access level asked for" example:"write"`
 }
 
-// CheckInput is the body of POST /service/{id}/check.
-type CheckInput struct {
-	_       struct{}       `additionalProperties:"true"`
-	Checks  []CheckRequest `json:"checks" minItems:"1" maxItems:"100" doc:"Questions to answer, up to 100 per request"`
-	Explain bool           `json:"explain" required:"false" doc:"Return an explanation with every answer: which rules grant the level, which deny it, and which exceptions lift a denial"`
-	Context RequestContext `json:"context" required:"false" nullable:"true" doc:"Attributes of this request that the rules may read (conditions with source context). Claims come from the token; these are what the request itself carries, such as the client address or the channel"`
-}
-
 // RequestContext holds the attributes a request carries besides its token: the values of the conditions with source
 // context. A value is a scalar or a list of scalars.
 type RequestContext map[string]any
@@ -141,9 +133,4 @@ type Explanation struct {
 type CheckResult struct {
 	Allowed     bool         `json:"allowed" doc:"Whether the caller may do it"`
 	Explanation *Explanation `json:"explanation,omitempty" doc:"Present when explain was asked for"`
-}
-
-// CheckResponse is the body of the POST /service/{id}/check answer.
-type CheckResponse struct {
-	Results []CheckResult `json:"results" nullable:"false" doc:"One answer per question, in the order asked"`
 }

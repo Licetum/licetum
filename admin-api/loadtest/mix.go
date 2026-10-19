@@ -15,28 +15,26 @@ const (
 	opEvaluation
 	opEvaluations10
 	opEvaluations100
-	opEvaluationProperties
 	numOps
 )
 
 // opNames are the names of the requests, as the mix spells them and as the k6 script names its metrics. The script lists the
-// same names in the same order (TestK6ScriptNamesTheRequestsOfTheMix keeps them so).
+// same names in the same order (TestK6ScriptNamesTheRequestsOfTheMix keeps them so). Every request is asked as the PEP client of
+// the service: the person is the subject of the body, and the claims of the person are its properties.
 //   - search_resource: the documents a person may read, one page of 20 (POST …/access/v1/search/resource);
 //   - evaluation: one question about a person (POST …/access/v1/evaluation);
-//   - evaluations10 and evaluations100: ten and a hundred questions about a person in one request (…/evaluations);
-//   - evaluation_properties: one question about another person, asked by a client application the service trusts, which
-//     brings the claims of the person in subject.properties (…/evaluation with the token of the client).
-var opNames = [numOps]string{"search_resource", "evaluation", "evaluations10", "evaluations100", "evaluation_properties"}
+//   - evaluations10 and evaluations100: ten and a hundred questions about a person in one request (…/evaluations).
+var opNames = [numOps]string{"search_resource", "evaluation", "evaluations10", "evaluations100"}
 
 // Mix is the share of each request in the traffic: a request is drawn with probability weight/total (k6 draws them, see
 // k6/check.js, which reads the same spelling).
 type Mix [numOps]int
 
-// DefaultMix is the traffic of a service that asks for every decision it makes: the lists of what a person may read, the
-// evaluations of one question and of ten, and the questions about another person that a trusted client asks. The shares
-// are those of the traffic budgets.yaml was measured with: the lists 2, the single questions 5, the questions in tens 2,
-// the questions about another person 1.
-const DefaultMix = "search_resource=2,evaluation=5,evaluations10=2,evaluation_properties=1"
+// DefaultMix is the traffic of a service that asks for every decision it makes: the lists of what a person may read, and the
+// evaluations of one question and of ten. The shares are those of the traffic budgets.yaml was measured with: the lists 2, the
+// questions in tens 2, the single questions 6. Of those, 5 were about the holder of a token and 1 about another person, asked by
+// a client the service trusted; there is one kind of question now, which names its person and brings the claims.
+const DefaultMix = "search_resource=2,evaluation=6,evaluations10=2"
 
 // ParseMix reads "name=weight,..." over the names of the requests. A request left out has weight 0.
 func ParseMix(s string) (Mix, error) {

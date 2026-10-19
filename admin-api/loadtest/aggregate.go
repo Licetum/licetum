@@ -71,10 +71,10 @@ func AggregateReport(dirs []string) (string, error) {
 // compared only with runs that name the same one: the cold runs before P2-07 are not the cold runs after it.
 func configKey(r Report) string {
 	s, p := r.Settings, r.Profile
-	key := fmt.Sprintf("%s (%d subjects, %d groups, %d rules, %d resources) | mode %s | mix %s | consistency %s | rate %.0f | "+
+	key := fmt.Sprintf("%s (%d subjects, %d groups, %d rules, %d resources) | mode %s | mix %s | rate %.0f | "+
 		"measure %.0f s | warm %.0f s | oracle %.0f/s | db pool %d | access log %s | replicas %d | writes every %.0f s | "+
 		"redis paused %.0f s | extra SQL %s",
-		p.Name, p.Users, p.Groups, p.Rules, p.Resources, s.Mode, s.Mix, s.Consistency, s.Rate, s.MeasureSecs, s.WarmSeconds,
+		p.Name, p.Users, p.Groups, p.Rules, p.Resources, s.Mode, s.Mix, s.Rate, s.MeasureSecs, s.WarmSeconds,
 		s.OracleRate, s.DBPool, onOff(s.AccessLog), s.Replicas, s.WritesEverySec, s.PauseRedisSecs, nameOrNone(s.ExtraSQL))
 	if s.Workload != "" {
 		key += " | workload " + s.Workload

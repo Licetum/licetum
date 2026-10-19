@@ -223,29 +223,43 @@ func CreatePEPClient(ctx context.Context, pool *pgxpool.Pool, c PEPClient) (PEPC
 // UpdatePEPClient changes the name, issuer, client id, operations and enabled flag of a client of the service. The kind does not
 // change: a client keeps its kind and its keys (a different kind is ErrPEPClientInvalid).
 func UpdatePEPClient(ctx context.Context, pool *pgxpool.Pool, c PEPClient) (PEPClient, error) {
-	if c.Operations == nil {
-		c.Operations = slices.Clone(pepDefaultOperations)
-	}
+	return ModifyPEPClient(ctx, pool, c.ServiceID, c.ID, func(cur *PEPClient) error {
+		if cur.Kind != c.Kind {
+			return ErrPEPClientInvalid
+		}
+		cur.Name, cur.Issuer, cur.ClientID, cur.Enabled = c.Name, c.Issuer, c.ClientID, c.Enabled
+		cur.Operations = c.Operations
+		return nil
+	})
+}
+
+// ModifyPEPClient changes a client of the service: the row is read under its lock, change edits the copy, and the copy is
+// written back, so two changes of different fields never lose one another. A nil operations list is the default (evaluate only);
+// change may return an error (ErrPEPClientInvalid for a kind that does not fit), which ends the write. A client that does not
+// exist, or is deleted, is ErrPEPNotFound.
+func ModifyPEPClient(ctx context.Context, pool *pgxpool.Pool, serviceID, clientID uuid.UUID, change func(*PEPClient) error) (PEPClient, error) {
+	var c PEPClient
 	err := InTx(ctx, pool, func(tx pgx.Tx) error {
-		var kind string
 		err := tx.QueryRow(ctx, `
-			SELECT kind FROM pep_client WHERE id = $1 AND service_id = $2 AND deleted_at IS NULL FOR UPDATE`,
-			c.ID, c.ServiceID).Scan(&kind)
+			SELECT id, service_id, name, kind, issuer, client_id, operations, enabled, created_at
+			FROM pep_client WHERE id = $1 AND service_id = $2 AND deleted_at IS NULL FOR UPDATE`, clientID, serviceID,
+		).Scan(&c.ID, &c.ServiceID, &c.Name, &c.Kind, &c.Issuer, &c.ClientID, &c.Operations, &c.Enabled, &c.CreatedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPEPNotFound
 		}
 		if err != nil {
 			return err
 		}
-		if kind != c.Kind {
-			return ErrPEPClientInvalid
+		if err := change(&c); err != nil {
+			return err
 		}
-		if err := tx.QueryRow(ctx, `
+		if c.Operations == nil {
+			c.Operations = slices.Clone(pepDefaultOperations)
+		}
+		if _, err := tx.Exec(ctx, `
 			UPDATE pep_client SET name = $3, issuer = $4, client_id = $5, operations = $6, enabled = $7
-			WHERE id = $1 AND service_id = $2 AND deleted_at IS NULL
-			RETURNING created_at`,
-			c.ID, c.ServiceID, c.Name, c.Issuer, c.ClientID, c.Operations, c.Enabled,
-		).Scan(&c.CreatedAt); err != nil {
+			WHERE id = $1 AND service_id = $2`,
+			c.ID, c.ServiceID, c.Name, c.Issuer, c.ClientID, c.Operations, c.Enabled); err != nil {
 			return pepClientError(err)
 		}
 		_, err = BumpRevision(ctx, tx, ScopePEP)
@@ -295,6 +309,52 @@ func ListPEPClients(ctx context.Context, q Querier, serviceID uuid.UUID) ([]PEPC
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// GetPEPClient returns a client of the service that is not deleted; any other is ErrPEPNotFound.
+func GetPEPClient(ctx context.Context, q Querier, serviceID, clientID uuid.UUID) (PEPClient, error) {
+	var c PEPClient
+	err := q.QueryRow(ctx, `
+		SELECT id, service_id, name, kind, issuer, client_id, operations, enabled, created_at
+		FROM pep_client WHERE id = $1 AND service_id = $2 AND deleted_at IS NULL`, clientID, serviceID,
+	).Scan(&c.ID, &c.ServiceID, &c.Name, &c.Kind, &c.Issuer, &c.ClientID, &c.Operations, &c.Enabled, &c.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PEPClient{}, ErrPEPNotFound
+	}
+	return c, err
+}
+
+// PEPKey is an API key as the management routes show it: the key id and its dates, never the secret or its hash.
+type PEPKey struct {
+	KeyID     string     `json:"key_id"`
+	ClientID  uuid.UUID  `json:"client_id"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	RevokedAt *time.Time `json:"revoked_at"`
+}
+
+// ListPEPKeys returns the keys of a client of the service, revoked ones included, the newest first. A client the service does not
+// have is ErrPEPNotFound.
+func ListPEPKeys(ctx context.Context, q Querier, serviceID, clientID uuid.UUID) ([]PEPKey, error) {
+	if _, err := GetPEPClient(ctx, q, serviceID, clientID); err != nil {
+		return nil, err
+	}
+	rows, err := q.Query(ctx, `
+		SELECT key_id, client_id, created_at, expires_at, revoked_at FROM pep_credential
+		WHERE client_id = $1 ORDER BY created_at DESC, key_id`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PEPKey{}
+	for rows.Next() {
+		var k PEPKey
+		if err := rows.Scan(&k.KeyID, &k.ClientID, &k.CreatedAt, &k.ExpiresAt, &k.RevokedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
 	}
 	return out, rows.Err()
 }

@@ -28,8 +28,8 @@ const k6ThresholdExit = 99
 // k6RawEnv keeps the points of every request of a window (k6 --out json), for reading the answers one by one.
 const k6RawEnv = "LICETUM_LOADTEST_K6_RAW"
 
-// k6Runner runs the traffic of the windows of a run with k6. The script and the tokens are written to the work
-// directory, which is removed when the run ends: the tokens are credentials, and the report directory is kept.
+// k6Runner runs the traffic of the windows of a run with k6. The script and the API key are written to the work
+// directory, which is removed when the run ends: the key is a credential, and the report directory is kept.
 type k6Runner struct {
 	bin string
 	// script is the path of check.js in the work directory.
@@ -46,15 +46,12 @@ type k6Runner struct {
 	issued int
 }
 
-// newK6Runner writes the script and the tokens of the run to workDir.
-func newK6Runner(bin, workDir, outDir, cpus string, tokens []string, backend string, p Profile, mix Mix, consistency string) (*k6Runner, error) {
-	raw, err := json.Marshal(tokens)
-	if err != nil {
-		return nil, fmt.Errorf("encode the tokens: %w", err)
-	}
-	tokensPath := filepath.Join(workDir, "tokens.json")
-	if err := os.WriteFile(tokensPath, raw, 0o600); err != nil {
-		return nil, fmt.Errorf("write the tokens: %w", err)
+// newK6Runner writes the script and the API key of the run to workDir. The key is the one line of a file the script reads, not
+// a setting of the environment.
+func newK6Runner(bin, workDir, outDir, cpus, apiKey string, p Profile, mix Mix) (*k6Runner, error) {
+	keyPath := filepath.Join(workDir, "api-key")
+	if err := os.WriteFile(keyPath, []byte(apiKey+"\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("write the API key: %w", err)
 	}
 	script := filepath.Join(workDir, "check.js")
 	if err := os.WriteFile(script, k6Script, 0o600); err != nil {
@@ -66,8 +63,7 @@ func newK6Runner(bin, workDir, outDir, cpus string, tokens []string, backend str
 		outDir: outDir,
 		cpus:   cpus,
 		env: []string{
-			"TOKENS=" + tokensPath,
-			"BACKEND_TOKEN=" + backend,
+			"API_KEY_FILE=" + keyPath,
 			"SERVICE=" + serviceSlug,
 			"USERS=" + strconv.Itoa(p.Users),
 			"GROUPS=" + strconv.Itoa(p.Groups),
@@ -75,7 +71,6 @@ func newK6Runner(bin, workDir, outDir, cpus string, tokens []string, backend str
 			"RULES=" + strconv.Itoa(p.Rules),
 			"FOLDERS=" + strconv.Itoa(p.folders()),
 			"MIX=" + mix.String(),
-			"CONSISTENCY=" + consistency,
 		},
 	}, nil
 }

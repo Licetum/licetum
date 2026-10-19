@@ -124,7 +124,7 @@ func TestRoleValidationAndBlocking(t *testing.T) {
 	}
 }
 
-// The service slug is the second identifier of a service in the check API.
+// The service slug is the identifier of a service in the AuthZEN API.
 func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	e := setup(t)
 	orders := e.must("POST", "/service", servicePayload(e, "orders"))["id"].(string)
@@ -145,13 +145,14 @@ func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	if status, raw := e.permission("orders", alice); status != http.StatusOK {
 		t.Fatalf("the slug addresses the service: %d %v", status, raw)
 	}
-	if status, _ := e.permission(orders, alice); status != http.StatusOK {
-		t.Fatalf("the id still addresses the service: %d", status)
-	}
+	// The path of the PDP names the service by its slug only (ADR 0001, 7.2): the id is a reference nobody has.
+	status, header, body := e.permissionRaw(orders, alice)
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 
 	e.must("PATCH", "/service/"+orders, map[string]any{"slug": "orders-v2"})
-	status, header, body := e.permissionRaw("orders", alice)
-	requireAuthzenError(t, status, header, body, http.StatusNotFound, "service_not_found")
+	// The old slug names no service now: the client that asked with it still has its key, and gets the one refusal.
+	status, header, body = e.permissionRaw("orders", alice)
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 	if status, _ := e.permission("orders-v2", alice); status != http.StatusOK {
 		t.Fatalf("the new slug: %d", status)
 	}

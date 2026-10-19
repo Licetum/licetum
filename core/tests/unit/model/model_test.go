@@ -113,7 +113,7 @@ func TestSynchronizerValidationNormalizesKindSpecificConfig(t *testing.T) {
 	}
 }
 
-func TestServiceUpdateSupportsPatchAndClearableSecret(t *testing.T) {
+func TestServiceUpdateIsAPartialPatch(t *testing.T) {
 	if _, err := decodeAndValidate[model.ServiceUpdate](t, `{}`); err == nil {
 		t.Fatal("an empty patch must be rejected")
 	}
@@ -121,18 +121,18 @@ func TestServiceUpdateSupportsPatchAndClearableSecret(t *testing.T) {
 	if err != nil || update.URL == nil || *update.URL != "https://x.io/" {
 		t.Fatalf("normalized patch = %+v, error = %v", update, err)
 	}
-
-	cleared, err := decodeAndValidate[model.ServiceUpdate](t, `{"client_secret":null}`)
-	if err != nil || !cleared.ClientSecret.Cleared() {
-		t.Fatalf("null must clear the secret: %+v, %v", cleared.ClientSecret, err)
+	// An empty address removes it; the other fields stay as they were sent.
+	cleared, err := decodeAndValidate[model.ServiceUpdate](t, `{"icon":""}`)
+	if err != nil || cleared.Icon == nil || *cleared.Icon != "" || cleared.URL != nil {
+		t.Fatalf("an empty icon removes it: %+v, %v", cleared, err)
 	}
-	set, err := decodeAndValidate[model.ServiceUpdate](t, `{"client_secret":"s3cret"}`)
-	if err != nil || set.ClientSecret.Cleared() || set.ClientSecret.Value == nil || *set.ClientSecret.Value != "s3cret" {
-		t.Fatalf("a new secret must be retained: %+v, %v", set.ClientSecret, err)
+	if _, err := decodeAndValidate[model.ServiceUpdate](t, `{"slug":"Bad Slug"}`); err == nil {
+		t.Fatal("an invalid slug must be rejected")
 	}
-	keep, err := decodeAndValidate[model.ServiceUpdate](t, `{"name":"x"}`)
-	if err != nil || keep.ClientSecret.Set {
-		t.Fatalf("an absent secret must be kept: %+v, %v", keep.ClientSecret, err)
+	// The OAuth configuration and the trusted clients of the previous release are not fields any more: the body allows extra
+	// members (the web interface sends its form), and they are ignored.
+	if _, err := decodeAndValidate[model.ServiceUpdate](t, `{"client_secret":"s"}`); err == nil {
+		t.Fatal("a patch that sets nothing the service has must be rejected")
 	}
 }
 

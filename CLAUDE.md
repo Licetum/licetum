@@ -27,16 +27,16 @@ embedded into other software gets its own permissive license when it is added (n
 
 The backend is written in Go (`backend/`), one binary with subcommands:
 - `licetum admin` — admin API (services, type_resources, resources, groups, group_members, roles and their
-  permission items, assignment_rules, oauth callback, platform self-service). Port 8000. Routes: `internal/api/admin.go`.
+  permission items, assignment_rules, PEP clients, the subject directory, the AuthZEN simulation, platform self-service). Port 8000. Routes: `internal/api/admin.go`.
 - `licetum pdp` — the PDP, the single runtime endpoint client services actually call at request time
-  (`GET /service/{service_id}/permission`), kept in its own process/port (8001, `-addr` or `PDP__ADDR` overrides it) so it can be
+  (the AuthZEN API under `/service/{ref}/access/v1/`, as a PEP client), kept in its own process/port (8001, `-addr` or `PDP__ADDR` overrides it) so it can be
   scaled/deployed independently of the admin surface. Its probes and `/metrics` are on the ops port (9090, `PDP__OPS_ADDR`), never on
-  this one. Route: `internal/api/check.go`.
+  this one. Routes: `core/server/authzen_routes.go`.
 - `licetum worker` — the synchronization worker: executes the jobs that fetch the resource sources into the local copy, and keeps the
   types in use fresh on a schedule. Metrics on :8002. The PDP and admin processes never apply a synchronization.
 - `licetum migrate` — apply DB migrations and seed the platform self-service.
 - `licetum restore-admin [-user name]...` — the way back in when nobody can manage the platform: puts the admin group, its
-  memberships (`PLATFORM__ADMIN_CLAIM_VALUES` and each `-user`), the admin rules of every policy back in force and switches off
+  memberships (`PLATFORM__ADMIN_CLAIM_VALUES` and each `-user`, matched by the claim of `ADMIN_AUTH__SUBJECT_CLAIM`), the admin rules of every policy back in force and switches off
   the denials that cover a policy (`db.RestoreAdminAccess`, `internal/db/restore.go`). The seed never does this on purpose.
 - `licetum openapi pdp [-yaml] [-lang en|ru|zh]` — print the PDP's OpenAPI spec without a server (the admin API's is `licetum-admin openapi admin`).
 
@@ -68,8 +68,7 @@ explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides 
 of the PDP (`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its
 resources, `Ask` asks the case's evaluations (`POST …/access/v1/evaluations`, with explain) at the case's time through
 `App.SetClock`, `CrossCheck` asks the case's resource and action searches (`…/access/v1/search/resource`, `…/search/action`) and
-fails every DEC and DECP test where the list (`coverNodes`) disagrees with the evaluations (`CoversOf`); level `pg`; until P2-23
-`SecondOpinion` asks the legacy `/check` and `/permission` routes as well), and `core/testsupport/refeval`, a
+fails every DEC and DECP test where the list (`coverNodes`) disagrees with the evaluations (`CoversOf`); level `pg`), and `core/testsupport/refeval`, a
 reference evaluator written from the semantics that shares no code with the engine (depguard keeps it away from engine, server
 and db). `core/testsupport/policygen` generates random valid fixtures (also types that had a synchronizer and lost it, with a `before`
 block: rows left behind, links to them, rules and claim lookups that name them); DECP compares the two sides on them (seeds 1–20 per pull
@@ -98,14 +97,14 @@ format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite 
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
 
 Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `background.go`, `tuning.go`, `keysets.go`; the key sets in `core/pepauth/jwks.go`; `core/redisx/fastfail.go`;
-settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TOKEN_TTL`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`,
+settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`,
 `REDIS__HOT_TIMEOUT`; the numbers are in `core/README.md`):
 - **The revision lives in PostgreSQL** (`revision_state`, migration `00002`, `db.BumpRevision` / `db.LoadRevisions`, `core/db/revision.go`):
   scope `rules` numbers every write that can change a decision (rules, memberships, groups, roles and items, access groups, services, types,
   synchronizers), scope `data:<service id>` numbers the resource data of a service. A write bumps `rules` **in its own transaction**
   (`mutate`, once per batch in `RunBatch`, `RestoreAdminAccess`, the seed), a synchronization that changed data bumps `data:<service>` in the
   transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
-  `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision`), invalidates the view and, for the replicas of the
+  `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision` of an admin write, `Licetum-Revision` of a PDP answer), invalidates the view and, for the replicas of the
   previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`);
   this release reads neither. Answer keys are `authz:permission:t9:r<rules>:…` / `authz:check:t5:r<rules>:…`.
 - The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
@@ -113,19 +112,20 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
   (started by `cli.Serve`) and by the requests every `REVISION__POLL_INTERVAL` (`singleflight`, so never twice at once), in the request when it
   is older than `staleLimit` (2 s or 8 polls), after a write of this process (`invalidateView`, from `AfterWrite` and the synchronizations)
-  and when the request asks for `at_least_as_fresh` a newer revision: `renewView` then waits for the revision for at most
+  and when the request asks for a newer revision (`context.licetum.min_revision`): `renewView` then waits for the revision for at most
   `REVISION__WAIT_MAX`, and if it does not come the answer is computed from the data and **not kept** (`cachedAnswer`, `store`).
   Cache misses queue for `COMPUTE__CONCURRENCY` slots (`computeSlots`, default half of `DB__POOL_SIZE`).
   A write made through another replica is therefore seen within the poll interval, not at once: a client that needs it at once passes the
-  `X-Authz-Revision` of its write as `at_least_as_fresh`. When the revisions cannot be read, the last view is served (as long as `POLICY__MAX_STALENESS` allows, no limit by default; see "Resilience") and marked
+  `X-Authz-Revision` of its write as `context.licetum.min_revision`. When the revisions cannot be read, the last view is served (as long as `POLICY__MAX_STALENESS` allows, no limit by default; see "Resilience") and marked
   `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
-- The snapshot holds what a decision reads: services (without `client_secret`: `ServiceCheckColumns`), the type graph, the enabled
+- The snapshot holds what a decision reads: services (id, name, slug: `ServiceColumns`), the type graph, the enabled
   memberships and rules *with* their validity windows (compared with the clock per request, `ruleActive`/`memberActive`), the role items, the
   access groups, the request attributes and the validity boundaries (for the TTL of an answer); the types with a live synchronizer are in the type
-  graph (`TypeNode.Sync`). It is built in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` and `GetServiceForCheck` answer from it (an
+  graph (`TypeNode.Sync`). It is built in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` (by slug only) answers from it (an
   unknown or deleted slug is a 404 without a query). Every write that changes any of this must bump the revision (all admin writes go through
   `mutate` or the batch, which do); a change made by other means (`restore-admin` does bump) shows up at `SNAPSHOT__MAX_AGE` at the latest.
-  `consistency=higher` does not use the snapshot (`cacheState.forConsistency`): it reads everything with queries, as before the snapshot.
+  The lever `consistency=higher` (`engine.WithConsistency`, set by the process that serves the request — no query parameter or header of the PDP sets it;
+  a test server maps the header `X-Test-Consistency`, `harness.Levers`, `authzenreq.Fresh()`) does not use the snapshot (`cacheState.forConsistency`): it reads everything with queries, as before the snapshot.
 - Resilience and operations (F5; `core/README.md` has the user-facing description):
   - **Probes** (`engine/ready.go`, `server.NewServer`), on the PDP's ops listener (`PDP__OPS_ADDR`, 9090; the public listener has none):
     `GET /healthz` has no dependency; `GET /readyz` (`App.Ready`) is 200 when the process is
@@ -162,9 +162,9 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
 - **Read replica** (F6; `engine/replica.go`, `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL`; `core/README.md` has the description): a PDP process
   may set `App.ReadDB` (`UseReadReplica`, `cli.Serve`). `App.reader(ctx)` is the pool of a read of the policy: the replica, or `DB` when there is none, when
-  the request needs a current read (`withPrimary`: `consistency=higher`, or a revision the view did not reach, set in `cachedAnswer`; such an answer is not kept)
+  the request needs a current read (`withPrimary`: the lever `consistency=higher`, or a revision the view did not reach, set in `cachedAnswer`; such an answer is not kept)
   or while the replica lags with `DB__LAG_ACTION=primary`. Reads of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) use `reader(ctx)`;
-  writes, the worker, the sync pool and the OAuth reads use `DB`. `WatchReplica` measures the lag (replay lag and the time the revision has been behind the
+  writes, the worker and the sync pool use `DB`. `WatchReplica` measures the lag (replay lag and the time the revision has been behind the
   primary's); `/readyz` fails with `replica_lag` under the `unready` action; `replicaGate` makes a replica behind `POLICY__MAX_STALENESS` fail closed (503). Tests:
   `cluster/f6_test.go` against a real streaming replica (`scripts/pg-replica.sh`, `LICETUM_TEST_REPLICA_ADDR`, `task go:test:integration:replica`).
   Beyond that: a replica that cannot be compared with the primary counts as stale (`replicaUnconfirmed`, only for `POLICY__MAX_STALENESS`, not for
@@ -175,14 +175,13 @@ settings `SNAPSHOT__*`, `AUTH__TOKEN_L1_SIZE`, `AUTH__JWKS_*`, `AUTH__INVALID_TO
   An admin write is six round trips to the primary at most (`mutate` sends the change record and the revision bump as one batch; `checkAssignmentRuleRefs` reads
   the type once and returns its service): `chaos/f6_test.go` `TestF6_7_*` keeps it so, since the admin API of a far region pays the link for each.
 - The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
-  `snapshot.ttl`, ...): a policy that does not fit, `consistency=higher` and the admin simulations use it. Change one, change the other;
+  `snapshot.ttl`, ...): a policy that does not fit, the lever `consistency=higher` and the admin simulations use it. Change one, change the other;
   `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` (random policies, both paths, answers and explanations) keeps them equal.
 - Answers: `cachedAnswer` looks in `answersL1` (keyed like the Redis key, so the revision is in it; entries also record the data versions they
-  read and an `exp`, which the value in Redis carries too) before Redis; tokens: `VerifyToken` looks in `tokensL1`, then Redis, then the
-  provider, and remembers an `InvalidToken` failure by service and token hash in `invalidTokens`. `App.ClearMemoryCaches` empties the levels
+  read and an `exp`, which the value in Redis carries too) before Redis. `App.ClearMemoryCaches` empties the level
   (tests). Values in these caches are shared by requests and must be treated as read-only.
-- `jwksKeyFor`: one key set per URL, shared fetches (singleflight per URL), refetch for an unknown `kid` at most once per
-  `AUTH__JWKS_MIN_REFRESH`; transport failures are `errJWKSUnavailable` (breaker), never cached.
+- `pepauth.KeySets` (`core/pepauth/jwks.go`, `App.keySets`): one key set per URL, shared fetches (singleflight per URL), refetch for an unknown
+  `kid` at most once per `AUTH__JWKS_MIN_REFRESH`; a set is trusted for `AUTH__JWKS_TTL`; transport failures are never cached.
 - `App.Background` runs on a fixed pool with a bounded queue and returns whether the work was accepted; a full queue drops it
   (`licetum_background_dropped_total`). Work that registers a marker (`refreshInBackground`) must clear it when dropped.
 - `redisx.ConnectWith(HotTimeout)` is how the PDP connects (`cli.Serve`, name `pdp`): read/write timeout, no retries, and a
@@ -195,8 +194,8 @@ tests); `harness.StartReplicas` builds several PDP replicas on one PostgreSQL an
 their AuthZEN requests with `core/testsupport/authzenreq`: `Replica.Permission` sends the resource search for branches
 (`harness.Branches`) for at least the revision of the last admin write (`Cluster.LastRevision`), and `Replica.Fresh` sends it with the
 test lever `harness.Higher()` (the `X-Test-Consistency` header, not a query parameter). `admin-api/tests/oldendpoints_test.go` counts
-the lines that still send an old route or spell an AuthZEN path, per file; the allowance of each file can only go down, and P2-23
-deletes the file with the routes. `core/testsupport` has the fake source, the
+the lines that send a route the PDP no longer has (`/permission`, `/check`, `/on_behalf`) or spell an AuthZEN path outside
+`authzenreq`, per file; the allowance of each file can only go down. `core/testsupport` has the fake source, the
 fake IdP and the Toxiproxy `FaultProxy`; tests under the `chaos` build tag (`task go:test:chaos`, nightly `chaos.yml`) inject faults;
 `admin-api/loadtest/budgets.yaml` holds the budgets the nightly `loadtest.yml` compares runs with (`licetum-loadtest budget`).
 
@@ -217,7 +216,7 @@ are mounted, the Go apps run under air (hot reload, `dev` target of `backend/Doc
 runs `pnpm dev`. It runs postgres, redis, a one-shot `postgres_init` migration container
 (`licetum migrate`), both backend apps and the web interface — see `docker-compose.yml` /
 `infra/*.compose.yml` for the env vars each service expects (`DB__*`, `AUTH__*`, `REDIS__*`,
-`CORS__*`, `PLATFORM__*`). The `runtime` target of `backend/Dockerfile` is the production image.
+`PLATFORM__*`). The `runtime` target of `backend/Dockerfile` is the production image.
 
 The orval client `web/src/api` is **not committed**: only `backend/schema/*.yaml` is. It is generated
 by `pnpm orval` / `task generate`, by `task web:lint` (so `task check` type-checks it), by the
@@ -245,9 +244,11 @@ the web interface sends extra form fields. Path-param structs that are embedded 
 or Huma won't see their fields.
 
 Settings: `config.Load()` reads env vars with the same prefixes as before (`DB__`, `AUTH__`,
-`REDIS__`, `CORS__`, `PLATFORM__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR` and `PDP__OPS_ADDR`); names are case-insensitive, lists accept a
+`REDIS__`, `PLATFORM__`, `ADMIN_AUTH__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `PDP__SEARCH_SCAN_BUDGET`, `PEP__RATE_LIMIT` and `PEP__RATE_BURST`); names are case-insensitive, lists accept a
 JSON array or CSV. `DB__URI` may keep the SQLAlchemy `+asyncpg` suffix (`db.NormalizeDSN`).
-`PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback.
+`PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback. The OAuth client of the
+self-service (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISSUER`, `__CLIENT_ID`, `__CLIENT_SECRET`) is gone (they are in
+`config.DeprecatedSettings`): administrators authenticate through `ADMIN_AUTH__*`, see "Administrator sign-in" below.
 
 Errors: return `*apperr.Error` from the service layer, created from an i18n catalog key
 (`apperr.NotFound(i18n.ServiceNotFound, id)`, `apperr.BlockedBy(list, i18n.RoleDeleteBlocked, id)`,
@@ -274,17 +275,14 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
 
 ### Domain model
 
-- **Service**: a client application registered with Licetum. Has its own OAuth2 config
-  (authorization/token/jwks URLs, issuer, client id/secret) used to verify tokens presented to
-  `/permission`, and a **slug**: lowercase Latin letters, digits, `-`, `_`, unique among live services and
+- **Service**: a client application registered with Licetum, with a **slug**: lowercase Latin letters, digits, `-`, `_`, unique among live services and
   never a UUID (`model.ValidSlug`; `00009_service_slug.sql`). The PDP takes the service as one path
-  segment — its id or its slug (`App.ServiceIDByRef`). Licetum itself is registered with the slug
+  segment — its slug only (`App.ServiceIDByRef`; the uuid form is gone). Licetum itself is registered with the slug
   `model.PlatformSlug` (`licetum`, reserved: no other service takes it; a name that makes an invalid slug
-  falls back to `service-<12 hex digits of the id>`, `00009_service_slug.sql`). An empty/NULL `client_secret` is a public client (sign-in with PKCE);
-  in PATCH an absent `client_secret` keeps it, `null`/`""` removes it (`model.ClearableString`); the response says only
-  whether one is stored (`has_client_secret`). The application `url` and the `icon` are optional and are never requested
-  (no live check from the server: `""` removes them in PATCH). `trusted_clients` lists the client applications (the `azp`, or
-  `client_id`, of their tokens) the service trusts to ask on behalf of a person: see "Calls on behalf of a person".
+  falls back to `service-<12 hex digits of the id>`, `00009_service_slug.sql`). The application `url` and the `icon` are optional and are never requested
+  (no live check from the server: `""` removes them in PATCH). A service has no sign-in configuration and no trusted clients: the callers of its PDP
+  are its PEP clients (see "Check, AuthZEN, metrics"). The OAuth columns and `trusted_clients` of the `service` table stay in the schema (they are NULL
+  or empty; nothing reads or writes them) until schema v2 (P3).
 - **TypeResource**: a resource *type* belonging to a service (e.g. "project", "branch"), with any
   number of parent types (`type_resource_parent(type_resource_id, parent_id, inherit)`) — a DAG, not
   a tree. The parent link is both structural *and* the permission-inheritance chain — it can cross
@@ -296,7 +294,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   still accepts the deprecated `type_resource_parent_id` (= one parent, all levels; `Validate()`
   normalizes it into `parents`), the response keeps it only for a type with exactly one parent. The name is unique within the service among live rows
   (partial unique index `uq_type_resource_service_name` + 409 `type_resource_name_taken`) — types
-  are keyed by name in `/permission`.
+  are keyed by name in the AuthZEN requests (`resource.type`).
 - **Type mode is derived, not stored**: a type is `sync` if a live (not deleted) Synchronizer points
   at it, otherwise `not_sync` — a "permission without resources" (a capability such as
   `advanced_working_mode`): it has no resources, and a rule with `resource_id = NULL` grants access
@@ -341,7 +339,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   (`SynchronizerConfig.RestoreSecrets`, applied before the probe).
   `cache_ttl` (seconds, 0–86400; omitted means `SYNC__FETCH_TTL`, default 10) keeps the fetched list in Redis
   under `authz:fetch_all:<synchronizer id>:<sha256 of the config with its secrets masked>` (`Adapter.FetchAll`;
-  an empty list is kept too: it is the source's answer). `consistency=higher` (`fresh`) asks the source anyway and
+  an empty list is kept too: it is the source's answer). The lever `consistency=higher` (`fresh`) asks the source anyway and
   refreshes that list. A source that does not answer (transport error, bad status, malformed or `null` body, open breaker,
   SQL source without `list_query`) is an error (`FetchAll` returns it): the sync is skipped and the data stays.
   A synchronization is a **job** (`sync_job`, `engine/sync_jobs.go`, `engine/sync_worker.go`): the PDP and admin processes
@@ -436,17 +434,34 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   lists `@name` in its `access` (`expandAccess`). Renaming or deleting a group that a rule or an item names is refused
   (409, `blocked_by`).
 
-- **KnownSubject** (`known_subject`, `service/subjects.go`, `SUBJECTS__ENABLED` default OFF (the dev Compose stack sets it on), `SUBJECTS__RETENTION_DAYS` default 90):
-  the subjects of verified tokens (the PDP's `authenticateCaller` and the admin API's `Authenticate` call
-  `App.NoteSubject`, at most once per ten minutes per subject and process, written in the background) with the display name and
-  only the claims the policy reads (`requestAttributes`). It lets the UI say which groups a person is in (`identityOf` over the
-  live memberships and the stored claims) and whom a rule reaches (`peopleReached`). `/subject` (list, one, forget) is governed by
-  the `group_member` policy. Without a registry nothing here is guessed.
+- **Subject directory** (`subject_directory`, `subject_directory_seen`, `subject_directory_settings`, migration `00008`; `core/db/directory.go`,
+  `admin-api/service/directory.go`, `admin-api/api/admin_directory.go`; ADR 0001, 8.8): the people of a **service**, sent on purpose by its
+  application or an editor. It replaces `known_subject` (global, filled by every token; the registry is removed in the second step of the
+  directory step). Six routes under `/service/{id}/subjects`: `PUT` (up to 1000 people, each once; `{type?, id, name?, properties?}`, the
+  properties stored as sent within 100 entries and 16 KiB), `GET` (list: `type`, `search`, `limit`, `offset`, with a total, ordered by type
+  and then bytewise by id), `GET|DELETE …/{type}/{id}` (an id with `/` goes percent-encoded; the entry comes with the groups the stored
+  properties put the person in), `GET|PUT …/settings` (`retention_days`, null: forever, the default). The id of a person is kept exactly
+  as sent and never starts with `group:`. The upsert writes only a row whose name or properties differ (`UpsertDirectory`, `IS DISTINCT
+  FROM`): an unchanged batch touches no row of `subject_directory` and takes **no revision** (no decision reads the directory); the time
+  an entry was last sent is kept apart in `subject_directory_seen` and refreshed at most hourly. The worker's retention (`RunRetention`,
+  `db.PruneDirectory`, 10 000-row chunks) deletes the entries not sent within their service's `retention_days`. Until the roles of the
+  service (P4) the routes are governed by the platform policy `group_member` (whole type). The key of a scan is (type, id) bytewise
+  (`DirectoryAfter`, index `ix_subject_directory_scan`). Tests: `directory_test.go` in `admin-api/tests/integration/api` (DIR02, DIR04) and
+  in `core/tests/integration/db`.
+  **The registry of known subjects is gone.** `known_subject` (global, filled by every verified token, `SUBJECTS__ENABLED`/`SUBJECTS__RETENTION_DAYS`,
+  `NoteSubject`, `/subject`) was removed in favour of the directory: nothing writes the table any more, and `RunRetention` drops what the previous
+  release left in it after a fixed 90 days (no setting; the table goes with the schema of P3). The directory feeds the AuthZEN subject search
+  (below), the people a rule reaches (`peopleReached`, `service/access_lookup.go`) and the person page. `peopleReached` tries each rule on the
+  people of the directories of **the services of the rule's types** (the type it targets, the type its claim is looked up in, the types of the
+  items of the role it grants; `servicesOfRules`), decided with the stored properties as claims: a service with an empty directory has no people, the
+  directory of another service is not counted, a person of two of a rule's services is counted once (DIR03); at most `engine.EvaluationLimit`
+  (5000) people are tried (`limited`). The administrators of the platform are no longer noted when they sign in: they appear in the rules and
+  memberships that name them, or in the directory of the platform service if somebody sends them there.
 
 ### Self-service: access policies for Licetum itself
 
 The admin API is protected by the same permission mechanism as any client service. `licetum migrate`
-(`db.SeedPlatform`) registers Licetum as a Service within itself (`PLATFORM__*`, deterministic uuid5
+(`db.SeedPlatform`, when `ADMIN_AUTH__*` is configured) registers Licetum as a Service within itself (`PLATFORM__*`, deterministic uuid5
 ids in `internal/model/platform.go`) and creates resource types that act as policies
 (`model.PlatformTypes`): `service`, `type_resource` (+ its synchronizers and resource list), `group`,
 `group_member`, `role` (+ its permission items: access to them is access to the role itself) and
@@ -467,6 +482,19 @@ item is refused (409 `last_admin_access`) when it leaves no rule in force that a
 somebody (a group needs a live member; a predicate or a nested group counts as non-empty), while somebody could before. It runs
 in the write's transaction, and once at the end of a batch (so a batch may replace the admin access); a platform that is already
 locked is not blocked further. A denial rule is not looked at: `licetum restore-admin` is the way out.
+
+**Administrator sign-in** (ADR 0001, 8.12; `core/config` `AdminAuth`, `engine/admin_auth.go`, `admin-api/service/platform.go::Authenticate`, `web/src/lib/oidc.ts`):
+administrators authenticate at one static OpenID Connect provider, `ADMIN_AUTH__ISSUER` / `__AUDIENCE` (required) / `__JWKS_URL` /
+`__SUBJECT_CLAIM` (default `preferred_username`, then `sub`). The admin API verifies the bearer token with a `pepauth.Verifier` (the
+key sets of the PEP issuers share its code): `iss` exact, `aud` must contain the audience, `exp` required, `nbf`, an asymmetric `alg`;
+a missing or bad token is a 401 (`WWW-Authenticate`, `invalid_token` for a token), keys that cannot be read a 424, no `ADMIN_AUTH__*`
+a 503 `admin_auth_not_configured` (the `admin` command refuses to start without them; half of the three is a config error). The
+permissions still come from the platform policies below. The seed and `restore-admin` need only `ADMIN_AUTH__*` (the service row has no OAuth
+client: its OAuth columns stay NULL); `restore-admin -user` matches the subject claim. The web interface is the OIDC client (code flow with
+PKCE; `OIDC_*`): `/auth/login` seals the state, nonce and PKCE verifier into the cookie `licetum_flow` (ten minutes, path `/auth`),
+`/auth/callback` checks it, exchanges the code at the token endpoint and writes the session cookie, the tokens are renewed at the token
+endpoint; nothing is kept on a server. Tests: `TestContract_ADM01_*` (`admin-api/tests/integration/api/admin_auth_test.go`),
+`TestContract_ADM13_*` (`core/tests/integration/db/admin_auth_test.go`), `TestContract_WEB01_*` (`web/tests/oidc.test.ts`).
 
 Enforcement: `internal/api/auth.go`. An operation declares its policy with
 `withPolicy(op, requireAny|requireWholeType|requireResource(type, action, pathParam))`; the Huma middleware
@@ -631,48 +659,68 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
 
 ### Check, AuthZEN, metrics
 
-- Every PDP path takes the service as `{id}` — the service id or its slug (`App.ServiceIDByRef`).
-- Request context (`context`, a JSON object): in the check body, as the `context` query parameter of `GET
-  /permission`, as the AuthZEN `context` (every key but `explain`), and in the admin simulations. The service that calls
-  Licetum sets it, as it sets the token: never copy it from end-user input. Names are identifiers
+- Every PDP path takes the service as `{ref}` — its slug (`App.ServiceIDByRef`).
+- Request context (`context`, a JSON object): in the AuthZEN requests (every key but `licetum`) and in the admin simulations. The PEP that calls
+  Licetum sets it, as it sets the credential: never copy it from end-user input. Names are identifiers
   (`model.ValidContextName`); at most 64 attributes per request, a string of at most 1024 characters, a list of at most 64 items; an object, or a
-  list within a list, is refused.
-- `POST /service/{id}/check` (`service/check.go`, `model/check.go`): up to 100 questions
-  `{type, resource_id?, action}`; without `resource_id` the question is about the type as a whole.
-  `explain: true` adds `{decision: allowed|denied|no_access|resource_not_found|type_not_found,
-  granted_by, denials[{rule, level, lifted_by, unresolved_parent}]}`. It decides only for the asked
-  resources (`coversOf`, the questions of one request are read together: `decideChecks`), with the same engine as `/permission`.
+  list within a list, is ignored (the condition sees the attribute as missing).
+- The questions of an evaluation decide only for the asked resources (`coversOf`, the questions of one request are read together: `decideChecks`);
+  the explanation is `{decision: allowed|denied|no_access|resource_not_found|type_not_found, granted_by, denials[{rule, level, lifted_by,
+  unresolved_parent}]}` (`model.Explanation`, in `context.reason_admin`).
 - **AuthZEN** (`core/server/authzen_run.go` the run layer, `authzen_caller.go`, `authzen_routes.go`; `core/model/authzen.go`; tag `AuthZEN`): the OpenID AuthZEN Authorization API 1.0 scoped to a service
-  (the service, by id or slug, is in the path, so the "PDP" is `<public url>/service/<ref>` and the default paths of the spec are appended to it).
+  (the service, by slug, is in the path, so the "PDP" is `<public url>/service/<slug>` and the default paths of the spec are appended to it).
   `POST …/access/v1/evaluation` and `…/evaluations` (defaults at the top level, `options.evaluations_semantic` = `execute_all` | `deny_on_first_deny`
   | `permit_on_first_permit`: the batch is decided as a whole and cut at the stopping evaluation; without `evaluations` it is one evaluation and the
   answer is `{decision}`; an evaluation that cannot be decided in a batch is `decision: false` with `context.error {status, message}`, the single
   endpoint answers the HTTP error); `POST …/access/v1/search/{subject,resource,action}` (`page.limit` up to 1000, `page.token` is an opaque cursor with
   a digest of the request, a changed request is 400 `authzen_page_invalid`); `GET /.well-known/authzen-configuration/service/{ref}` (the discovery
   document, from `PDP__PUBLIC_URL`; 404 `authzen_metadata_disabled` without it). A request that is not valid is a 400, not Huma's 422 (the
-  `NewErrorWithContext` hook maps it for the `AuthZEN` tag; `badRequest` does it for errors of the handlers). `subject.id` is the token's subject
-  and the claims come from the token; any other subject needs a client the service trusts (`trusted_clients`, as for the calls on behalf of a
-  person; else 403 `authzen_subject_mismatch`), which gives the person's claims in `subject.properties` (`PrepareDelegated`); such calls are audited
-  in `delegated_call` (evaluations and subject search as `check`, resource and action searches as `permission`). `context.explain` puts the explanation
-  into `context.reason_admin`; the other context keys are the request attributes. Resource search lists the resources of the type with the action
-  (sorted by id, `properties.name` is the name; a `not_sync` type has none); action search lists the levels on a resource (or on the type as a whole:
-  the candidates are the levels the person has on some resource of the type, each decided by `CheckAccess`); subject search (trusted clients only)
-  decides the known subjects of the registry (`SUBJECTS__ENABLED`) with their stored claims, in the order of their identifiers
-  (`LoadKnownSubjectsAfter`, keyset): batches of 100 from the cursor until the page is full or 1000 subjects were gone through, the page token is the
-  last subject covered (no `page.total`), so no page skips or repeats a person; the decisions are the cached `CheckAccess` ones. The token of a
-  trusted client is noted in the registry like any other (rules may grant a service account access by its claims), by the AuthZEN and the
-  delegated endpoints alike.
-- **Calls on behalf of a person** (`service/delegation.go`, `api/check.go`): `POST /service/{id}/on_behalf/check` and `…/permission` answer
-  as the check and the permission do, for the `subject` and the `claims` named in the body instead of the holder of the token. The caller
-  sends its own token (same IdP and keys as a user's, typically client-credentials); `AuthorizeDelegate` takes its client from `azp`, then
-  `client_id`, and the service must list it in `trusted_clients` (403 `delegation_not_trusted` / `delegation_no_client`). The caller
-  vouches for the claims, so a trusted client has to send the ones the rules read (`GET /service/{id}/policy/claims` lists them: the
-  conditions and guards of the rules that apply to the service's types, claim-based targets, and the group memberships);
-  `PrepareDelegated` sets `preferred_username` to the subject when it is absent and refuses a subject that starts with `group:` (it would
-  be taken for the group) or claims over 100 entries / 16 KiB. Every answered call is written to `delegated_call` before the answer is
-  returned (a call that cannot be recorded is not answered; `GET /service/{id}/delegated_calls` pages it;
-  `DELEGATION__AUDIT_RETENTION_DAYS`, default 365). `DELEGATION__AUDIT_MODE=async` (default `strict`) buffers the record (`DELEGATION__AUDIT_BUFFER`, default 100 000) and writes it with one multi-row INSERT every 500 ms or at 500 records (`engine/audit.go`); a full buffer drops and counts (`licetum_audit_dropped_total`, `licetum_audit_buffer_records`, `licetum_audit_lag_seconds`), `Close` flushes. `NoteSubject` fills a buffer flushed every second in batches of 500; the upsert only changes a row older than 10 minutes, so replicas change it once per interval. Retention (`engine/retention.go`) runs in the `worker` only, hourly, in 10 000-row chunks, under a Redis lock (once per interval across workers). A log-settings change bumps `revision_state` scope `log_settings` in its transaction; every process applies it from the revision poll (`WatchRevision`, no ticker of its own). `WaitChanges` shares one `max(id)` query per second per process between all waiters. The access log names the client as `user` and the person as `on_behalf_of`. Known
-  limit: a user token of a trusted client is not told apart from its own client-credentials token, so trust a backend client.
+  `NewErrorWithContext` hook maps it for the `AuthZEN` tag; `badRequest` does it for errors of the handlers). The callers are PEP clients (below): the person of a question is the body's `subject`, whose claims are in
+  `subject.properties` (`subjectClaims`, `model.PrepareSubject`: at most 100 claims and 16 KiB, no `group:` prefix, `preferred_username` defaults to `subject.id`),
+  and nothing about a call is recorded in the database. `context.licetum.explain` puts the explanation
+  into `context.reason_admin`, `context.licetum.min_revision` asks for an answer that reflects a revision (the only freshness a caller can ask for); the other context keys are the request attributes. Resource search (`engine.SearchResources`) reads the candidates of the type from `resource_cache` by a keyset scan in bytewise order
+  (`ORDER BY external_id COLLATE "C"`, the index `ix_resource_cache_type_external_c` of migration `00007`) and decides them in batches of 500 under
+  one `prepare` of the rules; a page is cached like a check answer (`authz:search:t1:…`, `licetum_search_cache_total`), so a repeated page costs no
+  query. The page token holds the last key covered (the empty string is a key too: `ResourceSearch.After` is a pointer) and a digest of the
+  request; at most `PDP__SEARCH_SCAN_BUDGET` (10 000) candidates are read per request, so a page can be shorter than its limit, even empty, and
+  still carry a `next_token`; a caller to whom no rule allows anything gets a finished empty page without a scan. Known limit: the scan reads the
+  keys of the type, not only the resources the rules reach (ADR 7.6 reads the descendants of the anchors; that arrives with the read-model port
+  in P5), so a caller with few grants on a very large type pays up to the budget per page; the result has no `total` (`properties.name` is the name; a `not_sync` type has none); action search lists the levels on a resource (or on the type as a whole:
+  the candidates are the levels the person has on some resource of the type, each decided by `CheckAccess`); subject search (a PEP client with
+  `search_subject`) decides the people of the **directory of the service** of the asked `subject.type` (`DirectoryAfter`,
+  keyset by type and id, bytewise) with their stored properties as claims: batches of 100 from the cursor until the page is full or 1000 people
+  were gone through, the page token is the last person covered (`type:id`, no `page.total`), so no page skips or repeats a person; the decisions are
+  the cached `CheckAccess` ones. A person who is not in the directory is never found, an empty directory gives an empty result (DIR01); the result
+  carries the stored display name as `properties.name`.
+- **PEP clients** (`engine/pep.go`, `engine/pep_auth.go`, `server/authzen_auth.go`, `server/pep_limits.go`, `pepauth/`, migration `00006`; ADR 0001, 7.10): the
+  callers of the AuthZEN routes. The directory (`pep_issuer`, `pep_client`, `pep_credential`) is read as a whole by `App.PEPDirectory` and follows the
+  `pep` scope of `revision_state`; a write to it bumps that scope only (no decision reads the directory, so no answer key moves) and calls
+  `App.AfterPEPWrite`. A client belongs to one service and is `api_key` (a key `lct_<16 hex digits>_<43 characters>`, stored as the sha256 of its
+  secret, at most two active at once) or `jwt` (the `iss` and the `azp`/`client_id` of the token of an issuer registered in `pep_issuer`: the algorithm
+  allowlist, `aud` always required, the issuer's `audiences` or else `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`), `at+jwt` when the issuer asks, 60 s of
+  leeway). `operations` lists what it may call: `evaluate` (the default), `search_resource`, `search_action`, `search_subject` and `explain`. The routes ask
+  `AuthenticatePEP` first (`authzenAuth.caller`): an API key or a token of a registered issuer that does not verify is a 401 (`Bearer error="invalid_token"`,
+  a key's answer takes the same time whether its id exists or not); a valid credential that gives nothing on the service (no such service, a client of
+  another service, a disabled one, an operation it lacks, `explain` without the `explain` operation) is **one** 403 `authzen_forbidden`, the same body for
+  every reason, so a caller learns nothing about which services exist. Any other credential — the token of a person included — is a 401. The person of a question is the body's `subject` (`subjectClaims`, the claims in `subject.properties`), never the
+  credential. `PEP__RATE_LIMIT`/`PEP__RATE_BURST` is a token bucket per
+  client and per process (429 `authzen_rate_limited` + `Retry-After`; off by default; a global limit belongs to the ingress). The directory holds enabled
+  clients only, so the key of a disabled client is a 401, not a 403. Tests: `core/server/authzen_pep_test.go`, `admin-api/tests/integration/api/pep_test.go`.
+  **Management** (`admin-api/api/admin_pep.go`, `admin-api/service/pep.go`, `core/model/pep.go`; minimal routes at their final paths, re-gated by the roles of the
+  service in P4): `GET|POST /service/{id}/pep-clients`, `GET|PATCH|DELETE …/pep-clients/{client_id}`, `GET|POST …/pep-clients/{client_id}/keys`,
+  `DELETE …/keys/{key_id}`, and `GET|PUT|DELETE /platform/pep-issuers` (the issuer to delete is the `issuer` query parameter: it is a URL). They are governed by the
+  platform policy `service`: read on the service to read its clients and keys, write to change them, the whole policy for the issuers. The path takes the service id
+  (the slug arrives with the routes of P4); a service that does not exist is refused like one the caller may not touch (403). A write goes through `db.CreatePEPClient`,
+  `ModifyPEPClient` (the row read under its lock, so a PATCH never loses a concurrent change), `IssueAPIKey`, `RevokeAPIKey`, … each in its own transaction with the bump of
+  the `pep` scope, then `App.AfterPEPWrite`. The change log does not record them (nor does a rollback restore them). The key is in the answer that issues it
+  (`Cache-Control: no-store`) and nowhere else; a client has two active keys at most (409), and a revoked key, a disabled or a deleted client is refused by every replica
+  within the revision poll interval (PEP02, `cluster/pep_test.go`).
+- **Simulation for administrators** (`core/server/simulate.go`, `admin-api/api/admin_ops.go`, tag `Simulation`): `POST /service/{service_id}/simulate/access/v1/{evaluation,evaluations,search/{resource,action,subject}}`
+  take the AuthZEN requests of the PDP and answer as it does, for the person and the claims the request names (`subject.properties` as they are given),
+  with `consistency=higher` (the data as it is now) and the explanation always on (`context.reason_admin`). They run the code of the PDP routes on a
+  synthetic caller (`authzenCaller.simulated`): no PEP authentication, no decision log; the policy is the read right on the service
+  (`requireResource(PlatformService, read, "service_id")`). The old `simulate_check` and `simulate_permission` are gone. In the web interface
+  `web/src/lib/authzen.ts` builds every AuthZEN request (Check page, Integration page snippets and its "try it", `tests/authzen.test.ts`, contract WEB03).
 - `GET /metrics` on the PDP's ops port and on the admin API (Prometheus, own registry per `App`, `service/metrics.go`): permission
   compute time and cache hit/miss/bypass, the in-process caches (`licetum_l1_cache_total`), JWKS fetches (`licetum_jwks_fetch_total`),
   dropped background work (`licetum_background_dropped_total`), requests that had no policy snapshot (`licetum_snapshot_fallback_total`),
@@ -680,20 +728,21 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   breaker-open counters, HTTP requests/duration by operation. `App.metrics` may be nil (an `App`
   built only to describe the API) — helpers are nil-safe.
 
-Token verification (`internal/service/oauth.go::VerifyToken`) fetches the service's JWKS, verifies
-the JWT, checks issuer, and caches the verified claims in Redis keyed by token hash until near
-expiry — also behind a circuit breaker + singleflight. Only JWKS transport failures count toward
-the breaker; an invalid token is a 401. `POST /service/{id}/oauth/refresh` (`RefreshTokens`, public
-like login/callback) exchanges a refresh token at the service IdP: `invalid_grant` is a 401 (sign in
-again) and does not count toward the breaker; any other rejection is a 424.
+PEP tokens are verified by `core/pepauth` (`pepauth.Verifier`, key sets in `pepauth/jwks.go`): the algorithm allowlist, `aud` required, `exp`/`nbf` with leeway, `at+jwt` when the
+issuer asks; only transport failures of the key set are a 424. The same verifier checks the tokens of the administrators (`ADMIN_AUTH__*`).
+The PDP takes no token of a person and keeps no OAuth state (PKCE, tokens, refresh): the settings `AUTH__STATE_*`, `AUTH__TOKEN_L1_SIZE`,
+`AUTH__INVALID_TOKEN_TTL`, `DELEGATION__*` and `CORS__*` went with those features (`config.DeprecatedSettings` warns when one is still set), and so did the
+routes `GET …/permission`, `POST …/check`, `POST …/on_behalf/…`, the admin `…/oauth/*`, `…/simulate/check|permission` and `…/delegated_calls`, and the
+query parameters `consistency` and `at_least_as_fresh`. `delegated_call`, `known_subject` and the OAuth columns stay in the schema until P3. The header
+`X-Authz-Sync: pending` stays until P5 (it goes with `ensure`).
 
 Claim values are compared as Python `str()` would render them (`service.PyStr`: `True`, `5`,
 `['a', 'b']`) so predicates written for the old implementation keep matching.
 
 Access log (`logAndRecover` in `internal/api/server.go`): one `request` line per HTTP request with `request_id`
 (the caller's `X-Request-ID` when it is sane, else a generated UUID; returned in the response), `operation`, `user`,
-status and duration. `user` is set only after the token is verified (`setRequestUser`, called by `platformAuth` and
-the PDP's `authenticateCaller`), so a forged token never shows up. Request bodies are never logged: they carry
+status and duration. `user` is set only after the credential is verified (`SetRequestUser`, called by `platformAuth` and
+the PDP's `authzenAuth.caller`), so a forged token never shows up. Request bodies are never logged: they carry
 client secrets and tokens.
 
 ## Web interface (`web/`)
@@ -701,14 +750,24 @@ client secrets and tokens.
 The interface: Next.js 16 (App Router) + Ant Design 6 + TanStack Query, in `web/`. `web/README.md` is the full
 description; in short:
 
-- Sign-in runs on the server (`src/app/auth/*`): the tokens live in an encrypted httpOnly session cookie, never in the page's
-  JavaScript. The browser reaches the admin API only through `src/app/api/admin/[...path]/route.ts`, which adds and renews
-  the token. `CORS__ALLOW_ORIGINS` of the admin API must contain the app's origin (the sign-in redirect is checked against it).
+- Sign-in runs on the server (`src/app/auth/*`), and the web interface is the OpenID Connect client (`OIDC_*`: code flow with PKCE, a
+  state and a nonce, `src/lib/oidc.ts`): the tokens live in an encrypted httpOnly session cookie, never in the page's JavaScript, and
+  what a sign-in under way remembers lives in a second short-lived encrypted cookie. The browser reaches the admin API only through
+  `src/app/api/admin/[...path]/route.ts`, which adds the token and renews it at the identity provider's token endpoint. The admin API
+  needs no CORS setting for it; the redirect URI to register at the provider is `${APP_BASE_URL}/auth/callback`.
 - The API client is generated by orval from `backend/schema/admin.yaml` into `web/src/api` (not committed): `pnpm orval` /
   `task web:orval` / `task generate`. After an API change run `task backend:schema`, then regenerate.
 - `task web:lint` (format, orval, tsc, locale check, knip), `task web:test` (`pnpm test`, Jest in `web/tests`: the domain helpers,
-  the grant form model, the schemas, the session cookie, and components rendered with mocked data), `pnpm build`. There is no
+  the grant form model, the schemas, the session cookie, the OIDC sign-in, and components rendered with mocked data), `pnpm build`. There is no
   e2e suite against a running stack: the interface is tested on mocks by decision of the owner.
+- Services: a service is a name, a slug, an address and an icon; it has no OAuth settings, no trusted clients and no delegation section.
+  Who may ask the PDP is set on the **PEP clients** tab of the service (`/services/[slug]/pep`: `pep-tab.tsx`, `pep-client-drawer.tsx`,
+  `pep-keys.tsx`, `pep-model.ts`: operations, the issuer of a jwt client, API keys with their secret shown once and kept nowhere but the
+  modal) and on the **Issuers** tab of the settings (`/settings/issuers`: the registered identity providers whose tokens a PEP may
+  present; `/api/discover` reads an issuer's discovery document for it). The Check and person pages ask the simulation of the admin
+  API in AuthZEN shapes (`src/lib/authzen.ts`) and show what a person sees by searching (`features/check/visible-access.tsx`,
+  `seen-model.ts`): there is no single answer listing everything any more, so a type with resources opens on demand, one resource
+  search per level, 50 per page.
 - Data that crosses a border is parsed, not cast: `src/lib/schemas.ts` (zod) holds the shape of the token answers, the discovery
   document, what the callback page posts and what a person uploads; `src/lib/env.ts` checks the settings the same way. `tsc` runs with
   `noUnusedLocals`/`noUnusedParameters` and `knip` (part of `task web:lint`) rejects unused files, exports and dependencies.

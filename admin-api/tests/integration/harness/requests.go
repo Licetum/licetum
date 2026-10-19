@@ -31,21 +31,25 @@ func (c *Cluster) PermissionRequest(ref, token string) authzenreq.Request {
 }
 
 // A Lever sets how a replica serves a request, through a header that Levers turns into a lever of the engine: a test asks for
-// the freshest answer without a parameter of the API, which a later pull request removes.
+// the freshest answer without a parameter of the API (the API has none).
 type Lever func(http.Header)
 
 // Higher is the lever of the freshest answer: the answer cache is skipped and the sources are asked again (what
-// ?consistency=higher asks of the API).
+// consistency=higher asked of the API before it was removed).
 func Higher() Lever {
 	return func(h http.Header) { h.Set(ConsistencyHeader, string(engine.HigherConsistency)) }
 }
 
-// questionHeader is what the harness adds to a question to the AuthZEN API: the levers, and the mark that the question may be sent
+// questionHeader is what the harness adds to a question to the AuthZEN API: the headers of the request (the lever of
+// authzenreq.Fresh), the levers, and the mark that the question may be sent
 // again. A question changes nothing, and a client retries it on a connection the server closed while it was idle (a replica that is
 // stopped or draining closes them) as it retries a GET; Go does that for a POST only when it holds an Idempotency-Key entry, and an
 // empty one is not sent.
-func questionHeader(levers []Lever) http.Header {
+func questionHeader(request http.Header, levers []Lever) http.Header {
 	h := http.Header{"Idempotency-Key": {}}
+	for k, v := range request {
+		h[k] = v
+	}
 	for _, l := range levers {
 		l(h)
 	}
@@ -80,5 +84,13 @@ func newRequest(ctx context.Context, method, target, token string, body any, hea
 // (empty: none), for a test that has a client of its own: a balancer, a load generator, a request that must not be reused. Like
 // Replica.Send it carries the levers and may be sent again.
 func HTTPRequest(ctx context.Context, base string, req authzenreq.Request, token string, levers ...Lever) (*http.Request, error) {
-	return newRequest(ctx, req.Method, base+req.Path, token, req.Body, questionHeader(levers))
+	return newRequest(ctx, req.Method, base+req.Path, token, req.Body, questionHeader(req.Header, levers))
+}
+
+// HTTPRequest is the package function HTTPRequest for a cluster: a question that names who asks by a person's token is sent as the
+// question of the PEP client of its service (the API key, and the claims of the token as the properties of the subject), as
+// Replica.Send sends it. The package function sends the token as it is.
+func (c *Cluster) HTTPRequest(ctx context.Context, base string, req authzenreq.Request, token string, levers ...Lever) (*http.Request, error) {
+	token, body := c.asPEP(base+req.Path, token, req.Body)
+	return newRequest(ctx, req.Method, base+req.Path, token, body, questionHeader(req.Header, levers))
 }

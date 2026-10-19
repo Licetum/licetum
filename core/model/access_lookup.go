@@ -17,11 +17,11 @@ type AccessLookup struct {
 	People   AccessPeople  `json:"people" doc:"What is known of the people the entries reach"`
 }
 
-// AccessPeople says how far the "people" of the entries can be trusted: they are the subjects of the registry.
+// AccessPeople says how far the "people" of the entries can be trusted: they are the people the applications sent to the
+// subject directories of the services the rules belong to.
 type AccessPeople struct {
-	Enabled  bool `json:"enabled" doc:"Whether the registry of known subjects is on (SUBJECTS__ENABLED); when it is off nothing is said about people"`
-	Registry int  `json:"registry" doc:"Known subjects the rules were tried on (SUBJECTS__ENABLED); 0 — the registry is empty or off, nothing is said about people"`
-	Limited  bool `json:"limited" doc:"The registry is larger than what was tried"`
+	Registry int  `json:"registry" doc:"People of the directories of the rules' services that the rules were tried on; 0 — those directories are empty, nothing is said about people"`
+	Limited  bool `json:"limited" doc:"The directories are larger than what was tried"`
 }
 
 // AccessEntry is a rule that covers the resource.
@@ -36,8 +36,8 @@ type AccessEntry struct {
 	ValidFrom     *time.Time    `json:"valid_from" doc:"When the rule starts; null — it has started"`
 	Assumed       bool          `json:"assumed" doc:"A denial that applies only because the resource has a parent that is not in the cache yet: none of its levels reaches the resource for real"`
 	AssumedLevels []string      `json:"assumed_levels" nullable:"false" doc:"The levels of a denial that reach the resource only because it has a parent that is not in the cache yet (fail closed); the other levels reach it for real"`
-	People        []KnownPerson `json:"people" nullable:"false" doc:"Known subjects the rule applies to (up to 20)"`
-	PeopleTotal   int           `json:"people_total" doc:"How many known subjects the rule applies to"`
+	People        []KnownPerson `json:"people" nullable:"false" doc:"People of the directory the rule applies to (up to 20)"`
+	PeopleTotal   int           `json:"people_total" doc:"How many people of the directory the rule applies to"`
 }
 
 // NamedID is an entity with its name.
@@ -46,10 +46,10 @@ type NamedID struct {
 	Name string    `json:"name" doc:"Name"`
 }
 
-// KnownPerson is a subject of the registry.
+// KnownPerson is a person of a subject directory.
 type KnownPerson struct {
 	Subject string  `json:"subject" doc:"The subject as the rules name it"`
-	Name    *string `json:"name" doc:"The display name, when the token had one"`
+	Name    *string `json:"name" doc:"The display name, when the application sent one"`
 }
 
 // AccessWho is whom a rule applies to.

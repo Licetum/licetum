@@ -14,8 +14,8 @@ import (
 	"github.com/licetum/licetum/core/engine"
 )
 
-// waitForKeys waits until Redis holds a key of each pattern: the answer and the verified token are written in the
-// background, after the request that computed them.
+// waitForKeys waits until Redis holds a key of each pattern: the answer is written in the background, after the request that
+// computed it.
 func waitForKeys(t *testing.T, c *harness.Cluster, patterns ...string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -39,9 +39,9 @@ func waitForKeys(t *testing.T, c *harness.Cluster, patterns ...string) {
 // F0-2: a test can assert the exact number of database queries and Redis round trips of one request, and the same
 // counters are in /metrics.
 //
-// The numbers are those of the fast read path (F1): a request whose token and answer are cached sends no query to
-// PostgreSQL and makes no round trip to Redis (before it, a cache hit read PostgreSQL twice, for the slug and for the
-// service, and made three round trips to Redis).
+// The numbers are those of the fast read path (F1): a request whose answer is cached sends no query to PostgreSQL and makes no
+// round trip to Redis (before it, a cache hit read PostgreSQL twice, for the slug and for the service, and made three round
+// trips to Redis). The credential of a PEP client costs nothing: the directory of the clients is in memory.
 func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
 	// /metrics counts every statement of the replica, the request's and the background ones; the Trace counts the request's.
 	// The background statement of an idle replica is the poll of the revision (WatchRevision, every REVISION__POLL_INTERVAL
@@ -54,16 +54,16 @@ func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
 	alice := c.UserToken("alice")
 	first, second := c.Replicas[0], c.Replicas[1]
 
-	// The first request computes the answer and verifies the token; both are cached in the background.
+	// The first request computes the answer; it is cached in the background.
 	cold := first.Permission(c, p.Slug, alice)
 	if cold.Status != http.StatusOK {
 		t.Fatalf("permission: %d %s", cold.Status, cold.Body)
 	}
-	if cold.Trace.DBQueries() <= 2 || cold.Trace.RedisRoundTrips() <= 3 {
+	if cold.Trace.DBQueries() <= 2 || cold.Trace.RedisRoundTrips() < 1 {
 		t.Fatalf("a cold request must cost more than a hit: db=%d %v redis=%d %v",
 			cold.Trace.DBQueries(), cold.Trace.DBQueryOps(), cold.Trace.RedisRoundTrips(), cold.Trace.RedisOps())
 	}
-	waitForKeys(t, c, "authz:permission:*", "authz:token:*")
+	waitForKeys(t, c, "authz:permission:*")
 
 	for _, r := range []*harness.Replica{first, second} {
 		r.Warm(c, c.PermissionRequest(p.Slug, alice), alice) // the request that is measured next
@@ -105,7 +105,7 @@ func TestF0_2_ATraceOfTheCallerCountsTheWholeRequest(t *testing.T) {
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
 	r.Permission(c, p.Slug, alice)
-	waitForKeys(t, c, "authz:permission:*", "authz:token:*")
+	waitForKeys(t, c, "authz:permission:*")
 
 	// The engine itself, called directly: the type graph is two queries.
 	ctx, trace := engine.WithTrace(context.Background())

@@ -15,14 +15,13 @@ import (
 // not wrong, it is unavailable, and the error rate says so.
 func TestOracleSeparatesWrongAnswersFromUnanswered(t *testing.T) {
 	p := profiles["smoke"]
-	tokens := make([]string, p.Users)
 
 	run := func(handler http.HandlerFunc) Oracle {
 		srv := httptest.NewServer(handler)
 		defer srv.Close()
 		stop := make(chan struct{})
 		go func() { time.Sleep(300 * time.Millisecond); close(stop) }()
-		return runOracle(context.Background(), srv.URL, "svc", p, tokens, 1, 100, stop)
+		return runOracle(context.Background(), srv.URL, "svc", p, "lct_test", 1, 100, stop)
 	}
 
 	down := run(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "busy", http.StatusServiceUnavailable) })
@@ -57,13 +56,15 @@ func TestOracleThatVerifiedNothingMakesTheWindowInvalid(t *testing.T) {
 // makes the window invalid; an evaluation the API could not decide (context.error) is unanswered, never a denial.
 func TestContract_LOAD01_TheLoadTestGivesNoWrongAnswer(t *testing.T) {
 	p := profiles["smoke"]
-	tokens := make([]string, p.Users)
 
 	// oracleOf asks the oracle of a server that answers reply(expected) to each question, and returns the oracle's counts.
 	oracleOf := func(reply func(expected bool) string) Oracle {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var q struct {
-				Subject  struct{ ID string } `json:"subject"`
+				Subject struct {
+					ID         string
+					Properties map[string]any
+				} `json:"subject"`
 				Resource struct{ ID string } `json:"resource"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
@@ -73,6 +74,11 @@ func TestContract_LOAD01_TheLoadTestGivesNoWrongAnswer(t *testing.T) {
 			var u, d int
 			if _, err := fmt.Sscanf(q.Subject.ID, "user-%d", &u); err != nil {
 				http.Error(w, "not a subject of the policy", http.StatusBadRequest)
+				return
+			}
+			// The oracle asks as the PEP client, with the claims of the person it asks about in the properties of the subject.
+			if r.Header.Get("Authorization") != "Bearer lct_test" || q.Subject.Properties["department"] != departmentName(u%p.Groups) {
+				http.Error(w, "not asked as the PEP client about a person with its claims", http.StatusForbidden)
 				return
 			}
 			if _, err := fmt.Sscanf(q.Resource.ID, "d-%d", &d); err != nil {
@@ -85,7 +91,7 @@ func TestContract_LOAD01_TheLoadTestGivesNoWrongAnswer(t *testing.T) {
 		defer srv.Close()
 		stop := make(chan struct{})
 		go func() { time.Sleep(300 * time.Millisecond); close(stop) }()
-		return runOracle(context.Background(), srv.URL, "svc", p, tokens, 1, 100, stop)
+		return runOracle(context.Background(), srv.URL, "svc", p, "lct_test", 1, 100, stop)
 	}
 
 	right := oracleOf(func(expected bool) string { return fmt.Sprintf(`{"decision":%t}`, expected) })

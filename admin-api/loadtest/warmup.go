@@ -22,15 +22,13 @@ const (
 	searchPage = 1000
 )
 
-// warmer sends one request of each kind, as subject 0, before the traffic starts. The answers are checked: a run whose
-// policy answers otherwise would measure the denials, not the decisions it means to measure.
+// warmer sends one request of each kind about subject 0, as the PEP client, before the traffic starts. The answers are checked:
+// a run whose policy answers otherwise would measure the denials, not the decisions it means to measure.
 type warmer struct {
-	base        string
-	client      *http.Client
-	tokens      []string
-	backend     string
-	profile     Profile
-	consistency string
+	base    string
+	client  *http.Client
+	apiKey  string // the API key of the PEP client of the service
+	profile Profile
 	// retry is the pause between two tries of the first search.
 	retry time.Duration
 }
@@ -52,16 +50,13 @@ func (w warmer) warmUp(ctx context.Context) ([]phase, error) {
 	probes := []struct {
 		kind op
 		req  authzenreq.Request
-		// token is the token of the caller: the subject's own, or the trusted client's.
-		token string
 	}{
-		{opEvaluation, w.evaluation(), w.tokens[warmSubject]},
-		{opEvaluations10, w.evaluations(10), w.tokens[warmSubject]},
-		{opEvaluationProperties, w.evaluationProperties(), w.backend},
+		{opEvaluation, w.evaluation()},
+		{opEvaluations10, w.evaluations(10)},
 	}
 	for _, p := range probes {
 		start := time.Now()
-		status, body, err := w.send(ctx, p.req, p.token)
+		status, body, err := w.send(ctx, p.req)
 		if err != nil {
 			return nil, fmt.Errorf("warm-up %s: %w", opNames[p.kind], err)
 		}
@@ -112,8 +107,8 @@ func (w warmer) listReadable(ctx context.Context) (count, status int, body []byt
 	token := ""
 	for {
 		req := authzenreq.SearchResource(serviceSlug, subjectName(warmSubject), documentType, readAction,
-			append(w.freshness(), authzenreq.Page(searchPage, token))...)
-		status, body, err = w.send(ctx, req, w.tokens[warmSubject])
+			append(w.options(), authzenreq.Page(searchPage, token))...)
+		status, body, err = w.send(ctx, req)
 		if err != nil || status != http.StatusOK {
 			return count, status, body, err
 		}
@@ -131,7 +126,7 @@ func (w warmer) listReadable(ctx context.Context) (count, status int, body []byt
 
 // evaluation asks whether subject 0 may read the document it owns.
 func (w warmer) evaluation() authzenreq.Request {
-	return authzenreq.Evaluation(serviceSlug, subjectName(warmSubject), authzenreq.On(documentType, warmDocument), readAction, w.freshness()...)
+	return authzenreq.Evaluation(serviceSlug, subjectName(warmSubject), authzenreq.On(documentType, warmDocument), readAction, w.options()...)
 }
 
 // evaluations asks the same question n times in one request.
@@ -140,27 +135,17 @@ func (w warmer) evaluations(n int) authzenreq.Request {
 	for i := range questions {
 		questions[i] = authzenreq.Question{Resource: authzenreq.On(documentType, warmDocument), Action: readAction}
 	}
-	return authzenreq.Evaluations(serviceSlug, subjectName(warmSubject), questions, w.freshness()...)
+	return authzenreq.Evaluations(serviceSlug, subjectName(warmSubject), questions, w.options()...)
 }
 
-// evaluationProperties asks as the trusted client whether subject 0 may read its document: the client names the person
-// and brings the claims of the person, the department that picks its groups.
-func (w warmer) evaluationProperties() authzenreq.Request {
-	return authzenreq.Evaluation(serviceSlug, subjectName(warmSubject), authzenreq.On(documentType, warmDocument), readAction,
-		append(w.freshness(), authzenreq.WithProperties(map[string]any{"department": departmentName(warmSubject)}))...)
+// options are those of every request about subject 0: its claims.
+func (w warmer) options() []authzenreq.Option {
+	return []authzenreq.Option{w.profile.asPerson(warmSubject)}
 }
 
-// freshness is the option of the consistency of the run.
-func (w warmer) freshness() []authzenreq.Option {
-	if w.consistency == "higher" {
-		return []authzenreq.Option{authzenreq.Fresh()}
-	}
-	return nil
-}
-
-// send performs the request with the token and reads the whole body.
-func (w warmer) send(ctx context.Context, r authzenreq.Request, token string) (int, []byte, error) {
-	req, err := newRequest(ctx, w.base, r, token)
+// send performs the request with the API key and reads the whole body.
+func (w warmer) send(ctx context.Context, r authzenreq.Request) (int, []byte, error) {
+	req, err := newRequest(ctx, w.base, r, w.apiKey)
 	if err != nil {
 		return 0, nil, err
 	}

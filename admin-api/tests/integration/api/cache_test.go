@@ -31,17 +31,7 @@ func TestAnswersAreGzippedOnlyForClientsThatAcceptIt(t *testing.T) {
 	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
 	fetch := func(accept string) (*http.Response, []byte) {
 		t.Helper()
-		search := authzenreq.SearchResource("gzip-org", authzenreq.SubjectOf(alice), "branch", "read")
-		payload, err := json.Marshal(search.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req, err := http.NewRequest(search.Method, e.check.URL+search.Path, bytes.NewReader(payload))
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+alice)
+		req := e.pdpRequest(e.check.URL, authzenreq.SearchResource("gzip-org", authzenreq.SubjectOf(alice), "branch", "read"), alice)
 		if accept != "" {
 			req.Header.Set("Accept-Encoding", accept)
 		}

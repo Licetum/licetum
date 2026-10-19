@@ -132,11 +132,11 @@ func (p Profile) oracleSample(rnd *rand.Rand) (int, int) {
 }
 
 // runOracle asks the AuthZEN API about sampled pairs at the given rate until stop is closed, and compares each answer
-// with expectedAllowed. The requests are real evaluations with the subject's token, so they load the server as one more
-// client; they are counted apart from the k6 traffic.
-func runOracle(ctx context.Context, base, service string, p Profile, tokens []string, seed uint64, rate float64, stop <-chan struct{}) Oracle {
+// with expectedAllowed. The requests are real evaluations, asked as the PEP client with the claims of the subject, so they
+// load the server as one more client; they are counted apart from the k6 traffic.
+func runOracle(ctx context.Context, base, service string, p Profile, apiKey string, seed uint64, rate float64, stop <-chan struct{}) Oracle {
 	var out Oracle
-	if rate <= 0 || len(tokens) == 0 {
+	if rate <= 0 || apiKey == "" {
 		return out
 	}
 	rnd := rand.New(rand.NewPCG(seed, 0x6f7261636c65)) //nolint:gosec // picks the pairs to check: no secret depends on it
@@ -153,7 +153,7 @@ func runOracle(ctx context.Context, base, service string, p Profile, tokens []st
 		}
 		u, d := p.oracleSample(rnd)
 		expected := p.expectedAllowed(u, d)
-		got, status, err := askEvaluation(ctx, client, base, service, subjectName(u), tokens[u], fmt.Sprintf("d-%d", d))
+		got, status, err := askEvaluation(ctx, client, base, service, p, u, apiKey, fmt.Sprintf("d-%d", d))
 		out.Checked++
 		if expected {
 			out.Granted++
@@ -175,12 +175,13 @@ func runOracle(ctx context.Context, base, service string, p Profile, tokens []st
 	}
 }
 
-// askEvaluation asks whether the subject may read the document, with the subject's own token, and returns the decision.
-// A question that got no decision returns a status other than 200 (the API refused or failed it), or an error: a
-// transport failure, an answer that is not one, or an evaluation the API could not decide (decision false with
+// askEvaluation asks whether subject u of the profile may read the document, as the PEP client with the claims of the subject,
+// and returns the decision. A question that got no decision returns a status other than 200 (the API refused or failed it), or
+// an error: a transport failure, an answer that is not one, or an evaluation the API could not decide (decision false with
 // context.error), which must not be mistaken for a denial.
-func askEvaluation(ctx context.Context, client *http.Client, base, service, subject, token, doc string) (bool, int, error) {
-	req, err := newRequest(ctx, base, authzenreq.Evaluation(service, subject, authzenreq.On(documentType, doc), readAction), token)
+func askEvaluation(ctx context.Context, client *http.Client, base, service string, p Profile, u int, apiKey, doc string) (bool, int, error) {
+	question := authzenreq.Evaluation(service, subjectName(u), authzenreq.On(documentType, doc), readAction, p.asPerson(u))
+	req, err := newRequest(ctx, base, question, apiKey)
 	if err != nil {
 		return false, 0, err
 	}

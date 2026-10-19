@@ -1,8 +1,10 @@
 package loadtest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -25,12 +27,28 @@ type warmUpServer struct {
 	mu    sync.Mutex
 	polls int
 	seen  []string // the paths asked, in order
+	// askers are who each request was asked as, in order: its bearer, the subject of its body and the department in the
+	// properties of that subject.
+	askers []asker
 }
+
+type asker struct{ bearer, subject, department string }
 
 func (s *warmUpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seen = append(s.seen, r.URL.Path)
+	raw, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	var asked struct {
+		Subject struct {
+			ID         string         `json:"id"`
+			Properties map[string]any `json:"properties"`
+		} `json:"subject"`
+	}
+	_ = json.Unmarshal(raw, &asked)
+	department, _ := asked.Subject.Properties["department"].(string)
+	s.askers = append(s.askers, asker{r.Header.Get("Authorization"), asked.Subject.ID, department})
 	if !strings.HasSuffix(r.URL.Path, "/search/resource") {
 		_, _ = w.Write([]byte(s.evaluate))
 		return
@@ -67,8 +85,7 @@ func (s *warmUpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func warmerFor(srv *httptest.Server, p Profile) warmer {
-	tokens := make([]string, p.Users)
-	return warmer{base: srv.URL, client: srv.Client(), tokens: tokens, backend: "backend", profile: p, retry: time.Millisecond}
+	return warmer{base: srv.URL, client: srv.Client(), apiKey: "lct_test", profile: p, retry: time.Millisecond}
 }
 
 // readable is the ids of the documents subject 0 may read under the policy of the profile.
@@ -111,9 +128,16 @@ func TestWarmUpWaitsForTheWholeList(t *testing.T) {
 	for _, ph := range phases {
 		names = append(names, ph.Name)
 	}
-	want := "warm-up search_resource (first synchronization),warm-up evaluation,warm-up evaluations10,warm-up evaluation_properties"
+	want := "warm-up search_resource (first synchronization),warm-up evaluation,warm-up evaluations10"
 	if strings.Join(names, ",") != want {
 		t.Errorf("phases = %q, want %q", names, want)
+	}
+	// Every request is asked as the PEP client, about subject 0, with the claims of subject 0 as the properties of the subject.
+	wantAsker := asker{"Bearer lct_test", subjectName(warmSubject), departmentName(warmSubject % p.Groups)}
+	for i, got := range api.askers {
+		if got != wantAsker {
+			t.Errorf("request %d (%s) was asked as %+v, want %+v", i, api.seen[i], got, wantAsker)
+		}
 	}
 	// The evaluations are probed after the list is whole, not before.
 	firstProbe := -1

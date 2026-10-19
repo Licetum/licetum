@@ -25,11 +25,11 @@ This is the topology Licetum is built and tested for: several `pdp` instances in
   or similar; the chart takes `secrets.dbUri` and `secrets.dbReadUri`). **Not multi-master**: advisory locks are node-local there, and the
   uniqueness checks and the last-admin check are not linearizable.
 - **Redis**: an independent instance per region, with **no replication between regions**. It holds regional caches only (answers,
-  verified tokens, fetched source lists). Losing or flushing it never changes a decision; it makes the pods slower for a moment
+  fetched source lists). Losing or flushing it never changes a decision; it makes the pods slower for a moment
   (`licetum_degraded{component="redis"}`).
 - **Pods**: `pdp` in every region (reads the policy from the replica of its region, writes nothing to the graph); `admin`, the
   `worker` and the migration Job in the region of the primary only. A PDP pod of another region writes to the primary only
-  rarely: it queues a synchronization job, and records a delegated call in the `strict` audit mode.
+  rarely: it queues a synchronization job.
 - **Entry**: a GeoDNS, an Anycast address or a global load balancer sends a client to the nearest region whose pods are ready. That
   layer is not part of Licetum. It should use the readiness of the pod on its ops port (`:9090`), not on the public one (the
   reasons are in `core/README.md`). The ops port is reached from inside the cluster (the Service's `ops` port), so a layer
@@ -41,7 +41,7 @@ This is the topology Licetum is built and tested for: several `pdp` instances in
 
 | port | setting | serves | reached by |
 |---|---|---|---|
-| `8001` | `PDP__ADDR` (`pdp.port`) | the AuthZEN API and the legacy permission routes | the clients of the services, through the entry layer |
+| `8001` | `PDP__ADDR` (`pdp.port`) | the AuthZEN API | the clients of the services, through the entry layer |
 | `9090` | `PDP__OPS_ADDR` (`pdp.opsPort`) | `/healthz`, `/readyz`, `/metrics` | the kubelet and the health checks of the entry layer; Prometheus, from `networkPolicy.monitoringNamespace` |
 
 The public port serves no probe and no metric. The chart's probes, its Service port `ops` and its ServiceMonitor use the ops port.
@@ -53,8 +53,8 @@ The public port serves no probe and no metric. The chart's probes, its Service p
 | the policy (services, types, rules, groups, roles) | global, one primary | written by the admin API in the primary region |
 | the copy of the policy a pod decides from | per pod, in memory | built from the replica, renewed every `REVISION__POLL_INTERVAL` |
 | the resource graph (`resource_cache`, the closure) | global, one primary | written by the worker only |
-| answers, tokens, source lists | per region, in Redis and in memory | disposable |
-| the audit of delegated calls, known subjects | global | written to the primary (async mode buffers them) |
+| answers, source lists | per region, in Redis and in memory | disposable |
+| the subject directory | global | written to the primary, by the admin API |
 | the change log | global | written in the transaction of the change |
 
 ## Settings of a region
@@ -109,7 +109,7 @@ time to enforcement  <=  replication lag of the region  +  REVISION__POLL_INTERV
 
 The objective is **p99 <= 5 s** (decision D3), measured over 200 revocations in the multi-region test environment
 (`admin-api/tests/multiregion`). A client that needs a write at once passes the revision of the write
-(`X-Authz-Revision`) as `at_least_as_fresh`: the region waits for its replica for up to `REVISION__WAIT_MAX`, then answers from
+(`X-Authz-Revision`) as `context.licetum.min_revision`: the region waits for its replica for up to `REVISION__WAIT_MAX`, then answers from
 the primary. A replica that lags more than `DB__MAX_REPLICA_LAG` is taken out of rotation (`unready`) or bypassed (`primary`).
 
 ## Failure matrix

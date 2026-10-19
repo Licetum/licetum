@@ -63,10 +63,11 @@ func goldenOf(t *testing.T, r authzenreq.Request) []byte {
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(struct {
-		Method string `json:"method"`
-		Path   string `json:"path"`
-		Body   any    `json:"body"`
-	}{r.Method, r.Path, r.Body}); err != nil {
+		Method string      `json:"method"`
+		Path   string      `json:"path"`
+		Header http.Header `json:"header,omitempty"`
+		Body   any         `json:"body"`
+	}{r.Method, r.Path, r.Header, r.Body}); err != nil {
 		t.Fatal(err)
 	}
 	return out.Bytes()
@@ -186,12 +187,8 @@ func TestBodiesHaveTheShapeOfTheModel(t *testing.T) {
 	}
 }
 
-// hiddenFreshnessParams are the query parameters of the legacy freshness levers. The PDP still reads them, but the schema does not
-// document them any more (ConsistencyParam is hidden, plan A7).
-var hiddenFreshnessParams = map[string]bool{"consistency": true, "at_least_as_fresh": true}
-
-// The committed schema of the PDP is the oracle of the routes and of the names of the freshness parameters.
-func TestRoutesAndQueriesExistInTheSchema(t *testing.T) {
+// The committed schema of the PDP is the oracle of the routes; the PDP has no query parameter on them.
+func TestRoutesExistInTheSchemaAndHaveNoQuery(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schema", "pdp.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -217,41 +214,18 @@ func TestRoutesAndQueriesExistInTheSchema(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			op, ok := doc.Paths["/service/{service_id}/access/v1/"+endpointOf(t, c.req)][strings.ToLower(c.req.Method)]
+			op, ok := doc.Paths["/service/{ref}/access/v1/"+endpointOf(t, c.req)][strings.ToLower(c.req.Method)]
 			if !ok {
 				t.Fatalf("%s %s is no operation of core/schema/pdp.yaml", c.req.Method, u.Path)
 			}
-			for name, values := range u.Query() {
-				var found bool
-				for _, p := range op.Parameters {
-					if p.In != "query" || p.Name != name {
-						continue
-					}
-					found = true
-					if len(p.Schema.Enum) > 0 && !contains(p.Schema.Enum, values[0]) {
-						t.Errorf("?%s=%s is not one of %v", name, values[0], p.Schema.Enum)
-					}
-					if p.Schema.Type == "integer" && strings.Trim(values[0], "0123456789") != "" {
-						t.Errorf("?%s=%s is not an integer", name, values[0])
-					}
-				}
-				// The freshness parameters are accepted and hidden from the schema until P2-23 deletes them (plan A7): a
-				// hidden parameter must still be a parameter the server reads, which the server tests cover.
-				if !found && !hiddenFreshnessParams[name] {
-					t.Errorf("the operation has no query parameter %q", name)
-				}
+			if len(op.Parameters) != 1 || op.Parameters[0].In != "path" || op.Parameters[0].Name != "ref" {
+				t.Errorf("the operation takes the service in the path and nothing else: %+v", op.Parameters)
+			}
+			if u.RawQuery != "" {
+				t.Errorf("the PDP has no query parameter: %s", u.RawQuery)
 			}
 		})
 	}
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // The examples of the AuthZEN Authorization API 1.0 (access evaluation, evaluations and the three searches), reduced to the
@@ -310,23 +284,36 @@ func normalized(t *testing.T, v any) string {
 	return string(out)
 }
 
-func TestFreshnessTravelsInTheQuery(t *testing.T) {
-	ev := func(opts ...authzenreq.Option) string {
-		return authzenreq.Evaluation("orders", "alice", authzenreq.On("branch", "b1"), "read", opts...).Path
+func TestFreshnessTravelsInTheBodyAndInATestHeader(t *testing.T) {
+	ev := func(opts ...authzenreq.Option) authzenreq.Request {
+		return authzenreq.Evaluation("orders", "alice", authzenreq.On("branch", "b1"), "read", opts...)
 	}
+	const path = "/service/orders/access/v1/evaluation"
 	for _, c := range []struct {
-		opts []authzenreq.Option
-		want string
+		name     string
+		opts     []authzenreq.Option
+		revision string
+		fresh    bool
 	}{
-		{nil, "/service/orders/access/v1/evaluation"},
-		{[]authzenreq.Option{authzenreq.Fresh()}, "/service/orders/access/v1/evaluation?consistency=higher"},
-		{[]authzenreq.Option{authzenreq.AtLeast(41)}, "/service/orders/access/v1/evaluation?at_least_as_fresh=41"},
-		{[]authzenreq.Option{authzenreq.AtLeast(0)}, "/service/orders/access/v1/evaluation"},
-		{[]authzenreq.Option{authzenreq.AtLeast(-5)}, "/service/orders/access/v1/evaluation"},
-		{[]authzenreq.Option{authzenreq.Fresh(), authzenreq.AtLeast(7)}, "/service/orders/access/v1/evaluation?at_least_as_fresh=7&consistency=higher"},
+		{"nothing", nil, "", false},
+		{"fresh", []authzenreq.Option{authzenreq.Fresh()}, "", true},
+		{"a revision", []authzenreq.Option{authzenreq.AtLeast(41)}, "41", false},
+		{"revision zero", []authzenreq.Option{authzenreq.AtLeast(0)}, "", false},
+		{"a negative revision", []authzenreq.Option{authzenreq.AtLeast(-5)}, "", false},
+		{"both", []authzenreq.Option{authzenreq.Fresh(), authzenreq.AtLeast(7)}, "7", true},
 	} {
-		if got := ev(c.opts...); got != c.want {
-			t.Errorf("got %s, want %s", got, c.want)
+		r := ev(c.opts...)
+		if r.Path != path {
+			t.Errorf("%s: the path is %s, and it has no query", c.name, r.Path)
+		}
+		body, _ := r.Body.(map[string]any)
+		attrs, _ := body["context"].(map[string]any)
+		settings, _ := attrs["licetum"].(map[string]any)
+		if got, _ := settings["min_revision"].(string); got != c.revision {
+			t.Errorf("%s: min_revision %q, want %q", c.name, got, c.revision)
+		}
+		if got := r.Header.Get(authzenreq.ConsistencyHeader) == "higher"; got != c.fresh {
+			t.Errorf("%s: the lever header is %v, want %v", c.name, r.Header, c.fresh)
 		}
 	}
 }
@@ -436,8 +423,9 @@ func TestOptionsEveryRequestCanCarry(t *testing.T) {
 		},
 	} {
 		r := build(all...)
-		if !strings.Contains(r.Path, "consistency=higher") || !strings.Contains(r.Path, "at_least_as_fresh=2") || !strings.Contains(normalized(t, r.Body), `"ip":"10.0.0.7"`) {
-			t.Errorf("%s: %s %s", name, r.Path, normalized(t, r.Body))
+		if r.Header.Get(authzenreq.ConsistencyHeader) != "higher" || !strings.Contains(normalized(t, r.Body), `"min_revision":"2"`) ||
+			!strings.Contains(normalized(t, r.Body), `"ip":"10.0.0.7"`) {
+			t.Errorf("%s: %s %v %s", name, r.Path, r.Header, normalized(t, r.Body))
 		}
 		if r.Method != http.MethodPost {
 			t.Errorf("%s: %s", name, r.Method)

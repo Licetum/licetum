@@ -95,14 +95,14 @@ func TestPEPDirectoryLoadsTheIssuersClientsAndKeys(t *testing.T) {
 	if !ok || client.ID != gateway.ID {
 		t.Fatalf("the key %s: ok=%v client=%v, want the gateway client", keyID, ok, client.ID)
 	}
-	_, secret, err := pepauth.ParseAPIKey(key)
+	_, random, err := pepauth.ParseAPIKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !pepauth.CompareSecret(cred.SHA256, secret) {
+	if !pepauth.CompareSecret(cred.SHA256, random) {
 		t.Error("the stored hash does not match the secret of the issued key")
 	}
-	if pepauth.CompareSecret(cred.SHA256, secret+"x") {
+	if pepauth.CompareSecret(cred.SHA256, random+"x") {
 		t.Error("a wrong secret matches the stored hash")
 	}
 }

@@ -32,15 +32,13 @@ type request struct {
 }
 
 // requestsOf are the requests of the check API of a service, from the subject, that read a policy and an answer: the resources
-// of a type, by the slug of the service and by its id, a page of them, an evaluation and a batch of evaluations with their
-// explanation.
+// of a type, a page of them, an evaluation and a batch of evaluations with their explanation.
 func requestsOf(p *harness.Policy, subject string) []request {
 	questions := []authzenreq.Question{
 		{Resource: authzenreq.On("branch", "b1"), Action: "read"}, {Resource: authzenreq.Whole("branch"), Action: "read"},
 	}
 	return []request{
-		{"resources by slug", authzenreq.SearchResource(p.Slug, subject, "branch", "read")},
-		{"resources by id", authzenreq.SearchResource(p.ServiceID, subject, "branch", "read")},
+		{"resources", authzenreq.SearchResource(p.Slug, subject, "branch", "read")},
 		{"a page of resources", authzenreq.SearchResource(p.Slug, subject, "branch", "read", authzenreq.Page(2, ""))},
 		{"evaluation", authzenreq.Evaluation(p.Slug, subject, authzenreq.On("branch", "b1"), "read", authzenreq.Explain())},
 		{"evaluations", authzenreq.Evaluations(p.Slug, subject, questions, authzenreq.Explain())},
@@ -114,15 +112,6 @@ func TestF1_2_ARequestAnsweredFromRedisMakesOneRoundTrip(t *testing.T) {
 				t.Errorf("replica %d, %s: the answer was not kept in memory: db=%d redis=%d", r.Index, q.name, again.Trace.DBQueries(), again.Trace.RedisRoundTrips())
 			}
 		}
-	}
-
-	// A token only Redis knows costs a round trip too, and is kept in memory afterwards.
-	r := c.Replicas[0]
-	r.App.ClearMemoryCaches()
-	res := r.Permission(c, p.Slug, alice)
-	if res.Status != http.StatusOK || res.Trace.DBQueries() != 0 || res.Trace.RedisRoundTrips() != 2 {
-		t.Errorf("token and answer from Redis: status %d, db=%d redis=%d %v, want no query and 2 round trips",
-			res.Status, res.Trace.DBQueries(), res.Trace.RedisRoundTrips(), res.Trace.RedisOps())
 	}
 }
 
@@ -203,18 +192,20 @@ func waitFor(timeout time.Duration, f func() bool) (time.Duration, bool) {
 	return time.Since(start), false
 }
 
-// F1-5: after the slug of a service changes or the service is deleted, every replica answers 404 for the old slug
-// within a second: they follow the revision.
+// F1-5: after the slug of a service changes or the service is deleted, every replica refuses the old slug within a second: they
+// follow the revision. A client of the renamed service is a valid credential that gives nothing on the old slug (the one 403); the
+// clients of a deleted service leave the directory with it, so their key is no credential any more (401).
 func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) {
 	for _, tc := range []struct {
 		name string
+		want int
 		do   func(c *harness.Cluster, p *harness.Policy)
 	}{
-		{"slug changed", func(c *harness.Cluster, p *harness.Policy) {
+		{"slug changed", http.StatusForbidden, func(c *harness.Cluster, p *harness.Policy) {
 			payload := c.ServicePayload("org-renamed")
 			c.Must(http.MethodPatch, "/service/"+p.ServiceID, payload)
 		}},
-		{"service deleted", func(c *harness.Cluster, p *harness.Policy) {
+		{"service deleted", http.StatusUnauthorized, func(c *harness.Cluster, p *harness.Policy) {
 			// A service goes when it has no types left, and a type when nothing refers to it.
 			c.Must(http.MethodDelete, "/assignment_rule/"+p.Rule, nil)
 			for _, typeID := range []string{p.Branch, p.Division} {
@@ -249,14 +240,14 @@ func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) 
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					// Plain requests, the way a client sends them: no at_least_as_fresh.
+					// Plain requests, the way a client sends them: no min_revision.
 					took, ok := waitFor(3*time.Second, func() bool {
-						return r.Send(c, harness.Branches(p.Slug, alice), alice).Status == http.StatusNotFound
+						return r.Send(c, harness.Branches(p.Slug, alice), alice).Status == tc.want
 					})
 					if !ok {
 						t.Errorf("replica %d still answers for the old slug after %v", r.Index, took)
 					} else if since := time.Since(wrote); since > time.Second {
-						t.Errorf("replica %d answered 404 %v after the write, want within 1s", r.Index, since)
+						t.Errorf("replica %d answered %d %v after the write, want within 1s", r.Index, tc.want, since)
 					}
 				}()
 			}
@@ -265,17 +256,29 @@ func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) 
 	}
 }
 
+// pepJWTCluster starts a cluster whose service org has a PEP client that authenticates with the tokens of the fake identity
+// provider, and returns it with the policy and a function that asks the first replica as that client.
+func pepJWTCluster(t *testing.T, replicas int, opts ...harness.Option) (*harness.Cluster, *harness.Policy, func(token string) *harness.Result) {
+	t.Helper()
+	c := startReplicas(t, replicas, opts...)
+	p := c.SeedPolicy("org", 0)
+	c.RegisterPEPIssuer()
+	c.JWTClient(p.Slug, "checkout")
+	ask := func(token string) *harness.Result {
+		return c.Replicas[0].Send(c, authzenreq.SearchResource(p.Slug, "alice", "branch", "read"), token)
+	}
+	return c, p, ask
+}
+
 // F1-6: a thousand requests with distinct valid tokens of one key ask the provider for its key set once.
 func TestF1_6_DistinctValidTokensOfOneKeyFetchTheKeySetOnce(t *testing.T) {
-	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
-	r := c.Replicas[0]
+	c, _, ask := pepJWTCluster(t, 1)
 	c.IdP.ResetCounters()
 
 	const total = 1000
 	tokens := make([]string, total)
 	for i := range tokens {
-		tokens[i] = c.UserToken(fmt.Sprintf("user-%d", i))
+		tokens[i] = c.PEPToken("checkout", fmt.Sprintf("instance-%d", i))
 	}
 	var wg sync.WaitGroup
 	next := make(chan string)
@@ -284,7 +287,7 @@ func TestF1_6_DistinctValidTokensOfOneKeyFetchTheKeySetOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for token := range next {
-				if res := r.Permission(c, p.Slug, token); res.Status != http.StatusOK {
+				if res := ask(token); res.Status != http.StatusOK {
 					t.Errorf("a valid token: %d %s", res.Status, res.Body)
 				}
 			}
@@ -304,9 +307,10 @@ func TestF1_6_DistinctValidTokensOfOneKeyFetchTheKeySetOnce(t *testing.T) {
 func signedWith(t *testing.T, c *harness.Cluster, key *rsa.PrivateKey, kid string) string {
 	t.Helper()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iss": c.IdP.Issuer(), "preferred_username": "mallory", "exp": time.Now().Add(time.Hour).Unix(),
+		"iss": c.IdP.Issuer(), "aud": harness.PEPAudience, "azp": "checkout", "sub": "mallory", "exp": time.Now().Add(time.Hour).Unix(),
 	})
 	tok.Header["kid"] = kid
+	tok.Header["typ"] = "at+jwt"
 	signed, err := tok.SignedString(key)
 	if err != nil {
 		t.Fatal(err)
@@ -314,12 +318,10 @@ func signedWith(t *testing.T, c *harness.Cluster, key *rsa.PrivateKey, kid strin
 	return signed
 }
 
-// F1-7: a thousand garbage or random-key tokens answer 401 and cost the provider at most one request per interval; the
-// same bad token again and again does not reach the provider or Redis.
+// F1-7: a thousand garbage or random-key tokens answer 401 and cost the provider at most one request per interval; the same bad
+// token again and again does not reach the provider, PostgreSQL or Redis.
 func TestF1_7_BadTokensDoNotAmplifyTheLoadOnTheProvider(t *testing.T) {
-	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
-	r := c.Replicas[0]
+	c, _, ask := pepJWTCluster(t, 1)
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -333,7 +335,7 @@ func TestF1_7_BadTokensDoNotAmplifyTheLoadOnTheProvider(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for token := range next {
-				if res := r.Permission(c, p.Slug, token); res.Status != http.StatusUnauthorized {
+				if res := ask(token); res.Status != http.StatusUnauthorized {
 					t.Errorf("a bad token: %d %s", res.Status, res.Body)
 				}
 			}
@@ -352,15 +354,14 @@ func TestF1_7_BadTokensDoNotAmplifyTheLoadOnTheProvider(t *testing.T) {
 		t.Fatalf("%d JWKS requests for 1000 bad tokens, want at most 1 per AUTH__JWKS_MIN_REFRESH", got)
 	}
 
-	// The same bad token (a known key id, a wrong signature) again: remembered for AUTH__INVALID_TOKEN_TTL.
+	// The same bad token (a known key id, a wrong signature) again: it is refused from the key set in memory.
 	known := signedWith(t, c, key, c.IdP.KeyID())
-	first := r.Permission(c, p.Slug, known)
-	if first.Status != http.StatusUnauthorized {
+	if first := ask(known); first.Status != http.StatusUnauthorized {
 		t.Fatalf("a token with a wrong signature: %d %s", first.Status, first.Body)
 	}
 	before := c.IdP.JWKSRequests()
 	for i := range 100 {
-		res := r.Permission(c, p.Slug, known)
+		res := ask(known)
 		if res.Status != http.StatusUnauthorized {
 			t.Fatalf("repeat %d: %d %s", i, res.Status, res.Body)
 		}
@@ -375,12 +376,10 @@ func TestF1_7_BadTokensDoNotAmplifyTheLoadOnTheProvider(t *testing.T) {
 
 // F1-8: after the provider rotates its key, a valid token with the new key id is accepted after exactly one refetch.
 func TestF1_8_KeyRotationCostsOneRefetch(t *testing.T) {
-	c := startReplicas(t, 1, harness.WithConfig(func(cfg *config.Config) { cfg.Auth.JWKSMinRefresh = 50 * time.Millisecond }))
-	p := c.SeedPolicy("org", 0)
-	r := c.Replicas[0]
+	c, _, ask := pepJWTCluster(t, 1, harness.WithConfig(func(cfg *config.Config) { cfg.Auth.JWKSMinRefresh = 50 * time.Millisecond }))
 	c.IdP.ResetCounters() // the admin API asked for the key set too, to set the policy up
-	if res := r.Permission(c, p.Slug, c.UserToken("alice")); res.Status != http.StatusOK {
-		t.Fatalf("alice: %d %s", res.Status, res.Body)
+	if res := ask(c.PEPToken("checkout", "first")); res.Status != http.StatusOK {
+		t.Fatalf("the first token: %d %s", res.Status, res.Body)
 	}
 	if got := c.IdP.JWKSRequests(); got != 1 {
 		t.Fatalf("%d JWKS requests for the first token, want 1", got)
@@ -389,7 +388,7 @@ func TestF1_8_KeyRotationCostsOneRefetch(t *testing.T) {
 	c.IdP.RotateKey(true)
 	time.Sleep(100 * time.Millisecond) // past AUTH__JWKS_MIN_REFRESH
 	for _, name := range []string{"carol", "dave", "erin"} {
-		if res := r.Permission(c, p.Slug, c.UserToken(name)); res.Status != http.StatusOK {
+		if res := ask(c.PEPToken("checkout", name)); res.Status != http.StatusOK {
 			t.Fatalf("%s, a token of the new key: %d %s", name, res.Status, res.Body)
 		}
 	}
@@ -421,8 +420,8 @@ func TestF1_ThePolicyThatDoesNotFitIsReadWithQueries(t *testing.T) {
 	}
 	// A request that is answered from memory still costs nothing; one that is not reads the policy with queries.
 	warm := r.Warm(c, harness.Branches(p.Slug, alice), alice)
-	if warm.Trace.DBQueries() != 2 { // the slug and the service: without a snapshot they are looked up
-		t.Errorf("a warm request without a snapshot made %d queries (%v), want the 2 lookups of the service", warm.Trace.DBQueries(), warm.Trace.DBQueryOps())
+	if warm.Trace.DBQueries() != 1 { // the slug: without a snapshot it is looked up
+		t.Errorf("a warm request without a snapshot made %d queries (%v), want the lookup of the slug", warm.Trace.DBQueries(), warm.Trace.DBQueryOps())
 	}
 }
 
@@ -436,10 +435,9 @@ func TestF1_TheSnapshotCanBeTurnedOff(t *testing.T) {
 	if r.App.PolicySnapshotLoaded() {
 		t.Fatal("a snapshot was built although it is turned off")
 	}
-	// Without the snapshot the slug and the service are looked up, and the revisions are read; the token and the answer
-	// are still kept in memory.
-	if warm.Trace.DBQueries() != 3 || warm.Trace.RedisRoundTrips() != 0 {
-		t.Errorf("without the snapshot a warm request made db=%d redis=%d (%v), want 3 and 0", warm.Trace.DBQueries(),
-			warm.Trace.RedisRoundTrips(), warm.Trace.RedisOps())
+	// Without the snapshot the slug is looked up and the revisions are read; the answer is still kept in memory.
+	if warm.Trace.DBQueries() != 2 || warm.Trace.RedisRoundTrips() != 0 {
+		t.Errorf("without the snapshot a warm request made db=%d redis=%d (%v, %v), want 2 and 0", warm.Trace.DBQueries(),
+			warm.Trace.RedisRoundTrips(), warm.Trace.RedisOps(), warm.Trace.DBQueryOps())
 	}
 }

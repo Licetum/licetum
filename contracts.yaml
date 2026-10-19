@@ -550,7 +550,7 @@ contracts:
     oracle: the full result set
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ05
     statement: The metadata name an https PDP identifier and only the endpoints implemented.
     oracle: the specification
@@ -574,19 +574,19 @@ contracts:
     oracle: RFC 6750
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ09
     statement: An unregistered client, a missing operation and an unknown service give the same 403.
     oracle: status and body
-    level: unit
+    level: pg
     phase: P2
-    status: planned
+    status: active
   - id: AZ10
     statement: The public port serves exactly the AuthZEN routes (snapshot of the route table).
     oracle: the route table
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ11
     statement: An unknown type or resource is decision false, not an error.
     oracle: the specification
@@ -598,19 +598,19 @@ contracts:
     oracle: status code
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ13
     statement: Resource search is limited to the requested type and to the scan budget; a short page carries next_token.
     oracle: the result set
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ14
     statement: An exhausted rate bucket is a 429 with Retry-After. The limit is per pod; a global limit belongs to the ingress.
     oracle: status and header
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ15
     statement: A client holds at most its share of the computation slots and of the requests in flight, and searches run in a pool of their own; a search storm from one client does not delay another client's evaluations.
     oracle: the evaluations of a second client, counted and timed
@@ -634,7 +634,7 @@ contracts:
     oracle: status codes over time
     level: system
     phase: P2
-    status: planned
+    status: active
   - id: PEP03
     statement: One JWKS fetch per TTL, one refetch per unknown kid, and junk tokens do not multiply fetches.
     oracle: fetches counted by the fake IdP
@@ -654,7 +654,7 @@ contracts:
     oracle: status codes
     level: pg
     phase: P2
-    status: planned
+    status: active
   - id: ADM02
     statement: The isolation matrix (every route × platform and service roles of A, B and a group) holds; lists contain only the caller's scope; a route without a policy fails the build.
     oracle: the route table and the role matrix
@@ -726,7 +726,7 @@ contracts:
     oracle: status codes
     level: pg
     phase: P2
-    status: planned
+    status: active
 
   # ---------- DIR: the subject directory (ADR 0001, 8.8) ----------
   # The directory replaces known_subject in P2. DIR02 and DIR04 become active with the first pull request of the directory step
@@ -737,25 +737,25 @@ contracts:
     oracle: the evaluation endpoint asked for each directory entry in turn; the entries written
     level: pg
     phase: P2
-    status: planned
+    status: active
   - id: DIR02
     statement: A directory write changes only the rows whose content differs; an unchanged batch writes no row and takes no revision, and the time an entry was last sent is kept apart from the entry. The same id in two services is two independent entries.
     oracle: the rows (xmin, updated_at) and revision_state before and after each write
     level: pg
     phase: P2
-    status: planned
+    status: active
   - id: DIR03
     statement: The people a rule reaches (who-has-access, preview, the person page) are the entries of the directories of the services of the rule's types, decided with their stored properties; a service with an empty directory has no people, and the directory of another service is not counted.
     oracle: hand-written sets of people from the fixture of DEC13 (who has access)
     level: pg
     phase: P2
-    status: planned
+    status: active
   - id: DIR04
     statement: Retention removes, in chunks, the directory entries not sent within the retention period of their service; an entry sent again survives, a service with no retention period keeps everything, and other services are untouched.
     oracle: the rows written and the times they were sent
     level: pg
     phase: P2
-    status: planned
+    status: active
 
   # ---------- OPS / API / LOAD / WEB ----------
   - id: OPS01
@@ -849,7 +849,7 @@ contracts:
     oracle: unit tests of the BFF
     level: web
     phase: P2
-    status: planned
+    status: active
   - id: WEB02
     statement: The interface shows only what the caller's capabilities in the service allow.
     oracle: rendered components with mocked capabilities
@@ -861,4 +861,4 @@ contracts:
     oracle: the specification
     level: web
     phase: P2
-    status: planned
+    status: active

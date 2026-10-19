@@ -222,3 +222,87 @@ func TestPEPIssuerInUseCannotBeDeleted(t *testing.T) {
 		t.Fatalf("deleting an issuer a client uses: got %v, want ErrPEPIssuerInUse", err)
 	}
 }
+
+// Two changes of different fields of one client, made together, are both kept: the row is read under its lock.
+func TestPEPModifyingAClientDoesNotLoseAConcurrentChange(t *testing.T) {
+	pool, service := newPEPPool(t)
+	ctx := context.Background()
+	client := apiKeyClient(t, pool, service, "checkout")
+
+	const rounds = 20
+	errs := make(chan error, 2*rounds)
+	for range rounds {
+		go func() {
+			_, err := db.ModifyPEPClient(ctx, pool, service, client.ID, func(c *db.PEPClient) error { c.Enabled = !c.Enabled; return nil })
+			errs <- err
+		}()
+		go func() {
+			_, err := db.ModifyPEPClient(ctx, pool, service, client.ID, func(c *db.PEPClient) error {
+				c.Operations = append(c.Operations, "explain")
+				return nil
+			})
+			errs <- err
+		}()
+	}
+	for range 2 * rounds {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := db.GetPEPClient(ctx, pool, service, client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every append was kept (evaluate and one explain per round), and the flag was flipped an even number of times.
+	if len(got.Operations) != 1+rounds || !got.Enabled {
+		t.Fatalf("operations %v, enabled %v: a change was lost", got.Operations, got.Enabled)
+	}
+}
+
+// A client is changed, read and listed through its own service only; a deleted one does not exist; the error of the change
+// function ends the write.
+func TestPEPClientAndKeysAreReachedThroughTheirServiceOnly(t *testing.T) {
+	pool, service := newPEPPool(t)
+	ctx := context.Background()
+	client := apiKeyClient(t, pool, service, "checkout")
+	_, keyID := support.IssueTestAPIKey(t, pool, client.ID)
+	other := uuid.New()
+
+	if _, err := db.GetPEPClient(ctx, pool, other, client.ID); !errors.Is(err, db.ErrPEPNotFound) {
+		t.Fatalf("get through another service = %v, want ErrPEPNotFound", err)
+	}
+	if _, err := db.ListPEPKeys(ctx, pool, other, client.ID); !errors.Is(err, db.ErrPEPNotFound) {
+		t.Fatalf("list keys through another service = %v, want ErrPEPNotFound", err)
+	}
+	if _, err := db.ModifyPEPClient(ctx, pool, other, client.ID, func(*db.PEPClient) error { return nil }); !errors.Is(err, db.ErrPEPNotFound) {
+		t.Fatalf("modify through another service = %v, want ErrPEPNotFound", err)
+	}
+	keys, err := db.ListPEPKeys(ctx, pool, service, client.ID)
+	if err != nil || len(keys) != 1 || keys[0].KeyID != keyID || keys[0].RevokedAt != nil {
+		t.Fatalf("keys = %v, %v", keys, err)
+	}
+
+	revisions, err := db.LoadRevisions(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := revisions.PEP
+	stop := errors.New("stop")
+	if _, err := db.ModifyPEPClient(ctx, pool, service, client.ID, func(c *db.PEPClient) error { c.Name = "renamed"; return stop }); !errors.Is(err, stop) {
+		t.Fatalf("an error of the change = %v", err)
+	}
+	revisions, err = db.LoadRevisions(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := db.GetPEPClient(ctx, pool, service, client.ID); got.Name != "checkout" || revisions.PEP != before {
+		t.Fatalf("a refused change was written: %v", got)
+	}
+
+	if err := db.DeletePEPClient(ctx, pool, service, client.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.GetPEPClient(ctx, pool, service, client.ID); !errors.Is(err, db.ErrPEPNotFound) {
+		t.Fatalf("a deleted client = %v, want ErrPEPNotFound", err)
+	}
+}

@@ -1,10 +1,11 @@
 {
   "method": "POST",
-  "path": "/service/orders/access/v1/evaluations?at_least_as_fresh=3",
+  "path": "/service/orders/access/v1/evaluations",
   "body": {
     "context": {
       "licetum": {
-        "explain": true
+        "explain": true,
+        "min_revision": "3"
       }
     },
     "evaluations": [

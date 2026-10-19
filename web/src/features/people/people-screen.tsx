@@ -1,6 +1,6 @@
 'use client';
 
-import { Alert, Button, Flex, Input, Modal, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Flex, Input, Modal, Select, Table, Tabs, Tag, Typography } from 'antd';
 import { Plus, Search } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useCreateGroup } from '@/api/admin/group/group';
-import { useListSubjects } from '@/api/admin/subject/subject';
+import { useListDirectory } from '@/api/admin/subject/subject';
 import { EmptyBlock, errorDetail, ErrorBlock, LoadingBlock, PageHeader } from '@/components/kit';
 import { usePreferences } from '@/components/providers';
 import { formatDateTime } from '@/domain/format';
@@ -24,17 +24,21 @@ import {
   useGroups,
   useRefreshAll,
   useRules,
+  useServices,
 } from '../data/queries';
 
-/** People known from the rules and memberships that name them, and from the administrators' own actions. */
-/** The people the policy and the registry know, and whether the registry (SUBJECTS__ENABLED) is on. */
-function useKnownPeople() {
+/**
+ * The people the policy names (in rules, memberships and the history of changes) and the people the application of the chosen
+ * service sent to its directory, with their names. A person of the directory who no rule names is listed too.
+ */
+function useKnownPeople(serviceId: string | undefined) {
   const access = useAccess();
-  const registry = useListSubjects(
+  const directory = useListDirectory(
+    serviceId ?? '',
     { limit: 200 },
     {
       query: {
-        enabled: access.whole('group_member', 'read'),
+        enabled: !!serviceId && access.whole('group_member', 'read'),
         select: (r) => (r.status === 200 ? r.data : null),
       },
     },
@@ -69,15 +73,15 @@ function useKnownPeople() {
         if (!person.lastSeen || person.lastSeen < rec.at) person.lastSeen = rec.at;
       }
     }
-    // The registry knows everyone whose token was verified, not only those the rules name.
-    for (const s of registry.data?.items ?? []) {
-      const person = touch(s.subject);
+    // The directory has everyone the application sent, not only those the rules name.
+    for (const s of directory.data?.items ?? []) {
+      const person = touch(s.id);
       if (s.name) person.name = s.name;
-      if (!person.lastSeen || person.lastSeen < s.last_seen) person.lastSeen = s.last_seen;
+      if (!person.lastSeen || person.lastSeen < s.sent_at) person.lastSeen = s.sent_at;
     }
     return [...map.values()].sort((a, b) => a.username.localeCompare(b.username));
-  }, [rules.data, members.byGroup, log.data, registry.data]);
-  return { list, registryOn: registry.data?.enabled ?? true };
+  }, [rules.data, members.byGroup, log.data, directory.data]);
+  return { list, directoryEmpty: directory.isSuccess && (directory.data?.total ?? 0) === 0 };
 }
 
 export function PeopleScreen() {
@@ -89,7 +93,12 @@ export function PeopleScreen() {
   const groupNames = useGroupNames();
   const rules = useRules();
   const members = useAllMembers((groups.data ?? []).map((g) => g.id));
-  const { list: people, registryOn } = useKnownPeople();
+  const services = useServices();
+  const [serviceSlug, setServiceSlug] = useQueryState('service');
+  // The people of a service are the ones its application sent: the first service of the installation is the default.
+  const clientServices = (services.data ?? []).filter((s) => s.slug !== 'licetum');
+  const service = clientServices.find((s) => s.slug === serviceSlug) ?? clientServices[0];
+  const { list: people, directoryEmpty } = useKnownPeople(service?.id);
   const create = useCreateGroup();
   const refresh = useRefreshAll();
 
@@ -256,19 +265,29 @@ export function PeopleScreen() {
         )
       ) : (
         <>
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 12 }}
-            title={t('people.registryOff')}
-          />
+          {clientServices.length > 0 && (
+            <Flex align="center" gap={8} style={{ marginBottom: 12 }}>
+              <Typography.Text type="secondary">{t('people.directoryOf')}</Typography.Text>
+              <Select
+                aria-label={t('people.directoryOf')}
+                value={service?.slug}
+                onChange={setServiceSlug}
+                options={clientServices.map((s) => ({ value: s.slug, label: s.name }))}
+                style={{ minWidth: 240 }}
+                showSearch={{ optionFilterProp: 'label' }}
+              />
+            </Flex>
+          )}
           <Table
             rowKey="username"
             size="middle"
             pagination={false}
             dataSource={filteredPeople}
             onRow={(r) => ({
-              onClick: () => router.push(`/people/${encodeURIComponent(r.username)}`),
+              onClick: () =>
+                router.push(
+                  `/people/${encodeURIComponent(r.username)}${service ? `?service=${service.slug}` : ''}`,
+                ),
               style: { cursor: 'pointer' },
             })}
             locale={{
@@ -284,7 +303,7 @@ export function PeopleScreen() {
                   <div>
                     {r.name && <div style={{ fontWeight: 500 }}>{r.name}</div>}
                     <Link
-                      href={`/people/${encodeURIComponent(r.username)}`}
+                      href={`/people/${encodeURIComponent(r.username)}${service ? `?service=${service.slug}` : ''}`}
                       className="mono"
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -309,7 +328,7 @@ export function PeopleScreen() {
             ]}
           />
           <Flex style={{ marginTop: 12 }} vertical gap={8}>
-            {!registryOn && <Alert type="info" showIcon title={t('people.registryOff')} />}
+            {directoryEmpty && <Alert type="info" showIcon title={t('people.directoryEmpty')} />}
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('people.findHint')}
             </Typography.Text>

@@ -170,10 +170,15 @@ func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) 
 	alice := c.UserToken("alice")
 	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 
+	// The answers of the standard request: the pages of the resource search (authz:search) and the permission maps.
 	keys := func() []string {
-		got, err := c.Redis.Keys(context.Background(), "authz:permission:*").Result()
-		if err != nil {
-			t.Fatal(err)
+		var got []string
+		for _, pattern := range []string{"authz:permission:*", "authz:search:*"} {
+			part, err := c.Redis.Keys(context.Background(), pattern).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, part...)
 		}
 		sort.Strings(got)
 		return got
@@ -249,13 +254,14 @@ func TestF2_6_ASynchronizationOfOneServiceLeavesTheAnswersOfAnotherInPlace(t *te
 	for _, p := range []*harness.Policy{a, b} {
 		r.Warm(c, harness.Branches(p.Slug, alice), alice)
 	}
-	waitForKeys(t, c, "authz:permission:*")
+	waitForKeys(t, c, "authz:search:*")
 
+	// The standard request is the resource search, whose pages are cached as search answers.
 	hits := func() float64 {
-		return harness.MetricValue(r.Metrics(c), `licetum_permission_cache_total{result="hit"}`)
+		return harness.MetricValue(r.Metrics(c), `licetum_search_cache_total{result="hit"}`)
 	}
 	misses := func() float64 {
-		return harness.MetricValue(r.Metrics(c), `licetum_permission_cache_total{result="miss"}`)
+		return harness.MetricValue(r.Metrics(c), `licetum_search_cache_total{result="miss"}`)
 	}
 	dataBefore, dataBeforeB := c.DataRevision(a.ServiceID), c.DataRevision(b.ServiceID)
 	missesBefore := misses()

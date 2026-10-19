@@ -50,8 +50,7 @@ type IssuerConfig struct {
 
 // Verified is the result of a successful verification.
 type Verified struct {
-	// Subject is the preferred_username of the token when it has one, else its sub: the name the rules of the check API
-	// read (engine.SubjectFromClaims).
+	// Subject is the preferred_username of the token when it has one, else its sub.
 	Subject string
 	// Client is the client application the token was issued to: its azp, else its client_id, else its sub.
 	Client string

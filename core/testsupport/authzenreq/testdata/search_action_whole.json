@@ -1,7 +1,12 @@
 {
   "method": "POST",
-  "path": "/service/orders/access/v1/search/action?at_least_as_fresh=9",
+  "path": "/service/orders/access/v1/search/action",
   "body": {
+    "context": {
+      "licetum": {
+        "min_revision": "9"
+      }
+    },
     "resource": {
       "id": "*",
       "type": "flag"

@@ -1,12 +1,20 @@
 {
   "method": "POST",
-  "path": "/service/orders/access/v1/evaluation?at_least_as_fresh=12&consistency=higher",
+  "path": "/service/orders/access/v1/evaluation",
+  "header": {
+    "X-Test-Consistency": [
+      "higher"
+    ]
+  },
   "body": {
     "action": {
       "name": "read"
     },
     "context": {
-      "ip": "10.0.0.7"
+      "ip": "10.0.0.7",
+      "licetum": {
+        "min_revision": "12"
+      }
     },
     "resource": {
       "id": "b1",

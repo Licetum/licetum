@@ -39,7 +39,7 @@ func LoadConfig(requireAll bool) (*config.Config, error) {
 		return nil, err
 	}
 	if requireAll {
-		if err := errors.Join(cfg.RequireRedis(), cfg.RequireAuth()); err != nil {
+		if err := cfg.RequireRedis(); err != nil {
 			return nil, err
 		}
 	}
@@ -110,6 +110,11 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 		*addr = defaultAddr
 	}
 
+	if name == "admin" {
+		if err := cfg.RequireAdminAuth(); err != nil {
+			return err
+		}
+	}
 	if name == "pdp" && cfg.PDP.PublicURL == "" {
 		return errors.New("PDP__PUBLIC_URL is required: the PEPs name the PDP by it, for example https://licetum.example.com")
 	}

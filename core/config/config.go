@@ -1,5 +1,5 @@
 // Package config reads settings from environment variables grouped by prefix (DB__, AUTH__,
-// REDIS__, CORS__, PLATFORM__, HTTP__). Names are case-insensitive. Lists (CORS__ALLOW_ORIGINS,
+// REDIS__, PLATFORM__, HTTP__). Names are case-insensitive. Lists (
 // PLATFORM__ADMIN_CLAIM_VALUES, ...) are accepted both as a JSON array (`["http://a","http://b"]`)
 // and comma-separated.
 package config
@@ -51,19 +51,11 @@ type Database struct {
 func (d Database) MaxConns() int { return d.PoolSize + d.MaxOverflow }
 
 type Auth struct {
-	StateSecret string
-	StateTTL    time.Duration
-	// TokenL1Size is how many verified tokens a process keeps in memory (the first level of the token cache; the second
-	// is Redis). Zero takes the default, a negative value turns the level off.
-	TokenL1Size int
-	// JWKSTTL is how long the key set of a service is kept before it is fetched again.
+	// JWKSTTL is how long the key set of an identity provider is kept before it is fetched again.
 	JWKSTTL time.Duration
 	// JWKSMinRefresh is the shortest time between two fetches of the same key set: a token that names an unknown key
 	// triggers a fetch at most this often per key set URL.
 	JWKSMinRefresh time.Duration
-	// InvalidTokenTTL is how long a token that failed verification is remembered, so that the same bad token does not
-	// reach the identity provider again.
-	InvalidTokenTTL time.Duration
 }
 
 type Redis struct {
@@ -114,37 +106,49 @@ type Background struct {
 	Queue   int
 }
 
-type Cors struct {
-	AllowOrigins     []string
-	AllowCredentials bool
-	AllowMethods     []string
-	AllowHeaders     []string
-}
-
 // Platform is the self-service config: Licetum registers itself as a Service to grant permissions
-// for managing itself through the same mechanism as for any other service.
-// If the OAuth2 fields are empty, seeding is skipped (see db.SeedPlatform). Together with the
-// service an admin group is seeded: everyone whose AdminClaim claim takes one of AdminClaimValues
-// becomes a member, and the group gets read+write on every platform resource type
-// (model.PlatformTypes).
+// for managing itself through the same mechanism as for any other service. The seed runs when ADMIN_AUTH__* is
+// configured (see AdminAuth and db.SeedPlatform). Together with the service an admin group is seeded: everyone whose
+// AdminClaim claim takes one of AdminClaimValues becomes a member, and the group gets read+write on every platform
+// resource type (model.PlatformTypes).
+//
+// The service no longer carries an OAuth2 client of its own: administrators sign in at the identity provider of
+// ADMIN_AUTH__*, with the web interface as the client. The OAuth half of the old PLATFORM__* settings (the URLs of the
+// provider, the issuer, the client id and secret) is gone; see DeprecatedSettings.
 type Platform struct {
 	Name             string
 	URL              string
 	Icon             string
-	AuthorizationURL string
-	TokenURL         string
-	JwksURL          string
-	Issuer           string
-	ClientID         string
-	ClientSecret     string
 	AdminGroupName   string
 	AdminClaim       string
 	AdminClaimValues []string
 }
 
-func (p Platform) IsConfigured() bool {
-	return p.AuthorizationURL != "" && p.TokenURL != "" && p.JwksURL != "" &&
-		p.Issuer != "" && p.ClientID != "" && p.ClientSecret != ""
+// DefaultSubjectClaim is the claim that names an administrator when ADMIN_AUTH__SUBJECT_CLAIM is not set. A token without
+// it is named by its sub.
+const DefaultSubjectClaim = "preferred_username"
+
+// AdminAuth is how administrators authenticate to the admin API (ADR 0001, 8.12): one static OIDC issuer. The admin API
+// verifies the bearer token against the keys of the issuer: iss is compared exactly, aud must contain Audience, exp and nbf
+// are checked, and the signature algorithm must be an asymmetric one the verifier allows. The web interface is the OIDC client
+// of the issuer (OIDC_* in web/README.md); the admin API never talks to the issuer except to read its keys.
+type AdminAuth struct {
+	// Issuer is the iss of the tokens, compared exactly (ADMIN_AUTH__ISSUER).
+	Issuer string
+	// Audience is a value the aud of every token must contain (ADMIN_AUTH__AUDIENCE). It is required: a token issued for
+	// another application is never an administrator's.
+	Audience string
+	// JWKSURL is where the keys of the issuer are read (ADMIN_AUTH__JWKS_URL).
+	JWKSURL string
+	// SubjectClaim is the claim that names the administrator (ADMIN_AUTH__SUBJECT_CLAIM, default preferred_username); a token
+	// without it is named by its sub.
+	SubjectClaim string
+}
+
+// IsConfigured reports whether administrators can authenticate: the issuer, the audience and the keys are known. The seed of
+// the self-service and restore-admin need it; without it the admin API answers 503.
+func (a AdminAuth) IsConfigured() bool {
+	return a.Issuer != "" && a.Audience != "" && a.JWKSURL != ""
 }
 
 // Sync tunes resource synchronization (see service.ensureSynced and synchronizer.Adapter).
@@ -193,25 +197,6 @@ type Sync struct {
 	Concurrency int
 }
 
-// Subjects tunes the registry of known subjects (see service.NoteSubject).
-type Subjects struct {
-	// Enabled turns the registry on: the subjects of verified tokens are remembered with the claims the policy reads.
-	Enabled bool
-	// RetentionDays is how long a subject that is not seen again is kept; 0 keeps them for good.
-	RetentionDays int
-}
-
-// Delegation tunes the audit of the calls made on behalf of a person (see service.RecordDelegatedCall).
-type Delegation struct {
-	// AuditRetentionDays is how long a record is kept; 0 keeps them for good.
-	AuditRetentionDays int
-	// AuditMode is "strict" (a call is answered only after its record is committed) or "async" (the record is
-	// buffered and written in batches: a crash loses at most the buffer of the last flush window).
-	AuditMode string
-	// AuditBuffer is how many records the async buffer holds; a record that does not fit is dropped and counted.
-	AuditBuffer int
-}
-
 type HTTP struct {
 	// Addr is the address the HTTP server listens on. Empty means the app's own default
 	// (:8000 for the admin API; the PDP has its own setting, PDP__ADDR).
@@ -222,6 +207,21 @@ type HTTP struct {
 	// RequestTimeout is the deadline put on the context of a request. Zero takes the default of the process (10 s for the
 	// check API, 60 s for the admin API, whose requests may wait for a synchronization), a negative value sets none.
 	RequestTimeout time.Duration
+}
+
+// DefaultSearchScanBudget is the default of PDP__SEARCH_SCAN_BUDGET, and what a Config that was not loaded (a zero value) means.
+const DefaultSearchScanBudget = 10000
+
+// PEP tunes how the PDP serves the clients that authenticate with PEP credentials (an API key, or a token of a registered issuer).
+type PEP struct {
+	// RateLimit is how many requests per second one PEP client may send to one PDP pod (PEP__RATE_LIMIT; 0, the default, turns the
+	// limit off). It is a token bucket per client and per pod: without a shared state between the pods, the limit of the fleet grows
+	// with their number, and a global limit belongs to the ingress in front of the PDPs. A request over the limit is a 429 with
+	// Retry-After.
+	RateLimit int
+	// Burst is how many requests a client may send at once when its bucket is full (PEP__RATE_BURST; 0, the default, is the
+	// rate, at least 1).
+	Burst int
 }
 
 // PDP tunes the regional PDP process (licetum pdp, see cli.Serve).
@@ -238,6 +238,9 @@ type PDP struct {
 	PublicURL string
 	// Audience is the audience a client token must carry when its issuer lists none (PDP__AUDIENCE, default PDP__PUBLIC_URL).
 	Audience string
+	// SearchScanBudget is how many candidate resources one request of the resource search reads (PDP__SEARCH_SCAN_BUDGET, default
+	// 10000). A page that the budget stops is shorter than its limit, even empty, and still carries a next_token.
+	SearchScanBudget int
 }
 
 // Policy tunes what the check API does while it cannot confirm that its copy of the policy is current.
@@ -263,11 +266,9 @@ type Config struct {
 	DB         Database
 	Auth       Auth
 	Redis      Redis
-	Cors       Cors
 	Platform   Platform
+	AdminAuth  AdminAuth
 	Sync       Sync
-	Subjects   Subjects
-	Delegation Delegation
 	HTTP       HTTP
 	Cache      Cache
 	Snapshot   Snapshot
@@ -277,6 +278,7 @@ type Config struct {
 	Policy     Policy
 	Shutdown   Shutdown
 	PDP        PDP
+	PEP        PEP
 }
 
 // Load reads the whole environment. Required variables are checked only for the sections the
@@ -301,13 +303,9 @@ func Load() (*Config, error) {
 			LagInterval:        e.duration("DB__LAG_INTERVAL", time.Second),
 		},
 		Auth: Auth{
-			StateSecret: e.str("AUTH__STATE_SECRET", ""),
-			StateTTL:    e.seconds("AUTH__STATE_TTL", 300),
 
-			TokenL1Size:     e.int("AUTH__TOKEN_L1_SIZE", 50_000),
-			JWKSTTL:         e.duration("AUTH__JWKS_TTL", 10*time.Minute),
-			JWKSMinRefresh:  e.duration("AUTH__JWKS_MIN_REFRESH", 30*time.Second),
-			InvalidTokenTTL: e.duration("AUTH__INVALID_TOKEN_TTL", 10*time.Second),
+			JWKSTTL:        e.duration("AUTH__JWKS_TTL", 10*time.Minute),
+			JWKSMinRefresh: e.duration("AUTH__JWKS_MIN_REFRESH", 30*time.Second),
 		},
 		Redis: Redis{
 			URI:        e.str("REDIS__URI", ""),
@@ -334,26 +332,20 @@ func Load() (*Config, error) {
 			Workers: e.int("BACKGROUND__WORKERS", 16),
 			Queue:   e.int("BACKGROUND__QUEUE", 1024),
 		},
-		Cors: Cors{
-			AllowOrigins:     e.list("CORS__ALLOW_ORIGINS", nil),
-			AllowCredentials: e.bool("CORS__ALLOW_CREDENTIALS", false),
-			AllowMethods:     e.list("CORS__ALLOW_METHODS", []string{"*"}),
-			AllowHeaders:     e.list("CORS__ALLOW_HEADERS", []string{"*"}),
-		},
 		Platform: Platform{
-			Name:             e.str("PLATFORM__NAME", "Licetum"),
-			URL:              e.str("PLATFORM__URL", "http://localhost:8000"),
-			Icon:             e.str("PLATFORM__ICON", "http://localhost:8000/favicon.ico"),
-			AuthorizationURL: e.str("PLATFORM__AUTHORIZATION_URL", ""),
-			TokenURL:         e.str("PLATFORM__TOKEN_URL", ""),
-			JwksURL:          e.str("PLATFORM__JWKS_URL", ""),
-			Issuer:           e.str("PLATFORM__ISSUER", ""),
-			ClientID:         e.str("PLATFORM__CLIENT_ID", ""),
-			ClientSecret:     e.str("PLATFORM__CLIENT_SECRET", ""),
+			Name: e.str("PLATFORM__NAME", "Licetum"),
+			URL:  e.str("PLATFORM__URL", "http://localhost:8000"),
+			Icon: e.str("PLATFORM__ICON", "http://localhost:8000/favicon.ico"),
 			// PLATFORM__ADMIN_ROLE_NAME is the name the variable had before the groups split: still honoured.
 			AdminGroupName:   e.str("PLATFORM__ADMIN_GROUP_NAME", e.str("PLATFORM__ADMIN_ROLE_NAME", "Platform administrator")),
-			AdminClaim:       e.str("PLATFORM__ADMIN_CLAIM", "preferred_username"),
+			AdminClaim:       e.str("PLATFORM__ADMIN_CLAIM", e.str("ADMIN_AUTH__SUBJECT_CLAIM", DefaultSubjectClaim)),
 			AdminClaimValues: e.list("PLATFORM__ADMIN_CLAIM_VALUES", nil),
+		},
+		AdminAuth: AdminAuth{
+			Issuer:       e.str("ADMIN_AUTH__ISSUER", ""),
+			Audience:     e.str("ADMIN_AUTH__AUDIENCE", ""),
+			JWKSURL:      e.str("ADMIN_AUTH__JWKS_URL", ""),
+			SubjectClaim: e.str("ADMIN_AUTH__SUBJECT_CLAIM", DefaultSubjectClaim),
 		},
 		Sync: Sync{
 			FetchTTL:         e.seconds("SYNC__FETCH_TTL", 10),
@@ -372,29 +364,19 @@ func Load() (*Config, error) {
 			FreshMinInterval: e.seconds("SYNC__FRESH_MIN_INTERVAL", 1),
 			Concurrency:      e.int("SYNC__CONCURRENCY", 0),
 		},
-		Subjects: Subjects{
-			Enabled:       e.bool("SUBJECTS__ENABLED", false),
-			RetentionDays: e.int("SUBJECTS__RETENTION_DAYS", 90),
-		},
-		Delegation: Delegation{
-			AuditRetentionDays: e.int("DELEGATION__AUDIT_RETENTION_DAYS", 365),
-			AuditMode:          strings.ToLower(e.str("DELEGATION__AUDIT_MODE", "strict")),
-			AuditBuffer:        e.int("DELEGATION__AUDIT_BUFFER", 100_000),
-		},
 		HTTP: HTTP{
 			Addr:           e.str("HTTP__ADDR", ""),
 			MaxInflight:    e.int("HTTP__MAX_INFLIGHT", 0),
 			RequestTimeout: e.duration("HTTP__REQUEST_TIMEOUT", 0),
 		},
 		PDP: PDP{
-			Addr:      e.str("PDP__ADDR", ":8001"),
-			OpsAddr:   e.address("PDP__OPS_ADDR", ":9090"),
-			PublicURL: strings.TrimRight(e.str("PDP__PUBLIC_URL", ""), "/"),
-			Audience:  e.str("PDP__AUDIENCE", ""),
+			Addr:             e.str("PDP__ADDR", ":8001"),
+			OpsAddr:          e.address("PDP__OPS_ADDR", ":9090"),
+			PublicURL:        strings.TrimRight(e.str("PDP__PUBLIC_URL", ""), "/"),
+			Audience:         e.str("PDP__AUDIENCE", ""),
+			SearchScanBudget: e.int("PDP__SEARCH_SCAN_BUDGET", DefaultSearchScanBudget),
 		},
-	}
-	if m := cfg.Delegation.AuditMode; m != "strict" && m != "async" {
-		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_MODE must be strict or async, got %q", m))
+		PEP: PEP{RateLimit: e.int("PEP__RATE_LIMIT", 0), Burst: e.int("PEP__RATE_BURST", 0)},
 	}
 	if cfg.DB.PoolSize < 1 {
 		e.errs = append(e.errs, fmt.Errorf("DB__POOL_SIZE must be positive, got %d", cfg.DB.PoolSize))
@@ -415,13 +397,28 @@ func Load() (*Config, error) {
 		e.errs = append(e.errs, fmt.Errorf("SHUTDOWN__DRAIN must not be negative and SHUTDOWN__TIMEOUT must be positive, got %s and %s",
 			cfg.Shutdown.Drain, cfg.Shutdown.Timeout))
 	}
-	if cfg.Delegation.AuditBuffer < 1 {
-		e.errs = append(e.errs, fmt.Errorf("DELEGATION__AUDIT_BUFFER must be positive, got %d", cfg.Delegation.AuditBuffer))
-	}
 	if u := cfg.PDP.PublicURL; u != "" {
 		if err := checkPublicURL(u); err != nil {
 			e.errs = append(e.errs, err)
 		}
+	}
+	if a := cfg.AdminAuth; a.Issuer != "" || a.Audience != "" || a.JWKSURL != "" {
+		// A half of the settings is a mistake that would otherwise show as 503 at the first sign-in.
+		if !a.IsConfigured() {
+			e.errs = append(e.errs, errors.New("ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL must be set together"))
+		} else if u, err := url.Parse(a.JWKSURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			e.errs = append(e.errs, fmt.Errorf("ADMIN_AUTH__JWKS_URL must be an http or https URL, got %q", a.JWKSURL))
+		}
+	}
+	if cfg.AdminAuth.SubjectClaim == "" {
+		cfg.AdminAuth.SubjectClaim = DefaultSubjectClaim
+	}
+	if cfg.PEP.RateLimit < 0 || cfg.PEP.Burst < 0 {
+		e.errs = append(e.errs, fmt.Errorf("PEP__RATE_LIMIT and PEP__RATE_BURST must not be negative (0 turns the limit off), got %d and %d",
+			cfg.PEP.RateLimit, cfg.PEP.Burst))
+	}
+	if cfg.PDP.SearchScanBudget < 1 {
+		e.errs = append(e.errs, fmt.Errorf("PDP__SEARCH_SCAN_BUDGET must be positive, got %d", cfg.PDP.SearchScanBudget))
 	}
 	if r := cfg.Sync.WorkerRegion; r != "" && !regionName.MatchString(r) {
 		e.errs = append(e.errs, fmt.Errorf("WORKER__REGION must be lowercase letters, digits and hyphens (at most 32 characters), got %q", r))
@@ -453,11 +450,26 @@ func (c *Config) RequireRedis() error {
 }
 
 // DeprecatedSettings names the settings that are set but no longer have an effect: the Redis lock of the synchronization
-// was replaced by the job table (SYNC__LEASE), and HTTP__PUBLIC_URL became PDP__PUBLIC_URL. The processes log a warning
-// when one of them is still set, so that a deployment notices it.
+// was replaced by the job table (SYNC__LEASE), HTTP__PUBLIC_URL became PDP__PUBLIC_URL, and the OAuth client of the
+// self-service (PLATFORM__AUTHORIZATION_URL and the rest) gave way to ADMIN_AUTH__*, and the settings of the authentication of
+// people by the token of a service (AUTH__STATE_*, AUTH__TOKEN_L1_SIZE, AUTH__INVALID_TOKEN_TTL), of the calls on behalf of a
+// person (DELEGATION__*) and of CORS went with those features. The processes log a warning when one
+// of them is still set, so that a deployment notices it.
 func DeprecatedSettings() []string {
 	var out []string
-	for _, name := range []string{"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "HTTP__PUBLIC_URL"} {
+	for _, name := range []string{
+		"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "HTTP__PUBLIC_URL",
+		// The OAuth client of the self-service: administrators sign in through ADMIN_AUTH__* now.
+		"PLATFORM__AUTHORIZATION_URL", "PLATFORM__TOKEN_URL", "PLATFORM__JWKS_URL", "PLATFORM__ISSUER", "PLATFORM__CLIENT_ID",
+		"PLATFORM__CLIENT_SECRET",
+		// The registry of known subjects gave way to the subject directory of each service.
+		"SUBJECTS__ENABLED", "SUBJECTS__RETENTION_DAYS",
+		// The PDP takes no token of a person (PEP clients authenticate), so the sign-in state, the token caches, the calls on behalf
+		// of a person and their audit, and the CORS of the browser are gone: the browser reaches the admin API through its BFF.
+		"AUTH__STATE_SECRET", "AUTH__STATE_TTL", "AUTH__TOKEN_L1_SIZE", "AUTH__INVALID_TOKEN_TTL",
+		"DELEGATION__AUDIT_RETENTION_DAYS", "DELEGATION__AUDIT_MODE", "DELEGATION__AUDIT_BUFFER",
+		"CORS__ALLOW_ORIGINS", "CORS__ALLOW_CREDENTIALS", "CORS__ALLOW_METHODS", "CORS__ALLOW_HEADERS",
+	} {
 		if _, ok := lookup(name); ok {
 			out = append(out, name)
 		}
@@ -465,9 +477,11 @@ func DeprecatedSettings() []string {
 	return out
 }
 
-func (c *Config) RequireAuth() error {
-	if c.Auth.StateSecret == "" {
-		return errors.New("environment variable AUTH__STATE_SECRET is not set")
+// RequireAdminAuth checks that administrators can authenticate: the admin API refuses to start without ADMIN_AUTH__*, since
+// every request would be answered 503.
+func (c *Config) RequireAdminAuth() error {
+	if !c.AdminAuth.IsConfigured() {
+		return errors.New("ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL are required: administrators sign in at that identity provider")
 	}
 	return nil
 }

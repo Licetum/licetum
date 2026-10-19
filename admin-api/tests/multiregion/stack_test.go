@@ -65,7 +65,8 @@ func (mainTB) Fatalf(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...);
 
 func TestMain(m *testing.M) {
 	idp = support.NewIdPForContainers(mainTB{}, "host.docker.internal")
-	adminToken = idp.Token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
+	// The admin API of the stack requires the audience of ADMIN_AUTH__AUDIENCE (compose.yml).
+	adminToken = idp.SignToken(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"}, support.Audience("licetum-admin"))
 	if !externalEnv {
 		os.Setenv("MR_IDP_URL", idp.URL())
 		os.Setenv("MR_MAX_REPLICA_LAG", "5s")
@@ -166,18 +167,22 @@ func mustAdmin(t testing.TB, base, method, path string, body any) (map[string]an
 	return out, rev
 }
 
-type seeded struct{ slug, serviceID, branchType string }
+type seeded struct{ slug, serviceID, branchType, key string }
 
 // seed registers the service "org" with its type "branch", whose source only region A reaches (and only the worker of A
-// synchronizes: the synchronizer lists the region a), and a rule that gives everybody named u<number> read.
+// synchronizes: the synchronizer lists the region a), a rule that gives everybody named u<number> read, and the PEP client of the
+// service with the API key that every question of the scenarios is asked with.
 func seed() (seeded, error) {
 	t := &fatalTB{}
 	svc, _ := mustAdmin(t, regionA.admin, "POST", "/service", map[string]any{
 		"name": "org", "slug": "org", "url": idp.AppURL(), "icon": idp.IconURL(),
-		"authorization_url": idp.AuthorizationURL(), "token_url": idp.TokenURL(), "jwks_url": idp.JWKSURL(), "issuer": idp.Issuer(),
-		"client_id": "org", "client_secret": "s",
 	})
 	id := svc["id"].(string)
+	client, _ := mustAdmin(t, regionA.admin, "POST", "/service/"+id+"/pep-clients", map[string]any{
+		"name": "scenarios", "kind": "api_key", "operations": []string{"evaluate"},
+	})
+	issued, _ := mustAdmin(t, regionA.admin, "POST", "/service/"+id+"/pep-clients/"+client["id"].(string)+"/keys", map[string]any{})
+	key, _ := issued["key"].(string)
 	typ, _ := mustAdmin(t, regionA.admin, "POST", "/service/"+id+"/type_resource", map[string]any{"name": "branch"})
 	branch := typ["id"].(string)
 	mustAdmin(t, regionA.admin, "POST", "/service/"+id+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
@@ -192,24 +197,31 @@ func seed() (seeded, error) {
 	if t.err != nil {
 		return seeded{}, t.err
 	}
-	// The replicas of B and C learn the policy from the stream, so the service is there when the replica has replayed the
-	// seed: the scenarios measure what they mean from the first request, not what the replication does on the way.
+	// The replicas of B and C learn the policy and the client from the stream, so the service is there when the replica has
+	// replayed the seed: the scenarios measure what they mean from the first request, not what the replication does on the way.
+	if key == "" {
+		return seeded{}, fmt.Errorf("the key of the PEP client was not issued: %v", issued)
+	}
 	for _, r := range []region{regionB, regionC} {
 		for _, base := range r.checks {
-			if err := waitForService(base, "org", 2*time.Minute); err != nil {
+			if err := waitForService(base, "org", key, 2*time.Minute); err != nil {
 				return seeded{}, err
 			}
 		}
 	}
-	return seeded{slug: "org", serviceID: id, branchType: branch}, nil
+	return seeded{slug: "org", serviceID: id, branchType: branch, key: key}, nil
 }
 
-// waitForService asks a check replica until it answers the service with 200, for at most limit.
-func waitForService(base, slug string, limit time.Duration) error {
+// waitForService asks a check replica until it decides a question of the service with 200 (before that the client is unknown to
+// it, and it refuses with the one 403 of the PDP), for at most limit.
+func waitForService(base, slug, key string, limit time.Duration) error {
 	deadline := time.Now().Add(limit)
 	for {
-		req, _ := http.NewRequest(http.MethodGet, base+"/service/"+slug+"/permission", nil)
-		req.Header.Set("Authorization", "Bearer "+token("u1"))
+		question := authzenreq.Evaluation(slug, "u1", authzenreq.Whole("branch"), "read")
+		payload, _ := json.Marshal(question.Body)
+		req, _ := http.NewRequest(question.Method, base+question.Path, bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+key)
 		resp, err := httpClient.Do(req)
 		status := 0
 		var body []byte
@@ -247,10 +259,6 @@ func (f *fatalTB) Fatalf(format string, args ...any) {
 
 // ----- the check API
 
-func token(user string) string {
-	return idp.Token(jwt.MapClaims{"preferred_username": user, "sub": user + "-sub"})
-}
-
 type answer struct {
 	status int
 	body   string
@@ -271,13 +279,13 @@ func (a answer) denies() bool {
 }
 
 // permission asks a check replica whether the person may read the branches (the type as a whole: the rules of the seed give it
-// by type); atLeast, when positive, is the revision the answer must reflect.
+// by type), as the PEP client of the service; atLeast, when positive, is the revision the answer must reflect.
 func permission(base, user string, atLeast int64) answer {
 	question := authzenreq.Evaluation(policy.slug, user, authzenreq.Whole("branch"), "read", authzenreq.AtLeast(atLeast))
 	payload, _ := json.Marshal(question.Body)
 	req, _ := http.NewRequest(question.Method, base+question.Path, bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token(user))
+	req.Header.Set("Authorization", "Bearer "+policy.key)
 	start := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
