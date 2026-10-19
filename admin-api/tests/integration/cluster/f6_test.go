@@ -152,7 +152,7 @@ func TestF6_5_AReplicaBehindTheStalenessLimitFailsClosed(t *testing.T) {
 	}
 	eventually(t, 15*time.Second, "503 policy_unavailable", func() bool {
 		res := r.Send(c, harness.Branches(p.Slug, alice), alice)
-		return res.Status == http.StatusServiceUnavailable && strings.Contains(string(res.Body), "policy_unavailable")
+		return unavailable(res)
 	})
 
 	c.ResumeReplay()
@@ -241,6 +241,12 @@ func TestF6_2_ARevocationReachesTheRegionWithinTheSLO(t *testing.T) {
 
 // F6-5: the link to the replica is cut for 6 s with POLICY__MAX_STALENESS of 3 s: the region goes on answering for a while, then
 // fails closed (503); once the link is back a revocation made meanwhile is enforced within the SLO.
+// unavailable says whether an answer refuses the request because the region cannot confirm its policy. The requests of these
+// tests are AuthZEN requests, whose error body is the message and whose code is in the Licetum-Error-Code header.
+func unavailable(res *harness.Result) bool {
+	return res.Status == http.StatusServiceUnavailable && res.Header.Get("Licetum-Error-Code") == "policy_unavailable"
+}
+
 func TestF6_5_ALinkCutFailsClosedAfterTheLimitAndRecoversWithTheRevocation(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithReadReplica(), harness.WithFaultProxies(), lagConfig(time.Hour, "unready", 3*time.Second))
 	p := c.SeedPolicy("org", 0)
@@ -272,7 +278,7 @@ func TestF6_5_ALinkCutFailsClosedAfterTheLimitAndRecoversWithTheRevocation(t *te
 				t.Fatalf("an answer at %v after the region had refused one", time.Since(cutAt))
 			}
 			answered++
-		case res.Status == http.StatusServiceUnavailable && strings.Contains(string(res.Body), "policy_unavailable"):
+		case unavailable(res):
 			if refused == 0 {
 				firstRefusal = time.Since(cutAt)
 			}
