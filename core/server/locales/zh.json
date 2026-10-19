@@ -676,7 +676,7 @@
   "URL of the Access Evaluations API": "批量访问评估 API 的 URL",
   "The access levels the subject has on the resource": "主体在资源上拥有的访问级别",
   "AuthZEN subject search": "AuthZEN 主体搜索",
-  "The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, \"Policy Decision Point Metadata\"). The Policy Decision Point of a service is <public url>/service/<id or slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from HTTP__PUBLIC_URL, and is not served (404) without it.": "单个服务的 AuthZEN API 发现文档（OpenID AuthZEN 1.0 “Policy Decision Point Metadata”）。服务的策略决策点为 <公开 URL>/service/<id 或 slug>，因此文档位于插入在主机和该路径之间的 well-known 路径。无需令牌。文档由 HTTP__PUBLIC_URL 生成，未设置时不提供（404）。",
+  "The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, \"Policy Decision Point Metadata\"). The Policy Decision Point of a service is <PDP__PUBLIC_URL>/service/<slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from PDP__PUBLIC_URL, and is not served (404) without it.": "单个服务的 AuthZEN API 发现文档（OpenID AuthZEN 1.0 “Policy Decision Point Metadata”）。服务的策略决策点为 <PDP__PUBLIC_URL>/service/<slug>，因此文档位于插入在主机和该路径之间的 well-known 路径。无需令牌。文档由 PDP__PUBLIC_URL 生成，未设置时不提供（404）。",
   "Paging of the results": "结果的分页信息",
   "Single access checks with explanations.": "带解释的单次访问检查。",
   "Ignored in a request; the resource search returns the name of the resource here": "在请求中被忽略；资源搜索在此返回资源名称",

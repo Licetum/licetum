@@ -649,7 +649,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   answer is `{decision}`; an evaluation that cannot be decided in a batch is `decision: false` with `context.error {status, message}`, the single
   endpoint answers the HTTP error); `POST …/access/v1/search/{subject,resource,action}` (`page.limit` up to 1000, `page.token` is an opaque cursor with
   a digest of the request, a changed request is 400 `authzen_page_invalid`); `GET /.well-known/authzen-configuration/service/{ref}` (the discovery
-  document, from `HTTP__PUBLIC_URL`; 404 `authzen_metadata_disabled` without it). A request that is not valid is a 400, not Huma's 422 (the
+  document, from `PDP__PUBLIC_URL`; 404 `authzen_metadata_disabled` without it). A request that is not valid is a 400, not Huma's 422 (the
   `NewErrorWithContext` hook maps it for the `AuthZEN` tag; `badRequest` does it for errors of the handlers). `subject.id` is the token's subject
   and the claims come from the token; any other subject needs a client the service trusts (`trusted_clients`, as for the calls on behalf of a
   person; else 403 `authzen_subject_mismatch`), which gives the person's claims in `subject.properties` (`PrepareDelegated`); such calls are audited

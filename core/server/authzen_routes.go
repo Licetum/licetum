@@ -304,12 +304,12 @@ there are more results; send it back as page.token with the same request. The re
 		Method:      http.MethodGet,
 		Path:        "/.well-known/authzen-configuration/service/{service_id}",
 		Summary:     "AuthZEN Policy Decision Point metadata",
-		Description: `The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, "Policy Decision Point Metadata"). The Policy Decision Point of a service is <public url>/service/<id or slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from HTTP__PUBLIC_URL, and is not served (404) without it.`,
+		Description: `The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, "Policy Decision Point Metadata"). The Policy Decision Point of a service is <PDP__PUBLIC_URL>/service/<slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from PDP__PUBLIC_URL, and is not served (404) without it.`,
 		Tags:        []string{authzenTag},
 	}, func(ctx context.Context, in *struct {
 		ServiceRefPath
 	}) (*authzenMetadataOut, error) {
-		base := cfg.HTTP.PublicURL
+		base := cfg.PDP.PublicURL
 		if base == "" {
 			return nil, apperr.NotFound(i18n.AuthzenMetadataDisabled)
 		}
@@ -317,10 +317,11 @@ there are more results; send it back as page.token with the same request. The re
 		if err != nil {
 			return nil, err
 		}
-		if _, err := app.GetServiceForCheck(ctx, serviceID); err != nil {
+		svc, err := app.GetServiceForCheck(ctx, serviceID)
+		if err != nil {
 			return nil, err
 		}
-		return &authzenMetadataOut{CacheControl: "public, max-age=300", Body: authzenMetadata(base, in.ServiceRef)}, nil
+		return &authzenMetadataOut{CacheControl: "public, max-age=300", Body: authzenMetadata(base, svc.Slug)}, nil
 	})
 }
 

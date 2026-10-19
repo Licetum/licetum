@@ -201,7 +201,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: admin
       annotations:
-        checksum/config: a5578c62042ae8cd47afae7e7eaab06232033e85a04de588e6497e9d596d468c
+        checksum/config: 3b69b7dad8949af2b6d02954e48f3bbfdc015d923df9bde4859001cd1de0fb5d
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -329,7 +329,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: pdp
       annotations:
-        checksum/config: a5578c62042ae8cd47afae7e7eaab06232033e85a04de588e6497e9d596d468c
+        checksum/config: 3b69b7dad8949af2b6d02954e48f3bbfdc015d923df9bde4859001cd1de0fb5d
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -550,7 +550,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: worker
       annotations:
-        checksum/config: a5578c62042ae8cd47afae7e7eaab06232033e85a04de588e6497e9d596d468c
+        checksum/config: 3b69b7dad8949af2b6d02954e48f3bbfdc015d923df9bde4859001cd1de0fb5d
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -778,7 +778,7 @@ data:
   SHUTDOWN__TIMEOUT: "30s"
   SYNC__ENGINE: "postgres"
   POLICY__MAX_STALENESS: "30s"
-  HTTP__PUBLIC_URL: "https://licetum.example.com"
+  PDP__PUBLIC_URL: "https://licetum.example.com"
   PLATFORM__NAME: "Licetum"
   PLATFORM__URL: "https://admin.example.com"
   PLATFORM__ICON: "https://admin.example.com/favicon.ico"

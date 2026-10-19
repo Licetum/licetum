@@ -274,13 +274,14 @@ func TestAuthzenMetadata(t *testing.T) {
 	status, header, raw := w.doWithHeader("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.org, nil)
 	requireAuthzenError(t, status, header, raw, http.StatusNotFound, "authzen_metadata_disabled")
 
-	w.cfg.HTTP.PublicURL = "https://licetum.test"
+	w.cfg.PDP.PublicURL = "https://licetum.test"
 	status, raw = w.do("GET", w.check.URL+"/.well-known/authzen-configuration/service/"+w.org, nil)
 	if status != http.StatusOK {
 		t.Fatalf("metadata: %d %s", status, raw)
 	}
 	doc := decodeMap(t, raw)
-	pdp := "https://licetum.test/service/" + w.org
+	// The identifier of the PDP names the service by its slug (ADR 0001, 7.2); the slug becomes fixed in P3 (ADM11). The path takes the id too.
+	pdp := "https://licetum.test/service/org"
 	if doc["policy_decision_point"] != pdp || doc["access_evaluation_endpoint"] != pdp+"/access/v1/evaluation" ||
 		doc["search_resource_endpoint"] != pdp+"/access/v1/search/resource" {
 		t.Fatalf("metadata: %v", doc)

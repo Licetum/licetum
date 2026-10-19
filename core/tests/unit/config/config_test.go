@@ -148,21 +148,42 @@ func TestLoadPDPOpsAddressDefaultsWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestLoadPublicURL(t *testing.T) {
-	t.Setenv("HTTP__PUBLIC_URL", "https://licetum.example.com/")
+// TestContract_AZ05_PublicURLIsHTTPSExceptOnLoopback: PDP__PUBLIC_URL is the PDP identifier the PEPs use, so it is https, with
+// the loopback exception of the Compose stack and the load test, and no path, query or fragment (ADR 0001, 7.3).
+func TestContract_AZ05_PublicURLIsHTTPSExceptOnLoopback(t *testing.T) {
+	t.Setenv("PDP__PUBLIC_URL", "https://licetum.example.com/")
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.HTTP.PublicURL != "https://licetum.example.com" {
-		t.Errorf("the trailing slash must go: %q", cfg.HTTP.PublicURL)
+	if cfg.PDP.PublicURL != "https://licetum.example.com" {
+		t.Errorf("the trailing slash must go: %q", cfg.PDP.PublicURL)
 	}
 
-	for _, bad := range []string{"licetum.example.com", "ftp://x", "https://x/?a=1", "https://x/#f", "https://x/licetum"} {
-		t.Setenv("HTTP__PUBLIC_URL", bad)
+	for _, ok := range []string{"http://localhost:8001", "http://127.0.0.1:8001", "http://[::1]:8001"} {
+		t.Setenv("PDP__PUBLIC_URL", ok)
+		if _, err := config.Load(); err != nil {
+			t.Errorf("%q is a loopback address and must be accepted: %v", ok, err)
+		}
+	}
+
+	for _, bad := range []string{"licetum.example.com", "ftp://x", "http://licetum.example.com", "https://x/?a=1", "https://x/#f", "https://x/licetum", "https://x?", "https://x#", "https://user:pw@x"} {
+		t.Setenv("PDP__PUBLIC_URL", bad)
 		if _, err := config.Load(); err == nil {
 			t.Errorf("%q must be refused", bad)
 		}
+	}
+}
+
+// PDP__AUDIENCE is read as it is; the default is the PDP identifier, which the token check applies (P2-15).
+func TestLoadPDPAudience(t *testing.T) {
+	t.Setenv("PDP__AUDIENCE", "licetum-pdp")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PDP.Audience != "licetum-pdp" {
+		t.Errorf("PDP.Audience = %q, want licetum-pdp", cfg.PDP.Audience)
 	}
 }
 

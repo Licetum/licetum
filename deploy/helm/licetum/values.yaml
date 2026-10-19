@@ -19,7 +19,7 @@ imagePullSecrets: []
 # worker.regionAware is set.
 region: ""
 
-# The address clients reach the PDP at (HTTP__PUBLIC_URL): the AuthZEN discovery document is built from it.
+# The identifier the PEPs use for the PDP (PDP__PUBLIC_URL, https except on a loopback host): the AuthZEN discovery document is built from it.
 publicUrl: ""
 
 # The secrets. Either name a Secret that holds the keys below (existingSecret, the way to go in production) or give the values and

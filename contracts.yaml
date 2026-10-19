@@ -556,7 +556,7 @@ contracts:
     oracle: the specification
     level: unit
     phase: P2
-    status: planned
+    status: active
   - id: AZ06
     statement: Unknown fields are ignored and a nested context value is ignored by conditions instead of refused.
     oracle: status and decision

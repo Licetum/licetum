@@ -924,9 +924,9 @@ var catalog = map[Key]Text{
 		ZH: "分页令牌无效，或请求与签发该令牌的请求不一致",
 	},
 	AuthzenMetadataDisabled: {
-		EN: "The AuthZEN discovery document is not available: HTTP__PUBLIC_URL is not set",
-		RU: "Документ обнаружения AuthZEN недоступен: не задан HTTP__PUBLIC_URL",
-		ZH: "AuthZEN 发现文档不可用：未设置 HTTP__PUBLIC_URL",
+		EN: "The AuthZEN discovery document is not available: PDP__PUBLIC_URL is not set",
+		RU: "Документ обнаружения AuthZEN недоступен: не задан PDP__PUBLIC_URL",
+		ZH: "AuthZEN 发现文档不可用：未设置 PDP__PUBLIC_URL",
 	},
 	AuthzenSubjectTypeInvalid: {
 		EN: "subject.type must be 1 to 64 bytes, and not group",

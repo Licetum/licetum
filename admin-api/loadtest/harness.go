@@ -618,7 +618,7 @@ func startPDP(ctx context.Context, e *env, opts Options, index int) (*checkServe
 	}
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // the binary is the one the run was asked to measure
 	cmd.Env = append(os.Environ(), checkServerEnv(e, opts)...)
-	cmd.Env = append(cmd.Env, "PDP__ADDR="+addr, "PDP__OPS_ADDR="+opsAddr)
+	cmd.Env = append(cmd.Env, "PDP__ADDR="+addr, "PDP__OPS_ADDR="+opsAddr, "PDP__PUBLIC_URL=http://"+addr)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		if cerr := logFile.Close(); cerr != nil {
