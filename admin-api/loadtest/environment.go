@@ -100,7 +100,8 @@ func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin stri
 	return env, nil
 }
 
-// checkServerEnv is the environment the check server is started with (see startPDP).
+// checkServerEnv is the environment the check server is started with (see startPDP). The whole traffic is one PEP client, so the
+// rate limit of a client (PEP__RATE_LIMIT) is off whatever the environment of the run says: the limit is not what is measured.
 func checkServerEnv(e *env, opts Options) []string {
 	return []string{
 		"DB__URI=" + e.checkDBURI,
@@ -108,6 +109,7 @@ func checkServerEnv(e *env, opts Options) []string {
 		"DB__MAX_OVERFLOW=0",
 		"REDIS__URI=" + e.checkRedisURI,
 		"AUTH__STATE_SECRET=" + e.stateSecret,
+		"PEP__RATE_LIMIT=0",
 	}
 }
 

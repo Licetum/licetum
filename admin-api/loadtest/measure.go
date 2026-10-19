@@ -108,7 +108,7 @@ func (m *Measurement) judgeMeasurement() {
 		m.InvalidReasons = append(m.InvalidReasons, fmt.Sprintf("%d of %d sampled answers differ from the expected ones",
 			m.Oracle.Mismatches, m.Oracle.Checked))
 	}
-	// An oracle that got no decision to any question (a token or trust that is refused, a timeout) verified nothing: the
+	// An oracle that got no decision to any question (an API key that is refused, a timeout) verified nothing: the
 	// absence of wrong answers means nothing then.
 	if m.Oracle.Checked > 0 && m.Oracle.Unanswered == m.Oracle.Checked {
 		m.InvalidReasons = append(m.InvalidReasons, fmt.Sprintf("the oracle got no answer to any of its %d questions: the answers were not verified", m.Oracle.Checked))

@@ -10,6 +10,9 @@
 # The figures come from the baseline of block F0 and are set again, on purpose, when a block improves them
 # (`licetum-loadtest budget -calibrate`). A run that is better than its budget by more than the tolerance does not
 # fail; its report asks for the budget to be set again.
+# The load test asks as a PEP client with an API key (the person is the subject of the request, its claims the properties of the
+# subject), with no consistency parameter. The figures below were measured with the tokens of people, so they stay until the
+# recalibration of P7 (ADR 0001, 11.11) sets them from a run of this traffic.
 tolerance: 0.15
 latency_slack_ms: 5
 budgets:

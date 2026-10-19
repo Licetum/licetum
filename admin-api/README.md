@@ -146,17 +146,21 @@ k6 must be on the `PATH` (or pass `-k6-bin`); CI installs the version the workfl
 What a step measures:
 
 - **k6** sends the requests of the mix at the rate of the step. They are the AuthZEN API: `search_resource` (a page of
-  the documents a person may read), `evaluation`, `evaluations10` and `evaluations100` (one, ten and a hundred questions
-  about a person), and `evaluation_properties` (a question about another person, asked with the token of a client
-  application the service trusts, which brings the person's claims). The mix is set with `-mix name=weight,...`. The arrivals
-  are an open model: a slow server does not lower the rate, it shows as late answers and as `dropped` arrivals, which are
-  the sign that a step is saturated.
+  the documents a person may read), and `evaluation`, `evaluations10` and `evaluations100` (one, ten and a hundred questions
+  about a person). The mix is set with `-mix name=weight,...`. Every request is asked as one PEP client of the service, the way
+  a service's own backend asks: the seeding makes the client (kind `api_key`, every operation) and issues its one API key, which
+  is the bearer of every request; the person a question is about is the `subject` of the body, and the claims the rules read
+  (the `department` that picks the groups) are its `properties`. No token of a person is involved, and no identity provider. The
+  PDPs read the client and its key from the database; the rate limit of a client (`PEP__RATE_LIMIT`) is switched off for them.
+  The arrivals are an open model: a slow server does not lower the rate, it shows as late answers and as `dropped` arrivals,
+  which are the sign that a step is saturated.
 - **The server** is read at the edges of each step: its CPU (from `/proc`), its cache hits and the time it spent per
   request (from `/metrics`), and the database: its blocks read, and when the server preloads `pg_stat_statements`, the
   time of its statements and the most expensive ones during the ramp.
 
 The results go to `reports/loadtest/`: `summary.md` (the table of the steps and where the time went), `result.json`,
-the k6 summaries and logs, and `check.log`. The tokens of the run are written to a temporary directory and removed.
+the k6 summaries and logs, and `check.log`. The API key of the run is written, with the script, to a temporary directory and
+removed when the run ends.
 
 Docker runs PostgreSQL and Redis; a server named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI` is used
 instead. The containers preload `pg_stat_statements`; an external server needs it in `shared_preload_libraries` for the

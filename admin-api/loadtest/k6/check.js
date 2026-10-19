@@ -1,5 +1,9 @@
 // Load test of the AuthZEN API of Licetum, run by admin-api/loadtest (see its README).
 //
+// Every request is asked as the PEP client of the service: the bearer is its API key, the person a question is about is the
+// subject of the body, and the claims the rules read (the department) are the properties of the subject. preferred_username is
+// the subject itself, as the server takes it.
+//
 // Arrivals are an open model: k6 starts a request at each tick of the rate whether or not earlier answers have come
 // back, so a server that falls behind shows as late answers and dropped iterations, not as a lower rate. Every request
 // is recorded in the metrics of its phase ("warmup" or "measure") and of its operation, so each percentile is computed
@@ -10,7 +14,6 @@
 // exception: its choices are a function of the number of the iteration, not of the virtual user.
 import http from 'k6/http';
 import exec from 'k6/execution';
-import { SharedArray } from 'k6/data';
 import { Counter, Rate, Trend } from 'k6/metrics';
 
 // The check servers: one per replica. A request goes to one of them, drawn at random, so the replicas share the load.
@@ -21,9 +24,7 @@ const groups = Number(__ENV.GROUPS);
 const documents = Number(__ENV.DOCUMENTS);
 const rules = Number(__ENV.RULES);
 const folders = Number(__ENV.FOLDERS);
-const backend = __ENV.BACKEND_TOKEN;
 const mode = __ENV.MODE || 'mix';
-const consistencySetting = __ENV.CONSISTENCY || 'minimize_latency';
 const seed = Number(__ENV.SEED || 1);
 // The number of the first iteration of this invocation among all the iterations of the run: the cold mode asks each
 // evaluation question once, so a later window must go on where the earlier ones stopped.
@@ -35,12 +36,12 @@ const rate = Number(__ENV.RATE || 10);
 const warmSeconds = Number(__ENV.WARM_SECONDS || 0);
 const measureSeconds = Number(__ENV.MEASURE_SECONDS || 60);
 
-// The tokens are read once for all the virtual users: one token per subject, in the order of the subjects.
-const tokens = new SharedArray('tokens', () => JSON.parse(open(__ENV.TOKENS)));
+// The API key of the PEP client: the one line of the file the harness wrote, read by each virtual user when it starts.
+const apiKey = open(__ENV.API_KEY_FILE).trim();
 
 // The operations, in the order the harness reports them (opNames in mix.go lists the same, and a test keeps them so).
-const ops = ['search_resource', 'evaluation', 'evaluations10', 'evaluations100', 'evaluation_properties'];
-const weights = parseMix(__ENV.MIX || 'search_resource=2,evaluation=5,evaluations10=2,evaluation_properties=1');
+const ops = ['search_resource', 'evaluation', 'evaluations10', 'evaluations100'];
+const weights = parseMix(__ENV.MIX || 'search_resource=2,evaluation=6,evaluations10=2');
 
 const phases = ['warmup', 'measure'];
 const metrics = {};
@@ -110,12 +111,7 @@ export default function () {
     subjectIndex = Math.min(users - 1, Math.floor(Math.pow(users, random())) - 1);
     doc = accessibleDoc(subjectIndex);
   }
-  const subject = `user-${subjectIndex}`;
-  const dept = `dept-${subjectIndex % groups}`;
-  const token = tokens[subjectIndex];
-  // The cold mode sends no consistency query: its evaluation questions are new, so no cache holds an answer to them. The
-  // other modes ask with the consistency of the run.
-  const consistencyQuery = mode === 'cold' ? '' : `?consistency=${consistencySetting}`;
+  const subject = subjectJSON(subjectIndex);
 
   const op = ops[pick()];
   let res;
@@ -123,32 +119,23 @@ export default function () {
     case 'search_resource':
       // One page of the documents the subject may read.
       res = http.post(
-        `${base}/service/${service}/access/v1/search/resource${consistencyQuery}`,
-        `{"subject":{"type":"user","id":"${subject}"},"resource":{"type":"document"},"action":{"name":"read"},"page":{"limit":20}}`,
-        { headers: jsonHeaders(token) },
+        `${base}/service/${service}/access/v1/search/resource`,
+        `{"subject":${subject},"resource":{"type":"document"},"action":{"name":"read"},"page":{"limit":20}}`,
+        { headers: jsonHeaders() },
       );
       break;
     case 'evaluation':
       res = http.post(
-        `${base}/service/${service}/access/v1/evaluation${consistencyQuery}`,
-        `{"subject":{"type":"user","id":"${subject}"},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
-        { headers: jsonHeaders(token) },
+        `${base}/service/${service}/access/v1/evaluation`,
+        `{"subject":${subject},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
+        { headers: jsonHeaders() },
       );
       break;
     case 'evaluations10':
-      res = evaluationsRequest(base, token, consistencyQuery, subjectIndex, 10, doc);
+      res = evaluationsRequest(base, subjectIndex, 10, doc);
       break;
     case 'evaluations100':
-      res = evaluationsRequest(base, token, consistencyQuery, subjectIndex, 100, doc);
-      break;
-    case 'evaluation_properties':
-      // The token is the one of the client application the service trusts; the subject is another person, whose claims
-      // the client brings.
-      res = http.post(
-        `${base}/service/${service}/access/v1/evaluation${consistencyQuery}`,
-        `{"subject":{"type":"user","id":"${subject}","properties":{"department":"${dept}"}},"resource":{"type":"document","id":"${doc}"},"action":{"name":"read"}}`,
-        { headers: jsonHeaders(backend) },
-      );
+      res = evaluationsRequest(base, subjectIndex, 100, doc);
       break;
   }
 
@@ -172,8 +159,14 @@ export default function () {
   }
 }
 
-function jsonHeaders(token) {
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+function jsonHeaders() {
+  return { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
+}
+
+// subjectJSON is the subject of a request about the subject of the given index: the person, and the claims of the person that the
+// rules read, its department (the group of the subject is picked by it). The harness spells the same subject (Profile.asPerson).
+function subjectJSON(subjectIndex) {
+  return `{"type":"user","id":"user-${subjectIndex}","properties":{"department":"dept-${subjectIndex % groups}"}}`;
 }
 
 // questions are n documents the subject may read, for a batch of n evaluations.
@@ -187,16 +180,16 @@ function questions(subjectIndex, n) {
 
 // evaluationsRequest is a batch of n evaluations of documents the subject may read, about the subject. In the cold mode
 // the first one is the document no earlier request asked about this subject, so the batch is a question no earlier one was.
-function evaluationsRequest(base, token, consistencyQuery, subjectIndex, n, doc) {
+function evaluationsRequest(base, subjectIndex, n, doc) {
   const docs = questions(subjectIndex, n);
   if (mode === 'cold') {
     docs[0] = doc;
   }
   const evaluations = docs.map((d) => `{"resource":{"type":"document","id":"${d}"}}`);
   return http.post(
-    `${base}/service/${service}/access/v1/evaluations${consistencyQuery}`,
-    `{"subject":{"type":"user","id":"user-${subjectIndex}"},"action":{"name":"read"},"evaluations":[${evaluations.join(',')}]}`,
-    { headers: jsonHeaders(token) },
+    `${base}/service/${service}/access/v1/evaluations`,
+    `{"subject":${subjectJSON(subjectIndex)},"action":{"name":"read"},"evaluations":[${evaluations.join(',')}]}`,
+    { headers: jsonHeaders() },
   );
 }
 
