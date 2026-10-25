@@ -111,6 +111,10 @@ jobs:
   # CONTRIBUTING.md). The previous release is checked out, the migrations it embeds are replaced by the ones of this change,
   # and it runs its own integration tests: its code and its tests on the schema this change produces. A migration that drops,
   # renames or narrows what the previous release uses, or adds what its writes cannot fill, fails them here.
+  #
+  # The previous release still uses Redis: its own integration tests need the redis service and LICETUM_TEST_REDIS_URI below,
+  # which is why they stay here after Redis left this repository (step 2e adds no migration, so the old release still runs on
+  # the schema). The jobs of this change start no Redis; this one stays until P3 (docs/adr/0001-regional-pdp.md, 11.1).
   previous-release:
     name: Previous release on the new schema
     needs: changes
@@ -207,6 +211,10 @@ jobs:
 
       - name: Web lint and checks
         run: CI=true task web:lint
+
+      # The development stack (docker-compose.yml and infra/*.compose.yml) is valid: includes, anchors and variables resolve.
+      - name: Check the Compose file
+        run: docker compose config -q
 
       - name: Web unit tests
         run: task web:test

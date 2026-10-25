@@ -1,8 +1,8 @@
 name: Chaos
 
-# Tier C of the production-load plan: the PDP with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole)
-# and a read-only Redis, nightly and on demand. The tests are the ones of admin-api/tests/integration/chaos, built with the
-# `chaos` tag; the pull request jobs do not run them.
+# Tier C of the production-load plan: the PDP with PostgreSQL behind Toxiproxy (latency, cut, black hole), nightly and on
+# demand. The tests are the ones of admin-api/tests/integration/chaos, built with the `chaos` tag; the pull request jobs do
+# not run them.
 #
 # A schedule fires only from the default branch. To test another branch (the epic branch production-load-readiness until
 # it reaches main) start the workflow by hand with `ref`, or set the repository variable CHAOS_REF, which the scheduled

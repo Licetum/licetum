@@ -3,12 +3,10 @@
 # For production, build the `runtime` target of core/Dockerfile (the PDP) or admin-api/Dockerfile (the admin API) (a single static binary).
 include:
   - infra/postgres.compose.yml
-  - infra/redis.compose.yml
   - infra/dex.compose.yml
 
 x-env-app: &env-app
   DB__URI: "${DB__URI:-postgresql://authz:authz@postgres:5432/authz_db}"
-  REDIS__URI: "${REDIS__URI:-redis://redis:6379/0}"
   # air restarts the apps on every change: no drain on shutdown in development (the default of 10 s is for a balancer).
   SHUTDOWN__DRAIN: "${SHUTDOWN__DRAIN:-0}"
   # The address clients reach the PDP at: the AuthZEN discovery document is built from it.
@@ -39,8 +37,6 @@ x-conf-go: &conf-go
     - go-build-cache:/root/.cache/go-build
   depends_on:
     postgres:
-      condition: service_healthy
-    redis:
       condition: service_healthy
 
 # The Go modules: core (MIT: the PDP runtime) and admin-api (AGPL: the admin API, which depends on core). Both are

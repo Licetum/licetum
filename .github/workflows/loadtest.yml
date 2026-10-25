@@ -5,7 +5,7 @@ name: Load test
 # every night, so the numbers can be compared from one night to the next.
 #
 # The medium profile runs in three modes (warm, cold, mix) with and without 100 ms added to every round trip to
-# PostgreSQL and to Redis (Toxiproxy), and each run is compared with its entry of admin-api/loadtest/budgets.yaml: a
+# PostgreSQL (Toxiproxy), and each run is compared with its entry of admin-api/loadtest/budgets.yaml: a
 # figure more than 15 % on the wrong side fails the job (F0-5). With `baseline: true` the runs are not compared; the
 # budget each one would make is printed in the summary instead (how budgets.yaml is made, F0-6).
 #
@@ -83,7 +83,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The ramps start low and double: a shared 4-CPU runner (the generator, the server, PostgreSQL and Redis on it)
+          # The ramps start low and double: a shared 4-CPU runner (the generator, the server and PostgreSQL on it)
           # may fail the first step of the mixed traffic at 50 requests/s, and then there is no baseline at all.
           # No added latency: the ramp reaches 640 requests/s (10, 20, ... 640), past the 600 the plan asks for.
           - { mode: warm, latency: 0ms, args: "-rate-start 10 -max-steps 7 -slo-p99 100ms -concurrency 250" }

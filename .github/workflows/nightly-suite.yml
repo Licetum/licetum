@@ -41,6 +41,8 @@ jobs:
       ref: ${{ inputs.ref }}
 
   # Switched off in P2-10 (ADR 0001, section 10.7): the multi-region environment is restored in P7 with the topology.
+  # The compose of admin-api/tests/multiregion still names Redis, DB__READ_URI and WORKER__REGION, which no longer exist; it is
+  # rewritten as multidc in P7 and is not edited before (only as far as `task go:vet:tags` needs it to compile).
   multiregion:
     if: false
     name: Multi-region
