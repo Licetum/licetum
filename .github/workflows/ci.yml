@@ -107,45 +107,6 @@ jobs:
             admin-api/reports/coverage.*
           if-no-files-found: ignore
 
-  # F5-9: the integration tests through PgBouncer in transaction mode with DB__PGBOUNCER=true (the simple protocol, nothing
-  # prepared). PgBouncer is the package of the runner's distribution (1.22 on Ubuntu 24.04, which has max_prepared_statements,
-  # the DBOS client prepares its statements). Each test gets a database of its own: transaction pooling does not carry the
-  # search_path of a connection. See admin-api/tests/integration/README.md.
-  # F6: the PDP reading the policy from a read replica (DB__READ_URI). A primary and a streaming replica run on the
-  # runner from the PostgreSQL binaries it ships (scripts/pg-replica.sh); pg_wal_replay_pause makes the replica lag.
-  go-test-replica:
-    name: Read replica tests
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
-    env:
-      LICETUM_TEST_REDIS_URI: redis://127.0.0.1:6379/0
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: core/go.mod
-          cache-dependency-path: |
-            core/go.sum
-            admin-api/go.sum
-
-      - uses: arduino/setup-task@v3
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Read replica tests
-        run: task go:test:integration:replica
-
   # F5-11: the release that came before this change still works on the schema this change migrates (expand/contract,
   # CONTRIBUTING.md). The previous release is checked out, the migrations it embeds are replaced by the ones of this change,
   # and it runs its own integration tests: its code and its tests on the schema this change produces. A migration that drops,

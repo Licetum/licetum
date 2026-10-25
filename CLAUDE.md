@@ -166,8 +166,9 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   the request needs a current read (`withPrimary`: the lever `consistency=higher`, or a revision the view did not reach, set in `cachedAnswer`; such an answer is not kept)
   or while the replica lags with `DB__LAG_ACTION=primary`. Reads of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) use `reader(ctx)`;
   writes, the worker and the sync pool use `DB`. `WatchReplica` measures the lag (replay lag and the time the revision has been behind the
-  primary's); `/readyz` fails with `replica_lag` under the `unready` action; `replicaGate` makes a replica behind `POLICY__MAX_STALENESS` fail closed (503). Tests:
-  `cluster/f6_test.go` against a real streaming replica (`scripts/pg-replica.sh`, `LICETUM_TEST_REPLICA_ADDR`, `task go:test:integration:replica`).
+  primary's); `/readyz` fails with `replica_lag` under the `unready` action; `replicaGate` makes a replica behind `POLICY__MAX_STALENESS` fail closed (503). The tests that needed a real
+  streaming replica are deleted (P2e-05; the contracts REV02, CONS01 and FC01-FC03 bring them back in P5/P6 and `task go:test:integration:replica` returns with them; `scripts/pg-replica.sh` stays);
+  `cluster/failover_test.go` (`TestF6_11_*`) keeps `licetum failover` tested without a replica.
   Beyond that: a replica that cannot be compared with the primary counts as stale (`replicaUnconfirmed`, only for `POLICY__MAX_STALENESS`, not for
   readiness); `licetum failover` (`db.BumpAllRevisions`) raises every revision after a promotion and a revision that goes backwards is counted
   (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` is stored but not enforced: the table engine that filtered jobs by

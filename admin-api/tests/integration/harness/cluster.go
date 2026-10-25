@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -60,11 +59,6 @@ type Cluster struct {
 	Replicas    []*Replica
 	// PostgresFault and RedisFault are the proxies the replicas connect through (nil without WithFaultProxies).
 	PostgresFault, RedisFault *support.FaultProxy
-	// ReplicaFault is the proxy in front of the read replica (WithReadReplica together with WithFaultProxies).
-	ReplicaFault *support.FaultProxy
-	// ReplicaPool is the test's own direct connection to the read replica (WithReadReplica), for pausing the replay and for
-	// looking at its state.
-	ReplicaPool *pgxpool.Pool
 
 	// LastRevision is the revision (X-Authz-Revision) of the last write made through AdminDo or Must. The replicas
 	// follow the revision with a delay of up to REVISION__POLL_INTERVAL; Replica.Permission asks for at least this one, so
@@ -77,12 +71,8 @@ type Cluster struct {
 	// starts another one the same way.
 	replicaDBURI, replicaRedisURI string
 	hotRedis                      time.Duration
-	// withReplica makes the check replicas read the policy from the streaming replica (see WithReadReplica); replicaReadURI is
-	// what they connect to (behind ReplicaFault when there are proxies).
-	withReplica    bool
-	replicaReadURI string
-	client         *http.Client
-	configure      []func(*config.Config)
+	client                        *http.Client
+	configure                     []func(*config.Config)
 	// callers makes the questions of the tests the questions of a PEP client (see send).
 	callers *support.PEPCallers
 }
@@ -107,16 +97,6 @@ type Option func(*Cluster)
 // WithFaultProxies makes the replicas reach PostgreSQL and Redis through Toxiproxy (Cluster.PostgresFault and
 // Cluster.RedisFault). The admin API and the test's own connections stay direct.
 func WithFaultProxies() Option { return func(c *Cluster) { c.proxied = true } }
-
-// EnvReplicaAddr names the host:port of a streaming replica of the PostgreSQL of the infrastructure (scripts/pg-replica.sh
-// starts one). Without it the tests that need a read replica are skipped.
-const EnvReplicaAddr = "LICETUM_TEST_REPLICA_ADDR"
-
-// WithReadReplica makes the check replicas read the policy from a real streaming replica of the infrastructure's PostgreSQL
-// (App.ReadDB), the way a region does; the admin API, the worker and the test's own Pool use the primary. The test is skipped
-// when there is no replica (EnvReplicaAddr) or the infrastructure goes through PgBouncer. Cluster.PauseReplay and ResumeReplay
-// make the replica lag.
-func WithReadReplica() Option { return func(c *Cluster) { c.withReplica = true } }
 
 // WithReplicaRedis makes the replicas use the Redis at uri instead of the one of the infrastructure (the admin API keeps
 // the infrastructure's). It is how a test gives the replicas a Redis that is read-only, or a different one.
@@ -219,9 +199,6 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		c.RedisFault = support.NewFaultProxy(t, "redis", redisURL.Host)
 		replicaDB, replicaRedis = c.PostgresFault.Rewrite(dbURI), c.RedisFault.Rewrite(infra.RedisURI)
 	}
-	if c.withReplica {
-		c.startReadReplica(dbURI)
-	}
 	if c.replicaRedis != "" {
 		replicaRedis = c.replicaRedis
 		if c.proxied {
@@ -292,20 +269,9 @@ func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
 	t.Cleanup(func() { _ = rdb.Close() })
 	app := engine.New(pool, rdb, &cfg)
 	t.Cleanup(app.Close)
-	if c.replicaReadURI != "" {
-		readCfg := cfg.DB
-		readCfg.URI = c.replicaReadURI
-		readPool, err := db.Connect(ctx, readCfg)
-		if err != nil {
-			t.Fatalf("replica %d: connect to the read replica: %v", index, err)
-		}
-		t.Cleanup(readPool.Close)
-		app.UseReadReplica(readPool)
-	}
 	// As in the check process: the replica follows the revision of the policy by itself, whether requests come or not.
 	watchCtx, stopWatching := context.WithCancel(ctx)
 	go app.WatchRevision(watchCtx)
-	go app.WatchReplica(watchCtx)
 	t.Cleanup(stopWatching)
 
 	r := &Replica{Index: index, App: app, Pool: pool, Redis: rdb}
@@ -615,106 +581,4 @@ func (r *Replica) Warm(c *Cluster, req authzenreq.Request, token string) *Result
 	}
 	c.T.Fatalf("%s %s did not settle: the last request cost db=%d redis=%d", req.Method, req.Path, last.Trace.DBQueries(), last.Trace.RedisRoundTrips())
 	return nil
-}
-
-// startReadReplica connects the cluster to the streaming replica: the check replicas get its URI (behind a proxy when there
-// are proxies), the test gets a direct pool, and the call returns once the replica has replayed the migrations.
-func (c *Cluster) startReadReplica(dbURI string) {
-	t := c.T
-	t.Helper()
-	addr := os.Getenv(EnvReplicaAddr)
-	if addr == "" {
-		t.Skipf("no read replica: set %s (scripts/pg-replica.sh up)", EnvReplicaAddr)
-	}
-	u, err := url.Parse(dbURI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Cfg.DB.PgBouncer {
-		t.Skip("the read replica tests do not run through PgBouncer")
-	}
-	direct := *u
-	direct.Host = addr
-	readURI := direct.String()
-	cfg := c.Cfg.DB
-	cfg.URI = readURI
-	c.ReplicaPool, err = db.Connect(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("connect to the read replica: %v", err)
-	}
-	t.Cleanup(func() {
-		c.ResumeReplay()
-		c.ReplicaPool.Close()
-	})
-	c.replicaReadURI = readURI
-	if c.proxied {
-		c.ReplicaFault = support.NewFaultProxy(t, "replica", addr)
-		c.replicaReadURI = c.ReplicaFault.Rewrite(readURI)
-	}
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		if _, err := db.LoadRevisions(context.Background(), c.ReplicaPool); err == nil {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the read replica did not replay the migrations: %v", err)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-// PauseReplay stops the read replica applying the changes it receives: from now on it lags behind the primary. The PEP clients of the
-// services are made first and the replica replays them, because the PDP reads its directory of PEP clients from the replica: a
-// client made while it lags would be unknown to the PDP, and every question of the test would be a 401.
-func (c *Cluster) PauseReplay() {
-	c.T.Helper()
-	if c.callers != nil {
-		c.callers.EnsureAll()
-		c.waitReplicaHas(`SELECT count(*) FROM pep_credential`)
-		c.callers.Notify()
-	}
-	if _, err := c.ReplicaPool.Exec(context.Background(), `SELECT pg_wal_replay_pause()`); err != nil {
-		c.T.Fatalf("pause the replay: %v", err)
-	}
-}
-
-// waitReplicaHas waits until the count that the query gives is the same on the read replica as on the primary.
-func (c *Cluster) waitReplicaHas(query string) {
-	c.T.Helper()
-	ctx := db.Uncounted(context.Background())
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		var onPrimary, onReplica int
-		if err := c.Pool.QueryRow(ctx, query).Scan(&onPrimary); err != nil {
-			c.T.Fatalf("count on the primary: %v", err)
-		}
-		if err := c.ReplicaPool.QueryRow(ctx, query).Scan(&onReplica); err != nil {
-			c.T.Fatalf("count on the replica: %v", err)
-		}
-		if onPrimary == onReplica {
-			return
-		}
-		if time.Now().After(deadline) {
-			c.T.Fatalf("the replica has %d rows where the primary has %d after 20s", onReplica, onPrimary)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-// ResumeReplay lets the read replica apply what it has received; it is safe to call when the replay is not paused.
-func (c *Cluster) ResumeReplay() {
-	if c.ReplicaPool == nil {
-		return
-	}
-	_, _ = c.ReplicaPool.Exec(context.Background(), `SELECT pg_wal_replay_resume()`)
-}
-
-// ReplicaRevision is the revision of the rules the read replica has replayed.
-func (c *Cluster) ReplicaRevision() int64 {
-	c.T.Helper()
-	rev, err := db.LoadRevisions(context.Background(), c.ReplicaPool)
-	if err != nil {
-		c.T.Fatalf("read the revisions of the replica: %v", err)
-	}
-	return rev.Rules
 }

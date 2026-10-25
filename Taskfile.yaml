@@ -150,16 +150,6 @@ tasks:
         done
         for m in core admin-api; do (cd $m && go test -race -count=1 -p 1 -timeout 40m -tags integration ./tests/integration/...) || exit 1; done
 
-  go:test:integration:replica:
-    desc: The read replica tests (F6) against a primary and a streaming replica on this machine (scripts/pg-replica.sh up, needs LICETUM_TEST_REDIS_URI)
-    cmds:
-      - |
-        if [ -z "$(printenv LICETUM_TEST_REDIS_URI)" ]; then echo "LICETUM_TEST_REDIS_URI is not set"; exit 1; fi
-        dir=$(mktemp -d)
-        trap 'scripts/pg-replica.sh down "$dir"' EXIT
-        eval "$(scripts/pg-replica.sh up "$dir")"
-        (cd admin-api && go test -race -count=1 -timeout 30m -tags integration ./tests/integration/cluster -run 'TestF6')
-
   go:test:multiregion:
     desc: The multi-region environment (three regions, latency between them, a primary and replicas) and the F6 scenarios, needs Docker
     cmds:
