@@ -13,8 +13,6 @@ import (
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 )
 
-const hotTimeout = 50 * time.Millisecond
-
 // everyone adds a rule that gives the users u0, u1, ... read on every branch, and returns their tokens.
 func everyone(t *testing.T, c *harness.Cluster, p *harness.Policy, users int) []string {
 	t.Helper()

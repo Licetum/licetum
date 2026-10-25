@@ -84,7 +84,7 @@ go run ./cmd/licetum pdp               # the PDP (AuthZEN, permission endpoints)
 go run ./cmd/licetum worker            # synchronization worker (jobs that fetch the resource sources), metrics on :8002
 go vet ./... && go test -race ./...                    # unit tests
 go test -race -tags integration ./...                  # integration tests via Testcontainers (set DOCKER_HOST for non-default contexts;
-                                                       # LICETUM_TEST_POSTGRES_URI / LICETUM_TEST_REDIS_URI use running servers instead)
+                                                       # LICETUM_TEST_POSTGRES_URI uses a running server instead)
 task backend:coverage                                  # coverage reports in backend/reports/
 ```
 Lint: `golangci-lint run` (config `backend/.golangci.yml`: gofmt/goimports, staticcheck, gosec,
@@ -182,7 +182,7 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
 
 Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` is counted
 (`licetum_db_*` metrics, `engine.Trace.DBQueries()` for tests; `engine.New(pool, cfg)` takes no Redis client, no process connects to Redis and none demands `REDIS__URI`: `cli.LoadConfig` asks for `DB__URI` only; `admin-api/tests/integration/api/process_test.go` starts `licetum pdp`, `licetum worker` and `licetum-admin admin` without any `REDIS__*` and waits for `/readyz`);
-`harness.StartReplicas` builds several PDP replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`). The tests build
+`harness.StartReplicas` builds several PDP replicas on one PostgreSQL (`WithConfig`, `WithFaultProxies`; the test infrastructure starts no Redis and knows no `LICETUM_TEST_REDIS_URI`). The tests build
 their AuthZEN requests with `core/testsupport/authzenreq`: `Replica.Permission` sends the resource search for branches
 (`harness.Branches`) for at least the revision of the last admin write (`Cluster.LastRevision`), and `Replica.Fresh` sends it with the
 test lever `harness.Higher()` (the `X-Test-Consistency` header, not a query parameter). `admin-api/tests/oldendpoints_test.go` counts

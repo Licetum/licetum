@@ -2,9 +2,7 @@
 
 package api_test
 
-// Integration test against real PostgreSQL and Redis. Run it with:
-//
-// The integration package owns disposable PostgreSQL and Redis containers. Run it with
+// Integration test against a real PostgreSQL. The integration package owns a disposable PostgreSQL container. Run it with
 // `go test -tags integration ./tests/integration/api` while Docker is available.
 
 import (
@@ -488,7 +486,7 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 		{"id":"p1","name":"Plano1","access":["write"]},
 		{"id":"p3","name":"Plano3","access":["write"]}]}`)
 
-	// Changing a rule invalidates the permission cache immediately (version in Redis).
+	// Changing a rule invalidates the permission cache immediately (the revision in PostgreSQL).
 	e.must("PATCH", "/assignment_rule/"+directRule,
 		map[string]any{"type_resource_id": division, "resource_id": "d2", "access": []string{"read", "write"}, "subject": "alice"})
 	expectJSON(t, "alice@filials after patch", permissions("filials", alice, "division", "branch"), `{

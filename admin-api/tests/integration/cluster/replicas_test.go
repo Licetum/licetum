@@ -11,8 +11,8 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// startReplicas is the entry point of the tests of this package: n check API replicas on the shared PostgreSQL and
-// Redis (see harness.StartReplicas).
+// startReplicas is the entry point of the tests of this package: n check API replicas on the shared PostgreSQL (see
+// harness.StartReplicas).
 func startReplicas(t *testing.T, n int, opts ...harness.Option) *harness.Cluster {
 	t.Helper()
 	return harness.StartReplicas(t, infra, n, opts...)

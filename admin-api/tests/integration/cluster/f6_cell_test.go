@@ -2,7 +2,7 @@
 
 package cluster_test
 
-// F6-10: a cell has its own PostgreSQL and Redis and no network path to another cell. The network policy of the chart enforces that
+// F6-10: a cell has its own PostgreSQL and no network path to another cell. The network policy of the chart enforces that
 // in the cluster (deploy/helm/test.sh checks what it allows); this test checks the processes themselves: while a cell works (checks,
 // writes, synchronizations) the sockets of the process go only to the endpoints of the cell, and nothing connects to the
 // addresses of a "neighbouring cell" that are listening here to catch it.
@@ -25,7 +25,7 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// decoy listens where a neighbouring cell's PostgreSQL or Redis would, and counts who knocks.
+// decoy listens where a neighbouring cell's PostgreSQL would, and counts who knocks.
 type decoy struct {
 	ln       net.Listener
 	attempts atomic.Int64
@@ -136,11 +136,11 @@ func TestF6_10_ACellOpensNoConnectionOutsideItself(t *testing.T) {
 	}
 	c := startReplicas(t, 2)
 	p := c.SeedPolicy("org")
-	otherPG, otherRedis := newDecoy(t), newDecoy(t)
+	otherPG := newDecoy(t)
 
-	// What the cell may talk to: its PostgreSQL and Redis, the identity provider, the source, and its own servers.
+	// What the cell may talk to: its PostgreSQL, the identity provider, the source, and its own servers.
 	allowed := map[int]bool{
-		portOf(t, infra.DBURI): true, portOf(t, infra.RedisURI): true,
+		portOf(t, infra.DBURI): true,
 		portOf(t, c.IdP.URL()): true, portOf(t, c.Source.URL()): true, portOf(t, c.AdminServer.URL): true,
 	}
 	for _, r := range c.Replicas {
@@ -150,10 +150,8 @@ func TestF6_10_ACellOpensNoConnectionOutsideItself(t *testing.T) {
 	if addr := os.Getenv(support.EnvPgBouncerAddr); addr != "" {
 		allowed[portOf(t, "tcp://"+addr)] = true
 	}
-	for _, port := range []int{otherPG.port(), otherRedis.port()} {
-		if allowed[port] {
-			t.Fatalf("port %d is both allowed and a decoy", port)
-		}
+	if port := otherPG.port(); allowed[port] {
+		t.Fatalf("port %d is both allowed and a decoy", port)
 	}
 
 	seen := map[int]bool{}
@@ -207,7 +205,7 @@ func TestF6_10_ACellOpensNoConnectionOutsideItself(t *testing.T) {
 	if len(outside) > 0 {
 		t.Errorf("connections to ports outside the cell: %v", outside)
 	}
-	if n := otherPG.attempts.Load() + otherRedis.attempts.Load(); n != 0 {
+	if n := otherPG.attempts.Load(); n != 0 {
 		t.Errorf("%d connections to the neighbouring cell", n)
 	}
 }

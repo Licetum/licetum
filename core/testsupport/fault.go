@@ -14,7 +14,7 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// Link is a Toxiproxy proxy in front of a TCP service (PostgreSQL or Redis): the code under test connects to the proxy,
+// Link is a Toxiproxy proxy in front of a TCP service (PostgreSQL): the code under test connects to the proxy,
 // and the test (or the load test) makes the link slow, cuts it, or swallows the traffic. The Toxiproxy server runs
 // inside the process (the same server as the toxiproxy-server binary, driven through its HTTP API), so no image is
 // needed. Tests use FaultProxy, which fails the test on an error.
@@ -57,7 +57,7 @@ func (l *Link) Close() {
 // Addr is the address of the proxy (host:port): connect here instead of the upstream.
 func (l *Link) Addr() string { return l.listen }
 
-// Rewrite returns uri (postgres://… or redis://…) with the host and the port of the proxy in place of its own.
+// Rewrite returns uri (postgres://…) with the host and the port of the proxy in place of its own.
 func (l *Link) Rewrite(uri string) (string, error) {
 	u, err := url.Parse(uri)
 	if err != nil {

@@ -212,7 +212,7 @@ func errorCodeOf(body []byte) string {
 // POLICY__MAX_STALENESS, then fails closed with 503 policy_unavailable, and recovers by itself when PostgreSQL is back.
 func TestF5_6_PostgreSQLGoneTheReplicaAnswersFromItsCopyThenFailsClosed(t *testing.T) {
 	const staleness = 5 * time.Second
-	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout),
+	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(),
 		harness.WithConfig(func(cfg *config.Config) { cfg.Policy.MaxStaleness = staleness }))
 	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
@@ -303,7 +303,7 @@ func TestF5_6_PostgreSQLGoneTheReplicaAnswersFromItsCopyThenFailsClosed(t *testi
 
 // F5-6: without a limit (the default) the replica answers from its copy for as long as PostgreSQL is gone.
 func TestF5_6_WithoutALimitTheReplicaKeepsAnsweringFromItsCopy(t *testing.T) {
-	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout))
+	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies())
 	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
@@ -349,7 +349,7 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 		probe    = 250 * time.Millisecond
 	)
 	rps := 600 / loadDivisor
-	c := harness.StartReplicas(t, infra, replicas, harness.WithHotRedis(hotTimeout))
+	c := harness.StartReplicas(t, infra, replicas)
 	p := c.SeedPolicy("org")
 	tokens := everyone(t, c, p, 30)
 	for _, r := range c.Replicas {

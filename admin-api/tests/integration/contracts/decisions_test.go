@@ -111,7 +111,7 @@ type caseAnswers struct {
 }
 
 // answered keeps the answers of the fixtures loaded so far, by fixture name: a fixture that checks several contracts is
-// loaded and asked once. The tests of the package do not run in parallel (the clusters share one Redis).
+// loaded and asked once. The tests of the package do not run in parallel (the clusters share one PostgreSQL).
 var (
 	answeredMu sync.Mutex
 	answered   = map[string][]caseAnswers{}

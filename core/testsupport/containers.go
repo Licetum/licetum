@@ -11,39 +11,30 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	rediscontainer "github.com/testcontainers/testcontainers-go/modules/redis"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/licetum/licetum/core/db"
 )
 
 // Environment variables that point the tests at servers which are already running instead of starting
-// containers (for hosts where Docker cannot create networks, or to reuse a local PostgreSQL/Redis).
+// containers (for hosts where Docker cannot create networks, or to reuse a local PostgreSQL).
 // Every Start then creates its own database on the PostgreSQL server and Terminate drops it.
 const (
 	EnvPostgresURI = "LICETUM_TEST_POSTGRES_URI" // administrative connection string, e.g. postgres://user:pass@localhost:5432/postgres
-	EnvRedisURI    = "LICETUM_TEST_REDIS_URI"    // e.g. redis://localhost:6379/0
-	// EnvSpareRedisURI names a second running Redis that a test may break (make it read-only, stop it): the tests that
-	// need one start a container without it.
-	EnvSpareRedisURI = "LICETUM_TEST_REDIS_SPARE_URI"
 	// EnvPgBouncerAddr is the address (host:port) of a PgBouncer in transaction mode in front of the PostgreSQL of
 	// EnvPostgresURI. With it the tests connect through the pooler, as DB__PGBOUNCER says (see Infrastructure.Isolate).
 	EnvPgBouncerAddr = "LICETUM_TEST_PGBOUNCER_ADDR"
 )
 
-// Infrastructure is the disposable PostgreSQL/Redis environment used by integration tests.
+// Infrastructure is the disposable PostgreSQL environment used by integration tests.
 // Each test package owns one instance; individual scenarios isolate their database state with a
-// PostgreSQL schema and clear the dedicated Redis database before creating the application.
+// PostgreSQL schema (Isolate).
 type Infrastructure struct {
 	Postgres *postgres.PostgresContainer
-	Redis    *rediscontainer.RedisContainer
 	DBURI    string
-	RedisURI string
 
-	// external is set when the tests run against servers named by EnvPostgresURI and EnvRedisURI.
+	// external is set when the tests run against the server named by EnvPostgresURI.
 	external *externalDatabase
 }
 
@@ -59,7 +50,7 @@ func Start(ctx context.Context) (*Infrastructure, error) {
 // (the statistics extension). They do not apply to the servers named by EnvPostgresURI, which are configured already.
 func StartWith(ctx context.Context, postgresOptions ...testcontainers.ContainerCustomizer) (*Infrastructure, error) {
 	if adminURI := os.Getenv(EnvPostgresURI); adminURI != "" {
-		return startExternal(ctx, adminURI, os.Getenv(EnvRedisURI))
+		return startExternal(ctx, adminURI)
 	}
 
 	options := append([]testcontainers.ContainerCustomizer{
@@ -78,80 +69,11 @@ func StartWith(ctx context.Context, postgresOptions ...testcontainers.ContainerC
 		return nil, fmt.Errorf("get postgres connection string: %w", err)
 	}
 
-	redisContainer, err := rediscontainer.Run(
-		ctx,
-		"redis:7-alpine",
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		_ = testcontainers.TerminateContainer(postgresContainer)
-		return nil, fmt.Errorf("start redis container: %w", err)
-	}
-	redisURI, err := redisContainer.ConnectionString(ctx)
-	if err != nil {
-		_ = testcontainers.TerminateContainer(redisContainer)
-		_ = testcontainers.TerminateContainer(postgresContainer)
-		return nil, fmt.Errorf("get redis connection string: %w", err)
-	}
-	return &Infrastructure{Postgres: postgresContainer, Redis: redisContainer, DBURI: dbURI, RedisURI: redisURI}, nil
-}
-
-// StartRedis starts only a Redis, for the tests that need no PostgreSQL: the server named by EnvRedisURI, or a container.
-// The returned stop function ends the container (it does nothing for a server that was already running).
-func StartRedis(ctx context.Context) (uri string, stop func(), err error) {
-	if uri = os.Getenv(EnvRedisURI); uri != "" {
-		return uri, func() {}, nil
-	}
-	container, err := rediscontainer.Run(
-		ctx,
-		"redis:7-alpine",
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		return "", nil, fmt.Errorf("start redis container: %w", err)
-	}
-	uri, err = container.ConnectionString(ctx)
-	if err != nil {
-		_ = testcontainers.TerminateContainer(container)
-		return "", nil, fmt.Errorf("get redis connection string: %w", err)
-	}
-	return uri, func() { _ = testcontainers.TerminateContainer(container) }, nil
-}
-
-// StartSpareRedis starts a Redis of its own for a test that is going to break it: the server named by EnvSpareRedisURI,
-// or a container. The returned stop function ends the container; a server that was already running is only made
-// writable again (REPLICAOF NO ONE) and emptied.
-func StartSpareRedis(ctx context.Context) (uri string, stop func(), err error) {
-	if uri = os.Getenv(EnvSpareRedisURI); uri == "" {
-		container, err := rediscontainer.Run(
-			ctx,
-			"redis:7-alpine",
-			testcontainers.WithWaitStrategy(wait.ForListeningPort("6379/tcp").WithStartupTimeout(30*time.Second)),
-		)
-		if err != nil {
-			return "", nil, fmt.Errorf("start redis container: %w", err)
-		}
-		uri, err = container.ConnectionString(ctx)
-		if err != nil {
-			_ = testcontainers.TerminateContainer(container)
-			return "", nil, fmt.Errorf("get redis connection string: %w", err)
-		}
-		return uri, func() { _ = testcontainers.TerminateContainer(container) }, nil
-	}
-	return uri, func() {
-		opts, err := redis.ParseURL(uri)
-		if err != nil {
-			return
-		}
-		client := redis.NewClient(opts)
-		defer client.Close()
-		_ = client.Do(context.Background(), "REPLICAOF", "NO", "ONE").Err()
-		_ = client.FlushAll(context.Background()).Err()
-	}, nil
+	return &Infrastructure{Postgres: postgresContainer, DBURI: dbURI}, nil
 }
 
 // startExternal creates a fresh database on the given PostgreSQL server.
-func startExternal(ctx context.Context, adminURI, redisURI string) (*Infrastructure, error) {
+func startExternal(ctx context.Context, adminURI string) (*Infrastructure, error) {
 	name := "licetum_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	conn, err := pgx.Connect(ctx, adminURI)
 	if err != nil {
@@ -169,7 +91,6 @@ func startExternal(ctx context.Context, adminURI, redisURI string) (*Infrastruct
 	u.Path = "/" + name
 	return &Infrastructure{
 		DBURI:    u.String(),
-		RedisURI: redisURI,
 		external: &externalDatabase{adminURI: adminURI, name: name},
 	}, nil
 }
@@ -185,9 +106,6 @@ func (i *Infrastructure) Terminate(ctx context.Context) error {
 		}
 		defer conn.Close(ctx)
 		_, err = conn.Exec(ctx, "DROP DATABASE IF EXISTS "+i.external.name+" WITH (FORCE)")
-		return err
-	}
-	if err := testcontainers.TerminateContainer(i.Redis); err != nil {
 		return err
 	}
 	return testcontainers.TerminateContainer(i.Postgres)

@@ -133,7 +133,7 @@ tasks:
       - for m in core admin-api; do (cd $m && go test -race -count=1 ./...) || exit 1; done
 
   go:test:integration:
-    desc: Integration tests with disposable PostgreSQL and Redis containers, both modules
+    desc: Integration tests with a disposable PostgreSQL container, both modules
     cmds:
       - |
         if [ -z "${DOCKER_HOST:-}" ]; then
@@ -142,10 +142,10 @@ tasks:
         for m in core admin-api; do (cd $m && go test -race -count=1 -timeout 30m -tags integration ./tests/integration/...) || exit 1; done
 
   go:test:integration:pgbouncer:
-    desc: The integration tests through PgBouncer in transaction mode (needs LICETUM_TEST_POSTGRES_URI, LICETUM_TEST_REDIS_URI and LICETUM_TEST_PGBOUNCER_ADDR, see admin-api/tests/integration/README.md)
+    desc: The integration tests through PgBouncer in transaction mode (needs LICETUM_TEST_POSTGRES_URI and LICETUM_TEST_PGBOUNCER_ADDR, see admin-api/tests/integration/README.md)
     cmds:
       - |
-        for v in LICETUM_TEST_POSTGRES_URI LICETUM_TEST_REDIS_URI LICETUM_TEST_PGBOUNCER_ADDR; do
+        for v in LICETUM_TEST_POSTGRES_URI LICETUM_TEST_PGBOUNCER_ADDR; do
           if [ -z "$(printenv $v)" ]; then echo "$v is not set: see admin-api/tests/integration/README.md"; exit 1; fi
         done
         for m in core admin-api; do (cd $m && go test -race -count=1 -p 1 -timeout 40m -tags integration ./tests/integration/...) || exit 1; done
@@ -158,7 +158,7 @@ tasks:
       - cd admin-api/tests/multiregion && go test -count=1 -timeout 60m -tags multiregion -v .
 
   go:test:decp:
-    desc: The decision property test (DECP) over the seeds of LICETUM_DECP_SEEDS (one, or first-last; 1-20 when unset), needs Docker or LICETUM_TEST_POSTGRES_URI / LICETUM_TEST_REDIS_URI
+    desc: The decision property test (DECP) over the seeds of LICETUM_DECP_SEEDS (one, or first-last; 1-20 when unset), needs Docker or LICETUM_TEST_POSTGRES_URI
     cmds:
       - |
         if [ -z "${DOCKER_HOST:-}" ] && [ -z "${LICETUM_TEST_POSTGRES_URI:-}" ]; then
@@ -167,7 +167,7 @@ tasks:
         cd admin-api && go test -count=1 -timeout 80m -tags integration -run 'TestContract_DECP' ./tests/integration/contracts/
 
   go:test:chaos:
-    desc: Fault injection tests with PostgreSQL and Redis behind Toxiproxy (latency, cut, black hole, read-only Redis), needs Docker
+    desc: Fault injection tests with PostgreSQL behind Toxiproxy (latency, cut, black hole), needs Docker
     cmds:
       - |
         if [ -z "${DOCKER_HOST:-}" ]; then

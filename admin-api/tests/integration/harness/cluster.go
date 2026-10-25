@@ -1,9 +1,9 @@
 // Package harness builds the multi-replica environments of the integration tests (tier M of the production-load
-// plan): several check API replicas, each with its own database pool and Redis client, on one shared PostgreSQL and
-// one shared Redis, together with an admin API to set the policy up, a fake identity provider and a fake source of
+// plan): several check API replicas, each with its own database pool, on one shared PostgreSQL, together with an
+// admin API to set the policy up, a fake identity provider and a fake source of
 // resources. The call counters of the fakes and the per-request counters of the replicas (engine.Trace) are what the
-// tests assert against; with WithFaultProxies the replicas reach PostgreSQL and Redis through Toxiproxy, so a test can
-// slow, cut or black-hole either of them.
+// tests assert against; with WithFaultProxies the replicas reach PostgreSQL through Toxiproxy, so a test can
+// slow, cut or black-hole it.
 package harness
 
 import (
@@ -24,7 +24,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/licetum/licetum/admin-api/api"
 	"github.com/licetum/licetum/admin-api/service"
@@ -32,7 +31,6 @@ import (
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
-	"github.com/licetum/licetum/core/redisx"
 	"github.com/licetum/licetum/core/server"
 	support "github.com/licetum/licetum/core/testsupport"
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
@@ -47,32 +45,29 @@ type Cluster struct {
 	Infra  *support.Infrastructure
 	IdP    *support.IdP
 	Source *support.Source
-	// Cfg is the configuration of the admin API (it reaches PostgreSQL and Redis directly).
+	// Cfg is the configuration of the admin API (it reaches PostgreSQL directly).
 	Cfg *config.Config
-	// Pool and Redis are the test's own direct connections, for fixtures and for looking at the state.
-	Pool  *pgxpool.Pool
-	Redis *redis.Client
+	// Pool is the test's own direct connection, for fixtures and for looking at the state.
+	Pool *pgxpool.Pool
 	// Admin is the admin API in process (AdminServer serves it); Replicas are the check API replicas.
 	Admin       *service.App
 	AdminServer *httptest.Server
 	AdminToken  string
 	Replicas    []*Replica
-	// PostgresFault and RedisFault are the proxies the replicas connect through (nil without WithFaultProxies).
-	PostgresFault, RedisFault *support.FaultProxy
+	// PostgresFault is the proxy the replicas connect through (nil without WithFaultProxies).
+	PostgresFault *support.FaultProxy
 
 	// LastRevision is the revision (X-Authz-Revision) of the last write made through AdminDo or Must. The replicas
 	// follow the revision with a delay of up to REVISION__POLL_INTERVAL; Replica.Permission asks for at least this one, so
 	// that it sees the writes of the test, as a client that passes at_least_as_fresh does (authzenreq.AtLeast).
 	LastRevision atomic.Int64
 
-	proxied      bool
-	replicaRedis string
-	// replicaDBURI and replicaRedisURI are what the replicas connect to (behind the proxies when there are any): AddReplica
-	// starts another one the same way.
-	replicaDBURI, replicaRedisURI string
-	hotRedis                      time.Duration
-	client                        *http.Client
-	configure                     []func(*config.Config)
+	proxied bool
+	// replicaDBURI is what the replicas connect to (behind the proxy when there is one): AddReplica starts another one
+	// the same way.
+	replicaDBURI string
+	client       *http.Client
+	configure    []func(*config.Config)
 	// callers makes the questions of the tests the questions of a PEP client (see send).
 	callers *support.PEPCallers
 }
@@ -93,25 +88,17 @@ type Replica struct {
 // Option changes how StartReplicas builds the cluster.
 type Option func(*Cluster)
 
-// WithFaultProxies makes the replicas reach PostgreSQL and Redis through Toxiproxy (Cluster.PostgresFault and
-// Cluster.RedisFault). The admin API and the test's own connections stay direct.
+// WithFaultProxies makes the replicas reach PostgreSQL through Toxiproxy (Cluster.PostgresFault). The admin API and
+// the test's own connections stay direct.
 func WithFaultProxies() Option { return func(c *Cluster) { c.proxied = true } }
-
-// WithReplicaRedis makes the replicas use the Redis at uri instead of the one of the infrastructure (the admin API keeps
-// the infrastructure's). It is how a test gives the replicas a Redis that is read-only, or a different one.
-func WithReplicaRedis(uri string) Option { return func(c *Cluster) { c.replicaRedis = uri } }
 
 // WithConfig changes the configuration of the cluster (the admin API and the replicas) before they start.
 func WithConfig(f func(*config.Config)) Option {
 	return func(c *Cluster) { c.configure = append(c.configure, f) }
 }
 
-// WithHotRedis gives the replicas the Redis client of the check API in production: commands time out after timeout, are
-// not retried, and Redis is skipped for a while after a few failures in a row (redisx.Options).
-func WithHotRedis(timeout time.Duration) Option { return func(c *Cluster) { c.hotRedis = timeout } }
-
-// StartReplicas starts n check API replicas on the PostgreSQL and Redis of infra, with an admin API next to them.
-// Each call gets its own database schema and clears Redis, so the tests of a package must not run in parallel.
+// StartReplicas starts n check API replicas on the PostgreSQL of infra, with an admin API next to them.
+// Each call gets its own database schema.
 func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...Option) *Cluster {
 	t.Helper()
 	ctx := context.Background()
@@ -158,16 +145,8 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 			r.App.AfterPEPWrite()
 		}
 	})
-	c.Redis, err = redisx.Connect(ctx, infra.RedisURI)
-	if err != nil {
-		t.Fatalf("connect to Redis: %v", err)
-	}
-	t.Cleanup(func() { _ = c.Redis.Close() })
-	if err := c.Redis.FlushDB(ctx).Err(); err != nil {
-		t.Fatalf("flush Redis: %v", err)
-	}
 
-	// The admin API writes through its own App; it reaches both servers directly.
+	// The admin API writes through its own App; it reaches PostgreSQL directly.
 	adminPool, err := db.Connect(ctx, c.Cfg.DB)
 	if err != nil {
 		t.Fatal(err)
@@ -179,27 +158,16 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	c.AdminServer = serve(t, api.NewAdminHandler(c.Admin))
 	c.AdminToken = c.IdP.SignToken(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"}, support.Audience(AdminAudience))
 
-	replicaDB, replicaRedis := c.Cfg.DB.URI, infra.RedisURI
+	replicaDB := c.Cfg.DB.URI
 	if c.proxied {
 		pgURL, err := url.Parse(dbURI)
 		if err != nil {
 			t.Fatal(err)
 		}
-		redisURL, err := url.Parse(infra.RedisURI)
-		if err != nil {
-			t.Fatal(err)
-		}
 		c.PostgresFault = support.NewFaultProxy(t, "postgres", pgURL.Host)
-		c.RedisFault = support.NewFaultProxy(t, "redis", redisURL.Host)
-		replicaDB, replicaRedis = c.PostgresFault.Rewrite(dbURI), c.RedisFault.Rewrite(infra.RedisURI)
+		replicaDB = c.PostgresFault.Rewrite(dbURI)
 	}
-	if c.replicaRedis != "" {
-		replicaRedis = c.replicaRedis
-		if c.proxied {
-			t.Fatal("WithReplicaRedis and WithFaultProxies cannot be combined: the proxy would not be in front of the replicas' Redis")
-		}
-	}
-	c.replicaDBURI, c.replicaRedisURI = replicaDB, replicaRedis
+	c.replicaDBURI = replicaDB
 	for i := 0; i < n; i++ {
 		c.Replicas = append(c.Replicas, c.startReplica(i, replicaDB))
 	}

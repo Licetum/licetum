@@ -339,7 +339,7 @@ func (l *Loaded) addSynchronizer(typ *policyfix.Type, rows []map[string]any) {
 	}
 	path := "/service/" + l.services[typ.Service].String() + "/type_resource/" + l.types[typ.Name].String() + "/resource/synchronizer"
 	created := l.Cluster.Must(http.MethodPost, path, map[string]any{
-		// No list is kept in Redis: a synchronization always reads what the source has now.
+		// No list is kept between synchronizations: a synchronization always reads what the source has now.
 		"config":            map[string]any{"kind": "http", "url": l.Cluster.Source.ListURL(kind)},
 		"probe_resource_id": probe,
 	})

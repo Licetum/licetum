@@ -17,7 +17,7 @@ import (
 // The PEP directory is what the check API authenticates a PEP with: the verifiers of the identity providers, the enabled clients
 // of each service and the credentials of the API keys. The process keeps it per revision of the pep scope. The revision comes from
 // the view of the process (see cacheState), which the requests and WatchRevision renew like the policy revisions, so a warm request
-// touches neither PostgreSQL nor Redis. The directory is loaded again only when that revision moved, once for the requests that wait.
+// touches no database. The directory is loaded again only when that revision moved, once for the requests that wait.
 
 // pepLoadTimeout bounds the load of the directory (one statement).
 const pepLoadTimeout = 10 * time.Second

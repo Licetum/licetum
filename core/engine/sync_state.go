@@ -19,7 +19,7 @@ import (
 
 // The state of the synchronization of a type (when it was applied, what it was applied with, when it is due again)
 // lives in the sync_state table, in step with the data it describes: the worker writes both in one transaction. A
-// Redis flush or a failover loses nothing and starts no synchronization.
+// failover loses nothing and starts no synchronization.
 
 // Role is what a process does with the synchronization. Only a worker applies it; the PDP and the admin processes ask
 // for it (see Ensure) and read what the worker wrote.

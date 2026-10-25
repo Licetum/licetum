@@ -32,7 +32,7 @@ func TestF2_7_ARevisionBumpUnderHotKeysDoesNotExhaustThePool(t *testing.T) {
 	for i := range tokens {
 		tokens[i] = c.UserToken(fmt.Sprintf("u%d", i))
 	}
-	// Every key is hot: its answer is in memory and in Redis.
+	// Every key is hot: its answer is in memory.
 	var warm sync.WaitGroup
 	next := make(chan string)
 	for range 8 {

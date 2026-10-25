@@ -1,13 +1,13 @@
 # Integration, multi-replica and fault injection tests
 
-Tests that need PostgreSQL and Redis. They start disposable containers (Testcontainers; Docker is needed), or use running
-servers named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI`.
+Tests that need PostgreSQL. They start a disposable container (Testcontainers; Docker is needed), or use the running
+server named by `LICETUM_TEST_POSTGRES_URI`.
 
 | directory | build tag | tier | what |
 |---|---|---|---|
 | `api/` | `integration` | I | the admin API and the PDP against real servers |
-| `cluster/` | `integration` | M | several PDP replicas on one PostgreSQL and one Redis; request cost counters; the fakes |
-| `chaos/` | `chaos` | C | Toxiproxy in front of PostgreSQL and Redis: latency, cut, black hole, a read-only Redis |
+| `cluster/` | `integration` | M | several PDP replicas on one PostgreSQL; request cost counters; the fakes |
+| `chaos/` | `chaos` | C | Toxiproxy in front of PostgreSQL: latency, cut, black hole |
 | `contracts/` | `integration` | I | the engine runner of the decision contracts (DEC* in `contracts.yaml`) and their tests |
 | `harness/` | none | | the helpers the packages above share (not tests) |
 
@@ -51,9 +51,9 @@ asked resources (`CoversOf`), the searches every resource (`coverNodes`): the cr
 ## The harness
 
 `harness.StartReplicas(t, infra, n, opts...)` builds a `Cluster`: `n` PDP replicas, each with **its own** `engine.App`,
-database pool, Redis client and HTTP server, on one shared PostgreSQL schema and one shared Redis (which is flushed), next to an
+database pool and HTTP server, on one shared PostgreSQL schema, next to an
 admin API that sets the policy up, a fake identity provider (`support.IdP`) and a fake source of resources (`support.Source`).
-Tests of a package run one after another: they share the Redis.
+Tests of a package run one after another: they share the PostgreSQL server.
 
 Each replica has two listeners, as the PDP does: the public one (`Replica.Server`, the AuthZEN and legacy routes, and nothing else)
 and the ops one (`Replica.Ops`, `/healthz`, `/readyz` and `/metrics`). `Replica.Do` and `Replica.Metrics` send each path to the
@@ -81,10 +81,9 @@ c.Replicas[1].Warm(c, harness.Branches(p.Slug, alice), alice) // until the cost 
 - **Fakes.** `support.Source` counts the requests per type (`Calls`, `CallsTo`, `History`), can be delayed (`SetDelay`), made to
   fail (`SetStatus`), padded (`SetBodySize`) or held (`Hold`/`Release`, `WaitForCalls`, `InFlight`). `support.IdP` counts the
   requests for its JWKS (`JWKSRequests`), signs tokens (`Token`), rotates its key (`RotateKey`) and can fail (`SetJWKSStatus`).
-- **Faults.** `harness.WithFaultProxies()` puts a Toxiproxy proxy in front of PostgreSQL (`c.PostgresFault`) and Redis
-  (`c.RedisFault`) for the replicas: `Latency`, `Cut`, `BlackHole`, `Reset`. Toxiproxy runs inside the test process (the
-  toxiproxy server library, driven through its HTTP API), so no extra image is needed. `harness.WithReplicaRedis(uri)` points
-  the replicas at another Redis, for the read-only test (`REPLICAOF` to an address nobody serves).
+- **Faults.** `harness.WithFaultProxies()` puts a Toxiproxy proxy in front of PostgreSQL (`c.PostgresFault`) for the
+  replicas: `Latency`, `Cut`, `BlackHole`, `Reset`. Toxiproxy runs inside the test process (the toxiproxy server library,
+  driven through its HTTP API), so no extra image is needed.
 - **Levers.** The freshness of a request is `engine.WithConsistency` in the context of the process that serves it (no network
   input sets it; the PDP has no parameter for it). `harness.Levers(handler)` is the test-only
   wrapper that turns the header `X-Test-Consistency` (`higher` or `minimize_latency`) into it; it lives under `tests/`, so no
@@ -106,7 +105,7 @@ Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in
 
 The replicas follow the revision with a delay of up to `REVISION__POLL_INTERVAL`: `Replica.Permission` asks for at least the revision
 of the last write made through `AdminDo`/`Must`; send `harness.Branches` with `Replica.Send` for a plain request. Run the packages one at
-a time (`-p 1`) when they share one Redis (`LICETUM_TEST_REDIS_URI`).
+a time (`-p 1`) when they share one PostgreSQL server (`LICETUM_TEST_POSTGRES_URI`).
 
 ## The revision in PostgreSQL (F2)
 
@@ -141,7 +140,6 @@ brings them back; F2-11 (stage 2, scoped bumps) is a separate pull request.
 
 | test | what it proves |
 |---|---|
-| `core/tests/integration/redisx` `TestF5_12_*` | random sequences of failures, successes and time never leave the failure counter of the breaker without an expiry; a counter the previous release left without one is repaired; concurrent failures are all counted (`LICETUM_BREAKER_SEED` repeats a run) |
 | `core/tests/integration/db` `TestF5_10_*` | five `migrate` runs started together on an empty database apply each migration once and seed once (repeated over fresh schemas); `migrate` waits for the lock held by another run (deterministic); the schema version equals the latest embedded migration |
 | `cluster/f5_test.go` `TestF5_1_*` | `/readyz` is 503 with PostgreSQL cut or the schema older than the binary and 200 otherwise (also with a *newer* schema), `/healthz` stays 200, the result is reused for a second |
 | `TestF5_3_*`, `TestF5_8_*` | a draining replica is not ready, serves, and asks for `Connection: close`; above `HTTP__MAX_INFLIGHT` the rest get 503 with `Retry-After` while the probes and the metrics are answered; a request past `HTTP__REQUEST_TIMEOUT` is answered 503 `request_timeout` |

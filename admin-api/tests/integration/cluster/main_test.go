@@ -2,7 +2,7 @@
 
 package cluster_test
 
-// Tier M: several check API replicas on one PostgreSQL and one Redis. The tests are named after the acceptance
+// Tier M: several check API replicas on one PostgreSQL. The tests are named after the acceptance
 // criteria of the production-load plan (F0-1 ...), see the issue "F0: test infrastructure and baseline".
 
 import (
