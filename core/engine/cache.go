@@ -15,7 +15,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/licetum/licetum/core/db"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 // The answers of the permission and check APIs are kept in the memory of the process. An answer is current while the rules
@@ -292,11 +291,6 @@ func (a *App) keepAnswerInMemory(key string, entry any, now time.Time) {
 		keep = min(hold, maxStaleAnswerTTL)
 	}
 	a.answersL1.Add(key, entry, keep, now)
-}
-
-// redisDegraded: the process is running without Redis (see licetum_degraded).
-func (a *App) redisDegraded() bool {
-	return a.Redis != nil && redisx.Degraded(a.Redis) || a.health.redis.degraded()
 }
 
 func (e *cachedEntry[T]) expiry() int64 { return e.Exp }

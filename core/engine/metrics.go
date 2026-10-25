@@ -36,12 +36,10 @@ type metrics struct {
 	httpDuration      *prometheus.HistogramVec
 	dbQueries         *prometheus.CounterVec   // operation, result
 	dbQueryDuration   *prometheus.HistogramVec // operation
-	redisOps          *prometheus.CounterVec   // operation, commands, result
-	redisOpDuration   *prometheus.HistogramVec // operation
 	backgroundDropped prometheus.Counter
 	snapshotFallback  prometheus.Counter
 	revisionRegress   prometheus.Counter
-	l1Cache           *prometheus.CounterVec // cache: token | answer, result: hit | miss
+	l1Cache           *prometheus.CounterVec // cache: answer, result: hit | miss
 	jwksFetches       *prometheus.CounterVec // result: ok | error
 }
 
@@ -117,16 +115,6 @@ func newMetrics() *metrics {
 		Help:    "Time a PostgreSQL statement took, by the first SQL keyword.",
 		Buckets: prometheus.ExponentialBuckets(0.0002, 2, 16),
 	}, []string{"operation"})
-	m.redisOps = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "licetum_redis_ops_total",
-		Help: "Round trips to Redis by command (\"pipeline\" for a pipeline: one round trip), the number of commands it carried " +
-			"(commands) and result (ok | error).",
-	}, []string{"operation", "commands", "result"})
-	m.redisOpDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "licetum_redis_op_seconds",
-		Help:    "Time a round trip to Redis took, by command (\"pipeline\" for a pipeline).",
-		Buckets: prometheus.ExponentialBuckets(0.0002, 2, 16),
-	}, []string{"operation"})
 
 	m.backgroundDropped = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "licetum_background_dropped_total",
@@ -142,7 +130,7 @@ func newMetrics() *metrics {
 	})
 	m.l1Cache = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_l1_cache_total",
-		Help: "Lookups in the in-process caches in front of Redis, by cache (token | answer) and result (hit | miss).",
+		Help: "Lookups in the in-process answer cache, by cache (answer) and result (hit | miss).",
 	}, []string{"cache", "result"})
 	m.jwksFetches = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_jwks_fetch_total",
@@ -152,7 +140,7 @@ func newMetrics() *metrics {
 	for _, c := range []prometheus.Collector{
 		m.permissionCompute, m.permissionCache, m.checkCache, m.searchCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls,
 		m.backgroundDropped, m.snapshotFallback, m.revisionRegress, m.l1Cache, m.jwksFetches,
-		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
+		m.dbQueries, m.dbQueryDuration,
 		m.httpRequests, m.httpDuration,
 	} {
 		factory(c)

@@ -130,10 +130,9 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
     `GET /healthz` has no dependency; `GET /readyz` (`App.Ready`) is 200 when the process is
     not draining (`App.SetDraining`), PostgreSQL answers one statement within 1 s (`db.SchemaVersion`, result reused for 1 s, not counted in the
     metrics) with the schema **at least** `db.LatestMigration()` (a newer one is fine: the previous release stays ready during a rolling
-    update), and the view holds its snapshot (or the policy is deliberately not copied: `oversized`). Redis is not part of it. The worker has
-    `/readyz` too (database and schema only). `licetum_degraded{component}` (redis: `redisx.Degraded` = the FastFail is tripped, open or half-open,
-    or a recent failure; postgres: the view is unconfirmed for `staleLimit` or the statements fail) and `licetum_snapshot_age_seconds`
-    (age of `localView.readAt`).
+    update), and the view holds its snapshot (or the policy is deliberately not copied: `oversized`). The worker has
+    `/readyz` too (database and schema only). `licetum_degraded{component="postgres"}` (the only component: the view is unconfirmed for `staleLimit`
+    or the statements fail; `dependencyHealth` in `ready.go`) and `licetum_snapshot_age_seconds` (age of `localView.readAt`).
   - **Degraded PostgreSQL**: `readView` reads the revisions with a 1 s timeout (`revisionReadTimeout`; the snapshot build has its own 30 s),
     `currentView` serves an age-stale view degraded without joining a reading in progress (`viewState.reading`) while `degraded()` allows it
     (`POLICY__MAX_STALENESS`, 0 = no limit); beyond it the state is not ok, the queries fail and `server.LocalizeError` turns
@@ -155,8 +154,8 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
     session locker (`newProvider`, 1 s polling) and `SeedPlatform` runs under `pg_advisory_xact_lock(seedLockKey)`. `SYNC__DBOS_URI` gives
     DBOS a URI of its own (it prepares statements).
   - **Breaker**: a source that does not answer is held back by the backoff in `sync_state` (below), not by a breaker; the Redis breaker is gone.
-    `FastFail` does not gate the connection-setup commands (HELLO, ...) that run inside the probe. **Logs**: failures of a
-    dependency on the request path go through `logx.Repeated` (`logDependency`, `errKind`; `licetum_log_suppressed_total`): one record per kind per second.
+    **Logs**: failures of PostgreSQL on the request path go through `logx.Repeated` (`logDependency`, `errKind`: timeout, connection,
+    `postgres:<code>`, other; `licetum_log_suppressed_total`): one record per kind per second.
   - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_POSTGRES_OUTAGE` shortens the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
 - **One PostgreSQL** (the in-process routing of reads to a read replica, `DB__READ_URI` and `DB__MAX_REPLICA_LAG` / `DB__LAG_ACTION` / `DB__LAG_INTERVAL`, was removed in P2e-06; the four
@@ -181,13 +180,10 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   `kid` at most once per `AUTH__JWKS_MIN_REFRESH`; a set is trusted for `AUTH__JWKS_TTL`; transport failures are never cached.
 - `App.Background` runs on a fixed pool with a bounded queue and returns whether the work was accepted; a full queue drops it
   (`licetum_background_dropped_total`). Work that registers a marker (`refreshInBackground`) must clear it when dropped.
-- `redisx.ConnectWith(HotTimeout)` is how the PDP connects (`cli.Serve`, name `pdp`): read/write timeout, no retries, and a
-  `FastFail` hook that skips Redis for 5 s after 3 failures in a row (half-open probe afterwards). Skipped commands are not round trips
-  (`observer.ObserveRedis`).
 
-Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` and every
-Redis client given to `engine.New` is counted (`licetum_db_*`, `licetum_redis_*` metrics, `engine.Trace.DBQueries()/RedisRoundTrips()` for
-tests); `harness.StartReplicas` builds several PDP replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`). The tests build
+Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` is counted
+(`licetum_db_*` metrics, `engine.Trace.DBQueries()` for tests; the Redis client that `engine.New` still takes is not counted any more);
+`harness.StartReplicas` builds several PDP replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`). The tests build
 their AuthZEN requests with `core/testsupport/authzenreq`: `Replica.Permission` sends the resource search for branches
 (`harness.Branches`) for at least the revision of the last admin write (`Cluster.LastRevision`), and `Replica.Fresh` sends it with the
 test lever `harness.Higher()` (the `X-Test-Consistency` header, not a query parameter). `admin-api/tests/oldendpoints_test.go` counts
@@ -729,8 +725,8 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
 - `GET /metrics` on the PDP's ops port and on the admin API (Prometheus, own registry per `App`, `service/metrics.go`): permission
   compute time and cache hit/miss/bypass, the in-process caches (`licetum_l1_cache_total`), JWKS fetches (`licetum_jwks_fetch_total`),
   dropped background work (`licetum_background_dropped_total`), requests that had no policy snapshot (`licetum_snapshot_fallback_total`),
-  Redis commands skipped by the fast-fail (`licetum_redis_skipped_total`), check decisions, source fetch time and sync results,
-  HTTP requests/duration by operation. `App.metrics` may be nil (an `App`
+  check decisions, source fetch time and sync results, statements sent to PostgreSQL (`licetum_db_queries_total`, `licetum_db_query_seconds`),
+  `licetum_degraded{component="postgres"}`, HTTP requests/duration by operation. `App.metrics` may be nil (an `App`
   built only to describe the API) — helpers are nil-safe.
 
 PEP tokens are verified by `core/pepauth` (`pepauth.Verifier`, key sets in `pepauth/jwks.go`): the algorithm allowlist, `aud` required, `exp`/`nbf` with leeway, `at+jwt` when the

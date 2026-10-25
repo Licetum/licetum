@@ -421,7 +421,7 @@ type Result struct {
 	Status int
 	Body   []byte
 	Header http.Header
-	// Trace holds the counters of the request: Trace.DBQueries(), Trace.RedisRoundTrips(). Work the request left in
+	// Trace holds the counters of the request: Trace.DBQueries(). Work the request left in
 	// the background (writing the answer to the cache) is not in it.
 	Trace *engine.Trace
 }
@@ -516,7 +516,7 @@ func (r *Replica) TryPermission(c *Cluster, serviceRef, token string, timeout ti
 }
 
 // Fresh asks what Permission asks under the lever Higher: the policy and the sources are read again, so the request needs
-// PostgreSQL and Redis even when everything is cached.
+// PostgreSQL even when everything is cached.
 func (r *Replica) Fresh(c *Cluster, serviceRef, token string) *Result {
 	c.T.Helper()
 	return r.Send(c, Branches(serviceRef, token), token, Higher())
@@ -566,7 +566,7 @@ func (r *Replica) Warm(c *Cluster, req authzenreq.Request, token string) *Result
 		if res.Status != http.StatusOK {
 			c.T.Fatalf("warm %s %s: %d %s", req.Method, req.Path, res.Status, res.Body)
 		}
-		if last != nil && last.Trace.DBQueries() == res.Trace.DBQueries() && last.Trace.RedisRoundTrips() == res.Trace.RedisRoundTrips() {
+		if last != nil && last.Trace.DBQueries() == res.Trace.DBQueries() {
 			same++
 		} else {
 			same = 0
@@ -579,6 +579,6 @@ func (r *Replica) Warm(c *Cluster, req authzenreq.Request, token string) *Result
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	c.T.Fatalf("%s %s did not settle: the last request cost db=%d redis=%d", req.Method, req.Path, last.Trace.DBQueries(), last.Trace.RedisRoundTrips())
+	c.T.Fatalf("%s %s did not settle: the last request cost db=%d", req.Method, req.Path, last.Trace.DBQueries())
 	return nil
 }

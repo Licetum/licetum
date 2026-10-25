@@ -18,9 +18,9 @@ type Trace struct {
 	readRevision int64
 	// syncPending says the answer lacks the data of a type that was not synchronized yet (see SyncResult.Pending).
 	syncPending bool
-	// What the request cost: statements sent to PostgreSQL and round trips to Redis, in total and by kind.
-	dbQueries, redisTrips int
-	dbOps, redisOps       map[string]int
+	// What the request cost: statements sent to PostgreSQL, in total and by kind.
+	dbQueries int
+	dbOps     map[string]int
 	// state is the revisions the request read, kept for the rest of the request by a process that has no policy view in memory
 	// (see App.cacheState): there every reading is a statement, and the authentication of a PEP, the lookup of the answer and
 	// the decision would each send one.
@@ -77,9 +77,8 @@ func (t *Trace) SetActor(subject string) {
 	t.actor = subject
 }
 
-// Revision is the revision of the last write of the request, 0 when it wrote nothing (or Redis failed, so
-// the write has no revision to report). A client that passes it as at_least_as_fresh gets answers that
-// reflect the write.
+// Revision is the revision of the last write of the request, 0 when it wrote nothing. A client that passes it as
+// context.licetum.min_revision gets answers that reflect the write.
 func (t *Trace) Revision() int64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -181,20 +180,6 @@ func (t *Trace) DBQueryOps() map[string]int {
 	return maps.Clone(t.dbOps)
 }
 
-// RedisRoundTrips is how many round trips the request made to Redis: a pipeline is one, whatever its size.
-func (t *Trace) RedisRoundTrips() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.redisTrips
-}
-
-// RedisOps is RedisRoundTrips by command ("get", "set", ...; "pipeline" for a pipeline).
-func (t *Trace) RedisOps() map[string]int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return maps.Clone(t.redisOps)
-}
-
 func (t *Trace) addDB(operation string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -203,14 +188,4 @@ func (t *Trace) addDB(operation string) {
 	}
 	t.dbQueries++
 	t.dbOps[operation]++
-}
-
-func (t *Trace) addRedis(operation string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.redisOps == nil {
-		t.redisOps = map[string]int{}
-	}
-	t.redisTrips++
-	t.redisOps[operation]++
 }

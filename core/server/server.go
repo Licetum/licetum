@@ -513,7 +513,7 @@ func registerProbes(api huma.API, app *engine.App) {
 		Description: `Answers 200 when the process may take requests and 503 when it may not: PostgreSQL does not answer within a second,
 the schema of the database is older than the release (run ` + "`licetum migrate`" + `), the copy of the policy is not loaded yet, or
 the process is shutting down and waits for the balancer to stop sending it requests. A schema newer than the release is
-fine. Redis is not checked: without it the process still answers, only slower (see the metric licetum_degraded).
+fine.
 The result is reused for a second. Use it as the readiness probe and ` + "`/healthz`" + ` as the liveness probe.`,
 		Tags:   []string{"System"},
 		Errors: []int{http.StatusServiceUnavailable},

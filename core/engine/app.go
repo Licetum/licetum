@@ -27,7 +27,6 @@ import (
 	"github.com/licetum/licetum/core/logx"
 	"github.com/licetum/licetum/core/model"
 	"github.com/licetum/licetum/core/pepauth"
-	"github.com/licetum/licetum/core/redisx"
 	"github.com/licetum/licetum/core/synchronizer"
 )
 
@@ -84,7 +83,7 @@ type App struct {
 	pep pepState
 	// ready answers the readiness probe (see Ready); health tells which dependencies the calls are failing on lately.
 	ready  readyState
-	health struct{ postgres, redis dependencyHealth }
+	health struct{ postgres dependencyHealth }
 	// admit counts the requests in flight and the ones refused (see Admit).
 	admit admission
 	// attrsMemo is the attribute names of the last revision read, for a process without the snapshot.
@@ -133,14 +132,9 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 		answersL1:    newLRU[any](t.answerL1Size),
 		computeSlots: make(chan struct{}, t.computeConcurrency),
 	}
-	// Every statement and every Redis round trip of the process is counted: in the metrics, and in the Trace of the
-	// request that made it. A pool not made by db.Connect has no tracer and is not counted.
+	// Every statement of the process is counted: in the metrics, and in the Trace of the request that made it. A pool not
+	// made by db.Connect has no tracer and is not counted.
 	db.Observe(pool, observer{app})
-	redisx.Observe(rdb, observer{app})
-	m.registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
-		Name: "licetum_redis_skipped_total",
-		Help: "Redis commands not sent because the fast-fail was open after repeated errors or timeouts.",
-	}, func() float64 { return float64(redisx.Skipped(rdb)) }))
 	m.registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Name: "licetum_log_suppressed_total",
 		Help: "Log records left out because the same failure of a dependency had just been logged (one record per kind of failure per second).",

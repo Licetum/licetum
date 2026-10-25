@@ -14,13 +14,12 @@ import (
 	"github.com/licetum/licetum/core/engine"
 )
 
-// F0-2: a test can assert the exact number of database queries and Redis round trips of one request, and the same
-// counters are in /metrics.
+// F0-2: a test can assert the exact number of database queries of one request, and the same counters are in /metrics.
 //
-// The numbers are those of the fast read path (F1): a request whose answer is cached sends no query to PostgreSQL and makes no
-// round trip to Redis (before it, a cache hit read PostgreSQL twice, for the slug and for the service, and made three round
-// trips to Redis). The credential of a PEP client costs nothing: the directory of the clients is in memory.
-func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
+// The numbers are those of the fast read path (F1): a request whose answer is cached sends no query to PostgreSQL (before it,
+// a cache hit read PostgreSQL twice, for the slug and for the service). The credential of a PEP client costs nothing: the
+// directory of the clients is in memory.
+func TestF0_2_ARequestHasExactDatabaseCounts(t *testing.T) {
 	// /metrics counts every statement of the replica, the request's and the background ones; the Trace counts the request's.
 	// The background statement of an idle replica is the poll of the revision (WatchRevision, every REVISION__POLL_INTERVAL
 	// of 250 ms, see F2-10): one that falls between the two scrapes below is in the delta of /metrics and in no Trace, and the
@@ -51,17 +50,12 @@ func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
 		if got := hit.Trace.DBQueries(); got != 0 {
 			t.Errorf("replica %d: a cache hit made %d database queries (%v), want 0", r.Index, got, hit.Trace.DBQueryOps())
 		}
-		if got := hit.Trace.RedisRoundTrips(); got != 0 {
-			t.Errorf("replica %d: a cache hit made %d Redis round trips (%v), want 0", r.Index, got, hit.Trace.RedisOps())
-		}
 
 		// The same counts are in /metrics of the replica (the scrape itself is not counted).
 		afterMetrics := r.Metrics(c)
 		dbDelta := harness.MetricValue(afterMetrics, "licetum_db_queries_total") - harness.MetricValue(beforeMetrics, "licetum_db_queries_total")
-		redisDelta := harness.MetricValue(afterMetrics, "licetum_redis_ops_total") - harness.MetricValue(beforeMetrics, "licetum_redis_ops_total")
-		if int(dbDelta) != hit.Trace.DBQueries() || int(redisDelta) != hit.Trace.RedisRoundTrips() {
-			t.Errorf("replica %d: /metrics counted db=%v redis=%v, the Trace db=%d redis=%d",
-				r.Index, dbDelta, redisDelta, hit.Trace.DBQueries(), hit.Trace.RedisRoundTrips())
+		if int(dbDelta) != hit.Trace.DBQueries() {
+			t.Errorf("replica %d: /metrics counted db=%v, the Trace db=%d", r.Index, dbDelta, hit.Trace.DBQueries())
 		}
 	}
 
@@ -87,7 +81,7 @@ func TestF0_2_ATraceOfTheCallerCountsTheWholeRequest(t *testing.T) {
 	if _, err := r.App.LoadTypeGraph(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if trace.DBQueries() != 2 || trace.DBQueryOps()["select"] != 2 || trace.RedisRoundTrips() != 0 {
-		t.Fatalf("LoadTypeGraph: db=%d %v redis=%d", trace.DBQueries(), trace.DBQueryOps(), trace.RedisRoundTrips())
+	if trace.DBQueries() != 2 || trace.DBQueryOps()["select"] != 2 {
+		t.Fatalf("LoadTypeGraph: db=%d %v", trace.DBQueries(), trace.DBQueryOps())
 	}
 }

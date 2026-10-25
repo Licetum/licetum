@@ -65,8 +65,7 @@ p := c.SeedPolicy("org", 0)                      // a service, two types fed by 
 alice := c.UserToken("alice")
 res := c.Replicas[1].Permission(c, p.Slug, alice) // the branches alice may read: a resource search of AuthZEN
 res.IDs(t)                                       // ["b1" "b2" "b3"]
-res.Trace.DBQueries()                            // what the request cost: statements to PostgreSQL ...
-res.Trace.RedisRoundTrips()                      // ... and round trips to Redis (a pipeline is one)
+res.Trace.DBQueries()                            // what the request cost: statements to PostgreSQL
 c.Replicas[1].Warm(c, harness.Branches(p.Slug, alice), alice) // until the cost of a request is steady
 ```
 
@@ -77,9 +76,8 @@ c.Replicas[1].Warm(c, harness.Branches(p.Slug, alice), alice) // until the cost 
   `Result.IDs`, `Decision` and `Sees` read the answer (`Sees` is whether a search lists anything; it is false for a refusal, which a
   test tells from an absence of access by the status). A test with a client of its own (a balancer, a load generator) builds its
   `http.Request` with `harness.HTTPRequest`.
-- **Counting.** The same counts are in `GET /metrics` (`licetum_db_queries_total`, `licetum_db_query_seconds`,
-  `licetum_redis_ops_total`, `licetum_redis_op_seconds`). The Trace does not count what the Redis client sends when it opens a
-  connection (`HELLO`, ...), nor background work; the metrics do. Assert exact counts only after `Warm`.
+- **Counting.** The same counts are in `GET /metrics` (`licetum_db_queries_total`, `licetum_db_query_seconds`). The Trace does
+  not count background work; the metrics do. Assert exact counts only after `Warm`.
 - **Fakes.** `support.Source` counts the requests per type (`Calls`, `CallsTo`, `History`), can be delayed (`SetDelay`), made to
   fail (`SetStatus`), padded (`SetBodySize`) or held (`Hold`/`Release`, `WaitForCalls`, `InFlight`). `support.IdP` counts the
   requests for its JWKS (`JWKSRequests`), signs tokens (`Token`), rotates its key (`RotateKey`) and can fail (`SetJWKSStatus`).
@@ -102,7 +100,7 @@ Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in
 
 | test | what it proves |
 |---|---|
-| `cluster/f1_test.go` `TestF1_1`, `_3`, `_5`, `_6`, `_7`, `_8` | no query and no Redis command for a warm request; a miss costs the same few queries for 1 000 and for 100 000 rules; slugs and deleted services follow the revision within a second; one key set fetch per TTL, none for bad tokens, one refetch per rotation |
+| `cluster/f1_test.go` `TestF1_1`, `_3`, `_5`, `_6`, `_7`, `_8` | no query for a warm request; a miss costs the same few queries for 1 000 and for 100 000 rules; slugs and deleted services follow the revision within a second; one key set fetch per TTL, none for bad tokens, one refetch per rotation |
 | `api/snapshot_differential_test.go` `TestF1_11` | random policies (validity windows, claim-based and attribute-based rules, roles, nested groups, conditions, denials, exceptions) give the same answers and explanations from the snapshot and from the queries, also after changes and after windows have passed. `LICETUM_DIFF_SEED` repeats a run |
 | `chaos/f1_test.go` `TestF1_4` | a warm request ignores 150 ms on PostgreSQL |
 
@@ -145,7 +143,7 @@ brings them back; F2-11 (stage 2, scoped bumps) is a separate pull request.
 |---|---|
 | `core/tests/integration/redisx` `TestF5_12_*` | random sequences of failures, successes and time never leave the failure counter of the breaker without an expiry; a counter the previous release left without one is repaired; concurrent failures are all counted (`LICETUM_BREAKER_SEED` repeats a run) |
 | `core/tests/integration/db` `TestF5_10_*` | five `migrate` runs started together on an empty database apply each migration once and seed once (repeated over fresh schemas); `migrate` waits for the lock held by another run (deterministic); the schema version equals the latest embedded migration |
-| `cluster/f5_test.go` `TestF5_1_*` | `/readyz` is 503 with PostgreSQL cut or the schema older than the binary and 200 otherwise (also with a *newer* schema), `/healthz` stays 200, the result is reused for a second, Redis is not part of readiness (`licetum_degraded{component="redis"}`) |
+| `cluster/f5_test.go` `TestF5_1_*` | `/readyz` is 503 with PostgreSQL cut or the schema older than the binary and 200 otherwise (also with a *newer* schema), `/healthz` stays 200, the result is reused for a second |
 | `TestF5_3_*`, `TestF5_8_*` | a draining replica is not ready, serves, and asks for `Connection: close`; above `HTTP__MAX_INFLIGHT` the rest get 503 with `Retry-After` while the probes and the metrics are answered; a request past `HTTP__REQUEST_TIMEOUT` is answered 503 `request_timeout` |
 | `TestF5_9_*` | a pool never holds more than `DB__POOL_SIZE + DB__MAX_OVERFLOW` connections under more concurrent users than connections, and the pool metrics say that acquires waited |
 | `TestF5_6_*` | PostgreSQL cut: the replica answers from memory until `POLICY__MAX_STALENESS` has passed since it last confirmed the policy, then 503 `policy_unavailable`; with no limit it keeps answering; it recovers without a restart |

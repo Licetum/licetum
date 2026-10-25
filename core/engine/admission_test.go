@@ -1,14 +1,11 @@
 package engine
 
 import (
-	"context"
-	"errors"
 	"runtime"
 	"testing"
 	"time"
 
 	"github.com/licetum/licetum/core/config"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 func TestAdmitRefusesAboveTheLimitAndCountsTheRefusals(t *testing.T) {
@@ -105,25 +102,6 @@ func TestCachedEntryServingRules(t *testing.T) {
 	}
 	if (&cachedEntry[int]{Exp: now.Add(time.Minute).UnixMilli()}).stale(now) {
 		t.Error("an entry without a Hold (written by an earlier release) is never served stale")
-	}
-}
-
-func TestRedisDownMeansUnreachableNotAnAnswer(t *testing.T) {
-	for _, c := range []struct {
-		err  error
-		want bool
-	}{
-		{nil, false},
-		{context.Canceled, false},
-		{redisx.ErrSkipped, false},
-		{replyErr("READONLY You can't write against a read only replica."), false},
-		{replyErr("LOADING Redis is loading the dataset in memory"), true},
-		{context.DeadlineExceeded, true},
-		{errors.New("dial tcp: connection refused"), true},
-	} {
-		if got := redisDown(c.err); got != c.want {
-			t.Errorf("redisDown(%v) = %v, want %v", c.err, got, c.want)
-		}
 	}
 }
 

@@ -10,11 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/licetum/licetum/core/db"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 // The readiness of a process is what a balancer asks before it sends it requests (GET /readyz). It is not its liveness
@@ -23,8 +21,7 @@ import (
 // A process is ready when it is not draining (SetDraining, on SIGTERM), PostgreSQL answers within a second, the schema is
 // at least the version this binary was built for (a newer one is fine: during a rolling update the pods of the previous
 // release keep serving on the schema the new release has migrated), and, where the process keeps the policy in memory,
-// that copy is loaded. Redis is not part of it: without Redis the process is degraded, not unavailable (see
-// licetum_degraded).
+// that copy is loaded.
 
 // Why a process is not ready.
 const (
@@ -169,25 +166,14 @@ func (h *dependencyHealth) degraded() bool {
 	return failed != 0 && failed >= h.okAt.Load() && time.Since(time.Unix(0, failed)) < healthWindow
 }
 
-// redisDown: the call failed because Redis could not be reached (or is loading its dataset and answers nothing else), not
-// because it answered a command with an error of that command. A read-only Redis refuses writes only; the reads that
-// succeed keep it from being reported down.
-func redisDown(err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, redisx.ErrSkipped) {
-		return false
-	}
-	var reply redis.Error
-	return !errors.As(err, &reply) || errKind(reply) == "redis:LOADING"
-}
-
-// degradedCollector reports, at every scrape, which dependencies the process is running without, and how old its copy of
+// degradedCollector reports, at every scrape, whether the process is running without PostgreSQL, and how old its copy of
 // the policy is.
 type degradedCollector struct{ app *App }
 
 var (
 	degradedDesc = prometheus.NewDesc("licetum_degraded",
-		"1 while the process runs without a dependency: redis (no cache: answers come from memory or are computed) or postgres "+
-			"(the policy is served from the copy in memory, unconfirmed).", []string{"component"}, nil)
+		"1 while the process runs without a dependency: postgres (the policy is served from the copy in memory, unconfirmed).",
+		[]string{"component"}, nil)
 	snapshotAgeDesc = prometheus.NewDesc("licetum_snapshot_age_seconds",
 		"Seconds since the process last confirmed its copy of the policy against PostgreSQL (the revision was read). It stays near "+
 			"the poll interval while the database answers and grows while it does not; POLICY__MAX_STALENESS bounds it. Zero when "+
@@ -215,7 +201,6 @@ func (c *degradedCollector) Collect(ch chan<- prometheus.Metric) {
 		age = time.Since(v.readAt).Seconds()
 		stale = time.Duration(age*float64(time.Second)) >= staleLimit(a.tuningOrDefault())
 	}
-	ch <- prometheus.MustNewConstMetric(degradedDesc, prometheus.GaugeValue, flag(a.redisDegraded()), "redis")
 	ch <- prometheus.MustNewConstMetric(degradedDesc, prometheus.GaugeValue, flag(a.health.postgres.degraded() || stale), "postgres")
 	ch <- prometheus.MustNewConstMetric(snapshotAgeDesc, prometheus.GaugeValue, age)
 }

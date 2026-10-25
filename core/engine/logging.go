@@ -6,17 +6,14 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"strings"
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/licetum/licetum/core/logx"
-	"github.com/licetum/licetum/core/redisx"
 )
 
-// logDependency logs the failure of a dependency (Redis, PostgreSQL) on the path of a request. A dependency that is down
+// logDependency logs the failure of a dependency (PostgreSQL) on the path of a request. A dependency that is down
 // makes every request fail the same way, hundreds of times a second: the records go through logx.Repeated, so each kind of
 // failure of each message is written once a second, and the record that follows says how many were left out
 // (licetum_log_suppressed_total counts them all).
@@ -30,8 +27,6 @@ func errKind(err error) string {
 	switch {
 	case err == nil:
 		return "none"
-	case errors.Is(err, redisx.ErrSkipped):
-		return "skipped"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	case errors.Is(err, context.Canceled):
@@ -40,11 +35,6 @@ func errKind(err error) string {
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "timeout"
-	}
-	var reply redis.Error
-	if errors.As(err, &reply) {
-		word, _, _ := strings.Cut(reply.Error(), " ") // READONLY, LOADING, OOM, ...
-		return "redis:" + strings.ToUpper(word)
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {

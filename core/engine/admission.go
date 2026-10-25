@@ -18,7 +18,7 @@ import (
 // out, and the work already done is thrown away. A refused request costs a counter increment.
 
 // defaultInflightPerCPU is HTTP__MAX_INFLIGHT per GOMAXPROCS when the setting is zero: requests mostly wait for the
-// database and Redis, so many more than the cores can be served at once.
+// database, so many more than the cores can be served at once.
 const defaultInflightPerCPU = 256
 
 // Default request deadlines, when HTTP__REQUEST_TIMEOUT is zero: the PDP answers within a budget; the admin API

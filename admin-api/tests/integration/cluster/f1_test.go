@@ -2,7 +2,7 @@
 
 package cluster_test
 
-// F1: the fast read path. A warm request sends no query to PostgreSQL and no command to Redis; what a cache miss costs
+// F1: the fast read path. A warm request sends no query to PostgreSQL; what a cache miss costs
 // does not grow with the policy; a deleted service or a changed slug is seen by every replica within a second; the key
 // set of the identity provider is fetched once per TTL, and a flood of bad tokens does not reach the provider.
 
@@ -55,7 +55,7 @@ func settle(t *testing.T, c *harness.Cluster, r *harness.Replica, q request, tok
 		if res.Status != http.StatusOK {
 			t.Fatalf("%s: %d %s", q.name, res.Status, res.Body)
 		}
-		if last != nil && last.Trace.DBQueries() == res.Trace.DBQueries() && last.Trace.RedisRoundTrips() == res.Trace.RedisRoundTrips() {
+		if last != nil && last.Trace.DBQueries() == res.Trace.DBQueries() {
 			same++
 		} else {
 			same = 0
@@ -69,7 +69,7 @@ func settle(t *testing.T, c *harness.Cluster, r *harness.Replica, q request, tok
 	return r.Send(c, q.req, token)
 }
 
-// F1-1: a request whose token and answer are cached sends no query to PostgreSQL (and none to Redis).
+// F1-1: a request whose token and answer are cached sends no query to PostgreSQL.
 func TestF1_1_AWarmRequestSendsNoQueryToPostgreSQL(t *testing.T) {
 	c := startReplicas(t, 2)
 	p := c.SeedPolicy("org")
@@ -79,9 +79,6 @@ func TestF1_1_AWarmRequestSendsNoQueryToPostgreSQL(t *testing.T) {
 			res := settle(t, c, r, q, alice)
 			if got := res.Trace.DBQueries(); got != 0 {
 				t.Errorf("replica %d, %s: %d queries to PostgreSQL (%v), want 0", r.Index, q.name, got, res.Trace.DBQueryOps())
-			}
-			if got := res.Trace.RedisRoundTrips(); got != 0 {
-				t.Errorf("replica %d, %s: %d round trips to Redis (%v), want 0", r.Index, q.name, got, res.Trace.RedisOps())
 			}
 		}
 	}
@@ -291,7 +288,7 @@ func signedWith(t *testing.T, c *harness.Cluster, key *rsa.PrivateKey, kid strin
 }
 
 // F1-7: a thousand garbage or random-key tokens answer 401 and cost the provider at most one request per interval; the same bad
-// token again and again does not reach the provider, PostgreSQL or Redis.
+// token again and again does not reach the provider or PostgreSQL.
 func TestF1_7_BadTokensDoNotAmplifyTheLoadOnTheProvider(t *testing.T) {
 	c, _, ask := pepJWTCluster(t, 1)
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -337,8 +334,8 @@ func TestF1_7_BadTokensDoNotAmplifyTheLoadOnTheProvider(t *testing.T) {
 		if res.Status != http.StatusUnauthorized {
 			t.Fatalf("repeat %d: %d %s", i, res.Status, res.Body)
 		}
-		if res.Trace.RedisRoundTrips() != 0 || res.Trace.DBQueries() != 0 {
-			t.Fatalf("repeat %d of a bad token cost db=%d redis=%d, want none", i, res.Trace.DBQueries(), res.Trace.RedisRoundTrips())
+		if res.Trace.DBQueries() != 0 {
+			t.Fatalf("repeat %d of a bad token cost db=%d, want none", i, res.Trace.DBQueries())
 		}
 	}
 	if got := c.IdP.JWKSRequests(); got != before {
@@ -408,8 +405,7 @@ func TestF1_TheSnapshotCanBeTurnedOff(t *testing.T) {
 		t.Fatal("a snapshot was built although it is turned off")
 	}
 	// Without the snapshot the slug is looked up and the revisions are read; the answer is still kept in memory.
-	if warm.Trace.DBQueries() != 2 || warm.Trace.RedisRoundTrips() != 0 {
-		t.Errorf("without the snapshot a warm request made db=%d redis=%d (%v, %v), want 2 and 0", warm.Trace.DBQueries(),
-			warm.Trace.RedisRoundTrips(), warm.Trace.RedisOps(), warm.Trace.DBQueryOps())
+	if warm.Trace.DBQueries() != 2 {
+		t.Errorf("without the snapshot a warm request made db=%d (%v), want 2", warm.Trace.DBQueries(), warm.Trace.DBQueryOps())
 	}
 }
