@@ -87,7 +87,7 @@ func runCommand(args []string) error {
 	fs.BoolVar(&opts.RawPoints, "raw-points", opts.RawPoints, "keep the point of every request (a large file, for the timing of the answers)")
 	fs.DurationVar(&opts.AddedLatency, "added-latency", opts.AddedLatency, "latency added to each round trip from the check servers to PostgreSQL, through Toxiproxy, from the end of the warm-up (0 for none)")
 	fs.BoolVar(&opts.RampThrough, "ramp-through", opts.RampThrough, "with -ramp: go on after a step fails, up to -max-steps, to see the server above its limit")
-	fs.IntVar(&opts.Replicas, "replicas", opts.Replicas, "check servers sharing the database and the cache; the load is spread over them")
+	fs.IntVar(&opts.Replicas, "replicas", opts.Replicas, "check servers sharing the database; the load is spread over them")
 	fs.DurationVar(&opts.WritesEvery, "writes-every", opts.WritesEvery, "an admin write (a rule created, then deleted) every this long during the window (0 for none)")
 	fs.Float64Var(&opts.RequireRate, "require-rate", 0, "a ramp run fails when the sustained rate is below this (for CI)")
 	fs.StringVar(&opts.CheckBin, "check-bin", opts.CheckBin, "the licetum binary that serves the check API")

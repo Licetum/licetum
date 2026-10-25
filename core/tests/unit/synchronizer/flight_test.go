@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +44,29 @@ func (s *heldSource) waitForCalls(t *testing.T, n int32) {
 	}
 }
 
+// waitForJoined waits until n goroutines are inside singleflight's Do: the one whose request is in flight and the n-1 that have
+// joined it. A goroutine that has not reached Do yet is not counted, so the test lets the source answer only after every
+// caller has joined, however slow the scheduler is.
+func waitForJoined(t *testing.T, n int) {
+	t.Helper()
+	buf := make([]byte, 1<<20)
+	count := func() int {
+		stacks := string(buf[:runtime.Stack(buf, true)])
+		in := 0
+		for _, g := range strings.Split(stacks, "\n\n") {
+			if strings.Contains(g, "singleflight.(*Group).Do(") {
+				in++
+			}
+		}
+		return in
+	}
+	for deadline := time.Now().Add(5 * time.Second); count() < n; time.Sleep(2 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d callers are inside the shared request, want %d", count(), n)
+		}
+	}
+}
+
 var listConfig = model.SynchronizerConfig{Kind: model.KindHTTP, URL: "https://source.test/list"}
 
 // Concurrent requests for the list of one synchronizer share one request to its source.
@@ -59,7 +83,7 @@ func TestConcurrentFetchesOfOneSourceShareOneRequest(t *testing.T) {
 		})
 	}
 	src.waitForCalls(t, 1)
-	time.Sleep(100 * time.Millisecond) // the others have joined the request that is in flight
+	waitForJoined(t, 5) // the others have joined the request that is in flight
 	close(src.release)
 	wg.Wait()
 	if got := src.calls.Load(); got != 1 {
@@ -67,8 +91,8 @@ func TestConcurrentFetchesOfOneSourceShareOneRequest(t *testing.T) {
 	}
 }
 
-// A fresh fetch (a request that needs the source as it is now) never joins a request that started before it: that one may
-// have read the source before the write the fresh request is waiting for. It asks the source again.
+// A fresh fetch (a request that needs the source as it is now) never joins a fetch that is not fresh: that one may have started
+// before, and read the source before the write the fresh request is waiting for. It asks the source again.
 func TestAFreshFetchDoesNotJoinAFetchThatStartedBeforeIt(t *testing.T) {
 	src := newHeldSource()
 	adapter := synchronizer.NewAdapterWithHTTPClient(src.client())
@@ -105,7 +129,7 @@ func TestConcurrentFreshFetchesShareOneRequest(t *testing.T) {
 		})
 	}
 	src.waitForCalls(t, 1)
-	time.Sleep(100 * time.Millisecond)
+	waitForJoined(t, 3)
 	close(src.release)
 	wg.Wait()
 	if got := src.calls.Load(); got != 1 {

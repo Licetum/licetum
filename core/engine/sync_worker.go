@@ -25,9 +25,9 @@ import (
 type SyncHooks struct {
 	// AfterFetch runs after the sources of the given types were asked and before the result is applied.
 	AfterFetch func(ctx context.Context, typeIDs []uuid.UUID)
-	// NoHeartbeat, when it returns true, stops the heartbeat of the executor, as a paused process would. It is asked for the
-	// whole executor, with nil (the DBOS engine has no per-job lease).
-	NoHeartbeat func(typeIDs []uuid.UUID) bool
+	// NoHeartbeat, when it returns true, stops the heartbeat of the executor, as a paused process would. The heartbeat is the
+	// executor's, not a job's (the DBOS engine has no per-job lease).
+	NoHeartbeat func() bool
 	// LockTimeout replaces syncLockTimeout when it is positive: how long a synchronization waits for the lock of its
 	// component.
 	LockTimeout time.Duration

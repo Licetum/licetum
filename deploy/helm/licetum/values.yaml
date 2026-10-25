@@ -116,8 +116,8 @@ admin:
   nodeSelector: {}
   tolerations: []
 
-# The synchronization worker: fetches the sources into the local copy. One region runs it (the one of the primary, or the ones that
-# can reach the sources). Enable it only where it belongs.
+# The synchronization worker: fetches the sources into the local copy. Run it next to the database, where the sources can be
+# reached.
 worker:
   enabled: true
   replicas: 1

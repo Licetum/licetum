@@ -58,11 +58,11 @@ tasks:
       - for m in core admin-api; do (cd $m && go mod download) || exit 1; done
 
   go:golangci:
-    desc: golangci-lint — formatters (gofmt, goimports) and linters, incl. gosec, depguard layers, unused
+    desc: golangci-lint — formatters (gofmt, goimports) and linters, incl. gosec, depguard layers, unused; the code behind the build tags ({{.GO_BUILD_TAGS}}) is linted too
     cmds:
       - |
         for m in core admin-api; do
-          (cd $m && if [ -z "$CI" ]; then {{.GOLANGCI_LINT}} fmt ./... && {{.GOLANGCI_LINT}} run --fix ./...; else {{.GOLANGCI_LINT}} fmt --diff ./... && {{.GOLANGCI_LINT}} run ./...; fi) || exit 1
+          (cd $m && if [ -z "$CI" ]; then {{.GOLANGCI_LINT}} fmt ./... && {{.GOLANGCI_LINT}} run --build-tags {{.GO_BUILD_TAGS}} --fix ./...; else {{.GOLANGCI_LINT}} fmt --diff ./... && {{.GOLANGCI_LINT}} run --build-tags {{.GO_BUILD_TAGS}} ./...; fi) || exit 1
         done
 
   go:tidy:
@@ -133,7 +133,7 @@ tasks:
   go:fix:
     desc: golangci-lint fmt + run --fix in both modules
     cmds:
-      - for m in core admin-api; do (cd $m && {{.GOLANGCI_LINT}} fmt ./... && {{.GOLANGCI_LINT}} run --fix ./...) || exit 1; done
+      - for m in core admin-api; do (cd $m && {{.GOLANGCI_LINT}} fmt ./... && {{.GOLANGCI_LINT}} run --build-tags {{.GO_BUILD_TAGS}} --fix ./...) || exit 1; done
 
   go:test:
     desc: Unit and integration tests of both modules

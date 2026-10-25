@@ -244,3 +244,103 @@ func TestPruneDirectorySkipsTheEntriesAnotherWorkerHasTakenWithoutWaiting(t *tes
 		t.Fatalf("deleted %d entries after the others were released (%v), want the remaining 4", n, err)
 	}
 }
+
+// A sending of an expired entry and a retention chunk do not wait for each other's rows. The sending locks the entry and then
+// the record of its sending; the retention takes them in the same order, so when the sending holds the entry the chunk skips
+// it, and the sending is not left waiting for a record the chunk holds.
+func TestPruneDirectoryDoesNotDeadlockWithASendingOfTheSameEntry(t *testing.T) {
+	pool, service := newPEPPool(t)
+	ctx := context.Background()
+	if _, err := db.UpsertDirectory(ctx, pool, service, []db.DirectoryEntry{entry("user", "alice")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
+		t.Fatal(err)
+	}
+	days := 30
+	if err := db.PutDirectorySettings(ctx, pool, service, db.DirectorySettings{RetentionDays: &days}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The sending, step by step: it holds the entry...
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM subject_directory WHERE service_id = $1 AND subject_id = 'alice' FOR UPDATE`, service); err != nil {
+		t.Fatal(err)
+	}
+
+	// ... the chunk runs now and neither waits for it nor takes the record of the sending...
+	done := make(chan int64, 1)
+	go func() {
+		n, err := db.PruneDirectory(ctx, pool, 100)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- n
+	}()
+	select {
+	case n := <-done:
+		if n != 0 {
+			t.Fatalf("the retention deleted %d entries while the sending held the entry, want 0", n)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the retention waits for the entry a sending holds")
+	}
+
+	// ... and the sending takes the record of its sending, which a chunk that held it would make it wait for for ever.
+	if _, err := tx.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() WHERE service_id = $1 AND subject_id = 'alice'`, service); err != nil {
+		t.Fatalf("the sending cannot take the record of its sending: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.PruneDirectory(ctx, pool, 100); err != nil || n != 0 {
+		t.Fatalf("deleted %d entries (%v) after the sending, want the sent entry kept", n, err)
+	}
+}
+
+// Sendings of expired entries and retention chunks that run at once all finish: no statement is aborted for a deadlock.
+func TestPruneDirectoryRunsAlongsideSendingsOfTheSameEntries(t *testing.T) {
+	pool, service := newPEPPool(t)
+	ctx := context.Background()
+	days := 30
+	if err := db.PutDirectorySettings(ctx, pool, service, db.DirectorySettings{RetentionDays: &days}); err != nil {
+		t.Fatal(err)
+	}
+	entries := make([]db.DirectoryEntry, 20)
+	for i := range entries {
+		entries[i] = entry("user", fmt.Sprintf("u%02d", i))
+	}
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for range 60 {
+				if _, err := db.UpsertDirectory(ctx, pool, service, entries); err != nil {
+					t.Errorf("sending: %v", err)
+					return
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 60 {
+				// The ageing takes the records in the order of the sendings (by id), as the sending does.
+				if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days' WHERE ctid IN (
+					SELECT ctid FROM subject_directory_seen ORDER BY subject_id FOR UPDATE)`); err != nil {
+					t.Errorf("ageing: %v", err)
+					return
+				}
+				if _, err := db.PruneDirectory(ctx, pool, 5); err != nil {
+					t.Errorf("retention: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}

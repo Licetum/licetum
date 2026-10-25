@@ -93,9 +93,12 @@ func TestValidityUntilKeepsTheHoldPastTheCap(t *testing.T) {
 
 func TestCachedEntryServingRules(t *testing.T) {
 	now := time.Now()
-	e := &cachedEntry[int]{Exp: now.Add(time.Minute).UnixMilli(), Hold: now.Add(time.Hour).UnixMilli(), serveUntil: now.Add(10 * time.Second)}
-	if !e.fresh(now) || e.fresh(now.Add(11*time.Second)) {
-		t.Error("an entry is served in the usual way until serveUntil")
+	e := &cachedEntry[int]{Exp: now.Add(time.Minute).UnixMilli(), Hold: now.Add(time.Hour).UnixMilli()}
+	if !e.fresh(now) || !e.fresh(now.Add(59*time.Second)) || e.fresh(now.Add(61*time.Second)) {
+		t.Error("an entry is served in the usual way until its Exp")
+	}
+	if (&cachedEntry[int]{}).fresh(now) {
+		t.Error("an entry without an Exp is never served in the usual way")
 	}
 	if !e.stale(now.Add(30*time.Minute)) || e.stale(now.Add(2*time.Hour)) {
 		t.Error("a stale entry is served until its Hold")

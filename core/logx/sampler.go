@@ -42,8 +42,8 @@ func NewSamplerWithClock(interval time.Duration, now func() time.Time) *Sampler 
 	return s
 }
 
-// Repeated is the sampler of the process for the records a failing dependency repeats (Redis, PostgreSQL, the identity
-// provider): one record per kind of failure per second.
+// Repeated is the sampler of the process for the records a failing dependency repeats (PostgreSQL, the identity
+// provider, a source of resources): one record per kind of failure per second.
 var Repeated = NewSampler(time.Second)
 
 // Allow reports whether a record under key may be written now. When it may, suppressed is the number of records under that

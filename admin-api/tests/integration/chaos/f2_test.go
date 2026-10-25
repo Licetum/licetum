@@ -120,7 +120,7 @@ func TestF2_7_ARevisionBumpUnderHotKeysDoesNotExhaustThePool(t *testing.T) {
 	if failures.Load() > 0 {
 		t.Errorf("%d requests failed or could not be started", failures.Load())
 	}
-	if int32(peak.Load()) > maxConns {
+	if peak.Load() > maxConns {
 		t.Errorf("the pool had %d connections acquired, its size is %d", peak.Load(), maxConns)
 	}
 	if limit := 10 * time.Second * slowdown; percentile(latencies, 0.99) > limit {

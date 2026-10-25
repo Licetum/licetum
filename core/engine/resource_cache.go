@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -1126,9 +1127,11 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 		return nil, err
 	}
 	if sync != nil {
+		// The backoff only spares a failing source: when the state cannot be read the source is asked, as it was before the
+		// state was consulted, instead of failing a read that the cache could answer.
 		states, err := loadSyncStates(ctx, a.DB, []uuid.UUID{typeResourceID})
 		if err != nil {
-			return nil, err
+			logDependency(ctx, slog.LevelWarn, "failed to read the synchronization state, asking the source", err)
 		}
 		if states[typeResourceID].Backoff {
 			return a.CacheLookup(ctx, g, typeResourceID, externalID)
@@ -1248,8 +1251,8 @@ func (a *App) ListResources(ctx context.Context, typeResourceID uuid.UUID, inclu
 	return out, nil
 }
 
-// RefreshResources asks the source of a type now and brings the local copy up to date: the cached source list, the
-// throttle and the background refresh are skipped (consistency "higher"). A type without a source cannot be refreshed;
+// RefreshResources asks the source of a type now and brings the local copy up to date: the throttle and the background
+// refresh are skipped (consistency "higher"). A type without a source cannot be refreshed;
 // a source that does not answer is an error and the data stays as it was.
 func (a *App) RefreshResources(ctx context.Context, typeResourceID uuid.UUID) (*model.ResourceRefresh, error) {
 	g, err := a.LoadTypeGraph(ctx)

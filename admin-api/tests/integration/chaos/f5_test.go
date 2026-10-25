@@ -99,17 +99,6 @@ func latencies(rs []outcome) []time.Duration {
 	return out
 }
 
-// between keeps the outcomes that began in [from, to) of the load.
-func between(rs []outcome, from, to time.Duration) []outcome {
-	var out []outcome
-	for _, r := range rs {
-		if r.at >= from && r.at < to {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 // logCounter counts the records of level warning and above, by the second they were written in, and writes nothing.
 type logCounter struct {
 	mu     sync.Mutex
@@ -163,19 +152,6 @@ func (l *logCounter) top() map[string]int {
 		if v > 1 {
 			out[k] = v
 		}
-	}
-	return out
-}
-
-func queries(c *harness.Cluster, r *harness.Replica) float64 {
-	return harness.MetricValue(r.Metrics(c), "licetum_db_queries_total")
-}
-
-// queriesBy is the statements counted so far by their first keyword (select, insert, ...).
-func queriesBy(c *harness.Cluster, r *harness.Replica) map[string]float64 {
-	out := map[string]float64{}
-	for _, op := range []string{"select", "insert", "update", "delete", "with", "begin", "commit", "rollback", "other"} {
-		out[op] = harness.MetricValue(r.Metrics(c), `licetum_db_queries_total{operation="`+op+`",result="ok"}`)
 	}
 	return out
 }

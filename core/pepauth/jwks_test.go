@@ -154,7 +154,7 @@ func TestContract_PEP03_TransportFailureIsNotAnInvalidToken(t *testing.T) {
 	_, err := a.KeyFor(t.Context(), srv.URL, "k1", true)
 	var unavailable Unavailable
 	if !errors.As(err, &unavailable) {
-		t.Fatalf("err = %v, want a JWKS failure (it counts toward the breaker)", err)
+		t.Fatalf("err = %v, want a JWKS failure (a 424 for the caller, not a 401)", err)
 	}
 	// Nothing was cached: the next token asks again, and succeeds once the provider is back.
 	srv.mu.Lock()

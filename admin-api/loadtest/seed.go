@@ -205,7 +205,7 @@ func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 
 // createRules writes the assignment rules straight into the table with COPY. The check API reads the table and nothing
 // else of a rule, so each row needs the constraints of the table and the defaults of a new rule, and no more: the
-// change log and the cache versions belong to the admin API's writes, which the measured path does not make. The table
+// change log and the revisions belong to the admin API's writes, which the measured path does not make. The table
 // is analyzed afterwards, so the planner sees its real size, as it would after a few writes.
 func createRules(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	columns := []string{"id", "type_resource_id", "resource_id", "resource_from_claim", "access", "subject", "predicate",

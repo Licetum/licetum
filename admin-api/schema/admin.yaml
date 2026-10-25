@@ -10231,7 +10231,7 @@ paths:
         - Resource
   /type_resource/{type_resource_id}/resource/refresh:
     post:
-      description: Asks the source of the type right away, skipping the cached source list, the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).
+      description: Asks the source of the type right away, skipping the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).
       operationId: refresh_resources_of_type
       parameters:
         - description: Resource type id

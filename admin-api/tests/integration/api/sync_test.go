@@ -502,8 +502,8 @@ func TestSyncLateExecutorIsFenced(t *testing.T) {
 	isFixture := func(ids []uuid.UUID) bool { return slices.Contains(ids, uuid.MustParse(f.typ)) }
 	// One executor: a paused executor's own siblings would take its expired job over as well.
 	late, _ := e.worker(func(c *config.Config) { c.Sync.Lease, c.Sync.Concurrency = 600*time.Millisecond, 1 }, engine.SyncHooks{
-		// The DBOS executor asks for its heartbeat with nil; the heartbeat stops for the whole executor.
-		NoHeartbeat: func(ids []uuid.UUID) bool { return ids == nil },
+		// The heartbeat stops for the whole executor.
+		NoHeartbeat: func() bool { return true },
 		AfterFetch: func(ctx context.Context, ids []uuid.UUID) {
 			if !isFixture(ids) {
 				return // only the job of the fixture is held

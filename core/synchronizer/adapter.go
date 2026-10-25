@@ -114,7 +114,7 @@ func (a *Adapter) FetchOne(ctx context.Context, cfg model.SynchronizerConfig, ex
 // failure, a bad status or a malformed answer. An answer that lists no resource is an answer like any other — an empty
 // list with no error — and the caller takes it as the source's truth. key names the synchronizer: concurrent calls for
 // the same key share one request, except that a fresh call (a request that needs the state of the source as of now)
-// never joins a request that started before it. key == "" disables singleflight (checking a source before saving).
+// never joins a fetch that is not fresh, which may have started before it (it may join another fresh call). key == "" disables singleflight (checking a source before saving).
 func (a *Adapter) FetchAll(ctx context.Context, cfg model.SynchronizerConfig, key string, fresh bool) ([]model.Resource, error) {
 	do := func(ctx context.Context) ([]model.Resource, error) {
 		ctx, cancel := context.WithTimeout(ctx, fetchAllTimeout)

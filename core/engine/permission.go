@@ -27,8 +27,8 @@ const (
 	// matched by one of its own memberships, or by a group nested into it through at most this many groups.
 	MaxGroupDepth = 16
 	// resultCacheFormat is the version of the cached result format: when the format or the decisions change, new
-	// keys do not overlap the old ones (a release does not serve the answers of the previous one during a rolling
-	// update), and stale entries simply expire by TTL.
+	// keys do not overlap the old ones. The answers live in the memory of one process, so it only keeps apart the keys
+	// of two formats inside it; stale entries simply expire by TTL.
 	resultCacheFormat = "t9"
 )
 

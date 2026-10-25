@@ -20,9 +20,10 @@ import (
 	"github.com/licetum/licetum/core/db"
 )
 
-// The synchronization jobs are DBOS workflows on a database-backed queue. The PDP and admin processes enqueue through a DBOS client and wait for the workflow; the worker
-// launches the DBOS runtime and executes them. What stays the same: one job per type shared by all callers (the DBOS
-// deduplication id, policy "return existing"), the state in sync_state, and the apply transaction.
+// The synchronization jobs are DBOS workflows on a database-backed queue. The PDP and admin processes enqueue through a DBOS
+// client and wait for the workflow; the worker launches the DBOS runtime and executes them. A job is one per type, shared by
+// all callers (the DBOS deduplication id, policy "return existing"); the state is kept in sync_state, and a job ends in the
+// apply transaction.
 //
 // Fetch and apply are one DBOS step: the list of the source is never a step result, so a checkpoint is a few dozen bytes
 // whatever the size of the type (measured with 100 000 resources: 52 bytes).
@@ -431,7 +432,7 @@ func (a *App) dbosSyncWorkflow(ctx dbos.Context, in dbosSyncIn) (dbosSyncOut, er
 func (a *App) dbosHeartbeat(ctx context.Context, executor string) {
 	lease := a.leaseDuration()
 	beat := func() {
-		if a.Hooks.NoHeartbeat != nil && a.Hooks.NoHeartbeat(nil) {
+		if a.Hooks.NoHeartbeat != nil && a.Hooks.NoHeartbeat() {
 			return
 		}
 		if _, err := a.DB.Exec(ctx, `

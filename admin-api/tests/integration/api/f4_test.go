@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"math"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -198,14 +197,4 @@ func (w *world) lastChange() int64 {
 		w.t.Fatal(err)
 	}
 	return id
-}
-
-func grepLines(text, sub string) string {
-	var out []string
-	for _, l := range strings.Split(text, "\n") {
-		if strings.Contains(l, sub) {
-			out = append(out, l)
-		}
-	}
-	return strings.Join(out, "\n")
 }

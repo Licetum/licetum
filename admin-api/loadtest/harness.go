@@ -657,7 +657,7 @@ func logSettings(accessLog bool) model.LogSettings {
 	}
 }
 
-// startReplicas starts the check servers of the run, the given number of them, against the same database and cache. A
+// startReplicas starts the check servers of the run, the given number of them, against the same database. A
 // replica that fails to start stops the ones that did.
 func startReplicas(ctx context.Context, e *env, opts Options) ([]*checkServer, error) {
 	n := max(opts.Replicas, 1)

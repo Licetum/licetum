@@ -34,8 +34,8 @@ type Key struct {
 	err  error
 }
 
-// Parsed returns the key; an unusable key is an error that counts toward the circuit breaker, as it did when the key was
-// read for every token.
+// Parsed returns the key; an unusable key is an error that the caller answers as a key set it cannot read (a 424), not as an
+// invalid token.
 func (k *Key) Parsed() (*jose.JSONWebKey, error) {
 	k.once.Do(func() { k.err = k.jwk.UnmarshalJSON(k.raw) })
 	if k.err != nil {
@@ -84,8 +84,8 @@ type KeySets struct {
 	flight singleflight.Group
 }
 
-// Unavailable is a failure to read a key set, or a key of it: it counts toward the circuit breaker of the caller, unlike
-// an invalid token.
+// Unavailable is a failure to read a key set, or a key of it. The caller answers it with a 424 (the token is neither accepted
+// nor refused), unlike an invalid token, which is a 401.
 type Unavailable struct{ err *apperr.Error }
 
 func (e Unavailable) Error() string { return e.err.Error() }

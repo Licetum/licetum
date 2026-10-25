@@ -234,17 +234,20 @@ func PutDirectorySettings(ctx context.Context, q Querier, serviceID uuid.UUID, s
 
 // PruneDirectory deletes up to limit entries that were not sent within the retention period of their service (a service with
 // no retention period keeps everything) and returns how many. The caller repeats it while it deletes a full chunk, so that no
-// statement holds its locks for long. Several workers may run it at once: a chunk takes the rows of its entries with
-// FOR UPDATE SKIP LOCKED, so each entry is deleted by one of them and none waits for another.
+// statement holds its locks for long. Several workers may run it at once: a chunk takes the rows of its entries (the entry and
+// the record of its sending, in that order) with FOR UPDATE SKIP LOCKED, so each entry is deleted by one of them and none waits
+// for another. The order is the one of UpsertDirectory, which locks the entry before the record of its sending: taking them the
+// other way round would let a retention chunk and a sending of the same entry wait for each other's row.
 func PruneDirectory(ctx context.Context, q Querier, limit int) (int64, error) {
 	tag, err := q.Exec(ctx, `
 		WITH doomed AS (
-			SELECT s.service_id, s.subject_type, s.subject_id
+			SELECT d.service_id, d.subject_type, d.subject_id
 			FROM subject_directory_settings t
-			JOIN subject_directory_seen s ON s.service_id = t.service_id
+			JOIN subject_directory d ON d.service_id = t.service_id
+			JOIN subject_directory_seen s ON s.service_id = d.service_id AND s.subject_type = d.subject_type AND s.subject_id = d.subject_id
 			WHERE t.retention_days IS NOT NULL AND s.seen_at < now() - make_interval(days => t.retention_days)
 			LIMIT $1
-			FOR UPDATE OF s SKIP LOCKED)
+			FOR UPDATE OF d, s SKIP LOCKED)
 		DELETE FROM subject_directory d USING doomed
 		WHERE d.service_id = doomed.service_id AND d.subject_type = doomed.subject_type AND d.subject_id = doomed.subject_id`, limit)
 	if err != nil {

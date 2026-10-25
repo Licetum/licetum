@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -48,7 +49,7 @@ func buildBinary(t *testing.T, dir, pkg string) string {
 		cmd := exec.Command("go", "build", "-o", b.path, pkg)
 		cmd.Dir = dir
 		if combined, err := cmd.CombinedOutput(); err != nil {
-			b.err = fmt.Errorf("build %s: %v\n%s", pkg, err, combined)
+			b.err = fmt.Errorf("build %s: %w\n%s", pkg, err, combined)
 		}
 	})
 	if b.err != nil {
@@ -94,8 +95,9 @@ func (e *env) processEnv(extra ...string) []string {
 	return withoutRedis(append(settings, extra...)...)
 }
 
-// runUntilReady starts the program and waits for GET url to answer 200; the output of the process is in the failure message.
-func runUntilReady(t *testing.T, bin string, args, env []string, url string) {
+// runUntilReady starts the program and waits for GET url to answer 200; the output of the process is in the failure message
+// and is returned, for a test that reads what the process logged while it started.
+func runUntilReady(t *testing.T, bin string, args, env []string, url string) *lockedBuffer {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Env = env
@@ -119,7 +121,7 @@ func runUntilReady(t *testing.T, bin string, args, env []string, url string) {
 		if resp, err := client.Get(url); err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				return
+				return out
 			}
 		}
 		if time.Now().After(deadline) {
@@ -151,4 +153,59 @@ func TestProcessAdminIsReadyWithoutRedis(t *testing.T) {
 			"ADMIN_AUTH__ISSUER="+e.cfg.AdminAuth.Issuer, "ADMIN_AUTH__AUDIENCE="+e.cfg.AdminAuth.Audience,
 			"ADMIN_AUTH__JWKS_URL="+e.cfg.AdminAuth.JWKSURL, "ADMIN_AUTH__SUBJECT_CLAIM="+e.cfg.AdminAuth.SubjectClaim,
 		), "http://"+addr+"/readyz")
+}
+
+// removedSettings are the settings that were removed with Redis, the read replica and the table synchronization engine.
+var removedSettings = []string{
+	"REDIS__URI", "REDIS__HOT_TIMEOUT",
+	"DB__READ_URI", "DB__MAX_REPLICA_LAG", "DB__LAG_ACTION", "DB__LAG_INTERVAL",
+	"SYNC__ENGINE", "SYNC__FETCH_TTL", "SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "WORKER__REGION",
+}
+
+// removedEnv sets every removed setting to a value that would have been refused or obeyed before they were removed.
+func removedEnv() []string {
+	var env []string
+	for _, name := range removedSettings {
+		env = append(env, name+"=x")
+	}
+	return env
+}
+
+// assertOneWarningEach checks that the output of a process that started with removedEnv carries exactly one warning per removed
+// setting: the processes that run for a long time (pdp, admin, worker) call the warning at their start, and a start that does
+// not call it would be silent for the operator who still sets the variables.
+func assertOneWarningEach(t *testing.T, output string) {
+	t.Helper()
+	for _, name := range removedSettings {
+		re := regexp.MustCompile(`the setting no longer has an effect.*"?setting"?[=:]"?` + name + `\b`)
+		if n := len(re.FindAllString(output, -1)); n != 1 {
+			t.Errorf("%s: %d warnings, want 1; the output of the process:\n%s", name, n, output)
+		}
+	}
+}
+
+// The three processes start with every removed setting set, and each of them logs one warning per setting.
+func TestProcessesStartWithTheRemovedSettingsAndWarnOnceForEach(t *testing.T) {
+	e := setup(t)
+	t.Run("pdp", func(t *testing.T) {
+		public, ops := freeAddr(t), freeAddr(t)
+		out := runUntilReady(t, buildBinary(t, coreModule, "./cmd/licetum"), []string{"pdp", "-addr", public},
+			e.processEnv(append(removedEnv(), "PDP__PUBLIC_URL=http://"+public, "PDP__OPS_ADDR="+ops)...), "http://"+ops+"/readyz")
+		assertOneWarningEach(t, out.String())
+	})
+	t.Run("worker", func(t *testing.T) {
+		addr := freeAddr(t)
+		out := runUntilReady(t, buildBinary(t, coreModule, "./cmd/licetum"), []string{"worker", "-addr", addr},
+			e.processEnv(removedEnv()...), "http://"+addr+"/readyz")
+		assertOneWarningEach(t, out.String())
+	})
+	t.Run("admin", func(t *testing.T) {
+		addr := freeAddr(t)
+		out := runUntilReady(t, buildBinary(t, adminModule, "./cmd/licetum-admin"), []string{"admin", "-addr", addr},
+			e.processEnv(append(removedEnv(),
+				"ADMIN_AUTH__ISSUER="+e.cfg.AdminAuth.Issuer, "ADMIN_AUTH__AUDIENCE="+e.cfg.AdminAuth.Audience,
+				"ADMIN_AUTH__JWKS_URL="+e.cfg.AdminAuth.JWKSURL, "ADMIN_AUTH__SUBJECT_CLAIM="+e.cfg.AdminAuth.SubjectClaim)...),
+			"http://"+addr+"/readyz")
+		assertOneWarningEach(t, out.String())
+	})
 }

@@ -107,13 +107,10 @@ type cachedEntry[T any] struct {
 	Deps  map[string]int64
 	Exp   int64
 	Hold  int64
-
-	// serveUntil is the end of the time this process serves the entry from memory while PostgreSQL answers.
-	serveUntil time.Time
 }
 
-// fresh: the entry may be served in the usual way.
-func (e *cachedEntry[T]) fresh(now time.Time) bool { return now.Before(e.serveUntil) }
+// fresh: the entry may be served in the usual way, until its Exp.
+func (e *cachedEntry[T]) fresh(now time.Time) bool { return now.Before(time.UnixMilli(e.Exp)) }
 
 // stale: the entry is past its time, but nothing that could make it wrong has happened as far as this process can tell:
 // the view of the policy it was made under is the one the process still holds, and no validity window has started or ended.
@@ -279,13 +276,11 @@ func (a *App) keepAnswerInMemory(key string, entry any, now time.Time) {
 	e, ok := entry.(interface {
 		expiry() int64
 		holdTime() int64
-		serveFor(time.Time)
 	})
 	if !ok || e.expiry() == 0 {
 		return
 	}
 	serve := time.UnixMilli(e.expiry()).Sub(now)
-	e.serveFor(now.Add(serve))
 	keep := serve
 	if hold := time.UnixMilli(e.holdTime()).Sub(now); hold > keep {
 		keep = min(hold, maxStaleAnswerTTL)
@@ -296,8 +291,6 @@ func (a *App) keepAnswerInMemory(key string, entry any, now time.Time) {
 func (e *cachedEntry[T]) expiry() int64 { return e.Exp }
 
 func (e *cachedEntry[T]) holdTime() int64 { return e.Hold }
-
-func (e *cachedEntry[T]) serveFor(until time.Time) { e.serveUntil = until }
 
 // dataTag names the data versions of a state. Two requests share a computation only when they saw the same
 // versions: a computation that started before a change of the data must not answer a request that started after it.

@@ -311,7 +311,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/type_resource/{type_resource_id}/resource/refresh",
 		Summary:     "Refresh the resources of a type from its source now",
-		Description: "Asks the source of the type right away, skipping the cached source list, the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).",
+		Description: "Asks the source of the type right away, skipping the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).",
 		Tags:        []string{"Resource"},
 		Errors:      []int{http.StatusUnprocessableEntity, http.StatusFailedDependency},
 	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {

@@ -143,8 +143,8 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
     `db.IsUnavailable` errors into 503 `policy_unavailable` (and an expired request context into 503 `request_timeout`, a canceled one
     quietly). A degraded view serves answers past their `Exp` while their `Hold` (the next validity boundary, uncapped by `ResultCacheTTL`; `computed.hold`,
     `Prepared.hold`, `validityUntil`: the exact distance to the boundary, no one-second floor, counted from the start of the computation) has not
-    passed (`cachedEntry.stale`, `result="stale"`; `hold_property_test.go` checks it against random policies with a manual clock, `App.clock`); `cachedEntry.serveUntil` is the ordinary serving
-    time of an entry, its `Exp` (a minute at most, or the next validity boundary; there is no shorter cap, since no second level holds the
+    passed (`cachedEntry.stale`, `result="stale"`; `hold_property_test.go` checks it against random policies with a manual clock, `App.clock`); an entry is served in the usual way until its `Exp`
+    (a minute at most, or the next validity boundary; there is no shorter cap, since no second level holds the
     answer): the entry lives in the LRU until `Hold` (at most `maxStaleAnswerTTL`). `cachedAnswer` waits for the shared computation with `DoChan` and the
     caller's context, so a request deadline is honoured. `HTTP__MAX_INFLIGHT` keeps no latency under overload (the admitted requests wait behind
     at most that many others): `core/README.md` says how to size it, `chaos/f5_8_test.go` measures it.
@@ -531,7 +531,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    **waits** for it up to `SYNC__REQUEST_WAIT` (5 s), then answers from what exists (the type contributes no resources, the
    answer is cached for 2 s only, the response has `X-Authz-Sync: pending`); throttle run out → the job is queued without
    waiting and the answer comes from the data as of the last synchronization; in backoff → nobody asks. `consistency=higher`
-   always waits for a *fresh* job (its own dedup key) that skips the throttle and the cached source list; fresh jobs ask
+   always waits for a *fresh* job (its own dedup key) that skips the throttle; fresh jobs ask
    a type's source at most once per `SYNC__FRESH_MIN_INTERVAL`. There is one job per type (the DBOS deduplication id, policy "return
    existing"; a request that waited names the job after the state it read, `jobName`): concurrent requests in any process attach to it
    and wait for its result (`waitJobs`, one poller per job per process). The worker (`RunWorker`: the DBOS runtime, `SYNC__CONCURRENCY`

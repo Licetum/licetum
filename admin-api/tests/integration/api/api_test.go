@@ -505,7 +505,7 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 		t.Fatalf("cycle in the type tree: want 400, got %d", status)
 	}
 
-	// Garbage tokens get 401 and do not open the circuit breaker for valid users.
+	// Garbage tokens get 401 and do not stop valid users from being answered.
 	for i := range 6 {
 		if status, _ := e.permission("filials", fmt.Sprintf("garbage.%d.x", i)); status != http.StatusUnauthorized {
 			t.Fatalf("garbage token: want 401, got %d", status)

@@ -403,7 +403,7 @@ func TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath(t *testing.T) {
 		for k, v := range g.bodies[id] {
 			body[k] = v
 		}
-		body["enabled"] = !(body["enabled"] == nil || body["enabled"] == true)
+		body["enabled"] = body["enabled"] != nil && body["enabled"] != true
 		w.must("PATCH", "/assignment_rule/"+id, body)
 	}
 	for range 15 {
