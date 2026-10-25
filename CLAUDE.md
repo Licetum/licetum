@@ -105,9 +105,7 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   synchronizers), scope `data:<service id>` numbers the resource data of a service. A write bumps `rules` **in its own transaction**
   (`mutate`, once per batch in `RunBatch`, `RestoreAdminAccess`, the seed), a synchronization that changed data bumps `data:<service>` in the
   transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
-  `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision` of an admin write, `Licetum-Revision` of a PDP answer), invalidates the view and, for the replicas of the
-  previous release during a rolling update, still bumps the Redis counters (`authz:cache_version`, `authz:data_versions`);
-  this release reads neither. Answer keys are `authz:permission:t9:r<rules>:…` / `authz:check:t5:r<rules>:…`.
+  `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision` of an admin write, `Licetum-Revision` of a PDP answer), invalidates the view and makes the platform types due. Answer keys are `authz:permission:t9:r<rules>:…` / `authz:check:t5:r<rules>:…`.
 - The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
   (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
   (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
@@ -549,8 +547,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    platform types due (`AfterWrite` → `invalidatePlatformSync`, `invalidated_at`): the next request waits for a job that
    fetched after the write; it is the only effect of a write on the synchronization (a change of a type or a synchronizer
    changes its structure signature instead). The digest keeps its shape; `format` 5 (4 is read too) is rewritten only when
-   data or graph signature changed, and a start of the worker imports the previous release's Redis hashes
-   (`authz:resource_sync:hash:<type>`, `v4:<data>:<graph>`) for types without a row. The worker's schedule (`SYNC__SCHEDULE_TICK`)
+   data or graph signature changed. The worker's schedule (`SYNC__SCHEDULE_TICK`)
    queues due types that someone asked for within `SYNC__DEMAND_WINDOW` (all with `SYNC__KEEP_WARM`). DBOS does not hand the
    interrupted workflows of a dead executor to a live one, so every executor writes a heartbeat to `sync_executor` (`SYNC__LEASE`, every
    lease/3) and a janitor of each worker cancels the workflows of an executor whose heartbeat is older than the lease, queues a
@@ -559,7 +556,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    (`admin-api/tests/integration/api/sync_test.go`, `sync_crash_test.go`) and `core/engine/sync_dbos_test.go` are the evidence for the
    engine. `App.Role` (pdp, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
    outside the worker. Every committed change of a type's data bumps the data revision of its service in the same transaction
-   (`bumpDataRevisions`, see F2), and the worker then calls `invalidateView` (and `recordDataChange` for the previous release). `resolve` (one resource
+   (`bumpDataRevisions`, see F2), and the worker then calls `invalidateView`. `resolve` (one resource
    refreshed inline by the admin API) writes under the same component lock and timeouts.
 4. Rules become *instances* (rule × anchor; a `resource_from_claim` rule yields the anchor found by one
    `findAncestors` query). Each instance covers the anchor's descendants through the closure

@@ -55,7 +55,7 @@ func currentBatch(ctx context.Context) *batchRun {
 // mutate runs a write in one transaction together with its change-log record and the bump of the revision of the rules
 // (db.BumpRevision): the revision commits with the write, so it cannot reach a replica before the data does. fn does its
 // statements through q (the transaction) and returns the change it made. Once the transaction has committed, the process
-// and the previous release are told (App.AfterWrite). Inside a batch the write joins the batch's transaction instead, and
+// is told (App.AfterWrite). Inside a batch the write joins the batch's transaction instead, and
 // the batch bumps the revision once.
 func (a *App) mutate(ctx context.Context, fn func(q db.Querier) (change, error)) error {
 	if run := currentBatch(ctx); run != nil {

@@ -168,16 +168,12 @@ func (a *App) Close() {
 // (db.BumpRevision, in the write's own transaction): it is the revision of the write for the caller (X-Authz-Revision),
 // it makes this process read the revisions again at once, and it makes the types of the platform itself due for synchronization (the
 // entities they are made of were just written, and a write must show at once; the data of the other services is not
-// touched: a change of a type or of a synchronizer changes its structure signature instead). The replicas of the previous release follow the Redis counter, which is bumped for them while a rolling
-// update lasts. The write is committed by now, so a Redis failure is not turned into a request error.
+// touched: a change of a type or of a synchronizer changes its structure signature instead).
 func (a *App) AfterWrite(ctx context.Context, revision int64) {
 	if t := TraceFrom(ctx); t != nil {
 		t.setRevision(revision)
 	}
 	a.invalidateView()
-	if _, err := redisx.BumpVersion(ctx, a.Redis); err != nil {
-		logRedis(ctx, slog.LevelWarn, "failed to bump the cache version of the previous release", err)
-	}
 	if err := a.invalidatePlatformSync(ctx); err != nil {
 		slog.ErrorContext(ctx, "failed to make the platform types due for synchronization", "error", err)
 	}

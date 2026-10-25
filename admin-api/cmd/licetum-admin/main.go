@@ -26,7 +26,6 @@ import (
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/logx"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 const usage = `Usage: licetum-admin <command> [flags]
@@ -92,8 +91,8 @@ type users []string
 func (u *users) String() string     { return fmt.Sprint([]string(*u)) }
 func (u *users) Set(v string) error { *u = append(*u, v); return nil }
 
-// restoreAdmin is the way back in when nobody can manage the platform any more. It needs the database (and Redis, to
-// drop the cached answers; without it the answers fix themselves within a minute).
+// restoreAdmin is the way back in when nobody can manage the platform any more. It needs the database only: it bumps the
+// revision of the rules in PostgreSQL, which every PDP follows, so the answers made before it are not served again.
 func restoreAdmin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("restore-admin", flag.ExitOnError)
 	var also users
@@ -116,15 +115,5 @@ func restoreAdmin(ctx context.Context, args []string) error {
 	}
 	slog.Warn("administrator access restored", "memberships", report.Members, "denials_switched_off", report.DisabledDenials)
 
-	if cfg.RequireRedis() == nil {
-		if rdb, err := redisx.Connect(ctx, cfg.Redis.URI); err != nil {
-			slog.Warn("Redis is not reachable: cached answers expire within a minute", "error", err)
-		} else {
-			defer rdb.Close()
-			if _, err := redisx.BumpVersion(ctx, rdb); err != nil {
-				slog.Warn("could not drop the cached answers: they expire within a minute", "error", err)
-			}
-		}
-	}
 	return nil
 }

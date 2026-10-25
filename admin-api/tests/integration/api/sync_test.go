@@ -757,12 +757,23 @@ func TestSyncRepeatedSynchronizationChangesNothing(t *testing.T) {
 		return s
 	}
 	versions := func() string {
-		raw, err := e.app.Redis.HGetAll(context.Background(), "authz:data_versions").Result()
+		rows, err := e.pool.Query(context.Background(), `SELECT scope || '=' || revision FROM revision_state WHERE scope LIKE 'data:%' ORDER BY scope`)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, _ := json.Marshal(raw)
-		return string(b)
+		defer rows.Close()
+		var all []string
+		for rows.Next() {
+			var v string
+			if err := rows.Scan(&v); err != nil {
+				t.Fatal(err)
+			}
+			all = append(all, v)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(all, ",")
 	}
 	before, beforeVersions := snapshot(), versions()
 	for range 3 {
@@ -800,48 +811,6 @@ func TestSyncRedisFlushStartsNothing(t *testing.T) {
 	}
 	if got := src.calls.Load(); got != calls {
 		t.Fatalf("a Redis flush made %d source calls", got-calls)
-	}
-}
-
-// F3-14: the state of the previous release (the hash in Redis) is taken over: nothing is applied again.
-func TestSyncStateOfThePreviousReleaseIsImported(t *testing.T) {
-	e := setup(t)
-	src := newSource(t, branches("b1", "b2")...)
-	f := e.syncFixture("legacy", src)
-	r := e.checkReplica(nil)
-	r.permission(t, f)
-
-	var data, graph string
-	if err := e.pool.QueryRow(context.Background(), `SELECT data_hash, graph_sig FROM sync_state WHERE type_resource_id = $1`, f.typ).Scan(&data, &graph); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.pool.Exec(context.Background(), `DELETE FROM sync_state WHERE type_resource_id = $1`, f.typ); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.app.Redis.Set(context.Background(), "authz:resource_sync:hash:"+f.typ, "v4:"+data+":"+graph, 0).Err(); err != nil {
-		t.Fatal(err)
-	}
-	before, err := e.app.Redis.HGetAll(context.Background(), "authz:data_versions").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	e.stopWorker()
-	_, _ = e.worker(nil, engine.SyncHooks{}) // the start imports the state
-	time.Sleep(300 * time.Millisecond)
-	for range 3 {
-		if _, body, _ := r.permission(t, f); !strings.Contains(body, `"b2"`) {
-			t.Fatalf("%s", body)
-		}
-	}
-	time.Sleep(500 * time.Millisecond)
-	var format int
-	if err := e.pool.QueryRow(context.Background(), `SELECT format FROM sync_state WHERE type_resource_id = $1`, f.typ).Scan(&format); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := e.app.Redis.HGetAll(context.Background(), "authz:data_versions").Result()
-	if before[f.service] != after[f.service] {
-		t.Fatalf("the data revision of the service changed after the import: %v -> %v", before, after)
 	}
 }
 

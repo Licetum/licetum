@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -21,12 +20,9 @@ import (
 // flowing through the rows that are not there (or a denial above would stop reaching the rows that are back). ChangeMode
 // makes the closure follow in the transaction that changes the mode.
 
-// ClosureMove says which types had the closure of their resources rebuilt by ChangeMode: the type itself and the types below
-// it. The caller hands it to AfterClosureMove once the transaction has committed.
-type ClosureMove struct {
-	g     *TypeGraph
-	types []uuid.UUID
-}
+// ClosureMove says that ChangeMode rebuilt the closure of the resources of the type and of the types below it (a nil move:
+// there was nothing to rebuild). The caller hands it to AfterClosureMove once the transaction has committed.
+type ClosureMove struct{}
 
 // ChangeMode runs write, the creation or the deletion of the synchronizer of a type, in the transaction tx, and rebuilds the
 // closure of the resources of the type and of the resources below them (found by the declared links) before the transaction commits, under the lock of the
@@ -93,7 +89,7 @@ func (a *App) ChangeMode(ctx context.Context, tx db.Querier, typeID uuid.UUID, w
 		if err := bumpDataRevisions(ctx, tx, g, types); err != nil {
 			return err
 		}
-		move = &ClosureMove{g: g, types: types}
+		move = &ClosureMove{}
 		return nil
 	})
 	return move, modeChangeError(err)
@@ -116,18 +112,13 @@ func modeChangeError(err error) error {
 	return err
 }
 
-// AfterClosureMove is for the process that committed a ChangeMode: it reads the revisions again, and tells the replicas of
-// the previous release, which follow the data versions in Redis. A nil move (nothing was rebuilt) does nothing.
-func (a *App) AfterClosureMove(ctx context.Context, move *ClosureMove) {
+// AfterClosureMove is for the process that committed a ChangeMode: it reads the revisions again. A nil move (nothing was
+// rebuilt) does nothing.
+func (a *App) AfterClosureMove(_ context.Context, move *ClosureMove) {
 	if move == nil {
 		return
 	}
 	a.invalidateView()
-	pipe := a.Redis.Pipeline()
-	recordDataChange(ctx, pipe, move.g, move.types)
-	if _, err := pipe.Exec(ctx); err != nil {
-		logRedis(ctx, slog.LevelWarn, "failed to record the resource data change for the previous release", err)
-	}
 }
 
 // withSyncTimeouts runs fn in the transaction tx with the lock and statement timeouts of a synchronization, and puts the

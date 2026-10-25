@@ -29,9 +29,6 @@ import (
 // in one service leaves in place the answers that do not read it.
 
 const (
-	// dataVersionsKey is a hash: service id -> version of the resource data of the service. Since the revision moved to
-	// PostgreSQL only the replicas of the previous release read it; the synchronizations still write it for them.
-	dataVersionsKey = "authz:data_versions"
 	// computeTimeout bounds a computation that goes on after its first caller has gone away (singleflight).
 	computeTimeout = 30 * time.Second
 )
@@ -346,21 +343,6 @@ func (a *App) keepAnswerInMemory(key string, entry any, now time.Time) {
 // redisDegraded: the process is running without Redis (see licetum_degraded).
 func (a *App) redisDegraded() bool {
 	return a.Redis != nil && redisx.Degraded(a.Redis) || a.health.redis.degraded()
-}
-
-// recordDataChange adds to the pipeline the bump of the data version of every service that owns one of the given types,
-// in the Redis hash the replicas of the previous release read. The authoritative revision is the one bumpDataRevisions
-// moves in PostgreSQL, in the transaction that wrote the data; this one is for a rolling update.
-func recordDataChange(ctx context.Context, pipe redis.Pipeliner, g *TypeGraph, typeIDs []uuid.UUID) {
-	seen := map[uuid.UUID]bool{}
-	for _, id := range typeIDs {
-		n, ok := g.Node(id)
-		if !ok || seen[n.ServiceID] {
-			continue
-		}
-		seen[n.ServiceID] = true
-		pipe.HIncrBy(ctx, dataVersionsKey, n.ServiceID.String(), 1)
-	}
 }
 
 func (e *cachedEntry[T]) expiry() int64 { return e.Exp }

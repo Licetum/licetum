@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"slices"
 	"strings"
 
@@ -1157,11 +1156,6 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 			}
 			if changed {
 				a.invalidateView()
-				pipe := a.Redis.Pipeline()
-				recordDataChange(ctx, pipe, g, []uuid.UUID{typeResourceID})
-				if _, err := pipe.Exec(ctx); err != nil {
-					logRedis(ctx, slog.LevelWarn, "failed to record the resource data change for the previous release", err)
-				}
 			}
 		}
 	}

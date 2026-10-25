@@ -20,7 +20,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
-	"github.com/licetum/licetum/core/redisx"
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
@@ -359,37 +358,6 @@ func TestF2_8_FlushingRedisWhileServingChangesNoAnswer(t *testing.T) {
 	// answer of the other replicas was made stale by it.
 	if got := c.DataRevision(p.ServiceID); got != dataBefore {
 		t.Errorf("the data revision went from %d to %d with nothing written to the source", dataBefore, got)
-	}
-}
-
-// F2-9: the replicas of the previous release follow the Redis counters; the write of this release bumps them too.
-func TestF2_9_APreviousReleaseCanStillFollowTheWrites(t *testing.T) {
-	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org")
-	ctx := context.Background()
-	before, err := redisx.GetVersion(ctx, c.Redis)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Must(http.MethodPost, "/assignment_rule", ruleBody(p, "bob", nil))
-	after, err := redisx.GetVersion(ctx, c.Redis)
-	if err != nil || after != before+1 {
-		t.Fatalf("the cache version of the previous release went from %d to %d (%v) with a write, want +1", before, after, err)
-	}
-	// A change of the data moves the hash of the data versions the previous release reads.
-	c.Source.Set("branch", map[string]any{"id": "b1", "name": "Branch 1", "parent_id": "d1"})
-	c.Must(http.MethodPost, "/type_resource/"+p.Branch+"/resource/refresh", nil)
-	v, err := c.Redis.HGet(ctx, "authz:data_versions", p.ServiceID).Int64()
-	if err != nil || v < 1 {
-		t.Fatalf("the data versions of the previous release: %d, %v", v, err)
-	}
-	// And the keys of the answers carry the new format, so the two releases do not read each other's.
-	r := c.Replicas[0]
-	alice := c.UserToken("alice")
-	r.Warm(c, harness.Branches(p.Slug, alice), alice)
-	waitForKeys(t, c, "authz:permission:t9:r*")
-	if old, _ := c.Redis.Keys(ctx, "authz:permission:t8:*").Result(); len(old) != 0 {
-		t.Fatalf("this release wrote keys of the format of the previous one: %v", old)
 	}
 }
 

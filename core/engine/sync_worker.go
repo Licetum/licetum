@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -44,7 +43,6 @@ func (a *App) RunWorker(ctx context.Context) error {
 	}
 	owner := workerName()
 	slog.InfoContext(ctx, "synchronization worker started", "owner", owner, "lease", a.leaseDuration(), "concurrency", a.workerConcurrency())
-	a.importLegacyState(ctx)
 	return a.runDBOSWorker(ctx, owner)
 }
 
@@ -295,12 +293,6 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 	}
 	if len(movedTypes) > 0 {
 		a.invalidateView() // the data revisions moved: the next request reads them again
-		// The replicas of the previous release follow the data versions in Redis.
-		pipe := a.Redis.Pipeline()
-		recordDataChange(ctx, pipe, g, movedTypes)
-		if _, err := pipe.Exec(ctx); err != nil {
-			logRedis(ctx, slog.LevelWarn, "failed to record the resource data change for the previous release", err)
-		}
 	}
 	return unanswered, nil
 }
@@ -420,51 +412,3 @@ func (a *App) scheduleOnce(ctx context.Context) {
 		}
 	}
 }
-
-// importLegacyState copies the stored hashes of the previous release (Redis authz:resource_sync:hash:<type>) into
-// sync_state for the types that have no row yet, so that the first start after the upgrade rebuilds nothing. The Redis
-// keys are left alone: pods of the previous release may still use them while they roll out.
-func (a *App) importLegacyState(ctx context.Context) {
-	if a.Redis == nil {
-		return
-	}
-	rows, err := a.DB.Query(ctx, `
-		SELECT DISTINCT s.type_resource_id FROM synchronizer s
-		WHERE s.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM sync_state st WHERE st.type_resource_id = s.type_resource_id)`)
-	if err != nil {
-		slog.WarnContext(ctx, "failed to look for the stored synchronization hashes of the previous release", "error", err)
-		return
-	}
-	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err == nil {
-			ids = append(ids, id)
-		}
-	}
-	rows.Close()
-	imported := 0
-	for _, id := range ids {
-		digest, err := a.Redis.Get(ctx, legacyHashPrefix+id.String()).Result()
-		if err != nil {
-			continue
-		}
-		parts := strings.Split(digest, ":")
-		if len(parts) != 3 || parts[0] != "v4" {
-			continue
-		}
-		tag, err := a.DB.Exec(ctx, `
-			INSERT INTO sync_state (type_resource_id, format, data_hash, graph_sig, applied_at, next_due_at)
-			SELECT $1, $2, $3, $4, now(), now() WHERE EXISTS (SELECT 1 FROM type_resource WHERE id = $1)
-			ON CONFLICT DO NOTHING`, id, syncFormatPrevious, parts[1], parts[2])
-		if err == nil && tag.RowsAffected() > 0 {
-			imported++
-		}
-	}
-	if imported > 0 {
-		slog.InfoContext(ctx, "imported the synchronization state of the previous release", "types", imported)
-	}
-}
-
-// legacyHashPrefix is where the previous release kept the hash of the last synchronization of a type.
-const legacyHashPrefix = "authz:resource_sync:hash:"
