@@ -170,24 +170,17 @@ func (r *replica) permission(t *testing.T, f *syncFixture, opts ...authzenreq.Op
 	return resp.StatusCode, string(raw), resp.Header
 }
 
-// jobCount counts the jobs of a type in a state (done, queued, running): the sync_job rows, or the DBOS workflows.
+// jobCount counts the DBOS SyncType workflows of a type in a state (done, queued, running).
 func (e *env) jobCount(typ string, state string) int {
 	e.t.Helper()
 	var n int
-	if syncEngine() == "dbos" {
-		status := map[string]string{"done": "SUCCESS", "queued": "ENQUEUED", "running": "PENDING"}[state]
-		q := fmt.Sprintf(`SELECT count(*) FROM %s.workflow_status WHERE name = 'SyncType' AND status = $1 AND attributes->>'type' = $2`,
-			e.cfg.Sync.DBOSSchema)
-		if err := e.pool.QueryRow(context.Background(), q, status, typ).Scan(&n); err != nil {
-			if strings.Contains(err.Error(), "does not exist") {
-				return 0
-			}
-			e.t.Fatal(err)
+	status := map[string]string{"done": "SUCCESS", "queued": "ENQUEUED", "running": "PENDING"}[state]
+	q := fmt.Sprintf(`SELECT count(*) FROM %s.workflow_status WHERE name = 'SyncType' AND status = $1 AND attributes->>'type' = $2`,
+		e.cfg.Sync.DBOSSchema)
+	if err := e.pool.QueryRow(context.Background(), q, status, typ).Scan(&n); err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			return 0
 		}
-		return n
-	}
-	if err := e.pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM sync_job WHERE type_ids = ARRAY[$1::uuid] AND state = $2`, typ, state).Scan(&n); err != nil {
 		e.t.Fatal(err)
 	}
 	return n
@@ -315,9 +308,6 @@ func TestSyncWaitingForTheWorkerHoldsNoComputeSlot(t *testing.T) {
 // hung so for 39 minutes, 20 concurrent admin writes enqueueing the six platform types each). The concurrent requests for one
 // job share one enqueue, and the process runs at most (pool - 1) / 2 enqueues of different jobs at once (engine.enqueueSlot).
 func TestSyncConcurrentDuplicateEnqueuesDoNotExhaustTheDBOSPool(t *testing.T) {
-	if syncEngine() != "dbos" {
-		t.Skip("the DBOS client only")
-	}
 	e := setup(t)
 	const types = 4
 	fixtures := make([]*syncFixture, types)
@@ -478,9 +468,8 @@ func TestSyncLateExecutorIsFenced(t *testing.T) {
 	isFixture := func(ids []uuid.UUID) bool { return slices.Contains(ids, uuid.MustParse(f.typ)) }
 	// One executor: a paused executor's own siblings would take its expired job over as well.
 	late, _ := e.worker(func(c *config.Config) { c.Sync.Lease, c.Sync.Concurrency = 600*time.Millisecond, 1 }, engine.SyncHooks{
-		// The postgres engine renews the lease of a job (asks with its types), the dbos engine the heartbeat of the executor
-		// (asks with nil): both stop for the fixture.
-		NoHeartbeat: func(ids []uuid.UUID) bool { return ids == nil || isFixture(ids) },
+		// The DBOS executor asks for its heartbeat with nil; the heartbeat stops for the whole executor.
+		NoHeartbeat: func(ids []uuid.UUID) bool { return ids == nil },
 		AfterFetch: func(ctx context.Context, ids []uuid.UUID) {
 			if !isFixture(ids) {
 				return // only the job of the fixture is held
@@ -538,12 +527,6 @@ func TestSyncLateExecutorIsFenced(t *testing.T) {
 	}
 	if n := e.jobCount(f.typ, "done"); n != 1 {
 		t.Fatalf("the job ended %d times", n)
-	}
-	if syncEngine() == "postgres" {
-		var attempts int
-		if err := e.pool.QueryRow(context.Background(), `SELECT max(attempts) FROM sync_job WHERE type_ids = ARRAY[$1::uuid]`, f.typ).Scan(&attempts); err != nil || attempts != 2 {
-			t.Fatalf("the job was claimed %d times (%v), want 2", attempts, err)
-		}
 	}
 }
 

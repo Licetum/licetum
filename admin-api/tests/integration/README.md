@@ -124,6 +124,21 @@ a time (`-p 1`) when they share one Redis (`LICETUM_TEST_REDIS_URI`).
 Not covered yet: the read replica that lags by two seconds (F2-3, F2-4 in full) needs the read pool of F6; F2-11 (stage 2, scoped
 bumps) is a separate pull request.
 
+## Synchronization (F3)
+
+`api/sync_test.go` and `api/sync_crash_test.go` run the synchronization on the DBOS engine, the only one; the tests have no engine switch. The
+`licetum worker` of the kill tests is started with the defaults.
+
+| test | what it proves |
+|---|---|
+| `api/sync_test.go` `TestSyncOneSourceCallForAConcurrentFirstRequest`, `TestSyncFreshRequestsShareTheSourceCall` | concurrent first requests, and concurrent `fresh` ones, ask the source once |
+| `TestSyncFailingSourceIsAskedOncePerBackoff` | the cluster asks a source that fails once per backoff window, whatever the number of replicas and requests |
+| `TestSyncLateExecutorIsFenced` | an executor that outlives its lease applies nothing once another one has taken the job over (`licetum_sync_lease_lost_total`), and the job ends once |
+| `TestSyncConcurrentDuplicateEnqueuesDoNotExhaustTheDBOSPool` | concurrent duplicate enqueues of many types do not wedge the pool of the DBOS client |
+| `api/sync_crash_test.go` `TestSyncKillNineOfTheWorker` | a worker killed while it fetches or while it commits: the job is taken over within twice the lease, no partial type, a consistent closure, one done job |
+| `TestSyncBusyComponentLockDoesNotStartABackoff` | a synchronization whose component lock stays busy does not start the backoff of the source |
+| `api/regions_test.go` `TestF6_6_RegionsOfASynchronizerThroughTheAPI` | the API stores, sorts, deduplicates and validates the `regions` of a synchronizer. No test says who asks a source with regions until P5 (the regional-fetch contract); any executor may |
+
 ## Resilience and operations (F5)
 
 | test | what it proves |
@@ -156,7 +171,6 @@ the two exports; `task go:test:integration:replica` does all of it. `harness.Wit
 | `TestF6_10_*` | while a cell works, the sockets of the process go only to the cell's own endpoints (`/proc/net/tcp`), and nothing connects to the decoys standing for a neighbouring cell |
 | `TestF6_11_*` | after a promotion that lost the last writes, `licetum failover` makes the regions drop what they kept under the reused revisions (the test shows the stale answer without it) |
 | `chaos/f6_test.go` | `TestF6_7_*`: an admin write with 150 ms to the primary costs at most six round trips; `TestF6_8_*`, `TestF6_9_*`: 600 requests a second over three regions split 50/30/20 (`LICETUM_F6_LOAD_SECONDS`), one region removed |
-| `api/regions_test.go` | `synchronizer.regions` and `WORKER__REGION`: a source of one region is asked only by the workers of that region |
 
 ### Through PgBouncer (F5-9)
 

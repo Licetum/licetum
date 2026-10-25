@@ -2,76 +2,13 @@
 
 package api_test
 
-// F6 item 5: the regions of a synchronizer and the region of a worker. A source that can be reached from one region only is asked
-// by the workers of that region, never by the others and never by a check process. The postgres engine claims jobs from a table
-// and can filter them; the tests set it on the processes they start.
+// F6 item 5: the API stores and validates the regions of a synchronizer. Since the table synchronization engine is gone nothing
+// enforces them until P5 (the regional-fetch contract); a source with regions may be asked by any executor.
 
 import (
-	"context"
 	"net/http"
-	"strings"
 	"testing"
-	"time"
-
-	"github.com/licetum/licetum/core/config"
-	"github.com/licetum/licetum/core/engine"
 )
-
-func postgresEngine(c *config.Config) { c.Sync.Engine = "postgres" }
-
-func inRegion(region string) func(*config.Config) {
-	return func(c *config.Config) { postgresEngine(c); c.Sync.WorkerRegion = region }
-}
-
-func TestF6_6_ASourceOfOneRegionIsAskedOnlyByTheWorkersOfThatRegion(t *testing.T) {
-	e := setup(t)
-	src := newSource(t, branches("b1", "b2")...)
-	f := e.syncFixture("regional", src)
-	e.stopWorker()
-	// The synchronizer is reachable from "eu" only.
-	if _, err := e.pool.Exec(context.Background(), `UPDATE synchronizer SET regions = '{eu}' WHERE type_resource_id = $1`, f.typ); err != nil {
-		t.Fatal(err)
-	}
-
-	r := e.checkReplica(func(c *config.Config) { postgresEngine(c); c.Sync.RequestWait = 1500 * time.Millisecond })
-	e.worker(inRegion("us"), engine.SyncHooks{})
-	e.worker(inRegion("jp"), engine.SyncHooks{})
-
-	// Only workers of other regions run: the request waits, the type has no data, and the source is not asked by anybody.
-	status, body, header := r.permission(t, f)
-	if status != http.StatusOK || strings.Contains(body, `"b1"`) || header.Get("X-Authz-Sync") != "pending" {
-		t.Fatalf("with no worker of the region: %d sync=%q %s", status, header.Get("X-Authz-Sync"), body)
-	}
-	time.Sleep(time.Second)
-	if got := src.calls.Load(); got != 0 {
-		t.Fatalf("the source was asked %d times by workers outside its regions", got)
-	}
-
-	// A worker of the region takes the job that waited.
-	e.worker(inRegion("eu"), engine.SyncHooks{})
-	e.waitFor("the type to be synchronized by the worker of its region", 20*time.Second, func() bool { return e.resourceCount(f.typ) == 2 })
-	if got := src.calls.Load(); got == 0 {
-		t.Fatal("the source was never asked")
-	}
-	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
-		t.Fatalf("after the worker of the region: %d %s", status, body)
-	}
-}
-
-func TestF6_6_AWorkerWithoutARegionTakesEveryJob(t *testing.T) {
-	e := setup(t)
-	src := newSource(t, branches("b1")...)
-	f := e.syncFixture("anywhere", src)
-	e.stopWorker()
-	if _, err := e.pool.Exec(context.Background(), `UPDATE synchronizer SET regions = '{eu}' WHERE type_resource_id = $1`, f.typ); err != nil {
-		t.Fatal(err)
-	}
-	e.worker(inRegion(""), engine.SyncHooks{})
-	r := e.checkReplica(func(c *config.Config) { postgresEngine(c); c.Sync.RequestWait = 10 * time.Second })
-	if status, body, _ := r.permission(t, f); status != http.StatusOK || !strings.Contains(body, `"b1"`) {
-		t.Fatalf("%d %s", status, body)
-	}
-}
 
 func TestF6_6_RegionsOfASynchronizerThroughTheAPI(t *testing.T) {
 	e := setup(t)

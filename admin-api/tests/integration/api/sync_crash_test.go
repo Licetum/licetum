@@ -63,7 +63,7 @@ func (e *env) workerProcess(lease int) *exec.Cmd {
 	cmd.Env = append(os.Environ(),
 		"DB__URI="+e.cfg.DB.URI, "REDIS__URI="+testInfrastructure.RedisURI,
 		"SYNC__LEASE="+strconv.Itoa(lease), "SYNC__CONCURRENCY=1", "SYNC__FRESH_MIN_INTERVAL=0",
-		"SYNC__ENGINE="+syncEngine(), "SYNC__DBOS_SCHEMA="+e.cfg.Sync.DBOSSchema)
+		"SYNC__DBOS_SCHEMA="+e.cfg.Sync.DBOSSchema)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	if err := cmd.Start(); err != nil {
 		e.t.Fatal(err)
@@ -161,19 +161,14 @@ func TestSyncKillNineOfTheWorker(t *testing.T) {
 			e.waitFor("another worker to finish the job", 2*lease*time.Second+60*time.Second, func() bool { return e.jobCount(f.typ, "done") > 0 })
 			// The takeover itself happens within twice the lease; redoing the work takes as long as the work does.
 			var reclaimed time.Time
-			if syncEngine() == "dbos" {
-				// The replacement of the workflow of the dead executor is queued under "<id>+r".
-				var createdMs int64
-				if err := e.pool.QueryRow(context.Background(), fmt.Sprintf(
-					`SELECT min(created_at) FROM %s.workflow_status WHERE name = 'SyncType' AND workflow_uuid LIKE '%%+r' AND attributes->>'type' = $1`,
-					e.cfg.Sync.DBOSSchema), f.typ).Scan(&createdMs); err != nil {
-					t.Fatal(err)
-				}
-				reclaimed = time.UnixMilli(createdMs)
-			} else if err := e.pool.QueryRow(context.Background(),
-				`SELECT started_at FROM sync_job WHERE type_ids = ARRAY[$1::uuid] AND state = 'done'`, f.typ).Scan(&reclaimed); err != nil {
+			// The replacement of the workflow of the dead executor is queued under "<id>+r".
+			var createdMs int64
+			if err := e.pool.QueryRow(context.Background(), fmt.Sprintf(
+				`SELECT min(created_at) FROM %s.workflow_status WHERE name = 'SyncType' AND workflow_uuid LIKE '%%+r' AND attributes->>'type' = $1`,
+				e.cfg.Sync.DBOSSchema), f.typ).Scan(&createdMs); err != nil {
 				t.Fatal(err)
 			}
+			reclaimed = time.UnixMilli(createdMs)
 			if took := reclaimed.Sub(killed); took > 2*lease*time.Second {
 				t.Fatalf("the job was taken over %v after the kill, want within twice the lease (%ds)", took, lease)
 			}
@@ -348,11 +343,8 @@ func TestSyncWorkerMemory(t *testing.T) {
 
 // F3 (lock timeout): a synchronization whose component lock stays busy through every attempt does not start the backoff
 // of the source (it did not fail): once the lock is free the type is synchronized by the next request, not after the
-// 30 s or more of a backoff. On the dbos engine; the postgres engine requeues the job, as before.
+// 30 s or more of a backoff.
 func TestSyncBusyComponentLockDoesNotStartABackoff(t *testing.T) {
-	if syncEngine() != "dbos" {
-		t.Skip("the table engine requeues the job instead")
-	}
 	e := setup(t)
 	f := e.syncFixture("busy", newSource(t, branches("b1")...))
 	e.stopWorker()
