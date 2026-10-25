@@ -1,7 +1,10 @@
 package config_test
 
 import (
+	"os"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -424,5 +427,99 @@ func TestDeprecatedSettingsNameTheFeaturesOfTheTokenOfAService(t *testing.T) {
 	// Loading does not fail on them: a deployment that still sets them starts and logs the warning.
 	if _, err := config.Load(); err != nil {
 		t.Errorf("a deprecated setting must not stop the start: %v", err)
+	}
+}
+
+// unsetDeprecated makes every variable of the catalog absent for the test (t.Setenv first, so that the runner restores the
+// ambient value afterwards).
+func unsetDeprecated(t *testing.T) {
+	t.Helper()
+	for _, d := range config.DeprecatedCatalog() {
+		t.Setenv(d.Name, "")
+		if err := os.Unsetenv(d.Name); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDeprecatedCatalogEveryRowHasAReason(t *testing.T) {
+	name := regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	catalog := config.DeprecatedCatalog()
+	if len(catalog) == 0 {
+		t.Fatal("the catalog is empty")
+	}
+	seen := map[string]bool{}
+	for _, d := range catalog {
+		if !name.MatchString(d.Name) {
+			t.Errorf("%q is not an upper-case setting name", d.Name)
+		}
+		if seen[d.Name] {
+			t.Errorf("%s is in the catalog twice", d.Name)
+		}
+		seen[d.Name] = true
+		if d.Reason == "" || strings.TrimSpace(d.Reason) != d.Reason {
+			t.Errorf("%s: the reason %q is empty or has surrounding space", d.Name, d.Reason)
+		}
+		if got, ok := config.DeprecatedReason(d.Name); !ok || got != d.Reason {
+			t.Errorf("DeprecatedReason(%s) = %q, %v; want %q", d.Name, got, ok, d.Reason)
+		}
+	}
+	if _, ok := config.DeprecatedReason("NO_SUCH_SETTING"); ok {
+		t.Error("DeprecatedReason names a setting that is not in the catalog")
+	}
+	catalog[0].Reason = "changed by the caller"
+	if config.DeprecatedCatalog()[0].Reason == "changed by the caller" {
+		t.Error("a caller changed the table through the slice DeprecatedCatalog returned")
+	}
+}
+
+// DeprecatedSettings hides the rows whose variable is unset; walking the catalog reaches all of them.
+func TestDeprecatedSettingsReturnsEveryCatalogRowThatIsSet(t *testing.T) {
+	unsetDeprecated(t)
+	if got := config.DeprecatedSettings(); len(got) != 0 {
+		t.Fatalf("with nothing set DeprecatedSettings = %v", got)
+	}
+	var names []string
+	for _, d := range config.DeprecatedCatalog() {
+		names = append(names, d.Name)
+		t.Setenv(d.Name, "x")
+		if got := config.DeprecatedSettings(); !slices.Equal(got, []string{d.Name}) {
+			t.Errorf("with only %s set DeprecatedSettings = %v", d.Name, got)
+		}
+		if err := os.Unsetenv(d.Name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range names {
+		t.Setenv(name, "x")
+	}
+	if got := config.DeprecatedSettings(); !slices.Equal(got, names) {
+		t.Errorf("with every row set DeprecatedSettings = %v, want the catalog in order %v", got, names)
+	}
+}
+
+// A removed setting that is still set must not stop the start. A row is added in the commit that stops Load() reading the
+// variable; a task that appends it earlier fails here.
+func TestLoadSucceedsWithEverySettingOfTheCatalogSet(t *testing.T) {
+	for _, d := range config.DeprecatedCatalog() {
+		t.Setenv(d.Name, "x")
+	}
+	if _, err := config.Load(); err != nil {
+		t.Errorf("a deprecated setting must not stop the start: %v", err)
+	}
+}
+
+// The reason of HTTP__PUBLIC_URL once told an operator that a Redis lock was replaced by a job table.
+func TestTheReasonOfARenamedOrReplacedSettingNamesItsReplacement(t *testing.T) {
+	for name, replacement := range map[string]string{
+		"HTTP__PUBLIC_URL":        "PDP__PUBLIC_URL",
+		"PLATFORM__ISSUER":        "ADMIN_AUTH__",
+		"PLATFORM__CLIENT_SECRET": "ADMIN_AUTH__",
+		"SYNC__LOCK_TTL":          "SYNC__LEASE",
+	} {
+		reason, ok := config.DeprecatedReason(name)
+		if !ok || !strings.Contains(reason, replacement) {
+			t.Errorf("the reason of %s is %q, want it to name %s", name, reason, replacement)
+		}
 	}
 }

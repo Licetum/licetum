@@ -246,7 +246,7 @@ or Huma won't see their fields.
 Settings: `config.Load()` reads env vars with the same prefixes as before (`DB__`, `AUTH__`,
 `REDIS__`, `PLATFORM__`, `ADMIN_AUTH__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `PDP__SEARCH_SCAN_BUDGET`, `PEP__RATE_LIMIT` and `PEP__RATE_BURST`); names are case-insensitive, lists accept a
 JSON array or CSV. `DB__URI` may keep the SQLAlchemy `+asyncpg` suffix (`db.NormalizeDSN`).
-`PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback. The OAuth client of the
+`PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback. A setting that was removed but may still be set in a deployment is a row of the table in `core/config/config.go` (`DeprecatedCatalog`: name and the reason an operator reads). The pdp, admin and worker processes log one warning per set row with `setting` and `reason`; migrate, failover, restore-admin and openapi do not. A pull request that removes a setting adds its row in the same commit. The OAuth client of the
 self-service (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISSUER`, `__CLIENT_ID`, `__CLIENT_SECRET`) is gone (they are in
 `config.DeprecatedSettings`): administrators authenticate through `ADMIN_AUTH__*`, see "Administrator sign-in" below.
 

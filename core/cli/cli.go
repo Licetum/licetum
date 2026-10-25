@@ -141,7 +141,7 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	defer app.Close()
 	app.Logs = logs
 	app.Role = roleOf(name)
-	warnDeprecated()
+	warnDeprecated(slog.Default())
 	if app.Role == engine.RolePDP && cfg.DB.ReadURI != "" && cfg.DB.ReadURI != cfg.DB.URI {
 		// The PDP reads the policy from the read replica of its region; everything else, and every read that must be
 		// current, goes to the primary (see engine.App.ReadDB).
@@ -279,10 +279,15 @@ func roleOf(name string) engine.Role {
 	return engine.RoleAny
 }
 
-func warnDeprecated() {
+// warnDeprecated logs one warning per removed setting that is still set, with the reason the catalog gives. Serve (the pdp
+// and admin processes) and Worker warn: they are the long-running processes whose logs a deployment watches. migrate,
+// failover, restore-admin and openapi do not: they are one-shot tools, migrate and failover run from a job with the same
+// environment as the serving processes, which already tell the operator, and a warning on the output of openapi would
+// corrupt what a script reads (the logger writes to stdout, like the specification).
+func warnDeprecated(log *slog.Logger) {
 	for _, name := range config.DeprecatedSettings() {
-		slog.Warn("the setting no longer has an effect: the Redis lock of the synchronization was replaced by the job table (see SYNC__LEASE)",
-			"setting", name)
+		reason, _ := config.DeprecatedReason(name)
+		log.Warn("the setting no longer has an effect", "setting", name, "reason", reason)
 	}
 }
 
@@ -385,7 +390,7 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 	app.Logs = logs
 	app.Role = engine.RoleWorker
 	app.SyncDB = syncPool
-	warnDeprecated()
+	warnDeprecated(slog.Default())
 	if err := app.LoadLogSettings(ctx); err != nil {
 		slog.WarnContext(ctx, "the stored log settings are not applied, the defaults stay in force", "error", err)
 	}

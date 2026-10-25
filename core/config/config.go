@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -114,7 +115,7 @@ type Background struct {
 //
 // The service no longer carries an OAuth2 client of its own: administrators sign in at the identity provider of
 // ADMIN_AUTH__*, with the web interface as the client. The OAuth half of the old PLATFORM__* settings (the URLs of the
-// provider, the issuer, the client id and secret) is gone; see DeprecatedSettings.
+// provider, the issuer, the client id and secret) is gone; see DeprecatedCatalog.
 type Platform struct {
 	Name             string
 	URL              string
@@ -449,29 +450,77 @@ func (c *Config) RequireRedis() error {
 	return nil
 }
 
-// DeprecatedSettings names the settings that are set but no longer have an effect: the Redis lock of the synchronization
-// was replaced by the job table (SYNC__LEASE), HTTP__PUBLIC_URL became PDP__PUBLIC_URL, and the OAuth client of the
-// self-service (PLATFORM__AUTHORIZATION_URL and the rest) gave way to ADMIN_AUTH__*, and the settings of the authentication of
-// people by the token of a service (AUTH__STATE_*, AUTH__TOKEN_L1_SIZE, AUTH__INVALID_TOKEN_TTL), of the calls on behalf of a
-// person (DELEGATION__*) and of CORS went with those features. The processes log a warning when one
-// of them is still set, so that a deployment notices it.
+// Deprecated is a setting that no longer has an effect and the one sentence an operator reads about it.
+type Deprecated struct {
+	Name   string
+	Reason string
+}
+
+// deprecatedSettings is the table of the settings that were removed but may still be set in a deployment. A pull request
+// that removes a setting stops Load() reading it and appends one row here in the same commit; the row's Reason says in one
+// sentence what replaced the setting. P3 deletes this mechanism (ADR 9.7).
+var deprecatedSettings = []Deprecated{
+	{"SYNC__LOCK_TTL", "the Redis lock of the synchronization is gone; a synchronization is one job under a lease, timed by SYNC__LEASE, and this setting has not been read since the lock was removed"},
+	{"SYNC__LOCK_WAIT", "the Redis lock of the synchronization is gone; a synchronization is one job under a lease, timed by SYNC__LEASE, and this setting has not been read since the lock was removed"},
+	{"HTTP__PUBLIC_URL", "renamed PDP__PUBLIC_URL, which the pdp command requires; HTTP__PUBLIC_URL is not read"},
+	// The OAuth client of the self-service: administrators sign in through ADMIN_AUTH__* now.
+	{"PLATFORM__AUTHORIZATION_URL", platformOAuthGone},
+	{"PLATFORM__TOKEN_URL", platformOAuthGone},
+	{"PLATFORM__JWKS_URL", platformOAuthGone},
+	{"PLATFORM__ISSUER", platformOAuthGone},
+	{"PLATFORM__CLIENT_ID", platformOAuthGone},
+	{"PLATFORM__CLIENT_SECRET", platformOAuthGone},
+	// The registry of known subjects gave way to the subject directory of each service.
+	{"SUBJECTS__ENABLED", subjectRegistryGone},
+	{"SUBJECTS__RETENTION_DAYS", subjectRegistryGone},
+	// The PDP takes no token of a person (PEP clients authenticate), so the sign-in state, the token caches, the calls on behalf
+	// of a person and their audit, and the CORS of the browser are gone: the browser reaches the admin API through its BFF.
+	{"AUTH__STATE_SECRET", signInStateGone},
+	{"AUTH__STATE_TTL", signInStateGone},
+	{"AUTH__TOKEN_L1_SIZE", personCacheGone},
+	{"AUTH__INVALID_TOKEN_TTL", personCacheGone},
+	{"DELEGATION__AUDIT_RETENTION_DAYS", delegationGone},
+	{"DELEGATION__AUDIT_MODE", delegationGone},
+	{"DELEGATION__AUDIT_BUFFER", delegationGone},
+	{"CORS__ALLOW_ORIGINS", corsGone},
+	{"CORS__ALLOW_CREDENTIALS", corsGone},
+	{"CORS__ALLOW_METHODS", corsGone},
+	{"CORS__ALLOW_HEADERS", corsGone},
+}
+
+// The reasons shared by the rows of one feature.
+const (
+	platformOAuthGone   = "the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client"
+	subjectRegistryGone = "the registry of known subjects is gone; each service has a subject directory with its own retention (PUT /service/{id}/subjects/settings)"
+	signInStateGone     = "the PDP keeps no sign-in state: per-service OAuth was removed and administrators sign in through ADMIN_AUTH__*"
+	personCacheGone     = "the PDP no longer verifies the token of a person against a service, so it keeps no cache of them; PEP clients authenticate with API keys or the tokens of a registered pep_issuer (AUTH__JWKS_TTL and AUTH__JWKS_MIN_REFRESH still apply to their key sets)"
+	delegationGone      = "calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request"
+	corsGone            = "the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server"
+)
+
+// DeprecatedCatalog is the table of the removed settings with the reason of each, whether or not they are set. The caller
+// gets a copy.
+func DeprecatedCatalog() []Deprecated {
+	return slices.Clone(deprecatedSettings)
+}
+
+// DeprecatedReason is the reason of the removed setting of that (upper-case) name; false when no such row exists.
+func DeprecatedReason(name string) (string, bool) {
+	for _, d := range deprecatedSettings {
+		if d.Name == name {
+			return d.Reason, true
+		}
+	}
+	return "", false
+}
+
+// DeprecatedSettings names the rows of the table of removed settings whose variable is set (names are case-insensitive, an
+// empty value counts as set). The processes log a warning for each, with its reason, so that a deployment notices it.
 func DeprecatedSettings() []string {
 	var out []string
-	for _, name := range []string{
-		"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "HTTP__PUBLIC_URL",
-		// The OAuth client of the self-service: administrators sign in through ADMIN_AUTH__* now.
-		"PLATFORM__AUTHORIZATION_URL", "PLATFORM__TOKEN_URL", "PLATFORM__JWKS_URL", "PLATFORM__ISSUER", "PLATFORM__CLIENT_ID",
-		"PLATFORM__CLIENT_SECRET",
-		// The registry of known subjects gave way to the subject directory of each service.
-		"SUBJECTS__ENABLED", "SUBJECTS__RETENTION_DAYS",
-		// The PDP takes no token of a person (PEP clients authenticate), so the sign-in state, the token caches, the calls on behalf
-		// of a person and their audit, and the CORS of the browser are gone: the browser reaches the admin API through its BFF.
-		"AUTH__STATE_SECRET", "AUTH__STATE_TTL", "AUTH__TOKEN_L1_SIZE", "AUTH__INVALID_TOKEN_TTL",
-		"DELEGATION__AUDIT_RETENTION_DAYS", "DELEGATION__AUDIT_MODE", "DELEGATION__AUDIT_BUFFER",
-		"CORS__ALLOW_ORIGINS", "CORS__ALLOW_CREDENTIALS", "CORS__ALLOW_METHODS", "CORS__ALLOW_HEADERS",
-	} {
-		if _, ok := lookup(name); ok {
-			out = append(out, name)
+	for _, d := range deprecatedSettings {
+		if _, ok := lookup(d.Name); ok {
+			out = append(out, d.Name)
 		}
 	}
 	return out
