@@ -14,10 +14,7 @@
 // levels of a type without resources), through another path of the engine (coverNodes instead of CoversOf). CrossCheck asks
 // the searches for a case and compares what they list with the evaluations of the same case, so that the tables and the
 // generated policies check that path too.
-//
-// While the check API still has the routes that AuthZEN replaces (POST /service/{slug}/check and
-// GET /service/{slug}/permission), SecondOpinion asks them as well and reports every way they differ from the evaluations and
-// the searches: the oracle moved from one transport to the other and lost nothing. It goes with those routes (legacy.go).
+
 package contracts
 
 import (
@@ -659,7 +656,7 @@ func (l *Loaded) tokenOf(c *policyfix.Case) string {
 func (l *Loaded) askOnce(req authzenreq.Request, token string) *harness.Result {
 	l.t.Helper()
 	for attempt := 1; ; attempt++ {
-		res := l.replica.Do(l.Cluster, req.Method, req.Path, token, req.Body)
+		res := l.replica.Send(l.Cluster, req, token)
 		if res.Status != http.StatusOK {
 			l.t.Fatalf("fixture %s: %s %s: %d %s", l.f.Name, req.Method, req.Path, res.Status, res.Body)
 		}

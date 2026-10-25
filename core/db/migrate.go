@@ -210,15 +210,15 @@ var adminAccess = []string{string(model.ActionRead), string(model.ActionWrite)}
 //     over claims (PLATFORM__ADMIN_CLAIM in PLATFORM__ADMIN_CLAIM_VALUES);
 //   - rules granting that group read+write on every policy type as a whole.
 //
-// Silently skipped if PLATFORM__* OAuth2 is not configured. Safe to re-run: existing rows are never
+// Skipped, with a log line, if ADMIN_AUTH__* is not configured (nobody could sign in to the admin API it protects). The
+// service row carries no OAuth client: administrators sign in at the identity provider of ADMIN_AUTH__*. Safe to re-run: existing rows are never
 // touched, and the admin group and its rules are only seeded in the run that creates the policy
 // types — once an admin edits or removes them, a later deploy does not bring them back.
 func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) error {
 	p := cfg.Platform
-	if !p.IsConfigured() {
-		slog.Info("PLATFORM__* OAuth2 is not configured (authorization_url/token_url/jwks_url/" +
-			"issuer/client_id/client_secret) — skipping the self-service seed. " +
-			"Set the variables and run migrate again — the operation is idempotent.")
+	if !cfg.AdminAuth.IsConfigured() {
+		slog.Info("ADMIN_AUTH__* is not configured (ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE, ADMIN_AUTH__JWKS_URL) — " +
+			"skipping the self-service seed. Set the variables and run migrate again — the operation is idempotent.")
 		return nil
 	}
 
@@ -231,11 +231,10 @@ func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) e
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO service (id, name, slug, url, icon, authorization_url, token_url, jwks_url, issuer, client_id, client_secret)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			INSERT INTO service (id, name, slug, url, icon)
+			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (id) DO NOTHING`,
-			model.PlatformServiceID, p.Name, model.PlatformSlug, p.URL, p.Icon, p.AuthorizationURL, p.TokenURL, p.JwksURL,
-			p.Issuer, p.ClientID, p.ClientSecret,
+			model.PlatformServiceID, p.Name, model.PlatformSlug, p.URL, p.Icon,
 		); err != nil {
 			return err
 		}

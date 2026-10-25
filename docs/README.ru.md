@@ -36,58 +36,64 @@ Licetum не хранит бизнес-записи, не заменяет пр�
 ```mermaid
 flowchart LR
   S["Сервис-владелец<br/>публикует свои ресурсы"]
-  C["Сервис-потребитель<br/>API, поиск, MCP, отчёты"]
-  L["Licetum<br/>правила и каталог ресурсов"]
+  C["Сервис-потребитель (PEP)<br/>API, поиск, MCP, отчёты"]
+  L["Licetum PDP<br/>правила и каталог ресурсов"]
   DB[(PostgreSQL)]
   R[(Redis)]
   S -- "SQL-представление или HTTP endpoint" --> L
-  C -- "GET /service/{id}/permission" --> L
+  C -- "AuthZEN: POST /service/{slug}/access/v1/..." --> L
   L --- DB
   L --- R
 ```
 
-Потребитель запрашивает права субъекта в зарегистрированном сервисе:
+PDP говорит на [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html) в границах одного
+сервиса: путь называет сервис его slug. Потребитель — это точка применения политики (PEP). Администратор регистрирует его
+как *PEP-клиент* сервиса, и он аутентифицируется API-ключом, который выдаёт Licetum, или токеном зарегистрированного
+администратором провайдера идентификации. PEP называет человека, о котором спрашивает, и ручается за его claims, передавая
+их как `subject` вопроса:
 
 ```http
-GET /service/{service_id}/permission
-Authorization: Bearer <user-token>
-```
-
-Ответ перечисляет ресурсы, доступные субъекту, с уровнями доступа к каждому:
-
-```json
-{
-  "project": {
-    "type": "sync",
-    "resources": [
-      { "id": "1", "name": "Project 1", "access": ["read"] },
-      { "id": "2", "name": "Project 2", "access": ["read", "write"] }
-    ]
-  }
-}
-```
-
-Тип без конкретных ресурсов, например функция, операция или режим, возвращается как `"type": "not_sync"`
-с уровнями доступа ко всему типу.
-
-Для одного решения задайте вопрос в запросе проверки. Один запрос содержит до 100 вопросов:
-
-```http
-POST /service/{service_id}/check
-Authorization: Bearer <user-token>
+POST /service/orders/access/v1/evaluation
+Authorization: Bearer <api-key>
 Content-Type: application/json
 
 {
-  "checks": [
-    { "type": "project", "resource_id": "2", "action": "write" },
-    { "type": "project", "action": "create" }
-  ],
-  "explain": true
+  "subject": { "type": "user", "id": "alice", "properties": { "department": "sales" } },
+  "resource": { "type": "project", "id": "2" },
+  "action": { "name": "write" },
+  "context": { "licetum": { "explain": true } }
 }
 ```
 
-С параметром `explain` каждый ответ говорит, какие правила дают уровень доступа, какие запреты действуют
-и какие исключения их снимают.
+Ответ — решение. С `explain` (PEP-клиенту нужна для этого операция `explain`) он говорит, какие правила дают уровень
+доступа, какие запреты действуют и какие исключения их снимают:
+
+```json
+{ "decision": true, "context": { "reason_admin": { "decision": "allowed", "granted_by": [ ... ] } } }
+```
+
+Чтобы получить список, а не решение, поиск ресурсов возвращает ресурсы типа, доступные человеку для действия.
+Потребитель может использовать эти ID в фильтре `WHERE` или в политике построчной безопасности:
+
+```http
+POST /service/orders/access/v1/search/resource
+Authorization: Bearer <api-key>
+Content-Type: application/json
+
+{
+  "subject": { "type": "user", "id": "alice", "properties": { "department": "sales" } },
+  "resource": { "type": "project" },
+  "action": { "name": "read" },
+  "page": { "limit": 100 }
+}
+```
+
+```json
+{ "results": [ { "type": "project", "id": "1", "properties": { "name": "Project 1" } }, ... ], "page": { "count": 2 } }
+```
+
+`POST …/access/v1/evaluations` решает пакет вопросов (с параметром `evaluations_semantic`), а поиск действий и субъектов
+перечисляет уровни доступа к ресурсу и людей, которым он доступен.
 
 ## Возможности
 
@@ -146,8 +152,8 @@ task dev
 
 ## Чем Licetum не является
 
-- Это не провайдер идентификации. Licetum использует токены OAuth2/OIDC, которые выдаёт ваш провайдер,
-  и их claims.
+- Это не провайдер идентификации. Спрашивающий сервис называет человека и ручается за его claims; администраторы
+  входят через ваш провайдер OIDC.
 - Это не бизнес-база данных. Исходные сервисы хранят свои записи и отвечают за CRUD.
 - Это не расширение RLS базы данных. Licetum возвращает разрешённые ID или решения, а потребляющий сервис
   применяет их к своим запросам и слою хранения.

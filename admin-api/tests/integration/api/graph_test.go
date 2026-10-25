@@ -313,10 +313,10 @@ func TestIntegrationCheckExplainAuthzenMetrics(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(string(raw), `[{"decision":true},{"decision":false}]`) {
 		t.Fatalf("authzen batch: %d %s", status, raw)
 	}
-	// Another subject cannot be asked about.
-	status, _ = w.ask(authzenreq.Evaluation(w.ref(w.org), "someone-else", authzenreq.On("branch", "B3"), "read"), token)
-	if status != http.StatusForbidden {
-		t.Fatalf("authzen subject mismatch: %d", status)
+	// The subject is the body's: a PEP client asks about any person, and a person nobody granted anything gets no access.
+	status, raw = w.ask(authzenreq.Evaluation(w.ref(w.org), "someone-else", authzenreq.On("branch", "B3"), "read"), token)
+	if allowed, err := authzenreq.Allowed(status, raw); err != nil || allowed {
+		t.Fatalf("authzen another subject: %d %s", status, raw)
 	}
 
 	// Metrics.

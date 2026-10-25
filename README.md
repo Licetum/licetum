@@ -37,57 +37,64 @@ access on your behalf. Services that receive an answer remain responsible for ap
 ```mermaid
 flowchart LR
   S["Owning service<br/>publishes its resources"]
-  C["Consumer service<br/>API, search, MCP, reporting"]
-  L["Licetum<br/>rules and resource catalog"]
+  C["Consumer service (PEP)<br/>API, search, MCP, reporting"]
+  L["Licetum PDP<br/>rules and resource catalog"]
   DB[(PostgreSQL)]
   R[(Redis)]
   S -- "SQL view or HTTP endpoint" --> L
-  C -- "GET /service/{id}/permission" --> L
+  C -- "AuthZEN: POST /service/{slug}/access/v1/..." --> L
   L --- DB
   L --- R
 ```
 
-A consumer asks for the subject's permissions in a registered service:
+The PDP speaks the [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html),
+scoped to a service: the path names the service by its slug. A consumer is a policy enforcement point (PEP). An
+administrator registers it as a *PEP client* of the service, and it authenticates with an API key that Licetum issues or
+with an access token of an identity provider the administrator registered. The PEP names the person it asks about and
+vouches for their claims, as the `subject` of the question:
 
 ```http
-GET /service/{service_id}/permission
-Authorization: Bearer <user-token>
-```
-
-The answer lists the resources the subject can reach, with the access levels on each:
-
-```json
-{
-  "project": {
-    "type": "sync",
-    "resources": [
-      { "id": "1", "name": "Project 1", "access": ["read"] },
-      { "id": "2", "name": "Project 2", "access": ["read", "write"] }
-    ]
-  }
-}
-```
-
-A type without concrete resources, such as a feature, an operation or a mode, comes back as
-`"type": "not_sync"` with the access levels on the type as a whole.
-
-For a single decision, ask a question per check. One request holds up to 100 of them:
-
-```http
-POST /service/{service_id}/check
-Authorization: Bearer <user-token>
+POST /service/orders/access/v1/evaluation
+Authorization: Bearer <api-key>
 Content-Type: application/json
 
 {
-  "checks": [
-    { "type": "project", "resource_id": "2", "action": "write" },
-    { "type": "project", "action": "create" }
-  ],
-  "explain": true
+  "subject": { "type": "user", "id": "alice", "properties": { "department": "sales" } },
+  "resource": { "type": "project", "id": "2" },
+  "action": { "name": "write" },
+  "context": { "licetum": { "explain": true } }
 }
 ```
 
-With `explain`, each answer says which rules grant the level, which denials apply, and which exceptions lift them.
+The answer is the decision. With `explain` (a PEP client needs the operation for it), it says which rules grant the
+level, which denials apply, and which exceptions lift them:
+
+```json
+{ "decision": true, "context": { "reason_admin": { "decision": "allowed", "granted_by": [ ... ] } } }
+```
+
+To list instead of ask, the resource search returns the resources of a type that the person may use for an action. A
+consumer can put the IDs in a `WHERE` filter or in a row-level security policy:
+
+```http
+POST /service/orders/access/v1/search/resource
+Authorization: Bearer <api-key>
+Content-Type: application/json
+
+{
+  "subject": { "type": "user", "id": "alice", "properties": { "department": "sales" } },
+  "resource": { "type": "project" },
+  "action": { "name": "read" },
+  "page": { "limit": 100 }
+}
+```
+
+```json
+{ "results": [ { "type": "project", "id": "1", "properties": { "name": "Project 1" } }, ... ], "page": { "count": 2 } }
+```
+
+`POST …/access/v1/evaluations` decides a batch (with the `evaluations_semantic` option), and the action and subject
+searches list the levels on a resource and the people who may use it.
 
 ## Features
 
@@ -145,7 +152,8 @@ To run the Go binaries without Docker, see the guides for the [core](core/README
 
 ## What Licetum is not
 
-- It is not an identity provider. It uses the OAuth2/OIDC tokens your identity provider issues and their claims.
+- It is not an identity provider. The service that asks names the person and vouches for their claims; administrators
+  sign in through your OIDC provider.
 - It is not a business database. Source services keep their records and remain responsible for CRUD.
 - It is not a database RLS extension. Licetum provides allowed IDs or decisions. Your service applies them to
   its own queries and storage.

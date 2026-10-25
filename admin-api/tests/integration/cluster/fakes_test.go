@@ -9,6 +9,7 @@ import (
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // F0-3: the fake source and the fake identity provider report how often they were called.
@@ -81,25 +82,24 @@ func TestF0_3_TheFakeSourceCountsAndCanBeHeld(t *testing.T) {
 func TestF0_3_TheFakeIdPCountsJWKSRequestsAndRotatesKeys(t *testing.T) {
 	// A key set is kept for ten minutes and fetched again for an unknown key at most once per AUTH__JWKS_MIN_REFRESH; the
 	// rotation below happens right after the first fetch, so the interval is short here.
-	c := startReplicas(t, 2, harness.WithConfig(func(cfg *config.Config) { cfg.Auth.JWKSMinRefresh = time.Millisecond }))
-	p := c.SeedPolicy("org", 0)
-	waitIdle := func() { time.Sleep(200 * time.Millisecond) }
+	c, p, _ := pepJWTCluster(t, 2, harness.WithConfig(func(cfg *config.Config) { cfg.Auth.JWKSMinRefresh = time.Millisecond }))
+	ask := func(r *harness.Replica, subject string) *harness.Result {
+		return r.Send(c, authzenreq.SearchResource(p.Slug, "alice", "branch", "read"), c.PEPToken("checkout", subject))
+	}
 
 	c.IdP.ResetCounters()
-	alice := c.UserToken("alice")
-	if res := c.Replicas[0].Permission(c, p.Slug, alice); res.Status != http.StatusOK {
-		t.Fatalf("alice: %d %s", res.Status, res.Body)
+	if res := ask(c.Replicas[0], "first"); res.Status != http.StatusOK {
+		t.Fatalf("the first token: %d %s", res.Status, res.Body)
 	}
 	if got := c.IdP.JWKSRequests(); got != 1 {
 		t.Fatalf("a token that is new to the system asked the JWKS %d times, want 1", got)
 	}
-	waitIdle() // the verified token is written to Redis in the background
-	// The same token on the other replica is found in the shared cache.
-	if res := c.Replicas[1].Permission(c, p.Slug, alice); res.Status != http.StatusOK {
-		t.Fatalf("alice on the second replica: %d %s", res.Status, res.Body)
+	// Each process keeps the key set it fetched: the other replica asks for it once.
+	if res := ask(c.Replicas[1], "second"); res.Status != http.StatusOK {
+		t.Fatalf("the second replica: %d %s", res.Status, res.Body)
 	}
-	if got := c.IdP.JWKSRequests(); got != 1 {
-		t.Fatalf("the verified token was not shared between replicas: %d JWKS requests", got)
+	if got := c.IdP.JWKSRequests(); got != 2 {
+		t.Fatalf("JWKS requests after the second replica's first token: %d, want 2 (one per process)", got)
 	}
 
 	// Rotation: tokens signed with the new kid verify, because the JWKS now lists it.
@@ -108,31 +108,29 @@ func TestF0_3_TheFakeIdPCountsJWKSRequestsAndRotatesKeys(t *testing.T) {
 	if newKid == oldKid {
 		t.Fatal("the key did not change")
 	}
-	rotated := c.UserToken("carol")
-	if res := c.Replicas[0].Permission(c, p.Slug, rotated); res.Status != http.StatusOK {
+	if res := ask(c.Replicas[0], "rotated"); res.Status != http.StatusOK {
 		t.Fatalf("a token of the new key: %d %s", res.Status, res.Body)
 	}
-	if got := c.IdP.JWKSRequests(); got != 2 {
-		t.Fatalf("JWKS requests after the rotation: %d, want 2", got)
+	if got := c.IdP.JWKSRequests(); got != 3 {
+		t.Fatalf("JWKS requests after the rotation: %d, want 3", got)
 	}
 
 	// The key set is cached in each process: a token of a key it lists needs no request, whatever the provider does.
 	c.IdP.SetJWKSStatus(http.StatusInternalServerError)
-	if res := c.Replicas[0].Permission(c, p.Slug, c.UserToken("erin")); res.Status != http.StatusOK {
+	if res := ask(c.Replicas[0], "erin"); res.Status != http.StatusOK {
 		t.Fatalf("a token of a known key while the JWKS fails: %d %s", res.Status, res.Body)
 	}
-	if got := c.IdP.JWKSRequests(); got != 2 {
-		t.Fatalf("JWKS requests: %d, want 2 (the key set is cached)", got)
+	if got := c.IdP.JWKSRequests(); got != 3 {
+		t.Fatalf("JWKS requests: %d, want 3 (the key set is cached)", got)
 	}
 
 	// A provider that fails and a key the cached set lacks: the token cannot be verified.
 	c.IdP.RotateKey(true)
-	dave := c.UserToken("dave")
 	time.Sleep(5 * time.Millisecond)
-	if res := c.Replicas[0].Permission(c, p.Slug, dave); res.Status == http.StatusOK {
+	if res := ask(c.Replicas[0], "dave"); res.Status == http.StatusOK {
 		t.Fatalf("a token was accepted while the JWKS failed: %s", res.Body)
 	}
-	if got := c.IdP.JWKSRequests(); got != 3 {
-		t.Fatalf("JWKS requests: %d, want 3 (a failing provider is still asked)", got)
+	if got := c.IdP.JWKSRequests(); got != 4 {
+		t.Fatalf("JWKS requests: %d, want 4 (a failing provider is still asked)", got)
 	}
 }

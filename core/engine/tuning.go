@@ -9,22 +9,17 @@ import (
 // Defaults of the settings that a zero value in the configuration stands for (the Config built by hand in a test, or
 // loaded from an environment that does not name them). config.Load sets the same values.
 const (
-	defaultTokenL1Size     = 50_000
-	defaultAnswerL1Size    = 50_000
-	defaultJWKSTTL         = 10 * time.Minute
-	defaultJWKSMinRefresh  = 30 * time.Second
-	defaultInvalidTokenTTL = 10 * time.Second
-	defaultSnapshotMax     = 256 << 20
-	defaultRevisionPoll    = 250 * time.Millisecond
-	defaultRevisionWait    = 500 * time.Millisecond
-	defaultSnapshotMaxAge  = time.Minute
-	defaultWorkers         = 16
-	defaultQueue           = 1024
+	defaultAnswerL1Size   = 50_000
+	defaultJWKSTTL        = 10 * time.Minute
+	defaultJWKSMinRefresh = 30 * time.Second
+	defaultSnapshotMax    = 256 << 20
+	defaultRevisionPoll   = 250 * time.Millisecond
+	defaultRevisionWait   = 500 * time.Millisecond
+	defaultSnapshotMaxAge = time.Minute
+	defaultWorkers        = 16
+	defaultQueue          = 1024
 
-	// invalidTokenCacheSize bounds the memory of the tokens remembered as invalid.
-	invalidTokenCacheSize = 10_000
-	// maxTokenL1TTL and maxAnswerL1TTL bound how long an in-memory entry lives, whatever the entry says.
-	maxTokenL1TTL  = 60 * time.Second
+	// maxAnswerL1TTL bounds how long an in-memory entry lives, whatever the entry says.
 	maxAnswerL1TTL = 10 * time.Second
 	// maxStaleAnswerTTL bounds how long an answer that is no longer served is kept in memory for the case PostgreSQL cannot
 	// be reached (see cachedEntry.stale); the size of the level bounds the memory the same way.
@@ -34,8 +29,8 @@ const (
 // tuning is the effective value of the settings of the fast read path: a zero in the configuration took the default,
 // a negative value turned the feature off (0 here).
 type tuning struct {
-	tokenL1Size, answerL1Size                  int
-	jwksTTL, jwksMinRefresh, invalidTokenTTL   time.Duration
+	answerL1Size                               int
+	jwksTTL, jwksMinRefresh                    time.Duration
 	snapshotMaxBytes                           int64
 	revisionPoll, revisionWait, snapshotMaxAge time.Duration
 	// policyMaxStaleness is how long the process answers from its copy of the policy without having confirmed it (0: no limit).
@@ -64,16 +59,14 @@ func newTuning(cfg *config.Config) tuning {
 		return v
 	}
 	t := tuning{
-		tokenL1Size:     size(cfg.Auth.TokenL1Size, defaultTokenL1Size),
-		answerL1Size:    size(cfg.Cache.AnswerL1Size, defaultAnswerL1Size),
-		jwksTTL:         span(cfg.Auth.JWKSTTL, defaultJWKSTTL),
-		jwksMinRefresh:  span(cfg.Auth.JWKSMinRefresh, defaultJWKSMinRefresh),
-		invalidTokenTTL: span(cfg.Auth.InvalidTokenTTL, defaultInvalidTokenTTL),
-		revisionPoll:    span(cfg.Revision.PollInterval, defaultRevisionPoll),
-		revisionWait:    span(cfg.Revision.WaitMax, defaultRevisionWait),
-		snapshotMaxAge:  span(cfg.Snapshot.MaxAge, defaultSnapshotMaxAge),
-		workers:         size(cfg.Background.Workers, defaultWorkers),
-		queue:           size(cfg.Background.Queue, defaultQueue),
+		answerL1Size:   size(cfg.Cache.AnswerL1Size, defaultAnswerL1Size),
+		jwksTTL:        span(cfg.Auth.JWKSTTL, defaultJWKSTTL),
+		jwksMinRefresh: span(cfg.Auth.JWKSMinRefresh, defaultJWKSMinRefresh),
+		revisionPoll:   span(cfg.Revision.PollInterval, defaultRevisionPoll),
+		revisionWait:   span(cfg.Revision.WaitMax, defaultRevisionWait),
+		snapshotMaxAge: span(cfg.Snapshot.MaxAge, defaultSnapshotMaxAge),
+		workers:        size(cfg.Background.Workers, defaultWorkers),
+		queue:          size(cfg.Background.Queue, defaultQueue),
 	}
 	switch v := cfg.Snapshot.MaxBytes; {
 	case v == 0:
@@ -94,9 +87,6 @@ func newTuning(cfg *config.Config) tuning {
 	}
 	if cfg.Snapshot.MaxAge < 0 {
 		t.snapshotMaxAge = 0
-	}
-	if cfg.Auth.InvalidTokenTTL < 0 {
-		t.invalidTokenTTL = 0
 	}
 	return t
 }

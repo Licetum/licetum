@@ -2,11 +2,9 @@
 
 package api_test
 
-// The questions a client application that the service trusts puts to the AuthZEN API about other people. The person is
-// subject.id and their claims are subject.properties; the rules read those claims as they would read the ones of the
-// person's own token. This is what the calls on behalf of a person did (delegation_test.go), restated for the AuthZEN API
-// that is to carry it: the claims decide, the name of the person is the preferred_username unless the caller sends one, a
-// subject that looks like a group is refused, and the claims are bounded.
+// The questions a PEP client puts to the AuthZEN API about the people of its application. The person is subject.id and their
+// claims are subject.properties: the claims decide, the name of the person is the preferred_username unless the caller sends
+// one, a subject that looks like a group is refused, and the claims are bounded.
 
 import (
 	"errors"
@@ -16,17 +14,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/golang-jwt/jwt/v5"
-
+	"github.com/licetum/licetum/core/db"
+	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // propertiesWorld is the hierarchy world with two groups and a rule for each: everyone from sales reads under D1, and the
-// people of the group "team", which is alice by her name, read under D2. The service trusts the client docs-backend.
+// people of the group "team", which is alice by her name, read under D2. The service has the PEP client docs-backend.
 type propertiesWorld struct {
 	*world
 	group  string // the group of the people from sales
-	client string // the token of the trusted client docs-backend
+	client string // the API key of the PEP client docs-backend
 }
 
 func newPropertiesWorld(t *testing.T) *propertiesWorld {
@@ -40,15 +38,11 @@ func newPropertiesWorld(t *testing.T) *propertiesWorld {
 		"predicate": []any{map[string]any{"attr": "preferred_username", "op": "eq", "value": "alice"}}})
 	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1", "member_of_group_id": group, "access": []string{"read"}})
 	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D2", "member_of_group_id": team, "access": []string{"read"}})
-	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend", "reports"}})
-	return &propertiesWorld{
-		world:  w,
-		group:  group,
-		client: w.token(jwt.MapClaims{"azp": "docs-backend", "sub": "svc-docs-backend"}),
-	}
+	key, _ := w.pepKey(w.pepClient(w.org, "docs-backend", db.PEPKindAPIKey, engine.PEPEvaluate, engine.PEPSearchResource, engine.PEPSearchAction))
+	return &propertiesWorld{world: w, group: group, client: key}
 }
 
-// reads asks, as the trusted client, whether the person may read the branch; the claims of the person are the properties.
+// reads asks, as the PEP client, whether the person may read the branch; the claims of the person are the properties.
 func (w *propertiesWorld) reads(person string, properties map[string]any, branch string) bool {
 	w.t.Helper()
 	opts := []authzenreq.Option{}
@@ -63,7 +57,7 @@ func (w *propertiesWorld) reads(person string, properties map[string]any, branch
 	return allowed
 }
 
-func TestAuthzenPropertiesDecideForAPersonAsTheClaimsOfATokenWould(t *testing.T) {
+func TestAuthzenPropertiesDecideForAPerson(t *testing.T) {
 	w := newPropertiesWorld(t)
 
 	// The claims the caller sends decide.
@@ -76,14 +70,6 @@ func TestAuthzenPropertiesDecideForAPersonAsTheClaimsOfATokenWould(t *testing.T)
 	if w.reads("dave", map[string]any{"department": "hr"}, "B1") {
 		t.Fatal("dave from another department does not")
 	}
-	// Nothing about the person is taken from the token of the caller: the department of the trusted client's own token, if
-	// it had one, would not be dave's.
-	own := w.token(jwt.MapClaims{"azp": "docs-backend", "sub": "svc-docs-backend", "department": "sales"})
-	status, body := w.ask(authzenreq.Evaluation(w.ref(w.org), "dave", authzenreq.On("branch", "B1"), "read"), own)
-	if allowed, err := authzenreq.Allowed(status, body); err != nil || allowed {
-		t.Fatalf("the claims of the caller's token are not dave's: %d %s", status, body)
-	}
-
 	// preferred_username is the person's name unless the caller sends one, so a rule that names a person by it applies.
 	if !w.reads("alice", nil, "B4") {
 		t.Fatal("alice is in the group team by her name and reads B4")
@@ -94,50 +80,6 @@ func TestAuthzenPropertiesDecideForAPersonAsTheClaimsOfATokenWould(t *testing.T)
 	if !w.reads("bob", map[string]any{"preferred_username": "alice"}, "B4") {
 		t.Fatal("the caller vouches for the claims, preferred_username included")
 	}
-}
-
-func TestAuthzenOnlyAClientTheServiceTrustsMayAskAboutAnotherPerson(t *testing.T) {
-	w := newWorld(t)
-	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1", "subject": "dave", "access": []string{"read"}})
-	// about asks whether dave may read the resource of the service, as the holder of the token made of the claims (none: no token).
-	about := func(ref string, resource authzenreq.Resource, claims jwt.MapClaims) (int, http.Header, []byte) {
-		w.t.Helper()
-		token := ""
-		if claims != nil {
-			token = w.token(claims)
-		}
-		return w.askWithHeader(authzenreq.Evaluation(ref, "dave", resource, "read"), token)
-	}
-	org, branch := w.ref(w.org), authzenreq.On("branch", "B1")
-
-	// Nobody is trusted yet.
-	status, header, body := about(org, branch, jwt.MapClaims{"azp": "docs-backend", "sub": "svc"})
-	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_subject_mismatch")
-
-	// The service names its clients; a client is its azp, or its client_id when there is no azp.
-	w.must("PATCH", "/service/"+w.org, map[string]any{"trusted_clients": []string{"docs-backend", "reports"}})
-	for name, claims := range map[string]jwt.MapClaims{
-		"azp":       {"azp": "docs-backend", "sub": "svc"},
-		"client_id": {"client_id": "reports", "sub": "svc"},
-	} {
-		status, _, body := about(org, branch, claims)
-		if allowed, err := authzenreq.Allowed(status, body); err != nil || !allowed {
-			t.Errorf("a client trusted by its %s asks about dave: %d %s", name, status, body)
-		}
-	}
-
-	// A token that names no client, and a client the service does not trust, are refused, and no token is a 401.
-	status, header, body = about(org, branch, jwt.MapClaims{"sub": "svc"})
-	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_subject_mismatch")
-	status, header, body = about(org, branch, jwt.MapClaims{"azp": "stranger", "sub": "svc"})
-	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_subject_mismatch")
-	if status, _, _ = about(org, branch, nil); status != http.StatusUnauthorized {
-		t.Fatalf("no token: %d", status)
-	}
-
-	// Another service does not trust the client.
-	status, header, body = about(w.ref(w.appSvc), authzenreq.On("item", "I1"), jwt.MapClaims{"azp": "docs-backend", "sub": "svc"})
-	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_subject_mismatch")
 }
 
 func TestAuthzenASubjectThatLooksLikeAGroupIsRefused(t *testing.T) {

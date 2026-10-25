@@ -9,8 +9,6 @@ import {
   Input,
   Segmented,
   Select,
-  Table,
-  Tag,
   Typography,
   message,
 } from 'antd';
@@ -20,22 +18,25 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type {
-  CheckResult,
-  NotSyncTypePermission,
-  RuleRef,
-  SimulatePermission200,
-  SyncTypePermission,
-} from '@/api/admin/model';
+import type { RuleRef } from '@/api/admin/model';
 import { useCreatePolicyScenario } from '@/api/admin/policy/policy';
 import { useListResourcesOfType } from '@/api/admin/resource/resource';
-import { useSimulateCheck, useSimulatePermission } from '@/api/admin/simulation/simulation';
+import { useSimulateEvaluations } from '@/api/admin/simulation/simulation';
 import { DecisionTag, EmptyBlock, errorDetail, PageHeader } from '@/components/kit';
 import type { Rule } from '@/domain/rule';
+import {
+  checkResultOf,
+  evaluationError,
+  evaluationsRequest,
+  propertiesOf,
+  type CheckResult,
+  type Properties,
+} from '@/lib/authzen';
 
 import { useAllTypes, useGroupNames, useRules, useServices } from '../data/queries';
 import { levelsOf } from '../grant/grant-model';
 import { WhoHasAccess } from '../services/who-has-access';
+import { VisibleAccess } from './visible-access';
 
 type Pair = { id: number; key: string; value: string };
 type Question = {
@@ -56,29 +57,6 @@ const question = (init: Partial<Question> = {}): Question => ({
   action: 'read',
   ...init,
 });
-
-/** A value typed as `[a, b]` is a list, anything else is a string: the rules compare claims as text. */
-function parseValue(value: string): string | string[] {
-  const v = value.trim();
-  if (v.startsWith('[') && v.endsWith(']')) {
-    try {
-      const parsed: unknown = JSON.parse(v);
-      if (Array.isArray(parsed)) return parsed.map(String);
-    } catch {
-      return v
-        .slice(1, -1)
-        .split(',')
-        .map((x) => x.trim())
-        .filter(Boolean);
-    }
-  }
-  return v;
-}
-
-const toObject = (pairs: Pair[]) =>
-  Object.fromEntries(
-    pairs.filter((p) => p.key.trim()).map((p) => [p.key.trim(), parseValue(p.value)]),
-  );
 
 export function CheckWorkspace() {
   const { t } = useTranslation();
@@ -103,10 +81,19 @@ export function CheckWorkspace() {
   ]);
   const [listType, setListType] = useState<string | undefined>(params.get('type') ?? undefined);
 
-  const check = useSimulateCheck();
+  const check = useSimulateEvaluations();
   const createScenario = useCreatePolicyScenario();
-  const permission = useSimulatePermission();
   const [lastRun, setLastRun] = useState<{ questions: Question[]; subject: string } | null>(null);
+  // "What a person sees" is drawn by its own component from what was asked when the button was pressed; `run` starts it over.
+  const [listed, setListed] = useState<{
+    serviceId: string;
+    slug: string;
+    subject: string;
+    properties: Properties;
+    context: Properties;
+    type?: string;
+    run: number;
+  } | null>(null);
 
   const service = (services.data ?? []).find((s) => s.slug === serviceSlug || s.id === serviceSlug);
   useEffect(() => {
@@ -123,37 +110,34 @@ export function CheckWorkspace() {
   const rulesById = useMemo(() => new Map((rules.data ?? []).map((r) => [r.id, r])), [rules.data]);
 
   const ready = !!service && subject.trim() !== '';
-  // The token of a person always carries their username: memberships "by name" match it.
-  const body = {
-    subject: subject.trim(),
-    claims: { preferred_username: subject.trim(), ...toObject(claims) },
-    context: toObject(context),
-  };
+  // The claims of the person and the attributes of the request, as the simulation of the PDP takes them: the person's
+  // username is added by the PDP when the claims do not carry it.
+  const properties: Properties = propertiesOf(claims);
+  const attributes: Properties = propertiesOf(context);
 
   const run = async () => {
     if (!service) return;
     check.reset();
-    permission.reset();
     if (mode === 'one') {
       const asked = questions.filter((q) => q.type);
       setLastRun({ questions: asked, subject: subject.trim() });
       await check.mutateAsync({
         serviceId: service.id,
-        data: {
-          ...body,
-          explain: true,
-          checks: asked.map((q) => ({
-            type: q.type!,
-            action: q.action,
-            resource_id: q.resource.trim() || null,
-          })),
-        },
+        data: evaluationsRequest(
+          { person: subject.trim(), properties, context: attributes },
+          asked.map((q) => ({ type: q.type!, resource: q.resource, action: q.action })),
+        ),
       });
     } else {
-      await permission.mutateAsync({
+      setListed((previous) => ({
         serviceId: service.id,
-        data: { ...body, type: listType, limit: listType ? 200 : undefined },
-      });
+        slug: service.slug,
+        subject: subject.trim(),
+        properties,
+        context: attributes,
+        type: listType,
+        run: (previous?.run ?? 0) + 1,
+      }));
     }
   };
 
@@ -179,8 +163,8 @@ export function CheckWorkspace() {
         data: {
           name: `${subject.trim()} · ${q.type}${q.resource ? ` ${q.resource}` : ''} · ${q.action}`,
           subject: subject.trim(),
-          claims: { preferred_username: subject.trim(), ...toObject(claims) },
-          context: toObject(context),
+          claims: { preferred_username: subject.trim(), ...properties },
+          context: attributes,
           checks: [
             {
               type: q.type,
@@ -201,7 +185,7 @@ export function CheckWorkspace() {
     }
   };
 
-  const error = check.error ?? permission.error;
+  const error = check.error;
 
   // The first question that names a type: who has access to what it asks about.
   const whoQuestion = questions.find((q) => q.type);
@@ -244,6 +228,7 @@ export function CheckWorkspace() {
                 setServiceSlug(v);
                 setQuestions([question()]);
                 setListType(undefined);
+                setListed(null);
               }}
               loading={services.isPending}
               options={(services.data ?? []).map((s) => ({ value: s.slug, label: s.name }))}
@@ -340,12 +325,7 @@ export function CheckWorkspace() {
               />
             </Field>
             <span style={{ flex: 1 }} />
-            <Button
-              type="primary"
-              disabled={!ready}
-              loading={permission.isPending}
-              onClick={() => void run()}
-            >
+            <Button type="primary" disabled={!ready} onClick={() => void run()}>
               {t('check.show')}
             </Button>
           </Flex>
@@ -387,33 +367,39 @@ export function CheckWorkspace() {
       {mode === 'one' && check.data && lastRun && (
         <Flex vertical gap={12}>
           {lastRun.questions.map((q, i) => {
-            const result = (check.data.data as { results: CheckResult[] }).results?.[i];
-            return result ? (
+            const answer = check.data.status === 200 ? check.data.data.evaluations?.[i] : undefined;
+            if (!answer) return null;
+            const problem = evaluationError(answer);
+            return problem ? (
+              <Alert key={q.id} type="error" showIcon title={problem} />
+            ) : (
               <Verdict
                 key={q.id}
                 q={q}
                 subject={lastRun.subject}
                 serviceName={service?.name ?? ''}
-                result={result}
+                result={checkResultOf(answer)}
                 resolve={(ref) => rulesById.get(ref.rule_id)}
-                onSave={() => saveAsTest(q, result.allowed)}
+                onSave={() => saveAsTest(q, answer.decision)}
                 onShare={() => void shareLink()}
                 resourceName={q.resourceName ?? q.resource}
               />
-            ) : null;
+            );
           })}
         </Flex>
       )}
 
-      {mode === 'list' && permission.data && (
-        <PermissionList
-          data={permission.data.data as SimulatePermission200}
-          subject={subject.trim()}
-          serviceSlug={service?.slug ?? ''}
+      {mode === 'list' && listed && (
+        <VisibleAccess
+          serviceId={listed.serviceId}
+          serviceSlug={listed.slug}
+          who={{ person: listed.subject, properties: listed.properties, context: listed.context }}
+          only={listed.type}
+          run={listed.run}
         />
       )}
 
-      {!check.data && !permission.data && !error && (
+      {!check.data && !(mode === 'list' && listed) && !error && (
         <EmptyBlock title={t('check.start.title')} hint={t('check.start.hint')} />
       )}
     </div>
@@ -723,104 +709,5 @@ function Verdict(props: {
         )}
       </Flex>
     </div>
-  );
-}
-
-type Entry = [string, SyncTypePermission | NotSyncTypePermission];
-
-function PermissionList({
-  data,
-  subject,
-  serviceSlug,
-}: {
-  data: SimulatePermission200;
-  subject: string;
-  serviceSlug: string;
-}) {
-  const { t } = useTranslation();
-  const entries = Object.entries(data) as Entry[];
-  if (entries.length === 0) {
-    return <EmptyBlock title={t('check.list.none', { subject })} hint={t('check.list.noneHint')} />;
-  }
-  return (
-    <Table<Entry>
-      rowKey={([name]) => name}
-      size="middle"
-      pagination={false}
-      dataSource={entries}
-      expandable={{
-        rowExpandable: ([, v]) => v.type === 'sync',
-        expandedRowRender: ([name, v]) =>
-          v.type === 'sync' ? (
-            <Table
-              size="small"
-              rowKey="id"
-              pagination={{ pageSize: 20, showSizeChanger: false }}
-              dataSource={v.resources}
-              columns={[
-                {
-                  title: t('check.resource'),
-                  key: 'name',
-                  render: (_, r) => (
-                    <span>
-                      {r.name}{' '}
-                      <span className="mono" style={{ color: 'var(--licetum-muted)' }}>
-                        {r.id}
-                      </span>
-                    </span>
-                  ),
-                },
-                {
-                  title: t('check.level'),
-                  key: 'access',
-                  width: 200,
-                  render: (_, r) =>
-                    (r.access ?? []).map((a) => (
-                      <Tag key={a} className="mono">
-                        {a}
-                      </Tag>
-                    )),
-                },
-                {
-                  title: '',
-                  key: 'why',
-                  width: 110,
-                  render: (_, r) => (
-                    <Link
-                      href={`/check?mode=one&service=${serviceSlug}&subject=${encodeURIComponent(subject)}&type=${encodeURIComponent(name)}&resource=${encodeURIComponent(r.id)}`}
-                    >
-                      {t('check.why')} ›
-                    </Link>
-                  ),
-                },
-              ]}
-            />
-          ) : null,
-      }}
-      columns={[
-        { title: t('check.type'), key: 'type', render: (_, [name]) => name },
-        {
-          title: t('check.list.resources'),
-          key: 'count',
-          width: 220,
-          render: (_, [, v]) =>
-            v.type === 'sync'
-              ? `${v.resources.length}${v.next_after ? '+' : ''}`
-              : t('check.list.wholeType'),
-        },
-        {
-          title: t('check.level'),
-          key: 'levels',
-          render: (_, [, v]) =>
-            v.type === 'not_sync'
-              ? v.access.map((a) => (
-                  <Tag key={a} className="mono">
-                    {a}
-                  </Tag>
-                ))
-              : null,
-        },
-      ]}
-    />
   );
 }

@@ -141,13 +141,10 @@ func TestIntegrationRequestAttributesDecideAndAreCachedByValue(t *testing.T) {
 		t.Fatalf("authzen with an address inside the network: %d %s", status, raw)
 	}
 
-	// The admin simulation takes the same attributes without a token.
-	sim := w.must("POST", "/service/"+w.org+"/simulate/check", map[string]any{
-		"subject": hierarchySubject, "claims": map[string]any{"preferred_username": hierarchySubject},
-		"context": outside, "checks": []map[string]any{check},
-	})
-	if results := sim["results"].([]any); results[0].(map[string]any)["allowed"] != false {
-		t.Fatalf("simulation with an address outside the network: %v", sim)
+	// The admin simulation takes the same attributes without a credential.
+	if status, sim := w.simulate(authzenreq.Evaluation(w.org, hierarchySubject, authzenreq.On("branch", "B1"), "read",
+		authzenreq.WithContext(outside))); status != http.StatusOK || sim["decision"] != false {
+		t.Fatalf("simulation with an address outside the network: %d %v", status, sim)
 	}
 
 	// A context name with a space is ignored by an AuthZEN request (AZ06), as if the attribute were absent: the rule has no

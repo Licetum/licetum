@@ -61,7 +61,19 @@ func (a *App) invalidateView() { a.local.epoch.Add(1) }
 // when there is one, otherwise it is read from the database. A state that is not ok means the revisions could not be read.
 func (a *App) cacheState(ctx context.Context) cacheState {
 	if !a.localEnabled() {
-		return a.readCacheState(ctx)
+		// Every reading is a statement: a request reads the revisions once, however many layers ask (the authentication of
+		// a PEP, the lookup of the answer, the decision).
+		trace := TraceFrom(ctx)
+		if trace != nil {
+			if held, ok := trace.heldState(); ok {
+				return held
+			}
+		}
+		state := a.readCacheState(ctx)
+		if trace != nil && state.ok {
+			trace.holdState(state)
+		}
+		return state
 	}
 	v := a.currentView(ctx)
 	if v == nil {
@@ -313,13 +325,10 @@ func (a *App) snapshotFor(ctx context.Context, revision int64, previous *localVi
 
 func isTooLarge(err error) bool { return errors.Is(err, errSnapshotTooLarge) }
 
-// ClearMemoryCaches empties the in-process levels of the answer cache and of the token cache (and forgets the tokens
-// remembered as invalid). Redis keeps what it holds, so the next request is served from it: this is how a test, or an
-// operator, tells the cost of the second level from that of the first.
+// ClearMemoryCaches empties the in-process level of the answer cache. Redis keeps what it holds, so the next request is served
+// from it: this is how a test, or an operator, tells the cost of the second level from that of the first.
 func (a *App) ClearMemoryCaches() {
 	a.answersL1.Clear()
-	a.tokensL1.Clear()
-	a.invalidTokens.Clear()
 }
 
 // ClearAnswerMemoryCache empties the in-process level of the answer cache only.

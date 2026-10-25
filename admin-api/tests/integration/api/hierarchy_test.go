@@ -9,7 +9,6 @@ package api_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -55,8 +54,7 @@ func newWorld(t *testing.T) *world {
 	svc := func(name string) string {
 		return e.must("POST", "/service", map[string]any{
 			"name": name, "url": m + "/app", "icon": m + "/icon.png",
-			"authorization_url": m + "/realm/auth", "token_url": m + "/realm/token",
-			"jwks_url": m + "/jwks", "issuer": m + "/realm", "slug": name, "client_id": name, "client_secret": "s",
+			"slug": name,
 		})["id"].(string)
 	}
 	w.org, w.appSvc = svc("org"), svc("app")
@@ -388,8 +386,7 @@ func TestIntegrationSynchronizerSecrets(t *testing.T) {
 	m := e.mock.URL
 	svcID := e.must("POST", "/service", map[string]any{
 		"name": "svc", "url": m + "/app", "icon": m + "/icon.png",
-		"authorization_url": m + "/realm/auth", "token_url": m + "/realm/token", "jwks_url": m + "/jwks",
-		"issuer": m + "/realm", "slug": "c", "client_id": "c", "client_secret": "s",
+		"slug": "c",
 	})["id"].(string)
 	typeID := e.must("POST", "/service/"+svcID+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
 	path := "/service/" + svcID + "/type_resource/" + typeID + "/resource/synchronizer"
@@ -446,52 +443,5 @@ func TestIntegrationSynchronizerSecrets(t *testing.T) {
 	_, raw = e.do("GET", e.admin.URL+"/type_resource/"+typeID+"/resource", nil)
 	if strings.Count(string(raw), `"id"`) != 3 {
 		t.Fatalf("resources of the closed source: %s", raw)
-	}
-}
-
-func TestIntegrationOAuthRefresh(t *testing.T) {
-	e := setup(t)
-	platform := model.PlatformServiceID.String()
-	refresh := func(token string) (int, []byte, http.Header) {
-		req, _ := http.NewRequest(http.MethodPost, e.admin.URL+"/service/"+platform+"/oauth/refresh",
-			strings.NewReader(`{"refresh_token":"`+token+`"}`))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, raw, resp.Header
-	}
-
-	status, raw, _ := refresh("good")
-	var tokens map[string]any
-	_ = json.Unmarshal(raw, &tokens)
-	if status != http.StatusOK {
-		t.Fatalf("refresh: %d %s", status, raw)
-	}
-	expectJSON(t, "refreshed tokens", tokens, `{"access_token":"new-access","token_type":"Bearer","expires_in":300,
-		"refresh_token":"new-refresh","refresh_expires_in":1800}`)
-
-	status, raw, headers := refresh("expired")
-	if status != http.StatusUnauthorized || !strings.Contains(string(raw), `"code":"refresh_token_invalid"`) ||
-		headers.Get("WWW-Authenticate") != `Bearer error="invalid_token"` {
-		t.Fatalf("an expired refresh token: %d %s %v", status, raw, headers)
-	}
-	// invalid_client (e.g. a changed client secret) is not a reason to log everybody out.
-	if status, raw, _ := refresh("other"); status != http.StatusFailedDependency {
-		t.Fatalf("invalid_client: want 424, got %d %s", status, raw)
-	}
-
-	// 401 from the admin API carries the Bearer challenge.
-	req, _ := http.NewRequest(http.MethodGet, e.admin.URL+"/service", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") != "Bearer" {
-		t.Fatalf("admin API without a token: %d %q", resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
 	}
 }

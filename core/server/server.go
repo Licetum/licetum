@@ -19,10 +19,8 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/google/uuid"
-	"github.com/rs/cors"
 
 	"github.com/licetum/licetum/core/apperr"
-	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/httpx"
@@ -428,31 +426,6 @@ func writeJSONError(w http.ResponseWriter, err *apperr.Error) {
 	_ = json.NewEncoder(w).Encode(err)
 }
 
-var allMethods = []string{
-	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
-	http.MethodPatch, http.MethodDelete, http.MethodOptions,
-}
-
-// withCORS is enabled only when CORS__ALLOW_ORIGINS is set (as in the Python version).
-func withCORS(cfg config.Cors, next http.Handler) http.Handler {
-	if len(cfg.AllowOrigins) == 0 {
-		return next
-	}
-	methods := cfg.AllowMethods
-	for _, m := range methods {
-		if m == "*" {
-			methods = allMethods
-			break
-		}
-	}
-	return cors.New(cors.Options{
-		AllowedOrigins:   cfg.AllowOrigins,
-		AllowedMethods:   methods,
-		AllowedHeaders:   cfg.AllowHeaders,
-		AllowCredentials: cfg.AllowCredentials,
-	}).Handler(next)
-}
-
 type healthOutput struct {
 	Body struct {
 		Status string `json:"status" example:"ok" doc:"Always ok while the process is responding"`
@@ -560,9 +533,9 @@ The result is reused for a second. Use it as the readiness probe and ` + "`/heal
 }
 
 // withStack puts the middleware of the public port around a route table: admission, the access log and the recovery from
-// panics, gzip, CORS, the trailing slash and the language of the answers.
+// panics, gzip, the trailing slash and the language of the answers.
 func withStack(app *engine.App, routes http.Handler) http.Handler {
-	return withAdmission(app, logAndRecover(app, httpx.WithGzip(withCORS(app.Cfg.Cors, stripTrailingSlash(withLang(routes))))))
+	return withAdmission(app, logAndRecover(app, httpx.WithGzip(stripTrailingSlash(withLang(routes)))))
 }
 
 // NewServer assembles the stack of the admin API: the route table with the probes, the localized docs and the metrics, and

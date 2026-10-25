@@ -21,13 +21,12 @@ type GrantPreviewType struct {
 	Count   int    `json:"count" doc:"Covered resources of the type"`
 }
 
-// GrantPeople is the known subjects a rule reaches.
+// GrantPeople is the people of the subject directories a rule reaches.
 type GrantPeople struct {
-	Enabled  bool          `json:"enabled" doc:"Whether the registry of known subjects is on (SUBJECTS__ENABLED); when it is off nothing is said about people"`
-	Total    int           `json:"total" doc:"How many known subjects"`
+	Total    int           `json:"total" doc:"How many people of the directory"`
 	Sample   []KnownPerson `json:"sample" nullable:"false" doc:"The first of them (up to 20)"`
-	Registry int           `json:"registry" doc:"Known subjects the rule was tried on; 0 — the registry is empty or off, nothing is said about people"`
-	Limited  bool          `json:"limited" doc:"The registry is larger than what was tried"`
+	Registry int           `json:"registry" doc:"People of the directories of the rule's services that the rule was tried on; 0 — those directories are empty, nothing is said about people"`
+	Limited  bool          `json:"limited" doc:"The directories are larger than what was tried"`
 }
 
 // GrantConflict is a denial or an exception in force that meets the previewed rule.

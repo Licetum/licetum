@@ -81,7 +81,7 @@ function renderLookup(entries: AccessEntry[]) {
       name: 'Room 1',
       entries,
       dynamic: [],
-      people: { enabled: true, registry: 0, limited: false },
+      people: { registry: 0, limited: false },
     },
   };
   client.setQueryData(getWhoHasAccessQueryKey('s', 't', { resource_id: 'M1' }), answer);

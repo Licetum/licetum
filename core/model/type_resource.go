@@ -3,10 +3,8 @@ package model
 import (
 	"encoding/json"
 	"maps"
-	"reflect"
 	"slices"
 
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/apperr"
@@ -199,28 +197,23 @@ const (
 	TypeModeNotSync = "not_sync"
 )
 
-// SyncTypePermission is the /permission entry of a type with a synchronizer: access per resource.
-type SyncTypePermission struct {
-	Type      string           `json:"type" enum:"sync" doc:"Type mode: the type has a synchronizer, access is granted per resource"`
-	Resources []ResourceAccess `json:"resources" nullable:"false" doc:"Resources of the type available to the subject, with access levels"`
-	NextAfter string           `json:"next_after,omitempty" doc:"Present when the answer is a page that is not the last: pass it as after to read the next page"`
-}
-
-// NotSyncTypePermission is the /permission entry of a type without a synchronizer: access to the
-// type itself.
-type NotSyncTypePermission struct {
-	Type   string   `json:"type" enum:"not_sync" doc:"Type mode: the type has no synchronizer (no resources), access is granted to the type as a whole"`
-	Access []string `json:"access" nullable:"false" doc:"Access levels of the subject on the type" example:"[\"read\",\"write\"]"`
-}
-
-// TypePermission is an entry of the /permission response: a union discriminated by type —
-// SyncTypePermission or NotSyncTypePermission.
+// TypePermission is the access of a subject on a resource type: a type with a synchronizer (sync) lists the resources with their
+// access levels, a type without one (not_sync) the levels on the type as a whole. It is what the engine decides per type; the
+// answers of the PDP are made from it.
 type TypePermission struct {
 	Type      string
 	Resources []ResourceAccess
 	Access    []string
-	// NextAfter is the cursor of the next page of Resources (see service.PermissionFilter); empty on the last page.
-	NextAfter string
+}
+
+type syncTypePermission struct {
+	Type      string           `json:"type"`
+	Resources []ResourceAccess `json:"resources"`
+}
+
+type notSyncTypePermission struct {
+	Type   string   `json:"type"`
+	Access []string `json:"access"`
 }
 
 func (p TypePermission) MarshalJSON() ([]byte, error) {
@@ -229,13 +222,13 @@ func (p TypePermission) MarshalJSON() ([]byte, error) {
 		if access == nil {
 			access = []string{}
 		}
-		return json.Marshal(NotSyncTypePermission{Type: TypeModeNotSync, Access: access})
+		return json.Marshal(notSyncTypePermission{Type: TypeModeNotSync, Access: access})
 	}
 	resources := p.Resources
 	if resources == nil {
 		resources = []ResourceAccess{}
 	}
-	return json.Marshal(SyncTypePermission{Type: TypeModeSync, Resources: resources, NextAfter: p.NextAfter})
+	return json.Marshal(syncTypePermission{Type: TypeModeSync, Resources: resources})
 }
 
 func (p *TypePermission) UnmarshalJSON(data []byte) error {
@@ -243,25 +236,10 @@ func (p *TypePermission) UnmarshalJSON(data []byte) error {
 		Type      string           `json:"type"`
 		Resources []ResourceAccess `json:"resources"`
 		Access    []string         `json:"access"`
-		NextAfter string           `json:"next_after"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*p = TypePermission{Type: raw.Type, Resources: raw.Resources, Access: raw.Access, NextAfter: raw.NextAfter}
+	*p = TypePermission{Type: raw.Type, Resources: raw.Resources, Access: raw.Access}
 	return nil
-}
-
-// Schema describes the union for OpenAPI: oneOf the two entry shapes with a discriminator on type.
-func (TypePermission) Schema(r huma.Registry) *huma.Schema {
-	sync := r.Schema(reflect.TypeFor[SyncTypePermission](), true, "SyncTypePermission")
-	notSync := r.Schema(reflect.TypeFor[NotSyncTypePermission](), true, "NotSyncTypePermission")
-	return &huma.Schema{
-		Description: "Access of the subject on a resource type; the shape depends on the type mode",
-		OneOf:       []*huma.Schema{sync, notSync},
-		Discriminator: &huma.Discriminator{
-			PropertyName: "type",
-			Mapping:      map[string]string{TypeModeSync: sync.Ref, TypeModeNotSync: notSync.Ref},
-		},
-	}
 }

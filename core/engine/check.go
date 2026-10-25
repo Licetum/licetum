@@ -97,6 +97,13 @@ type checkInputs struct {
 // live synchronizer, see Prepared.sourced) is not looked up: the question about it is resource_not_found, as about any
 // resource the local copy does not have, though a deleted synchronizer may have left its row there.
 func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID, requests []model.CheckRequest, explain bool) ([]model.CheckResult, error) {
+	return a.decideChecksWith(ctx, p, serviceID, requests, explain, nil)
+}
+
+// decideChecksWith is decideChecks for a caller that decides many batches under the same rules and has read the unresolved
+// parent links of the type once (UnresolvedParents): they do not depend on the batch. nil: they are read here.
+func (a *App) decideChecksWith(ctx context.Context, p *Prepared, serviceID uuid.UUID, requests []model.CheckRequest, explain bool,
+	unresolved map[uuid.UUID][]UnresolvedLink) ([]model.CheckResult, error) {
 	typeIDs := make([]uuid.UUID, len(requests))
 	found := make([]bool, len(requests))
 	var refs []anchorRef
@@ -114,16 +121,17 @@ func (a *App) decideChecks(ctx context.Context, p *Prepared, serviceID uuid.UUID
 	}
 
 	in := &checkInputs{}
-	var unresolved map[uuid.UUID][]UnresolvedLink
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.Go(func() (err error) {
 		in.rows, err = a.anchorRowIDs(ectx, refs)
 		return err
 	})
-	eg.Go(func() (err error) {
-		unresolved, err = a.UnresolvedParents(ectx, p.Graph, Keys(askedTypes))
-		return err
-	})
+	if unresolved == nil {
+		eg.Go(func() (err error) {
+			unresolved, err = a.UnresolvedParents(ectx, p.Graph, Keys(askedTypes))
+			return err
+		})
+	}
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}

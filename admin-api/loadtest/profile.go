@@ -12,7 +12,7 @@ import (
 // Profile is the size of a run: the subjects that send requests, and the policy and the resources they meet.
 type Profile struct {
 	Name      string `json:"name"`
-	Users     int    `json:"users"`     // subjects; each one has a token and the claims of its department
+	Users     int    `json:"users"`     // subjects; each one has the claims of its department
 	Groups    int    `json:"groups"`    // departments: one group per department, its members are picked by the department claim
 	Rules     int    `json:"rules"`     // assignment rules, in the mix of ruleFor
 	Resources int    `json:"resources"` // folders and documents of the synchronized source; a folder is 1 in 20 of them

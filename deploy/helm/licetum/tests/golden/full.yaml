@@ -201,7 +201,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: admin
       annotations:
-        checksum/config: 3b69b7dad8949af2b6d02954e48f3bbfdc015d923df9bde4859001cd1de0fb5d
+        checksum/config: 4127ae810b1416d6aa226c5971b1f04f10e01a2af522fa4e219161ae544e72f6
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -253,18 +253,6 @@ spec:
                 secretKeyRef:
                   name: licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: AUTH__STATE_SECRET
-            - name: PLATFORM__CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: PLATFORM__CLIENT_SECRET
-            - name: CORS__ALLOW_ORIGINS
-              value: "[\"https://app.example.com\"]"
           startupProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 2
@@ -329,7 +317,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: pdp
       annotations:
-        checksum/config: 3b69b7dad8949af2b6d02954e48f3bbfdc015d923df9bde4859001cd1de0fb5d
+        checksum/config: 4127ae810b1416d6aa226c5971b1f04f10e01a2af522fa4e219161ae544e72f6
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -393,16 +381,6 @@ spec:
                 secretKeyRef:
                   name: licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: AUTH__STATE_SECRET
-            - name: PLATFORM__CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: PLATFORM__CLIENT_SECRET
             - name: HTTP__MAX_INFLIGHT
               value: "512"
           startupProbe:
@@ -481,19 +459,29 @@ spec:
           env:
             - name: ADMIN_API_URL
               value: "http://release-licetum-admin:8000"
-            - name: ADMIN_API_PUBLIC_URL
-              value: "https://admin.example.com"
             - name: CHECK_API_URL
               value: "http://release-licetum-pdp:8001"
             - name: CHECK_API_PUBLIC_URL
               value: "https://licetum.example.com"
             - name: APP_BASE_URL
               value: "https://app.example.com"
+            - name: OIDC_AUTHORIZATION_URL
+              value: "https://idp.example.com/auth"
+            - name: OIDC_TOKEN_URL
+              value: "https://idp.example.com/token"
+            - name: OIDC_CLIENT_ID
+              value: "licetum-web"
             - name: SESSION_SECRET
               valueFrom:
                 secretKeyRef:
                   name: licetum-secrets
                   key: SESSION_SECRET
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: licetum-secrets
+                  key: OIDC_CLIENT_SECRET
+                  optional: true
           readinessProbe:
             httpGet: {path: /, port: http}
             periodSeconds: 10
@@ -550,7 +538,7 @@ spec:
         licetum.io/region: "eu"
         app.kubernetes.io/component: worker
       annotations:
-        checksum/config: 3b69b7dad8949af2b6d02954e48f3bbfdc015d923df9bde4859001cd1de0fb5d
+        checksum/config: 4127ae810b1416d6aa226c5971b1f04f10e01a2af522fa4e219161ae544e72f6
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -602,16 +590,6 @@ spec:
                 secretKeyRef:
                   name: licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: AUTH__STATE_SECRET
-            - name: PLATFORM__CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: PLATFORM__CLIENT_SECRET
             - name: WORKER__REGION
               value: "eu"
           readinessProbe:
@@ -782,11 +760,10 @@ data:
   PLATFORM__NAME: "Licetum"
   PLATFORM__URL: "https://admin.example.com"
   PLATFORM__ICON: "https://admin.example.com/favicon.ico"
-  PLATFORM__AUTHORIZATION_URL: "https://idp.example.com/auth"
-  PLATFORM__TOKEN_URL: "https://idp.example.com/token"
-  PLATFORM__JWKS_URL: "https://idp.example.com/keys"
-  PLATFORM__ISSUER: "https://idp.example.com"
-  PLATFORM__CLIENT_ID: "licetum"
+  ADMIN_AUTH__ISSUER: "https://idp.example.com"
+  ADMIN_AUTH__AUDIENCE: "licetum-admin"
+  ADMIN_AUTH__JWKS_URL: "https://idp.example.com/keys"
+  ADMIN_AUTH__SUBJECT_CLAIM: "preferred_username"
   PLATFORM__ADMIN_GROUP_NAME: "Platform administrator"
   PLATFORM__ADMIN_CLAIM: "preferred_username"
   PLATFORM__ADMIN_CLAIM_VALUES: "[\"admin\"]"
@@ -855,16 +832,6 @@ spec:
                 secretKeyRef:
                   name: licetum-secrets
                   key: REDIS__URI
-            - name: AUTH__STATE_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: AUTH__STATE_SECRET
-            - name: PLATFORM__CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: licetum-secrets
-                  key: PLATFORM__CLIENT_SECRET
           resources:
             limits:
               memory: 256Mi

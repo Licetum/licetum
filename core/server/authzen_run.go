@@ -18,6 +18,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/licetum/licetum/core/apperr"
+	"github.com/licetum/licetum/core/config"
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
@@ -26,12 +28,12 @@ import (
 const (
 	// authzenPageMax is the most results of one page of a search.
 	authzenPageMax = 1000
-	// authzenSubjectScan bounds how many known subjects one request of the subject search goes through; the page token
+	// authzenSubjectScan bounds how many people of the directory one request of the subject search goes through; the page token
 	// continues from where it stopped.
 	authzenSubjectScan = 1000
-	// authzenScanBatch is how many known subjects are read and decided at a time.
+	// authzenScanBatch is how many people of the directory are read and decided at a time.
 	authzenScanBatch = 100
-	// authzenScanWorkers is how many known subjects are decided at the same time.
+	// authzenScanWorkers is how many people of the directory are decided at the same time.
 	authzenScanWorkers = 8
 )
 
@@ -137,10 +139,7 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 			Subject string
 			Claims  engine.Claims
 			Attrs   model.RequestContext
-		}{Subject: e.sp.subject, Attrs: e.attrs}
-		if e.sp.delegated {
-			key.Claims = e.sp.claims
-		}
+		}{Subject: e.sp.subject, Claims: e.sp.claims, Attrs: e.attrs}
 		raw, err := json.Marshal(key)
 		if err != nil {
 			return nil, err
@@ -159,6 +158,31 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 	return evals, nil
 }
 
+// evaluations answers a batch request: the evaluations with the defaults of the top level and the semantic of the options, or,
+// when the request has no evaluations, its top-level fields as one evaluation, answered with its decision alone.
+func (c *authzenCaller) evaluations(ctx context.Context, consistency engine.Consistency, body model.AuthzenEvaluationsRequest, explain bool) (*model.AuthzenEvaluationsResponse, error) {
+	if len(body.Evaluations) == 0 {
+		single := model.AuthzenEvaluationRequest{Subject: body.Subject, Resource: body.Resource, Action: body.Action, Context: body.Context}
+		evals, err := c.evaluate(ctx, consistency, []model.AuthzenEvaluationRequest{single}, model.AuthzenEvaluationsRequest{}, explain, model.AuthzenExecuteAll)
+		if err != nil {
+			return nil, err
+		}
+		if evals[0].err != nil {
+			return nil, evals[0].err
+		}
+		return &model.AuthzenEvaluationsResponse{Decision: &evals[0].resp.Decision, Context: evals[0].resp.Context}, nil
+	}
+	semantic := model.AuthzenExecuteAll
+	if body.Options != nil && body.Options.EvaluationsSemantic != "" {
+		semantic = body.Options.EvaluationsSemantic
+	}
+	evals, err := c.evaluate(ctx, consistency, body.Evaluations, body, explain, semantic)
+	if err != nil {
+		return nil, err
+	}
+	return &model.AuthzenEvaluationsResponse{Evaluations: applySemantic(semantic, evals, i18n.FromContext(ctx))}, nil
+}
+
 // decide answers the evaluations at idx with one CheckAccess call: they carry the same person and the same attributes.
 func (c *authzenCaller) decide(ctx context.Context, consistency engine.Consistency, explain bool, evals []evaluation, idx []int) error {
 	first := evals[idx[0]]
@@ -171,18 +195,15 @@ func (c *authzenCaller) decide(ctx context.Context, consistency engine.Consisten
 	if err != nil {
 		return err
 	}
-	c.app.LogDecisions(ctx, c.serviceID, first.sp.subject, group, results, consistency)
-	allowed := 0
+	if !c.simulated {
+		c.app.LogDecisions(ctx, c.serviceID, first.sp.subject, group, results, consistency)
+	}
 	for j, i := range idx {
 		evals[i].resp = model.AuthzenEvaluationResponse{Decision: results[j].Allowed}
-		if results[j].Allowed {
-			allowed++
-		}
 		if explain && results[j].Explanation != nil {
 			evals[i].resp.Context = map[string]any{"reason_admin": results[j].Explanation}
 		}
 	}
-	c.note(first.sp, len(idx), allowed)
 	return nil
 }
 
@@ -262,7 +283,9 @@ func decodeCursor(token, sum string) (string, *apperr.Error) {
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	var cur pageCursor
-	if err != nil || json.Unmarshal(raw, &cur) != nil || cur.Sum != sum {
+	// The key goes to the database as text, which cannot hold a NUL byte (JSON decoding already turns invalid UTF-8 into valid text):
+	// it would be an error there, not a refusal here.
+	if err != nil || json.Unmarshal(raw, &cur) != nil || cur.Sum != sum || strings.ContainsRune(cur.After, 0) {
 		return "", apperr.BadRequest(i18n.AuthzenPageInvalid)
 	}
 	return cur.After, nil
@@ -335,6 +358,7 @@ type search struct {
 	attrs   model.RequestContext
 	limit   int
 	after   string
+	started bool // the request carries a page token: the page starts after the key, which may be the empty string
 	sum     string
 	subject *model.AuthzenSubject
 }
@@ -357,6 +381,7 @@ func parseSearch(kind string, in searchInput) (*search, *apperr.Error) {
 		return nil, aerr
 	}
 	s.after = after
+	s.started = token != ""
 	return s, nil
 }
 
@@ -365,6 +390,11 @@ func (c *authzenCaller) permissions(ctx context.Context, sp speaker, attrs model
 	return c.app.GetPermission(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), consistency)
 }
 
+// searchResources answers the resource search: one page of the resources of the asked type that the speaker may do the action
+// with, in bytewise order of their ids. The engine reads the candidates of the type by a keyset scan and decides them (see
+// engine.SearchResources); the cursor is the key the page covers up to, so that no result is repeated across pages. A page
+// the scan budget stopped is shorter than its limit and still carries a next_token. There is no total: it would need the
+// whole result.
 func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenResourceSearchResponse, error) {
 	s, aerr := parseSearch("resource", in)
 	if aerr != nil {
@@ -374,26 +404,26 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 	if aerr != nil {
 		return nil, aerr
 	}
-	result, err := c.permissions(ctx, sp, s.attrs, consistency)
+	budget := c.cfg.PDP.SearchScanBudget
+	if budget < 1 {
+		budget = config.DefaultSearchScanBudget
+	}
+	query := engine.ResourceSearch{Type: in.Resource.Type, Action: in.Action.Name, Limit: s.limit, Budget: budget}
+	if s.started {
+		query.After = &s.after
+	}
+	page, err := c.app.SearchResources(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, s.attrs), query, consistency)
 	if err != nil {
 		return nil, err
 	}
-	var all []model.ResourceAccess
-	// A type without resources (a permission such as a feature flag) has nothing to list; an unknown type has no answer.
-	if tp, ok := result[in.Resource.Type]; ok && tp.Type != model.TypeModeNotSync {
-		for _, r := range tp.Resources {
-			if slices.Contains(r.Access, in.Action.Name) {
-				all = append(all, r)
-			}
-		}
+	next := ""
+	if !page.Done {
+		next = encodeCursor(page.Last, s.sum)
 	}
-	slices.SortFunc(all, func(a, b model.ResourceAccess) int { return strings.Compare(a.ID, b.ID) })
-	page, next := pageOf(all, func(r model.ResourceAccess) string { return r.ID }, s.after, s.limit, s.sum)
-	out := &model.AuthzenResourceSearchResponse{Page: pageInfo(len(page), intPtr(len(all)), next), Results: make([]model.AuthzenResource, len(page))}
-	for i, r := range page {
-		out.Results[i] = model.AuthzenResource{Type: in.Resource.Type, ID: r.ID, Properties: map[string]any{"name": r.Name}}
+	out := &model.AuthzenResourceSearchResponse{Page: pageInfo(len(page.Hits), nil, next), Results: make([]model.AuthzenResource, len(page.Hits))}
+	for i, h := range page.Hits {
+		out.Results[i] = model.AuthzenResource{Type: in.Resource.Type, ID: h.ID, Properties: map[string]any{"name": h.Name}}
 	}
-	c.note(sp, 0, 0)
 	return out, nil
 }
 
@@ -421,7 +451,6 @@ func (c *authzenCaller) searchActions(ctx context.Context, consistency engine.Co
 	for i, l := range page {
 		out.Results[i] = model.AuthzenAction{Name: l}
 	}
-	c.note(sp, 0, 0)
 	return out, nil
 }
 
@@ -474,36 +503,31 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 	return levels, nil
 }
 
-// searchSubjects lists the known subjects (the registry of people seen by a verified token) that may do the action on the
-// resource. Only a client application the service trusts may ask: the answer names other people.
+// searchSubjects lists the people of the directory of the service (the type of subject.type) that may do the action on the
+// resource (ADR 0001, 7.6). The directory is what the application sent; a person who is not in it is never found, and an empty
+// directory gives an empty result. Only a PEP client with the search_subject operation may ask: the answer names other people.
 func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenSubjectSearchResponse, error) {
 	s, aerr := parseSearch("subject", in)
 	if aerr != nil {
 		return nil, aerr
 	}
-	client, err := c.trusted()
-	if err != nil {
-		return nil, err
-	}
-	SetRequestUser(ctx, "client:"+client)
-
 	out := &model.AuthzenSubjectSearchResponse{Results: []model.AuthzenSubject{}}
-	if !c.cfg.Subjects.Enabled {
-		out.Context = map[string]any{"subjects_registry": "disabled"}
-		out.Page = pageInfo(0, nil, "")
-		return out, nil
-	}
 	question := []model.CheckRequest{{Type: in.Resource.Type, Action: in.Action.Name, ResourceID: resourceIDOf(in.Resource)}}
 
-	// The registry is read in the order of the subjects, a batch at a time from the cursor, and every subject of a batch
-	// is decided (the decisions are cached like any other, so a repeated page costs little) until the page is full or
-	// the request has gone through authzenSubjectScan subjects. The cursor is the last subject the page covers: the order
-	// does not depend on who was seen last, so no page skips or repeats a person.
-	var found []engine.KnownSubject
-	scanned, cursor, exhausted := 0, s.after, false
+	// The directory is read in the order of its keys (type, then id, bytewise), a batch at a time from the cursor, and every
+	// person of a batch is decided (the decisions are cached like any other, so a repeated page costs little) until the page is
+	// full or the request has gone through authzenSubjectScan people. The cursor is the last person the page covers: the order
+	// does not depend on who was sent last, so no page skips or repeats a person.
+	var found []db.DirectoryEntry
+	var after *db.DirectoryKey
+	if s.started {
+		after = directoryCursor(s.after)
+	}
+	scanned, exhausted := 0, false
 scan:
 	for scanned < authzenSubjectScan && len(found) < s.limit {
-		batch, err := c.app.LoadKnownSubjectsAfter(ctx, cursor, min(authzenScanBatch, authzenSubjectScan-scanned))
+		want := min(authzenScanBatch, authzenSubjectScan-scanned)
+		batch, err := c.app.DirectoryAfter(ctx, c.serviceID, in.Subject.Type, after, want)
 		if err != nil {
 			return nil, err
 		}
@@ -511,53 +535,60 @@ scan:
 		if err != nil {
 			return nil, err
 		}
-		for i, k := range batch {
+		for i, e := range batch {
 			scanned++
-			cursor = k.Subject
+			after = &db.DirectoryKey{Type: e.Type, ID: e.ID}
 			if allowed[i] {
-				found = append(found, k)
+				found = append(found, e)
 				if len(found) == s.limit {
 					break scan
 				}
 			}
 		}
-		if len(batch) < authzenScanBatch {
+		if len(batch) < want {
 			exhausted = true
 			break
 		}
 	}
 	next := ""
-	if !exhausted {
-		next = encodeCursor(cursor, s.sum)
+	if !exhausted && after != nil {
+		next = encodeCursor(after.Type+":"+after.ID, s.sum)
 	}
-	// The number of all the results is not known without going through the whole registry.
+	// The number of all the results is not known without going through the whole directory.
 	out.Page = pageInfo(len(found), nil, next)
-	for _, k := range found {
-		subject := model.AuthzenSubject{Type: in.Subject.Type, ID: k.Subject}
-		if k.Name != nil {
-			subject.Properties = map[string]any{"name": *k.Name}
+	for _, e := range found {
+		subject := model.AuthzenSubject{Type: e.Type, ID: e.ID}
+		if e.DisplayName != "" {
+			subject.Properties = map[string]any{"name": e.DisplayName}
 		}
 		out.Results = append(out.Results, subject)
 	}
-	// The search is about nobody in particular: the audit names it with a wildcard.
-	c.delegated = append(c.delegated, "*")
-	c.tally["*"] = &delegatedTally{questions: scanned, allowed: len(found)}
 	return out, nil
 }
 
-// decideKnown says, for each known subject of a batch, whether the question is allowed to them. A subject that cannot be
-// asked about (it looks like a group) is not an answer.
-func (c *authzenCaller) decideKnown(ctx context.Context, consistency engine.Consistency, batch []engine.KnownSubject, question []model.CheckRequest, attrs model.RequestContext) ([]bool, error) {
+// directoryCursor is the key a page of the subject search starts after: the type and the id, as encodeCursor was given them.
+// A type cannot hold a colon, so the first one separates the two.
+func directoryCursor(key string) *db.DirectoryKey {
+	typ, id, ok := strings.Cut(key, ":")
+	if !ok {
+		return nil
+	}
+	return &db.DirectoryKey{Type: typ, ID: id}
+}
+
+// decideKnown says, for each person of a batch of the directory, whether the question is allowed to them, decided with their
+// stored properties as claims. A subject that cannot be asked about (it looks like a group) is not an answer.
+func (c *authzenCaller) decideKnown(ctx context.Context, consistency engine.Consistency, batch []db.DirectoryEntry, question []model.CheckRequest, attrs model.RequestContext) ([]bool, error) {
 	allowed := make([]bool, len(batch))
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.SetLimit(authzenScanWorkers)
-	for i, k := range batch {
+	for i, e := range batch {
 		eg.Go(func() error {
-			claims, err := engine.PrepareDelegated(k.Subject, k.Claims)
+			claims, err := subjectClaims(e.ID, e.Properties)
 			if err != nil {
 				return nil
 			}
-			answers, err := c.app.CheckAccess(ectx, c.serviceID, k.Subject, c.app.NewEnv(claims, attrs), question, false, consistency)
+			answers, err := c.app.CheckAccess(ectx, c.serviceID, e.ID, c.app.NewEnv(claims, attrs), question, false, consistency)
 			if err != nil {
 				return err
 			}

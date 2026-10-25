@@ -15,12 +15,10 @@ type Policy struct {
 	Rule            string
 }
 
-// ServicePayload is the body of POST /service for a service that trusts the fake identity provider.
+// ServicePayload is the body of POST /service.
 func (c *Cluster) ServicePayload(name string) map[string]any {
 	return map[string]any{
 		"name": name, "slug": name, "url": c.IdP.AppURL(), "icon": c.IdP.IconURL(),
-		"authorization_url": c.IdP.AuthorizationURL(), "token_url": c.IdP.TokenURL(), "jwks_url": c.IdP.JWKSURL(),
-		"issuer": c.IdP.Issuer(), "client_id": name, "client_secret": "s",
 	}
 }
 

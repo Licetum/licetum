@@ -7,45 +7,15 @@ import (
 	"github.com/licetum/licetum/core/engine"
 )
 
-func TestConsistencyParamTakesTheQueryWhenTheContextHasNoLever(t *testing.T) {
-	ctx := context.Background()
-	for _, c := range []struct {
-		query string
-		want  engine.Consistency
-	}{
-		{"", engine.MinimizeLatency},
-		{"minimize_latency", engine.MinimizeLatency},
-		{"higher", engine.HigherConsistency},
-		{"anything else", engine.MinimizeLatency},
-	} {
-		if got := (ConsistencyParam{Consistency: c.query}).valueIn(ctx); got != c.want {
-			t.Errorf("?consistency=%q: got %q, want %q", c.query, got, c.want)
-		}
+// No network request sets the freshness: the process that serves the request does, through the context, and without it the
+// answer may come from the cache.
+func TestConsistencyOfTakesTheLeverOfTheContext(t *testing.T) {
+	if got := consistencyOf(context.Background()); got != engine.MinimizeLatency {
+		t.Errorf("without a lever: got %q, want %q", got, engine.MinimizeLatency)
 	}
-}
-
-func TestConsistencyParamLetsTheContextWin(t *testing.T) {
-	for _, c := range []struct {
-		lever, query, want engine.Consistency
-	}{
-		{engine.HigherConsistency, "", engine.HigherConsistency},
-		{engine.HigherConsistency, engine.MinimizeLatency, engine.HigherConsistency},
-		{engine.HigherConsistency, engine.HigherConsistency, engine.HigherConsistency},
-		{engine.MinimizeLatency, engine.HigherConsistency, engine.MinimizeLatency},
-	} {
-		ctx := engine.WithConsistency(context.Background(), c.lever)
-		if got := (ConsistencyParam{Consistency: string(c.query)}).valueIn(ctx); got != c.want {
-			t.Errorf("lever %q with ?consistency=%q: got %q, want %q", c.lever, c.query, got, c.want)
+	for _, lever := range []engine.Consistency{engine.HigherConsistency, engine.MinimizeLatency} {
+		if got := consistencyOf(engine.WithConsistency(context.Background(), lever)); got != lever {
+			t.Errorf("lever %q: got %q", lever, got)
 		}
-	}
-}
-
-// The revision a caller asks for is a separate lever and keeps its own carrier.
-func TestConsistencyParamFreshnessLeavesTheConsistencyAlone(t *testing.T) {
-	ctx := engine.WithConsistency(context.Background(), engine.HigherConsistency)
-	p := ConsistencyParam{AtLeastAsFresh: 12}
-	ctx = p.freshness(ctx)
-	if got := p.valueIn(ctx); got != engine.HigherConsistency {
-		t.Fatalf("got %q", got)
 	}
 }

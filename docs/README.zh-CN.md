@@ -29,56 +29,59 @@ Licetum 不保存业务记录，不替代身份提供方，也不代替您的服
 ```mermaid
 flowchart LR
   S["资源所属服务<br/>发布自己的资源"]
-  C["使用方服务<br/>API、搜索、MCP、报表"]
-  L["Licetum<br/>规则与资源目录"]
+  C["使用方服务（PEP）<br/>API、搜索、MCP、报表"]
+  L["Licetum PDP<br/>规则与资源目录"]
   DB[(PostgreSQL)]
   R[(Redis)]
   S -- "SQL 视图或 HTTP endpoint" --> L
-  C -- "GET /service/{id}/permission" --> L
+  C -- "AuthZEN: POST /service/{slug}/access/v1/..." --> L
   L --- DB
   L --- R
 ```
 
-使用方可以查询主体在已注册服务中的权限：
+PDP 使用 [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html)，并限定在单个服务内：路径
+以 slug 指明服务。使用方是策略执行点（PEP）。管理员把它注册为服务的 *PEP 客户端*，它用 Licetum 签发的 API 密钥，或用管理员
+注册的身份提供方签发的访问令牌进行认证。PEP 指明要询问的人，并以问题中的 `subject` 为其 claims 担保：
 
 ```http
-GET /service/{service_id}/permission
-Authorization: Bearer <user-token>
-```
-
-响应列出主体可以访问的资源，以及每个资源上的访问级别：
-
-```json
-{
-  "project": {
-    "type": "sync",
-    "resources": [
-      { "id": "1", "name": "Project 1", "access": ["read"] },
-      { "id": "2", "name": "Project 2", "access": ["read", "write"] }
-    ]
-  }
-}
-```
-
-没有具体资源的类型，例如某个功能、操作或模式，会以 `"type": "not_sync"` 返回，并附带整个类型上的访问级别。
-
-如果只需要单个决策，可以逐项提问。一次请求最多包含 100 个问题：
-
-```http
-POST /service/{service_id}/check
-Authorization: Bearer <user-token>
+POST /service/orders/access/v1/evaluation
+Authorization: Bearer <api-key>
 Content-Type: application/json
 
 {
-  "checks": [
-    { "type": "project", "resource_id": "2", "action": "write" },
-    { "type": "project", "action": "create" }
-  ],
-  "explain": true
+  "subject": { "type": "user", "id": "alice", "properties": { "department": "sales" } },
+  "resource": { "type": "project", "id": "2" },
+  "action": { "name": "write" },
+  "context": { "licetum": { "explain": true } }
 }
 ```
 
-设置 `explain` 后，每个答案都会说明哪些规则授予了访问级别、哪些拒绝生效，以及哪些例外取消了这些拒绝。
+响应就是决策。设置 `explain` 后（PEP 客户端需要 `explain` 操作），它会说明哪些规则授予了访问级别、哪些拒绝生效，以及哪些例外取消了这些拒绝：
+
+```json
+{ "decision": true, "context": { "reason_admin": { "decision": "allowed", "granted_by": [ ... ] } } }
+```
+
+如果需要列表而不是单个决策，资源搜索会返回此人可对某操作使用的该类型资源。使用方可以把这些 ID 用在 `WHERE` 过滤或行级安全策略中：
+
+```http
+POST /service/orders/access/v1/search/resource
+Authorization: Bearer <api-key>
+Content-Type: application/json
+
+{
+  "subject": { "type": "user", "id": "alice", "properties": { "department": "sales" } },
+  "resource": { "type": "project" },
+  "action": { "name": "read" },
+  "page": { "limit": 100 }
+}
+```
+
+```json
+{ "results": [ { "type": "project", "id": "1", "properties": { "name": "Project 1" } }, ... ], "page": { "count": 2 } }
+```
+
+`POST …/access/v1/evaluations` 批量决策（带 `evaluations_semantic` 选项），操作搜索和主体搜索则分别列出资源上的访问级别和可使用它的人员。
 
 ## 功能
 
@@ -122,7 +125,7 @@ task dev
 
 ## Licetum 不是什么
 
-- 它不是身份提供方。Licetum 使用您的身份提供方签发的 OAuth2/OIDC 令牌及其 claims。
+- 它不是身份提供方。发起询问的服务指明具体的人并为其 claims 担保；管理员通过您的 OIDC 提供方登录。
 - 它不是业务数据库。源服务保存自己的记录，并负责 CRUD。
 - 它不是数据库 RLS 扩展。Licetum 返回允许的 ID 或决策，由使用方将其应用到自己的查询和存储层。
 - 它不只是前端过滤器。后端和数据访问层必须强制执行结果。

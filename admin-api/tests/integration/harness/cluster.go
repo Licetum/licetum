@@ -39,6 +39,9 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
+// AdminAudience is the audience (ADMIN_AUTH__AUDIENCE) the admin API of a Cluster requires of the tokens of administrators.
+const AdminAudience = "licetum-admin"
+
 // Cluster is one environment: the shared state, the fakes, the admin API and the check replicas.
 type Cluster struct {
 	T      testing.TB
@@ -80,6 +83,8 @@ type Cluster struct {
 	replicaReadURI string
 	client         *http.Client
 	configure      []func(*config.Config)
+	// callers makes the questions of the tests the questions of a PEP client (see send).
+	callers *support.PEPCallers
 }
 
 // Replica is one check API instance: its own App, database pool, Redis client and HTTP servers. Server is the public port
@@ -147,15 +152,14 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	c.Cfg = &config.Config{
 		DB: config.Database{URI: dbURI, PoolSize: 5, PgBouncer: iso.PgBouncer, MigrateURI: iso.MigrateURI},
 		// The DBOS tables of the cluster live in a schema of their own, dropped with it.
-		Sync:     config.Sync{DBOSSchema: "dbos_" + iso.Name},
-		Auth:     config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
-		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
+		Sync: config.Sync{DBOSSchema: "dbos_" + iso.Name},
 		Platform: config.Platform{
 			Name: "Licetum", URL: c.IdP.AppURL(), Icon: c.IdP.IconURL(),
-			AuthorizationURL: c.IdP.AuthorizationURL(), TokenURL: c.IdP.TokenURL(), JwksURL: c.IdP.JWKSURL(),
-			Issuer: c.IdP.Issuer(), ClientID: "licetum", ClientSecret: "s",
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username", AdminClaimValues: []string{"admin"},
 		},
+		// Administrators sign in at the fake identity provider; its tokens for the admin API carry AdminAudience.
+		AdminAuth: config.AdminAuth{Issuer: c.IdP.Issuer(), Audience: AdminAudience, JWKSURL: c.IdP.JWKSURL(),
+			SubjectClaim: "preferred_username"},
 	}
 	for _, f := range c.configure {
 		f(c.Cfg)
@@ -170,6 +174,11 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(c.Pool.Close)
+	c.callers = support.NewPEPCallers(t, c.Pool, func() {
+		for _, r := range c.Replicas {
+			r.App.AfterPEPWrite()
+		}
+	})
 	c.Redis, err = redisx.Connect(ctx, infra.RedisURI)
 	if err != nil {
 		t.Fatalf("connect to Redis: %v", err)
@@ -194,7 +203,7 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	t.Cleanup(c.Admin.Close)
 	c.startWorker()
 	c.AdminServer = serve(t, api.NewAdminHandler(c.Admin))
-	c.AdminToken = c.IdP.Token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
+	c.AdminToken = c.IdP.SignToken(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"}, support.Audience(AdminAudience))
 
 	replicaDB, replicaRedis := c.Cfg.DB.URI, infra.RedisURI
 	if c.proxied {
@@ -407,6 +416,7 @@ func (c *Cluster) do(method, target, token string, body any, requestID string, h
 }
 
 func (c *Cluster) send(client *http.Client, method, target, token string, body any, requestID string, header http.Header) (int, []byte, http.Header, error) {
+	token, body = c.asPEP(target, token, body)
 	req, err := newRequest(context.Background(), method, target, token, body, header)
 	if err != nil {
 		return 0, nil, nil, err
@@ -424,6 +434,20 @@ func (c *Cluster) send(client *http.Client, method, target, token string, body a
 		return 0, nil, nil, err
 	}
 	return resp.StatusCode, raw, resp.Header, nil
+}
+
+// asPEP turns a question to the AuthZEN API that names who asks by a person's token into the question of a PEP client: the API key
+// of the client of the service, and the claims of the token as the properties of the subject (support.PEPCallers). The PDP takes
+// no person's token on these routes. Any other request is sent as it is.
+func (c *Cluster) asPEP(target, token string, body any) (string, any) {
+	if c.callers == nil || token == "" {
+		return token, body
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return token, body
+	}
+	return c.callers.Prepare(u.Path, token, body)
 }
 
 // Result is an answer of a replica with what the request cost.
@@ -486,7 +510,7 @@ func (r *Replica) Do(c *Cluster, method, path, token string, body any) *Result {
 // answer with the Trace of the request.
 func (r *Replica) Send(c *Cluster, req authzenreq.Request, token string, levers ...Lever) *Result {
 	c.T.Helper()
-	return r.request(c, req.Method, req.Path, token, req.Body, questionHeader(levers))
+	return r.request(c, req.Method, req.Path, token, req.Body, questionHeader(req.Header, levers))
 }
 
 // base is the address a path of the replica is asked at: the probes and the metrics are on the operations listener, the rest
@@ -515,7 +539,7 @@ func (r *Replica) request(c *Cluster, method, path, token string, body any, head
 func (r *Replica) Try(c *Cluster, req authzenreq.Request, token string, timeout time.Duration, levers ...Lever) (status int, body []byte, err error) {
 	c.T.Helper()
 	client := &http.Client{Timeout: timeout}
-	status, body, _, err = c.send(client, req.Method, r.Server.URL+req.Path, token, req.Body, "", questionHeader(levers))
+	status, body, _, err = c.send(client, req.Method, r.Server.URL+req.Path, token, req.Body, "", questionHeader(req.Header, levers))
 	return status, body, err
 }
 
@@ -584,9 +608,6 @@ func (r *Replica) Warm(c *Cluster, req authzenreq.Request, token string) *Result
 		last = res
 		if same >= 2 {
 			c.WaitForSyncIdle()
-			// The subjects the requests noted are written in batches once a second: write them now, so that the
-			// batch does not fall into the request a test measures next.
-			r.App.FlushSubjects(context.Background())
 			time.Sleep(100 * time.Millisecond) // let the background work of the last request end
 			return r.Send(c, req, token)
 		}
@@ -642,11 +663,41 @@ func (c *Cluster) startReadReplica(dbURI string) {
 	}
 }
 
-// PauseReplay stops the read replica applying the changes it receives: from now on it lags behind the primary.
+// PauseReplay stops the read replica applying the changes it receives: from now on it lags behind the primary. The PEP clients of the
+// services are made first and the replica replays them, because the PDP reads its directory of PEP clients from the replica: a
+// client made while it lags would be unknown to the PDP, and every question of the test would be a 401.
 func (c *Cluster) PauseReplay() {
 	c.T.Helper()
+	if c.callers != nil {
+		c.callers.EnsureAll()
+		c.waitReplicaHas(`SELECT count(*) FROM pep_credential`)
+		c.callers.Notify()
+	}
 	if _, err := c.ReplicaPool.Exec(context.Background(), `SELECT pg_wal_replay_pause()`); err != nil {
 		c.T.Fatalf("pause the replay: %v", err)
+	}
+}
+
+// waitReplicaHas waits until the count that the query gives is the same on the read replica as on the primary.
+func (c *Cluster) waitReplicaHas(query string) {
+	c.T.Helper()
+	ctx := db.Uncounted(context.Background())
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		var onPrimary, onReplica int
+		if err := c.Pool.QueryRow(ctx, query).Scan(&onPrimary); err != nil {
+			c.T.Fatalf("count on the primary: %v", err)
+		}
+		if err := c.ReplicaPool.QueryRow(ctx, query).Scan(&onReplica); err != nil {
+			c.T.Fatalf("count on the replica: %v", err)
+		}
+		if onPrimary == onReplica {
+			return
+		}
+		if time.Now().After(deadline) {
+			c.T.Fatalf("the replica has %d rows where the primary has %d after 20s", onReplica, onPrimary)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

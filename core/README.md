@@ -12,7 +12,7 @@ The admin API (`admin-api/`, AGPL-3.0-only) is a separate module that depends on
 
 | Command | What it does |
 |---|---|
-| `licetum pdp` | the PDP: the permission API, `GET /service/{id}/permission` and the check endpoints (default `:8001`); its probes and `/metrics` are on the ops port (`PDP__OPS_ADDR`, default `:9090`) |
+| `licetum pdp` | the PDP: the AuthZEN API under `/service/{slug}/access/v1/` (default `:8001`); its probes and `/metrics` are on the ops port (`PDP__OPS_ADDR`, default `:9090`) |
 | `licetum migrate` | applies the database migrations and seeds the platform self-service (idempotent) |
 | `licetum openapi pdp [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server, database or Redis |
 
@@ -22,13 +22,14 @@ The admin API (`admin-api/`, AGPL-3.0-only) is a separate module that depends on
 cd core
 export DB__URI=postgresql://authz:authz@localhost:5432/authz_db   # a +asyncpg suffix is accepted too
 export REDIS__URI=redis://localhost:6379/0
-# the platform self-service is seeded from the PLATFORM__* variables (see Configuration)
+# the platform self-service is seeded when ADMIN_AUTH__* is set (administrators sign in at that OIDC provider, see Configuration)
+export ADMIN_AUTH__ISSUER=http://localhost:5556/dex ADMIN_AUTH__AUDIENCE=licetum-local ADMIN_AUTH__JWKS_URL=http://localhost:5556/dex/keys
 
 go run ./cmd/licetum migrate
 go run ./cmd/licetum pdp
 ```
 
-The PDP serves no docs and no OpenAPI document on its ports: its public port has the AuthZEN API and the legacy routes,
+The PDP serves no docs and no OpenAPI document on its ports: its public port has the AuthZEN API only,
 and its ops listener the probes and the metrics. The spec is generated from the Go structs that handle requests (Huma v2),
 so it cannot drift from the code; `licetum openapi pdp` prints it, without a server:
 
@@ -49,15 +50,16 @@ The PDP implements the [OpenID AuthZEN Authorization API 1.0](https://openid.net
 for every service, under `/service/{id or slug}/access/v1/`: `evaluation`, `evaluations` (with
 `options.evaluations_semantic`), `search/subject`, `search/resource` and `search/action`. The Policy Decision Point of
 a service is `<PDP__PUBLIC_URL>/service/<slug>`; its metadata is at
-`/.well-known/authzen-configuration/service/{id or slug}` (served only when `PDP__PUBLIC_URL` is set).
+`/.well-known/authzen-configuration/service/{slug}` (served only when `PDP__PUBLIC_URL` is set).
 
 - The resource type is a resource type of the service, the resource id its id in the external system (`*`: the type as a whole),
   the action an access level. `context` holds the attributes of the request the rules read; `{"licetum": {"explain": true}}` returns
   the explanation in `context.reason_admin`. The `licetum` object is the only place of the settings of the request.
-- The subject is the holder of the bearer token. A client application listed in the service's `trusted_clients` may ask about any
-  person, giving the person's claims in `subject.properties`; these calls are recorded like the calls on behalf of a person.
-- The subject search is for trusted clients only and decides the known subjects (`SUBJECTS__ENABLED`).
-- A request that is not valid is a 400; a missing or invalid token a 401; a subject the caller may not ask about a 403. Errors keep
+- The caller is a PEP client of the service. The subject is the person of its application, named in the body; their claims are
+  `subject.properties` (at most 100 claims and 16 KiB; `preferred_username` defaults to `subject.id`). Nothing about a call is recorded.
+  The only freshness a caller can ask for is `{"licetum": {"min_revision": "<revision of a write>"}}` in the context.
+- The subject search is for PEP clients with the `search_subject` operation and decides the people of the subject directory of the service (what its application sent to `PUT /service/{id}/subjects`), with their stored properties.
+- A request that is not valid is a 400; a missing or invalid credential a 401 (the token of a person is not one); an operation the caller lacks, or a service it has no client of, a 403. Errors keep
   Licetum's usual JSON body (`{"detail": …, "extra": {"code": …}}`), which carries the message the specification asks for.
 
 ## Full stack
@@ -65,7 +67,8 @@ a service is `<PDP__PUBLIC_URL>/service/<slug>`; its metadata is at
 `task dev` (= `docker compose up`) from the repository root starts PostgreSQL, Redis, a local Dex OIDC provider,
 the migration, the PDP, the admin API and the web interface. Open `http://localhost:3000` and sign in as
 `admin@example.com` with password `password`. These credentials and the Dex client are for development only; set the
-`PLATFORM__*` variables in `.env` to use another identity provider.
+`ADMIN_AUTH__*` variables of the admin API and the `OIDC_*` variables of the web interface in `.env` to use another identity
+provider.
 
 The Compose service uses the `dev` target of [`Dockerfile`](Dockerfile): the sources are mounted and
 [air](https://github.com/air-verse/air) rebuilds the binary on every change. The `runtime` target is the production
@@ -81,17 +84,19 @@ lists accept a JSON array or a comma-separated string.
 | `DB__` | `DB__URI` (required), `DB__READ_URI` (read replica of a PDP), `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL` — see [Read replica](#read-replica-db__read_uri), pool settings (`DB__POOL_SIZE` default 10, `DB__MAX_OVERFLOW` default 20, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO`; behind PgBouncer: `DB__PGBOUNCER` (simple protocol, nothing prepared) and `DB__MIGRATE_URI` (where `licetum migrate` connects, PostgreSQL itself) — see [Resilience and operations](#resilience-and-operations) |
 | `REDIS__` | `REDIS__URI`: the permission cache, the cached source lists, the circuit breakers. `REDIS__HOT_TIMEOUT` (default `50ms`): the PDP's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
 | `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
-| `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `at_least_as_fresh` waits for its revision before the answer is computed from the data) |
+| `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `min_revision` waits for its revision before the answer is computed from the data) |
 | `COMPUTE__` | `COMPUTE__CONCURRENCY`: answers computed at once (default half of `DB__POOL_SIZE`); the rest of a wave of cache misses queues. A computation that waits for a synchronization job (the worker's) gives its slot back meanwhile |
-| `AUTH__` | `AUTH__STATE_SECRET`, `AUTH__STATE_TTL`; the token and key caches: `AUTH__TOKEN_L1_SIZE` (verified tokens kept in memory, default 50 000), `AUTH__JWKS_TTL` (default `10m`), `AUTH__JWKS_MIN_REFRESH` (default `30s`: an unknown key id refetches the key set at most this often), `AUTH__INVALID_TOKEN_TTL` (default `10s`) |
+| `AUTH__` | the key sets of the identity providers (PEP issuers and the administrators'): `AUTH__JWKS_TTL` (default `10m`), `AUTH__JWKS_MIN_REFRESH` (default `30s`: an unknown key id refetches the key set at most this often). `AUTH__STATE_SECRET`, `AUTH__STATE_TTL`, `AUTH__TOKEN_L1_SIZE` and `AUTH__INVALID_TOKEN_TTL` are gone with the authentication of people by a service's own provider: they are ignored, and logged at start-up when still set |
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
-| `PLATFORM__` | the self-service: its OAuth2 client (`PLATFORM__CLIENT_ID`, `PLATFORM__CLIENT_SECRET`, the authorization, token and JWKS URLs, the issuer) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`) |
+| `ADMIN_AUTH__` | how administrators authenticate to the admin API: one OpenID Connect provider. `ADMIN_AUTH__ISSUER` (the `iss` of the tokens, compared exactly), `ADMIN_AUTH__AUDIENCE` (required: a value the `aud` of every token must contain), `ADMIN_AUTH__JWKS_URL` (where its keys are read) and `ADMIN_AUTH__SUBJECT_CLAIM` (the claim that names the administrator, default `preferred_username`, then `sub`). The admin API refuses to start without the first three; the seed of the self-service and `restore-admin` need only these. The web interface is the OIDC client of the provider (`OIDC_*`, see `web/README.md`) |
+| `PLATFORM__` | the self-service: its name, URL and icon (`PLATFORM__NAME`, `PLATFORM__URL`, `PLATFORM__ICON`) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, default `ADMIN_AUTH__SUBJECT_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`). The OAuth client it used to carry (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISSUER`, `__CLIENT_ID`, `__CLIENT_SECRET`) is gone: they are ignored, and logged at start-up when still set |
 | `SYNC__` | `SYNC__FETCH_TTL` (how long a source's list is kept), `SYNC__ENGINE` (`dbos`, the default, or `postgres`), `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, at least 3, outside `DB__POOL_SIZE`; the process runs at most (size - 1) / 2 enqueues at once, since a duplicate enqueue takes two connections and the listener keeps one), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
-| `SUBJECTS__` | `SUBJECTS__ENABLED` (the registry of known subjects, off by default), `SUBJECTS__RETENTION_DAYS` |
-| | The retention of both runs in the **worker** only (`licetum worker`): give it the same `SUBJECTS__RETENTION_DAYS` and `DELEGATION__AUDIT_RETENTION_DAYS` as the other processes, or the defaults (90 and 365 days) apply. |
-| `DELEGATION__` | `DELEGATION__AUDIT_RETENTION_DAYS` (the audit of calls made on behalf of a person), `DELEGATION__AUDIT_MODE` (`strict`, default: the record is committed before the answer; `async`: buffered and written in batches), `DELEGATION__AUDIT_BUFFER` (async buffer size, default 100000) |
-| `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `HTTP__ADDR` | the listen address: `PDP__ADDR` for the PDP (default `:8001`: the AuthZEN API and the legacy routes only), `PDP__OPS_ADDR` for its probes and `/metrics` (default `:9090`), `HTTP__ADDR` for the admin API and the worker; `PDP__PUBLIC_URL` is the identifier the PEPs use for the PDP (`https://licetum.example.com`, required by the PDP; https, except for a loopback host), which the AuthZEN discovery document is built from; `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`) is read but not used yet: from P2-15 it is the audience a client token must carry when its issuer lists none |
+| `SUBJECTS__` | gone: the registry of known subjects was replaced by the subject directory of each service (retention per service, set through `PUT /service/{id}/subjects/settings`). `SUBJECTS__ENABLED` and `SUBJECTS__RETENTION_DAYS` are ignored, and logged at start-up when still set. The retention of the directories runs in the **worker** only (`licetum worker`). |
+| `DELEGATION__`, `CORS__` | gone: the calls on behalf of a person and their audit, and the CORS of the admin API (the browser reaches it through the web interface's server), no longer exist. The settings are ignored, and logged at start-up when still set |
+| `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `HTTP__ADDR` | the listen address: `PDP__ADDR` for the PDP (default `:8001`: the AuthZEN API only), `PDP__OPS_ADDR` for its probes and `/metrics` (default `:9090`), `HTTP__ADDR` for the admin API and the worker; `PDP__PUBLIC_URL` is the identifier the PEPs use for the PDP (`https://licetum.example.com`, required by the PDP; https, except for a loopback host), which the AuthZEN discovery document is built from; `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`) is the audience a PEP's token must carry when its issuer lists none (a token always needs an `aud`) |
+| `PDP__SEARCH_SCAN_BUDGET` | how many candidate resources one request of the AuthZEN resource search reads (default `10000`). A page that the budget stops is shorter than its `page.limit`, even empty, and still carries a `next_token`: a client keeps asking until the token is empty |
+| `PEP__RATE_LIMIT`, `PEP__RATE_BURST` | the rate limit of one PEP client on the AuthZEN routes of one PDP process, in requests per second (default `0`: none) and the size of its bucket (default: one second's worth). A client over the limit gets 429 with `Retry-After`. The limit is per pod; a global limit belongs to the ingress |
 | `HTTP__MAX_INFLIGHT`, `HTTP__REQUEST_TIMEOUT` | admission control: the requests served at once (default `GOMAXPROCS × 256`, a negative value removes the limit) and the deadline of a request (default `10s` for the PDP, `60s` for the admin API, a negative value sets none) |
 | `POLICY__MAX_STALENESS` | how long a process goes on answering from its copy of the policy when it cannot confirm it against PostgreSQL; beyond it requests fail closed (503 `policy_unavailable`). Default `0`: **no limit** — the process answers for as long as PostgreSQL is unreachable and does not see a revocation made meanwhile; set it where that is not acceptable |
 | `SHUTDOWN__DRAIN`, `SHUTDOWN__TIMEOUT` | on SIGTERM: how long the process is not ready but serves (default `10s`) and how long it waits for the requests in progress (default `30s`) |
@@ -99,32 +104,30 @@ lists accept a JSON array or a comma-separated string.
 
 ## Synchronization pipeline
 
-A request to the PDP that finds its token and its answer in memory sends no query to PostgreSQL and no command to
+A request to the PDP that finds its answer in memory sends no query to PostgreSQL and no command to
 Redis. The pieces, all per process:
 
 - **The policy snapshot** (`engine/snapshot.go`): the services, the type graph, the memberships, the rules, the role items
   and the access groups, built in one read-only transaction for one revision of the policy (`revision_state`, scope `rules`) and
   replaced as a whole when the revision moves. The validity windows of rules and memberships are compared with the clock
   at every request, never built into the snapshot. A policy that does not fit `SNAPSHOT__MAX_BYTES` is not copied: the
-  queries read it (`licetum_snapshot_fallback_total`), as does `consistency=higher`, which asks for the freshest answer.
+  queries read it (`licetum_snapshot_fallback_total`), as does the lever `consistency=higher` (set by the process that serves the request, never by the caller), which asks for the freshest answer.
 - **The view** (`engine/localstate.go`): the revision of the rules and of the data of each service as read from PostgreSQL
   (one statement), with the snapshot of that revision. It is renewed every `REVISION__POLL_INTERVAL` (`WatchRevision`, and
-  the requests), and at once after a write made through the process or a request that asks for `at_least_as_fresh` a newer
+  the requests), and at once after a write made through the process or a request that asks (`min_revision`) for a newer
   revision. When the revisions cannot be read the last view is served as it is, marked degraded, for as long as
   `POLICY__MAX_STALENESS` allows (no limit by default), and answers are kept in memory only. The revision and the data change in
   one transaction, so a replica never sees a revision before its data.
-- **Answers and tokens** are kept in memory first (`CACHE__ANSWER_L1_SIZE`, ten seconds at most; `AUTH__TOKEN_L1_SIZE`, a
-  minute at most) and in Redis second: a request that finds its answer only in Redis makes one round trip.
+- **Answers** are kept in memory first (`CACHE__ANSWER_L1_SIZE`, ten seconds at most) and in Redis second: a request that finds its answer only in Redis makes one round trip.
 - **Key sets** of the identity providers are kept per URL (`AUTH__JWKS_TTL`), fetched once for all the requests that wait
-  for them, and fetched again for an unknown key id at most once per `AUTH__JWKS_MIN_REFRESH`; a token that failed
-  verification is remembered for `AUTH__INVALID_TOKEN_TTL`.
+  for them, and fetched again for an unknown key id at most once per `AUTH__JWKS_MIN_REFRESH`.
 
 ## Resilience and operations
 
 ### Probes
 
 The PDP serves its probes and `/metrics` on the ops listener, `PDP__OPS_ADDR` (default `:9090`), and on no other: the public
-listener (`PDP__ADDR`) serves the AuthZEN API and the legacy routes only. The probes below are on the ops port:
+listener (`PDP__ADDR`) serves the AuthZEN API only. The probes below are on the ops port:
 
 - `GET /healthz` is liveness: 200 while the process answers, whatever its dependencies do. Use it for the liveness probe.
 - `GET /readyz` is readiness: 200 when PostgreSQL answers within a second, the schema of the database is **at least** the version
@@ -143,7 +146,7 @@ liveness-only probing), or for a PostgreSQL that is gone for less than the probe
 ### Degraded mode
 
 - **Redis gone, slow or read-only**: the PDP skips Redis after three failures in a row (`REDIS__HOT_TIMEOUT`), keeps its
-  tokens, key sets and answers in memory (answers are kept until they stop being current while Redis is down, not ten seconds),
+  key sets and answers in memory (answers are kept until they stop being current while Redis is down, not ten seconds),
   and computes what it does not find, bounded by `COMPUTE__CONCURRENCY`. Failures of Redis are logged once a second per kind,
   with the count of the records left out (`licetum_log_suppressed_total`).
 - **PostgreSQL gone**: requests are answered from the copy of the policy and the answers in memory, also past their time
@@ -203,9 +206,9 @@ A PDP can read the policy from a read replica of PostgreSQL, normally the one of
 crosses a region. Set `DB__READ_URI` (asynchronous streaming replica; the primary stays `DB__URI`). The snapshot of the policy, the
 revision it follows, the type graph and the closure are read from the replica; the revision a process acts on is therefore the one of
 the data it has. Everything that writes (the admin API, the worker, the revision bump) uses the primary, and so does every read that
-must be current: `consistency=higher`, and `at_least_as_fresh=R` when the replica has not reached `R` within `REVISION__WAIT_MAX`
+must be current: the lever `consistency=higher`, and `min_revision` `R` when the replica has not reached `R` within `REVISION__WAIT_MAX`
 (such an answer is computed from the primary and not kept under the replica's revision). Use a client that passes `X-Authz-Revision`
-of its write as `at_least_as_fresh` when it must see the write at once; otherwise a write is seen within the replication lag plus
+of its write as `context.licetum.min_revision` when it must see the write at once; otherwise a write is seen within the replication lag plus
 `REVISION__POLL_INTERVAL`.
 
 The process measures the lag every `DB__LAG_INTERVAL` (1 s): the larger of what the replica reports (`pg_last_xact_replay_timestamp`,
@@ -361,10 +364,8 @@ Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/
 
 ## Notes
 
-- The PDP takes a service by its id or its slug (`/service/{service_id}/...`). A slug is never a UUID, so the two
-  cannot be confused. The slug `licetum` belongs to the platform itself.
-- Invalid or expired tokens are 401 and never trip the JWKS circuit breaker. 424 means that the identity provider's
-  JWKS or a synchronizer source did not answer.
+- The PDP takes a service by its slug (`/service/{slug}/...`); the slug `licetum` belongs to the platform itself.
+- Invalid or expired credentials are 401. 424 means that the JWKS of an issuer or a synchronizer source did not answer.
 - Creating or deleting the synchronizer of a type rewrites the closure of the resources below it in the same request
   (`engine.App.ChangeMode`), under the lock of the type's component and with the timeouts of a synchronization, so that a grant
   above stops (or starts) flowing through the rows of the type whatever the sources of the types below do. The cost is that of

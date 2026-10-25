@@ -5,14 +5,13 @@ import {
   discoveryDocumentSchema,
   policyDocumentShapeSchema,
   policyTestFileSchema,
-  sessionHandoffSchema,
   tokenAnswerSchema,
 } from '@/lib/schemas';
 
 describe('token answers', () => {
-  it('accepts the numbers as numbers or as text (a URL fragment gives text)', () => {
+  it('accepts the numbers as numbers or as text (an identity provider may give text)', () => {
     const answer = tokenAnswerSchema.parse({
-      access_token: 'a',
+      access_token: 'a.b.c',
       expires_in: '300',
       refresh_expires_in: 3600,
     });
@@ -24,10 +23,10 @@ describe('token answers', () => {
     expect(tokenAnswerSchema.safeParse(null).success).toBe(false);
   });
 
-  it('opens a session only for something that looks like a JWT', () => {
-    expect(sessionHandoffSchema.safeParse({ access_token: 'a.b.c' }).success).toBe(true);
-    expect(sessionHandoffSchema.safeParse({ access_token: 'opaque' }).success).toBe(false);
-    expect(sessionHandoffSchema.safeParse({ access_token: 'a.b' }).success).toBe(false);
+  it('opens a session only for an access token that looks like a JWT (the admin API verifies a JWT)', () => {
+    expect(tokenAnswerSchema.safeParse({ access_token: 'a.b.c' }).success).toBe(true);
+    expect(tokenAnswerSchema.safeParse({ access_token: 'opaque' }).success).toBe(false);
+    expect(tokenAnswerSchema.safeParse({ access_token: 'a.b' }).success).toBe(false);
   });
 });
 
@@ -42,7 +41,7 @@ describe('identity provider discovery', () => {
     expect(discoverQuerySchema.safeParse({ issuer: '' }).success).toBe(false);
   });
 
-  it('cuts the document down to the four fields and ignores values of the wrong type', () => {
+  it('cuts the document down to the issuer and its keys and ignores values of the wrong type', () => {
     const found = discoveryDocumentSchema.parse({
       issuer: 'https://idp.example.com',
       authorization_endpoint: 'https://idp.example.com/auth',
@@ -52,10 +51,11 @@ describe('identity provider discovery', () => {
     });
     expect(found).toEqual({
       issuer: 'https://idp.example.com',
-      authorization_url: 'https://idp.example.com/auth',
-      token_url: undefined,
       jwks_url: 'https://idp.example.com/keys',
     });
+    expect(
+      discoveryDocumentSchema.parse({ issuer: 'https://idp.example.com', jwks_uri: 7 }),
+    ).toEqual({ issuer: 'https://idp.example.com', jwks_url: undefined });
   });
 });
 
@@ -111,12 +111,33 @@ describe('settings', () => {
   it('falls back to the local development addresses and cuts trailing slashes', async () => {
     const { env } = await import('@/lib/env');
     stubEnv('ADMIN_API_URL', '');
-    stubEnv('ADMIN_API_PUBLIC_URL', '');
     stubEnv('APP_BASE_URL', 'https://licetum.example.com//');
     expect(env.adminApiUrl()).toBe('http://localhost:8002');
-    expect(env.adminApiPublicUrl()).toBe('http://localhost:8002');
     expect(env.appBaseUrl()).toBe('https://licetum.example.com');
     expect(env.secureCookies()).toBe(true);
+  });
+
+  it('reads the OIDC client settings, with a scope that asks for a refresh token, and names what is missing', async () => {
+    const { env } = await import('@/lib/env');
+    stubEnv('OIDC_AUTHORIZATION_URL', '');
+    stubEnv('OIDC_TOKEN_URL', '');
+    stubEnv('OIDC_CLIENT_ID', '');
+    expect(() => env.oidc()).toThrow(/OIDC_AUTHORIZATION_URL/);
+    stubEnv('OIDC_AUTHORIZATION_URL', 'https://idp.example.com/auth');
+    expect(() => env.oidc()).toThrow(/OIDC_TOKEN_URL/);
+    stubEnv('OIDC_TOKEN_URL', 'http://dex:5556/dex/token');
+    expect(() => env.oidc()).toThrow(/OIDC_CLIENT_ID/);
+    stubEnv('OIDC_CLIENT_ID', 'licetum');
+    expect(env.oidc()).toEqual({
+      authorizationUrl: 'https://idp.example.com/auth',
+      tokenUrl: 'http://dex:5556/dex/token',
+      clientId: 'licetum',
+      clientSecret: undefined,
+      scope: 'openid profile email offline_access',
+    });
+    stubEnv('OIDC_CLIENT_SECRET', 's3cret');
+    stubEnv('OIDC_SCOPE', 'openid');
+    expect(env.oidc()).toMatchObject({ clientSecret: 's3cret', scope: 'openid' });
   });
 
   it('refuses an address that is not http(s) and a short session secret', async () => {

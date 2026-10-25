@@ -10,11 +10,10 @@ db:
 platform:
   url: https://admin.example.com
   icon: https://admin.example.com/favicon.ico
-  authorizationUrl: https://idp.example.com/auth
-  tokenUrl: https://idp.example.com/token
-  jwksUrl: https://idp.example.com/keys
+adminAuth:
   issuer: https://idp.example.com
-  clientId: licetum
+  audience: licetum-admin
+  jwksUrl: https://idp.example.com/keys
 pdp:
   maxInflight: "512"
   opsPort: 9090
@@ -23,13 +22,14 @@ pdp:
 worker:
   engine: postgres
   regionAware: true
-admin:
-  corsAllowOrigins: '["https://app.example.com"]'
 web:
   enabled: true
   appBaseUrl: https://app.example.com
-  adminApiPublicUrl: https://admin.example.com
   checkApiPublicUrl: https://licetum.example.com
+  oidc:
+    authorizationUrl: https://idp.example.com/auth
+    tokenUrl: https://idp.example.com/token
+    clientId: licetum-web
   ingress:
     enabled: true
     className: nginx

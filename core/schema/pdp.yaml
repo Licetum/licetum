@@ -1,20 +1,5 @@
 components:
   schemas:
-    Anchor:
-      additionalProperties: false
-      properties:
-        resource_id:
-          description: The resource the rule is anchored on; null — the whole type
-          type:
-            - string
-            - "null"
-        type:
-          description: Name of the resource type the rule is anchored on
-          type: string
-      required:
-        - type
-        - resource_id
-      type: object
     AuthzenAction:
       additionalProperties: true
       properties:
@@ -212,7 +197,7 @@ components:
           description: Pass it as page.token to read the next page; empty on the last page
           type: string
         total:
-          description: The number of results of the whole search at the time of the request; absent when the search does not know it (the subject search)
+          description: The number of results of the whole search at the time of the request; absent when the search does not know it (the resource and the subject searches)
           format: int64
           type: integer
       required:
@@ -281,13 +266,13 @@ components:
       additionalProperties: true
       properties:
         id:
-          description: "Subject id: 1 to 256 bytes, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it. It is the subject of the bearer token (preferred_username, or sub) unless the caller is a client application the service trusts"
+          description: "Subject id: 1 to 256 bytes, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it"
           examples:
             - alice
           type: string
         properties:
           additionalProperties: {}
-          description: "The claims of a person other than the holder of the token, given by a trusted client: at most 100 claims and 16 KiB of JSON. Ignored for the holder of the token, whose claims come from the token"
+          description: "The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"
           type: object
         type:
           description: "Subject type (not interpreted): 1 to 64 bytes, and not group"
@@ -320,10 +305,6 @@ components:
     AuthzenSubjectSearchResponse:
       additionalProperties: false
       properties:
-        context:
-          additionalProperties: {}
-          description: Extra information; subjects_registry is disabled while the registry of known subjects is off
-          type: object
         page:
           $ref: "#/components/schemas/AuthzenPageResponse"
           description: Paging of the results
@@ -335,374 +316,10 @@ components:
       required:
         - results
       type: object
-    CheckInput:
-      additionalProperties: true
-      properties:
-        checks:
-          description: Questions to answer, up to 100 per request
-          items:
-            $ref: "#/components/schemas/CheckRequest"
-          maxItems: 100
-          minItems: 1
-          type:
-            - array
-            - "null"
-        context:
-          additionalProperties: {}
-          description: Attributes of this request that the rules may read (conditions with source context). Claims come from the token; these are what the request itself carries, such as the client address or the channel
-          type:
-            - object
-            - "null"
-        explain:
-          description: "Return an explanation with every answer: which rules grant the level, which deny it, and which exceptions lift a denial"
-          type: boolean
-      required:
-        - checks
-      type: object
-    CheckRequest:
-      additionalProperties: false
-      properties:
-        action:
-          description: Access level asked for
-          examples:
-            - write
-          type: string
-        resource_id:
-          description: Resource id in the external system. Omit it to ask about the type as a whole — creating new resources, or a permission without resources (a not_sync type)
-          examples:
-            - b1
-          type:
-            - string
-            - "null"
-        type:
-          description: Name of the resource type in this service
-          examples:
-            - branch
-          type: string
-      required:
-        - type
-        - action
-      type: object
-    CheckResponse:
-      additionalProperties: false
-      properties:
-        results:
-          description: One answer per question, in the order asked
-          items:
-            $ref: "#/components/schemas/CheckResult"
-          type: array
-      required:
-        - results
-      type: object
-    CheckResult:
-      additionalProperties: false
-      properties:
-        allowed:
-          description: Whether the caller may do it
-          type: boolean
-        explanation:
-          $ref: "#/components/schemas/Explanation"
-          description: Present when explain was asked for
-      required:
-        - allowed
-      type: object
-    DelegatedCheckInput:
-      additionalProperties: true
-      properties:
-        checks:
-          description: Questions to answer, up to 100 per request
-          items:
-            $ref: "#/components/schemas/CheckRequest"
-          maxItems: 100
-          minItems: 1
-          type:
-            - array
-            - "null"
-        claims:
-          additionalProperties: {}
-          description: "The claims the person's own token would carry: the ones the rules of the service read (see GET /service/{id}/policy/claims in the admin API). preferred_username defaults to the subject. The caller vouches for them"
-          type:
-            - object
-            - "null"
-        context:
-          additionalProperties: {}
-          description: Attributes of the request the rules may read (conditions with source context)
-          type:
-            - object
-            - "null"
-        explain:
-          description: Return an explanation with every answer
-          type: boolean
-        subject:
-          description: The person, as the rules name them (their preferred_username, or sub). It must not look like a group (group:…)
-          examples:
-            - alice
-          maxLength: 256
-          minLength: 1
-          type: string
-      required:
-        - subject
-        - checks
-      type: object
-    DelegatedPermissionInput:
-      additionalProperties: true
-      properties:
-        access:
-          description: Only the resources (and types) that have this access level
-          type: string
-        after:
-          description: "The resource id after which the page starts: the next_after of the previous page"
-          type: string
-        claims:
-          additionalProperties: {}
-          description: The claims the person's own token would carry (see the check). preferred_username defaults to the subject
-          type:
-            - object
-            - "null"
-        context:
-          additionalProperties: {}
-          description: Attributes of the request the rules may read (conditions with source context)
-          type:
-            - object
-            - "null"
-        limit:
-          description: "At most this many resources of the type; needs type. Absent: all of them"
-          format: int64
-          maximum: 1000
-          minimum: 1
-          type: integer
-        subject:
-          description: The person, as the rules name them (their preferred_username, or sub). It must not look like a group (group:…)
-          examples:
-            - alice
-          maxLength: 256
-          minLength: 1
-          type: string
-        type:
-          description: Only this resource type
-          type: string
-      required:
-        - subject
-      type: object
-    DenialRef:
-      additionalProperties: false
-      properties:
-        level:
-          description: "The denied level that matched: the asked level, a level it includes, or the wildcard"
-          type: string
-        lifted_by:
-          description: Exceptions below the denial that lift it; a denial with none stands
-          items:
-            $ref: "#/components/schemas/RuleRef"
-          type: array
-        missing_attribute:
-          description: The denial applies because a condition reads an attribute the request does not carry, and the rule says to apply it then (on_missing_attribute = apply)
-          type: boolean
-        rule:
-          $ref: "#/components/schemas/RuleRef"
-          description: The denying rule
-        unresolved_parent:
-          description: The denial applies because the resource has a parent that is not in the cache, so the hierarchy above it is not fully known
-          type: boolean
-      required:
-        - rule
-        - level
-        - lifted_by
-        - unresolved_parent
-        - missing_attribute
-      type: object
-    Error:
-      additionalProperties: false
-      properties:
-        detail:
-          description: Human-readable error description in the language negotiated via Accept-Language
-          type: string
-        extra:
-          $ref: "#/components/schemas/Extra"
-          description: Machine-readable details
-      required:
-        - detail
-        - extra
-      type: object
-    Explanation:
-      additionalProperties: false
-      properties:
-        decision:
-          description: allowed; denied — a denial removes a granted level; no_access — no rule grants the level; resource_not_found and type_not_found — there is nothing to check
-          enum:
-            - allowed
-            - denied
-            - no_access
-            - resource_not_found
-            - type_not_found
-          type: string
-        denials:
-          description: Denials that apply to the level, lifted or not
-          items:
-            $ref: "#/components/schemas/DenialRef"
-          type: array
-        granted_by:
-          description: Rules that grant the level, including through the level hierarchy of the type
-          items:
-            $ref: "#/components/schemas/RuleRef"
-          type: array
-      required:
-        - decision
-        - granted_by
-        - denials
-      type: object
-    Extra:
-      additionalProperties: false
-      properties:
-        blocked_by:
-          description: "For type=blocked_by: which entities prevent the deletion"
-          examples:
-            - - assignment_rule
-          items:
-            type: string
-          type:
-            - array
-            - "null"
-        code:
-          description: Stable machine-readable error code, independent of the response language
-          examples:
-            - service_not_found
-          type: string
-        missing:
-          description: "For type=missing: which fields or sources are unavailable"
-          examples:
-            - - url
-          items:
-            type: string
-          type:
-            - array
-            - "null"
-        operation:
-          description: "For a batch: the index of the operation that failed; nothing of the batch was applied"
-          examples:
-            - 2
-          format: int64
-          type: integer
-        type:
-          description: Kind of error
-          enum:
-            - generic
-            - missing
-            - provider_unavailable
-            - blocked_by
-          type: string
-      required:
-        - type
-      type: object
-    NotSyncTypePermission:
-      additionalProperties: false
-      properties:
-        access:
-          description: Access levels of the subject on the type
-          examples:
-            - - read
-              - write
-          items:
-            type: string
-          type: array
-        type:
-          description: "Type mode: the type has no synchronizer (no resources), access is granted to the type as a whole"
-          enum:
-            - not_sync
-          type: string
-      required:
-        - type
-        - access
-      type: object
-    ResourceAccess:
-      additionalProperties: false
-      properties:
-        access:
-          description: Access levels
-          examples:
-            - - read
-              - write
-          items:
-            type: string
-          type:
-            - array
-            - "null"
-        id:
-          description: Resource id in the external system
-          examples:
-            - b1
-          type: string
-        name:
-          description: Resource name
-          examples:
-            - Branch1
-          type: string
-      required:
-        - id
-        - name
-        - access
-      type: object
-    RuleRef:
-      additionalProperties: false
-      properties:
-        access:
-          description: Access levels of the rule
-          items:
-            type: string
-          type: array
-        anchor:
-          $ref: "#/components/schemas/Anchor"
-          description: Where the rule is anchored; it covers this resource through the hierarchy
-        applies_to:
-          description: "Why the rule applies to the caller: the subject, a group, a role, a claims predicate, or everyone"
-          examples:
-            - group 4e2c…
-          type: string
-        effect:
-          description: allow or deny
-          enum:
-            - allow
-            - deny
-          type: string
-        exception:
-          description: An allow rule that lifts the denials above it
-          type: boolean
-        rule_id:
-          description: Id of the assignment rule
-          format: uuid
-          type: string
-      required:
-        - rule_id
-        - effect
-        - exception
-        - access
-        - anchor
-        - applies_to
-      type: object
-    SyncTypePermission:
-      additionalProperties: false
-      properties:
-        next_after:
-          description: "Present when the answer is a page that is not the last: pass it as after to read the next page"
-          type: string
-        resources:
-          description: Resources of the type available to the subject, with access levels
-          items:
-            $ref: "#/components/schemas/ResourceAccess"
-          type: array
-        type:
-          description: "Type mode: the type has a synchronizer, access is granted per resource"
-          enum:
-            - sync
-          type: string
-      required:
-        - type
-        - resources
-      type: object
   securitySchemes:
     bearer:
       bearerFormat: JWT
-      description: Access token issued by the IdP of the service whose permissions are being checked.
+      description: The API key of a PEP client of the service, or the access token of an issuer registered for PEPs.
       scheme: bearer
       type: http
 info:
@@ -732,17 +349,17 @@ info:
   version: 0.1.0
 openapi: 3.1.0
 paths:
-  /.well-known/authzen-configuration/service/{service_id}:
+  /.well-known/authzen-configuration/service/{ref}:
     get:
       description: The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, "Policy Decision Point Metadata"). The Policy Decision Point of a service is <PDP__PUBLIC_URL>/service/<slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from PDP__PUBLIC_URL, and is not served (404) without it.
       operationId: authzen_metadata
       parameters:
-        - description: Service id or slug
+        - description: Service slug
           in: path
-          name: service_id
+          name: ref
           required: true
           schema:
-            description: Service id or slug
+            description: Service slug
             type: string
       responses:
         "200":
@@ -798,32 +415,35 @@ paths:
       summary: AuthZEN Policy Decision Point metadata
       tags:
         - AuthZEN
-  /service/{service_id}/access/v1/evaluation:
+  /service/{ref}/access/v1/evaluation:
     post:
       description: |-
         Decides whether the subject may perform the action on the resource.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
         resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
-        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
-        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
-        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are.
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
 
         The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
         is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
         explanation goes into context.reason_admin).
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
-        has its message as a JSON string, and its code in the Licetum-Error-Code header.
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_evaluation
       parameters:
-        - description: Service id or slug
+        - description: Service slug
           in: path
-          name: service_id
+          name: ref
           required: true
           schema:
-            description: Service id or slug
+            description: Service slug
             type: string
       requestBody:
         content:
@@ -898,6 +518,16 @@ paths:
             Licetum-Error-Code:
               schema:
                 type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
@@ -913,32 +543,35 @@ paths:
       summary: AuthZEN access evaluation
       tags:
         - AuthZEN
-  /service/{service_id}/access/v1/evaluations:
+  /service/{ref}/access/v1/evaluations:
     post:
       description: |-
         Decides up to 100 evaluations in one request; subject, resource, action and context given at the top level are defaults for the evaluations that omit them. options.evaluations_semantic chooses between answering all of them (execute_all, the default), stopping at the first denial (deny_on_first_deny) and stopping at the first permit (permit_on_first_permit). An evaluation that cannot be decided is a denial with context.error holding its status and message. Without evaluations the top-level fields are one evaluation, and the answer is its decision.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
         resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
-        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
-        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
-        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are.
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
 
         The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
         is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
         explanation goes into context.reason_admin).
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
-        has its message as a JSON string, and its code in the Licetum-Error-Code header.
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_evaluations
       parameters:
-        - description: Service id or slug
+        - description: Service slug
           in: path
-          name: service_id
+          name: ref
           required: true
           schema:
-            description: Service id or slug
+            description: Service slug
             type: string
       requestBody:
         content:
@@ -1013,6 +646,16 @@ paths:
             Licetum-Error-Code:
               schema:
                 type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
@@ -1028,7 +671,7 @@ paths:
       summary: AuthZEN access evaluations (batch)
       tags:
         - AuthZEN
-  /service/{service_id}/access/v1/search/action:
+  /service/{ref}/access/v1/search/action:
     post:
       description: |-
         Lists the actions (access levels) the subject may perform on the resource; without resource.id the resource is the type as a whole. The request has no action.
@@ -1036,27 +679,30 @@ paths:
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
         resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
-        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
-        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
-        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are.
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
 
         The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
         is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
         explanation goes into context.reason_admin).
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
-        has its message as a JSON string, and its code in the Licetum-Error-Code header.
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_search_action
       parameters:
-        - description: Service id or slug
+        - description: Service slug
           in: path
-          name: service_id
+          name: ref
           required: true
           schema:
-            description: Service id or slug
+            description: Service slug
             type: string
       requestBody:
         content:
@@ -1131,6 +777,16 @@ paths:
             Licetum-Error-Code:
               schema:
                 type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
@@ -1146,35 +802,38 @@ paths:
       summary: AuthZEN action search
       tags:
         - AuthZEN
-  /service/{service_id}/access/v1/search/resource:
+  /service/{ref}/access/v1/search/resource:
     post:
       description: |-
-        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. A type without resources has none to list.
+        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. A type without resources has none to list. A page can be shorter than page.limit, even empty, and still carry page.next_token, because one request reads a bounded number of resources: keep asking until page.next_token is empty.
 
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
         resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
-        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
-        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
-        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are.
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
 
         The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
         is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
         explanation goes into context.reason_admin).
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
-        has its message as a JSON string, and its code in the Licetum-Error-Code header.
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_search_resource
       parameters:
-        - description: Service id or slug
+        - description: Service slug
           in: path
-          name: service_id
+          name: ref
           required: true
           schema:
-            description: Service id or slug
+            description: Service slug
             type: string
       requestBody:
         content:
@@ -1249,6 +908,16 @@ paths:
             Licetum-Error-Code:
               schema:
                 type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
@@ -1264,35 +933,38 @@ paths:
       summary: AuthZEN resource search
       tags:
         - AuthZEN
-  /service/{service_id}/access/v1/search/subject:
+  /service/{ref}/access/v1/search/subject:
     post:
       description: |-
-        Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a client application the service trusts may ask. The subjects are the known ones — the people whose tokens Licetum has verified, kept while SUBJECTS__ENABLED is on — so a person who was never seen is not listed; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given).
+        Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a PEP client with the search_subject operation may ask. The subjects are the people in the subject directory of the service — what its application sent — decided with their stored properties, so a person who is not in the directory is never listed and an empty directory gives an empty result; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given).
 
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
         there are more results; send it back as page.token with the same request. The results are sorted.
 
-        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, as its id or its slug.
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
         resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
-        "*" names the type as a whole, not a resource. action.name is an access level. subject.id is the subject of the bearer token
-        (preferred_username, or sub) and the claims come from the token. A client application the service trusts (its azp, or
-        client_id, is in the service's trusted_clients) may ask about any person: it gives the claims of the person in
-        subject.properties, and every such call is recorded as the calls on behalf of a person are.
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
 
         The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
         is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
         explanation goes into context.reason_admin).
 
-        A request that is not valid is a 400, a missing or invalid token a 401, a subject the caller may not ask about a 403. An error
-        has its message as a JSON string, and its code in the Licetum-Error-Code header.
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
       operationId: authzen_search_subject
       parameters:
-        - description: Service id or slug
+        - description: Service slug
           in: path
-          name: service_id
+          name: ref
           required: true
           schema:
-            description: Service id or slug
+            description: Service slug
             type: string
       requestBody:
         content:
@@ -1367,6 +1039,16 @@ paths:
             Licetum-Error-Code:
               schema:
                 type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
         "500":
           content:
             application/json:
@@ -1382,402 +1064,9 @@ paths:
       summary: AuthZEN subject search
       tags:
         - AuthZEN
-  /service/{service_id}/check:
-    post:
-      description: |-
-        Answers up to 100 questions "may I do X with Y" in one request, for the subject of the token.
-
-        Every question names a resource type of the service, optionally a resource id, and an access level. Without a
-        resource id the question is about the type as a whole (creating resources, a permission without resources): only the
-        rules anchored on the type itself count, and a denial always wins there. With a resource id the rules covering the
-        resource through the hierarchy count.
-
-        With `explain` every answer carries an explanation: which rules grant the level, which denials apply, and which
-        exceptions lift them. The decision is the same as in GET /permission, only computed for the asked resources and not for
-        all of them.
-
-        Errors: 401 — the token is missing, invalid or expired; 424 — the service JWKS is unavailable.
-      operationId: check_access
-      parameters:
-        - description: Service id or slug
-          in: path
-          name: service_id
-          required: true
-          schema:
-            description: Service id or slug
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CheckInput"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CheckResponse"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-      security:
-        - bearer: []
-      summary: Check access to resources
-      tags:
-        - Check
-  /service/{service_id}/on_behalf/check:
-    post:
-      description: |-
-        Answers up to 100 questions "may this person do X with Y" as POST /service/{id}/check does, for the person named in the body instead of the holder of the token.
-
-        The caller is a client application the service trusts (its azp, or client_id, is in the service's trusted_clients), and it
-        authenticates with its own token — from the same IdP and keys as a user's, typically a client-credentials token. The person is
-        named in the body, with the claims their token would carry: the caller vouches for them, so a trusted client has to send the
-        claims the rules of the service read (the admin API lists them: GET /service/{id}/policy/claims). preferred_username
-        defaults to the subject. Every call is recorded: who asked, for whom, when and how many questions were allowed.
-        A token of a trusted client may ask about anybody: trust a backend client, not the one your users sign in with.
-
-        Errors: 401 — the token is missing, invalid or expired; 403 — the client is not trusted by the service; 422 — the subject
-        or the claims are not acceptable; 424 — the service JWKS is unavailable.
-      operationId: delegated_check
-      parameters:
-        - description: Service id or slug
-          in: path
-          name: service_id
-          required: true
-          schema:
-            description: Service id or slug
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DelegatedCheckInput"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CheckResponse"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-      security:
-        - bearer: []
-      summary: Check access on behalf of a person
-      tags:
-        - Delegated
-  /service/{service_id}/on_behalf/permission:
-    post:
-      description: |-
-        What the person named in the body may do with the resources of the service, per resource type, as GET /service/{id}/permission answers it for the holder of a token. The filters and the paging are the same (type, access, limit, after), given in the body.
-
-        The caller is a client application the service trusts (its azp, or client_id, is in the service's trusted_clients), and it
-        authenticates with its own token — from the same IdP and keys as a user's, typically a client-credentials token. The person is
-        named in the body, with the claims their token would carry: the caller vouches for them, so a trusted client has to send the
-        claims the rules of the service read (the admin API lists them: GET /service/{id}/policy/claims). preferred_username
-        defaults to the subject. Every call is recorded: who asked, for whom, when and how many questions were allowed.
-        A token of a trusted client may ask about anybody: trust a backend client, not the one your users sign in with.
-
-        Errors: 401 — the token is missing, invalid or expired; 403 — the client is not trusted by the service; 422 — the subject
-        or the claims are not acceptable; 424 — the service JWKS is unavailable.
-      operationId: delegated_permission
-      parameters:
-        - description: Service id or slug
-          in: path
-          name: service_id
-          required: true
-          schema:
-            description: Service id or slug
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DelegatedPermissionInput"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                additionalProperties:
-                  description: Access of the subject on a resource type; the shape depends on the type mode
-                  discriminator:
-                    mapping:
-                      not_sync: "#/components/schemas/NotSyncTypePermission"
-                      sync: "#/components/schemas/SyncTypePermission"
-                    propertyName: type
-                  oneOf:
-                    - $ref: "#/components/schemas/SyncTypePermission"
-                    - $ref: "#/components/schemas/NotSyncTypePermission"
-                type: object
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-      security:
-        - bearer: []
-      summary: A person's permissions in a service, asked on their behalf
-      tags:
-        - Delegated
-  /service/{service_id}/permission:
-    get:
-      description: |-
-        The token is verified against the service JWKS (signature, exp/nbf/iat, issuer). The subject is the
-        preferred_username claim, or sub if it is missing.
-
-        The response is keyed by resource type name, and the shape of each entry depends on the type mode, which is
-        derived from its synchronizer:
-
-        - `sync` — the type has a synchronizer: `{"type": "sync", "resources": [{id, name, access}]}` lists every resource
-          of the type the user has access to;
-        - `not_sync` — the type has no synchronizer (a permission without resources, e.g. a feature flag):
-          `{"type": "not_sync", "access": [...]}` are the access levels on the type as a whole.
-
-        A type without applicable rules is not in the response. Direct rules, claim-based rules, groups (transitively), roles and
-        grants cascading down the resource hierarchy — including from types of other services — are all taken into
-        account, and so are denials: a denial takes its access levels away from everything it covers unless an
-        exception below it lifts it. Rules outside their validity period do not count.
-
-        The result is cached for up to 60 seconds (less when a rule or a group membership starts or stops being in force
-        sooner) per subject and per the claims the rules look at; any change in the admin API resets the cache. Pass
-        consistency=higher to skip the cache.
-
-        Filters and paging: type keeps one resource type, access keeps the resources with one access level, and limit with
-        after pages the resources of that type, sorted by id. A page that is not the last carries next_after; pass it as after
-        to read the next one. Paging needs type.
-
-        Errors: 401 — the token is missing, invalid or expired; 424 — the service JWKS is unavailable.
-      operationId: get_permission
-      parameters:
-        - description: Service id or slug
-          in: path
-          name: service_id
-          required: true
-          schema:
-            description: Service id or slug
-            type: string
-        - description: Only this resource type
-          explode: false
-          in: query
-          name: type
-          schema:
-            description: Only this resource type
-            type: string
-        - description: Only the resources (and types) that have this access level
-          explode: false
-          in: query
-          name: access
-          schema:
-            description: Only the resources (and types) that have this access level
-            type: string
-        - description: "At most this many resources of the type; needs type. Absent: all of them"
-          explode: false
-          in: query
-          name: limit
-          schema:
-            description: "At most this many resources of the type; needs type. Absent: all of them"
-            format: int64
-            maximum: 1000
-            minimum: 1
-            type: integer
-        - description: "The resource id after which the page starts: the next_after of the previous page"
-          explode: false
-          in: query
-          name: after
-          schema:
-            description: "The resource id after which the page starts: the next_after of the previous page"
-            type: string
-        - description: The attributes of this request that the rules may read (conditions with source context), as a JSON object, e.g. {"ip":"10.0.0.7"}
-          explode: false
-          in: query
-          name: context
-          schema:
-            description: The attributes of this request that the rules may read (conditions with source context), as a JSON object, e.g. {"ip":"10.0.0.7"}
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                additionalProperties:
-                  description: Access of the subject on a resource type; the shape depends on the type mode
-                  discriminator:
-                    mapping:
-                      not_sync: "#/components/schemas/NotSyncTypePermission"
-                      sync: "#/components/schemas/SyncTypePermission"
-                    propertyName: type
-                  oneOf:
-                    - $ref: "#/components/schemas/SyncTypePermission"
-                    - $ref: "#/components/schemas/NotSyncTypePermission"
-                type: object
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-      security:
-        - bearer: []
-      summary: User permissions in a service
-      tags:
-        - Permission
 tags:
-  - description: "Permission check: what the user holding this token may do with the service resources."
-    name: Permission
-  - description: Single access checks with explanations.
-    name: Check
   - description: "The OpenID AuthZEN Authorization API 1.0 of a service: access evaluation and evaluations, the subject, resource and action searches, and the discovery document."
     name: AuthZEN
-  - description: The same questions asked on behalf of a person by a client application the service trusts, without the person's token. Every call is recorded.
-    name: Delegated
   - description: Service endpoints.
     name: System
 

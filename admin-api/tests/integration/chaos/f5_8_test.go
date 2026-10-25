@@ -64,7 +64,7 @@ func (g *overloadRig) reset() {
 // do sends one request and sorts the answer: admitted (200), shed (503 overloaded with Retry-After: 1), or anything else.
 func (g *overloadRig) do(int) (int, error) {
 	token := g.tokens[int(g.seq.Add(1))%len(g.tokens)]
-	req, err := harness.HTTPRequest(context.Background(), g.r.Server.URL, harness.Branches(g.ref, token), token, harness.Higher())
+	req, err := g.c.HTTPRequest(context.Background(), g.r.Server.URL, harness.Branches(g.ref, token), token, harness.Higher())
 	if err != nil {
 		return 0, err
 	}

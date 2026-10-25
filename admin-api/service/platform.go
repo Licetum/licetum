@@ -14,8 +14,7 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// GetPlatform returns the id of the self-service (Licetum registered within itself). The frontend
-// uses it to sign in through the platform's own OAuth2 client.
+// GetPlatform returns the id of the self-service (Licetum registered within itself) and its policy types.
 func (a *App) GetPlatform(ctx context.Context) (*model.Platform, error) {
 	if _, err := a.GetExistingService(ctx, a.DB, model.PlatformServiceID); err != nil {
 		if _, ok := apperr.As(err); ok {
@@ -45,14 +44,18 @@ type Access struct {
 	denied map[string][]model.ResourceAccess
 }
 
-// Authenticate verifies a token issued for the self-service and loads the caller's access to the
-// platform policies. authorization is the raw Authorization header.
+// Authenticate verifies the token of an administrator and loads the caller's access to the platform policies. authorization is
+// the raw Authorization header.
 //
-// If the self-service is not seeded, the admin API is closed to everyone (503): there is nothing
-// to verify the token or the permissions against.
+// The token is checked against the static issuer of ADMIN_AUTH__* (engine.VerifyAdminToken): a missing header, a malformed,
+// expired or rejected token and a token for another audience are a 401 with the Bearer challenge. The permissions come from
+// the same rules as for any other service, on the self-service. If ADMIN_AUTH__* is not configured, or the self-service is not
+// seeded, the admin API is closed to everyone (503): there is nothing to verify the token or the permissions against.
 func (a *App) Authenticate(ctx context.Context, authorization string) (*Access, error) {
-	platform, err := a.GetExistingService(ctx, a.DB, model.PlatformServiceID)
-	if err != nil {
+	if !a.Cfg.AdminAuth.IsConfigured() {
+		return nil, apperr.ServiceUnavailable(i18n.AdminAuthNotConfigured)
+	}
+	if _, err := a.GetExistingService(ctx, a.DB, model.PlatformServiceID); err != nil {
 		if _, ok := apperr.As(err); ok {
 			return nil, apperr.ServiceUnavailable(i18n.PlatformNotSeeded)
 		}
@@ -63,17 +66,16 @@ func (a *App) Authenticate(ctx context.Context, authorization string) (*Access, 
 	if token == "" {
 		return nil, apperr.Unauthorized(i18n.AuthHeaderRequired)
 	}
-	claims, err := a.VerifyToken(ctx, platform, token)
+	verified, err := a.VerifyAdminToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	// The same subject as in /service/{id}/permission.
-	subject, err := engine.SubjectFromClaims(claims)
+	claims := engine.Claims(verified.Claims)
+	subject, err := a.AdminSubject(claims)
 	if err != nil {
 		return nil, err
 	}
 
-	a.NoteSubject(subject, claims)
 	data, err := a.GetPermissionData(ctx, model.PlatformServiceID, subject, engine.NewEnv(claims, nil), engine.MinimizeLatency)
 	if err != nil {
 		return nil, err

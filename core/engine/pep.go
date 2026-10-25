@@ -158,10 +158,9 @@ func (a *App) newPEPDirectory(data db.PEPDirectoryData) *PEPDirectory {
 		clients:          make(map[uuid.UUID]db.PEPClient, len(data.Clients)),
 	}
 	for _, i := range data.Issuers {
-		// The audience of the PDP is not configured yet (PDP__AUDIENCE, see docs/adr/0001-regional-pdp.md), so the verifiers get none.
 		d.Verifiers[i.Issuer] = pepauth.NewVerifier(pepauth.IssuerConfig{
 			Issuer: i.Issuer, JWKSURL: i.JWKSURL, Audiences: i.Audiences, Algs: i.Algs, RequireTyp: i.RequireTyp,
-		}, a.keySets(), "")
+		}, a.keySets(), a.pdpAudience())
 	}
 	for _, c := range data.Clients {
 		d.ClientsByService[c.ServiceID] = append(d.ClientsByService[c.ServiceID], c)
@@ -171,6 +170,18 @@ func (a *App) newPEPDirectory(data db.PEPDirectoryData) *PEPDirectory {
 		d.Credentials[k.KeyID] = k
 	}
 	return d
+}
+
+// pdpAudience is the audience a token of a PEP must carry when its issuer lists none: PDP__AUDIENCE, else the identifier of the PDP
+// (PDP__PUBLIC_URL). With neither, a token of an issuer that lists no audience is refused: aud is always required.
+func (a *App) pdpAudience() string {
+	if a.Cfg == nil {
+		return ""
+	}
+	if a.Cfg.PDP.Audience != "" {
+		return a.Cfg.PDP.Audience
+	}
+	return a.Cfg.PDP.PublicURL
 }
 
 // AfterPEPWrite is told of a change of the PEP directory this process made (an issuer, a client or a key). The next request reads the

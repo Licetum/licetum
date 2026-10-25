@@ -142,7 +142,7 @@ export function GrantPreviewPanel({
         </Typography.Text>
       ) : (
         <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-          {people.enabled ? t('grant.preview.registryEmpty') : t('grant.preview.registryOff')}
+          {t('grant.preview.registryEmpty')}
         </Typography.Text>
       )}
 

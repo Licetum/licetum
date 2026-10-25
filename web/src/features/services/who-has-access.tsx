@@ -193,11 +193,7 @@ export function WhoHasAccess({
         />
       )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {!data.people.enabled
-          ? t('whohas.registryOff')
-          : known
-            ? t('whohas.registry', { count: data.people.registry })
-            : t('whohas.registryEmpty')}
+        {known ? t('whohas.registry', { count: data.people.registry }) : t('whohas.registryEmpty')}
         {data.people.limited && ` ${t('whohas.limited')}`} {t('whohas.note')}
       </Typography.Text>
     </Flex>

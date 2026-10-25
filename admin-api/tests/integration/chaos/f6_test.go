@@ -106,7 +106,7 @@ func (l *regionsLoad) do(i int) (int, error) {
 	}
 	l.perReg[r].Add(1)
 	token := l.tokens[i%len(l.tokens)]
-	req, err := harness.HTTPRequest(context.Background(), l.c.Replicas[r].Server.URL, harness.Branches(l.ref, token), token)
+	req, err := l.c.HTTPRequest(context.Background(), l.c.Replicas[r].Server.URL, harness.Branches(l.ref, token), token)
 	if err != nil {
 		return 0, err
 	}

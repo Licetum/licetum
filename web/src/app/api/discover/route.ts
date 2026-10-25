@@ -13,10 +13,10 @@ const BLOCKED_HOSTS = new Set([
 ]);
 
 /**
- * "Detect automatically" in the connect-a-service wizard: reads the OpenID Connect discovery document of an issuer and
- * returns only the four values the form needs. Only a signed-in administrator may call it, the answer is cut down to
- * those fields, and the well-known cloud metadata addresses are refused; it still reaches whatever this server can, so
- * run it where an administrator is trusted to name an address.
+ * "Detect automatically" in the form of a PEP issuer: reads the OpenID Connect discovery document of an issuer and
+ * returns only the two values the form needs (the issuer and where its keys are). Only a signed-in administrator may call
+ * it, the answer is cut down to those fields, and the well-known cloud metadata addresses are refused; it still reaches
+ * whatever this server can, so run it where an administrator is trusted to name an address.
  */
 export async function GET(request: NextRequest) {
   if (!(await readSession())) return NextResponse.json({ detail: 'no session' }, { status: 401 });

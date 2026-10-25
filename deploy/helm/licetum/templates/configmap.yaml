@@ -27,11 +27,10 @@ data:
   PLATFORM__NAME: {{ .Values.platform.name | quote }}
   PLATFORM__URL: {{ .Values.platform.url | quote }}
   PLATFORM__ICON: {{ .Values.platform.icon | quote }}
-  PLATFORM__AUTHORIZATION_URL: {{ .Values.platform.authorizationUrl | quote }}
-  PLATFORM__TOKEN_URL: {{ .Values.platform.tokenUrl | quote }}
-  PLATFORM__JWKS_URL: {{ .Values.platform.jwksUrl | quote }}
-  PLATFORM__ISSUER: {{ .Values.platform.issuer | quote }}
-  PLATFORM__CLIENT_ID: {{ .Values.platform.clientId | quote }}
+  ADMIN_AUTH__ISSUER: {{ .Values.adminAuth.issuer | quote }}
+  ADMIN_AUTH__AUDIENCE: {{ .Values.adminAuth.audience | quote }}
+  ADMIN_AUTH__JWKS_URL: {{ .Values.adminAuth.jwksUrl | quote }}
+  ADMIN_AUTH__SUBJECT_CLAIM: {{ .Values.adminAuth.subjectClaim | quote }}
   PLATFORM__ADMIN_GROUP_NAME: {{ .Values.platform.adminGroupName | quote }}
   PLATFORM__ADMIN_CLAIM: {{ .Values.platform.adminClaim | quote }}
   PLATFORM__ADMIN_CLAIM_VALUES: {{ .Values.platform.adminClaimValues | quote }}

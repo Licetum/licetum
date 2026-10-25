@@ -5,7 +5,6 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -22,35 +21,7 @@ import (
 // call is e.do for a test that reads the response headers too.
 func (e *env) call(method, url string, body any, headers ...string) (int, http.Header, []byte) {
 	e.t.Helper()
-	var reader io.Reader = bytes.NewReader(nil)
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
-			e.t.Fatalf("marshal request body: %v", err)
-		}
-		reader = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequest(method, url, reader)
-	if err != nil {
-		e.t.Fatalf("build request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if e.admin != nil && strings.HasPrefix(url, e.admin.URL) {
-		req.Header.Set("Authorization", "Bearer "+e.adminToken)
-	}
-	for i := 0; i+1 < len(headers); i += 2 {
-		req.Header.Set(headers[i], headers[i+1])
-	}
-	resp, err := (&http.Client{}).Do(req)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		e.t.Fatalf("read response: %v", err)
-	}
-	return resp.StatusCode, resp.Header, raw
+	return e.doWithHeader(method, url, body, headers...)
 }
 
 // newService registers a client service whose URLs point at the mock IdP.
@@ -59,8 +30,7 @@ func (e *env) newService(name string) string {
 	m := e.mock.URL
 	return e.must("POST", "/service/", map[string]any{
 		"name": name, "url": m + "/app", "icon": m + "/icon.png",
-		"authorization_url": m + "/realm/auth", "token_url": m + "/realm/token",
-		"jwks_url": m + "/jwks", "issuer": m + "/realm", "slug": name, "client_id": name, "client_secret": "s",
+		"slug": name,
 	})["id"].(string)
 }
 
@@ -237,114 +207,6 @@ func TestWritesReturnARevisionThatReadsCanRequire(t *testing.T) {
 	if status != http.StatusOK || header.Get("X-Authz-Revision") != "" {
 		t.Fatalf("a read carries no revision: %d %q", status, header.Get("X-Authz-Revision"))
 	}
-}
-
-func TestSimulationAnswersForClaimsWithoutAToken(t *testing.T) {
-	e := setup(t)
-	svc := e.newService("ledger2")
-	branch := e.must("POST", "/service/"+svc+"/type_resource/", map[string]any{"name": "branch"})["id"].(string)
-	e.must("POST", "/service/"+svc+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
-		"config": map[string]any{"kind": "http", "url": e.mock.URL + "/sync/branch"}, "probe_resource_id": "b1",
-	})
-	e.must("POST", "/assignment_rule/", map[string]any{
-		"type_resource_id": branch, "access": []string{"read"},
-		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}},
-	})
-
-	check := func(claims map[string]any) map[string]any {
-		t.Helper()
-		status, raw := e.do(http.MethodPost, e.admin.URL+"/service/"+svc+"/simulate/check", map[string]any{
-			"subject": "dave", "claims": claims, "explain": true,
-			"checks": []map[string]any{{"type": "branch", "resource_id": "b1", "action": "read"}},
-		})
-		if status != http.StatusOK {
-			t.Fatalf("simulate check: %d %s", status, raw)
-		}
-		var out struct {
-			Results []map[string]any `json:"results"`
-		}
-		if err := json.Unmarshal(raw, &out); err != nil {
-			t.Fatal(err)
-		}
-		return out.Results[0]
-	}
-
-	sales := check(map[string]any{"department": "sales"})
-	if sales["allowed"] != true || sales["explanation"] == nil {
-		t.Fatalf("a sales claim is allowed, with the explanation: %v", sales)
-	}
-	others := check(map[string]any{"department": "hr"})
-	if others["allowed"] != false {
-		t.Fatalf("another department is denied: %v", others)
-	}
-
-	status, raw := e.do(http.MethodPost, e.admin.URL+"/service/"+svc+"/simulate/permission", map[string]any{
-		"subject": "dave", "claims": map[string]any{"department": "sales"}, "type": "branch", "limit": 2,
-	})
-	if status != http.StatusOK {
-		t.Fatalf("simulate permission: %d %s", status, raw)
-	}
-	var page map[string]map[string]any
-	if err := json.Unmarshal(raw, &page); err != nil {
-		t.Fatal(err)
-	}
-	if n := len(page["branch"]["resources"].([]any)); n != 2 || page["branch"]["next_after"] != "b2" {
-		t.Fatalf("the first page of simulated permissions: %v", page)
-	}
-
-	// a stranger may not simulate anybody
-	stranger := e.token(jwt.MapClaims{"preferred_username": "carol", "sub": "c1"})
-	status, raw = e.do(http.MethodPost, e.admin.URL+"/service/"+svc+"/simulate/check", map[string]any{
-		"subject": "dave", "checks": []map[string]any{{"type": "branch", "action": "read"}},
-	}, "Authorization", "Bearer "+stranger)
-	if status != http.StatusForbidden {
-		t.Fatalf("simulation needs the rights on the service: %d %s", status, raw)
-	}
-}
-
-func TestPermissionPagesWalkTheResourcesInIDOrder(t *testing.T) {
-	e := setup(t)
-	svc := e.newService("ledger3")
-	branch := e.must("POST", "/service/"+svc+"/type_resource/", map[string]any{"name": "branch"})["id"].(string)
-	e.must("POST", "/service/"+svc+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
-		"config": map[string]any{"kind": "http", "url": e.mock.URL + "/sync/branch"}, "probe_resource_id": "b1",
-	})
-	e.must("POST", "/assignment_rule/", map[string]any{"type_resource_id": branch, "access": []string{"read"}, "subject": "alice"})
-	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "u1"})
-
-	page := func(query string) map[string]any {
-		t.Helper()
-		status, _, raw := e.call(http.MethodGet, e.check.URL+"/service/"+svc+"/permission"+query, nil,
-			"Authorization", "Bearer "+alice)
-		if status != http.StatusOK {
-			t.Fatalf("permission %s: %d %s", query, status, raw)
-		}
-		var out map[string]map[string]any
-		if err := json.Unmarshal(raw, &out); err != nil {
-			t.Fatal(err)
-		}
-		return out["branch"]
-	}
-	ids := func(p map[string]any) string {
-		var out []string
-		for _, r := range p["resources"].([]any) {
-			out = append(out, r.(map[string]any)["id"].(string))
-		}
-		return strings.Join(out, ",")
-	}
-
-	first := page("?type=branch&limit=2")
-	if ids(first) != "b1,b2" || first["next_after"] != "b2" {
-		t.Fatalf("first page: %v", first)
-	}
-	second := page("?type=branch&limit=2&after=b2")
-	if ids(second) != "b3" || second["next_after"] != nil {
-		t.Fatalf("the last page names no next page: %v", second)
-	}
-
-	status, _, raw := e.call(http.MethodGet, e.check.URL+"/service/"+svc+"/permission?limit=2", nil,
-		"Authorization", "Bearer "+alice)
-	requireErrorCode(t, status, raw, http.StatusUnprocessableEntity, "permission_page_needs_type")
 }
 
 func TestLogSettingsAreReadWrittenAndAppliedToTheLogger(t *testing.T) {

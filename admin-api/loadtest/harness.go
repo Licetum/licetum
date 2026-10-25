@@ -47,7 +47,6 @@ type Options struct {
 	Mode          string        // warm (the caches answer), cold (the evaluations ask what none asked before; a search repeats per subject) or mix (a skewed traffic)
 	Seed          int64         // the seed of the choices of the traffic and of the oracle
 	Mix           Mix           // the share of each request
-	Consistency   string        // minimize_latency (caches allowed) or higher (every request is computed); the cold traffic sends none
 	Rate          float64       // arrivals per second of a fixed-rate run
 	Ramp          bool          // ramp the rate instead: start at RateStart, multiply by RateFactor, up to MaxSteps
 	RateStart     float64       // the first rate of a ramp
@@ -90,7 +89,6 @@ func DefaultOptions() Options {
 		Mode:         "mix",
 		Seed:         1,
 		Mix:          mix,
-		Consistency:  "minimize_latency",
 		Rate:         50,
 		RateStart:    50,
 		RateFactor:   2,
@@ -107,9 +105,9 @@ func DefaultOptions() Options {
 	}
 }
 
-// workloadOf names what the traffic of a mode asks, for Settings.Workload. The cold mode sends no consistency query, and its
-// evaluations ask questions no earlier request of the run asked (a search repeats per subject). The cold runs before that
-// asked every request with consistency=higher, carry no name, and so are never compared with these.
+// workloadOf names what the traffic of a mode asks, for Settings.Workload. The evaluations of the cold mode ask questions no
+// earlier request of the run asked (a search repeats per subject). The cold runs before that asked every request with
+// consistency=higher, carry no name, and so are never compared with these.
 func workloadOf(mode string) string {
 	if mode == "cold" {
 		return "cold-unrepeated-evaluations"
@@ -124,8 +122,6 @@ func (o Options) validate() error {
 	switch {
 	case o.Mode != "warm" && o.Mode != "cold" && o.Mode != "mix":
 		return fmt.Errorf("mode %q: want warm, cold or mix", o.Mode)
-	case o.Consistency != "minimize_latency" && o.Consistency != "higher":
-		return fmt.Errorf("consistency %q: want minimize_latency or higher", o.Consistency)
 	case o.Rate < 1 && !o.Ramp:
 		return fmt.Errorf("the rate is at least 1 arrival per second")
 	case o.Ramp && (o.RateStart < 1 || o.RateFactor <= 1 || o.MaxSteps < 1):
@@ -159,7 +155,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	if err := os.MkdirAll(opts.OutDir, 0o750); err != nil {
 		return nil, fmt.Errorf("create %s: %w", opts.OutDir, err)
 	}
-	// The tokens and the script go to a directory of their own, removed when the run ends: the report directory is kept.
+	// The API key and the script go to a directory of their own, removed when the run ends: the report directory is kept.
 	workDir, err := os.MkdirTemp("", "licetum-loadtest-")
 	if err != nil {
 		return nil, fmt.Errorf("create the work directory: %w", err)
@@ -173,7 +169,6 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			Mode:           opts.Mode,
 			Seed:           opts.Seed,
 			Mix:            opts.Mix.String(),
-			Consistency:    opts.Consistency,
 			Workload:       workloadOf(opts.Mode),
 			Concurrency:    opts.Concurrency,
 			DBPool:         opts.DBPool,
@@ -235,14 +230,6 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	rep.Seeding, rep.RulesWritten = fx.phases, fx.rules
 	slog.Info("seeded", "rules", fx.rules, "folders", fx.folders, "documents", fx.documents)
 
-	tokens, err := e.idp.tokens(opts.Profile.Users, opts.Profile.Groups)
-	if err != nil {
-		return nil, err
-	}
-	backend, err := e.idp.clientToken(backendClient)
-	if err != nil {
-		return nil, err
-	}
 	if _, err := e.admin.PutLogSettings(ctx, logSettings(opts.AccessLog)); err != nil {
 		return nil, fmt.Errorf("set the log settings of the check server: %w", err)
 	}
@@ -275,13 +262,11 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	rep.DBStatements = obs.statements
 
 	warm := warmer{
-		base:        check.base,
-		client:      newClient(1, warmUpTimeout),
-		tokens:      tokens,
-		backend:     backend,
-		profile:     opts.Profile,
-		consistency: opts.Consistency,
-		retry:       synchronizeRetry,
+		base:    check.base,
+		client:  newClient(1, warmUpTimeout),
+		apiKey:  fx.apiKey,
+		profile: opts.Profile,
+		retry:   synchronizeRetry,
 	}
 	rep.WarmUp, err = warm.warmUp(ctx)
 	if err != nil {
@@ -299,7 +284,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		return finishRun(ctx, rep, e, opts, err, nil)
 	}
 
-	runner, err := newK6Runner(k6Path, workDir, opts.OutDir, opts.K6CPUs, tokens, backend, opts.Profile, opts.Mix, opts.Consistency)
+	runner, err := newK6Runner(k6Path, workDir, opts.OutDir, opts.K6CPUs, fx.apiKey, opts.Profile, opts.Mix)
 	if err != nil {
 		return finishRun(ctx, rep, e, opts, err, nil)
 	}
@@ -307,7 +292,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	for _, c := range checks {
 		bases = append(bases, c.base)
 	}
-	mr := measurer{runner: runner, check: check, obs: obs, opts: opts, tokens: tokens, outDir: opts.OutDir,
+	mr := measurer{runner: runner, check: check, obs: obs, opts: opts, apiKey: fx.apiKey, outDir: opts.OutDir,
 		admin: e.admin, docType: fx.documentType, bases: bases}
 
 	// The warm-up window: the caches fill, and the synchronizations settle, before anything is measured.
@@ -378,7 +363,7 @@ type measurer struct {
 	check   *checkServer
 	obs     observer
 	opts    Options
-	tokens  []string
+	apiKey  string // the API key of the PEP client of the service, for the oracle
 	outDir  string
 	admin   *adminsvc.App
 	docType uuid.UUID
@@ -416,7 +401,7 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 	stopOracle := make(chan struct{})
 	oracleDone := make(chan Oracle, 1)
 	go func() {
-		oracleDone <- runOracle(ctx, m.check.base, serviceSlug, m.opts.Profile, m.tokens, uint64(max(m.opts.Seed, 0)), m.opts.OracleRate, stopOracle)
+		oracleDone <- runOracle(ctx, m.check.base, serviceSlug, m.opts.Profile, m.apiKey, uint64(max(m.opts.Seed, 0)), m.opts.OracleRate, stopOracle)
 	}()
 
 	var wr *writer

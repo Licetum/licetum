@@ -24,6 +24,7 @@ type metrics struct {
 	permissionCompute prometheus.Histogram
 	permissionCache   *prometheus.CounterVec // result: hit | miss | bypass
 	checkCache        *prometheus.CounterVec // result: hit | miss | bypass
+	searchCache       *prometheus.CounterVec // result: hit | miss | bypass
 	checks            *prometheus.CounterVec // decision: allowed | denied
 	syncFetch         prometheus.Histogram
 	syncResults       *prometheus.CounterVec // result: changed | unchanged | unanswered
@@ -31,7 +32,7 @@ type metrics struct {
 	syncJobSeconds    prometheus.Histogram
 	syncLeaseLost     prometheus.Counter
 	sourceCalls       *prometheus.CounterVec // type, outcome: ok | error
-	breakerOpen       *prometheus.CounterVec // dependency: source | jwks | token_endpoint
+	breakerOpen       *prometheus.CounterVec // dependency: source | jwks
 	httpRequests      *prometheus.CounterVec // operation, status
 	httpDuration      *prometheus.HistogramVec
 	dbQueries         *prometheus.CounterVec   // operation, result
@@ -43,7 +44,6 @@ type metrics struct {
 	revisionRegress   prometheus.Counter
 	l1Cache           *prometheus.CounterVec // cache: token | answer, result: hit | miss
 	jwksFetches       *prometheus.CounterVec // result: ok | error
-	auditDropped      prometheus.Counter
 }
 
 func newMetrics() *metrics {
@@ -64,6 +64,10 @@ func newMetrics() *metrics {
 	m.checkCache = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_check_cache_total",
 		Help: "Check answer cache lookups: hit, miss, bypass (higher consistency requested), or stale (an answer served past its time because the revisions of the policy cannot be read).",
+	}, []string{"result"})
+	m.searchCache = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "licetum_search_cache_total",
+		Help: "Resource search page cache lookups: hit, miss, bypass (higher consistency requested), or stale (a page served past its time because the revisions of the policy cannot be read).",
 	}, []string{"result"})
 	m.checks = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_check_decisions_total",
@@ -129,11 +133,6 @@ func newMetrics() *metrics {
 		Buckets: prometheus.ExponentialBuckets(0.0002, 2, 16),
 	}, []string{"operation"})
 
-	m.auditDropped = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "licetum_audit_dropped_total",
-		Help: "Delegated-call records dropped because the async audit buffer was full (or could not be flushed at shutdown).",
-	})
-
 	m.backgroundDropped = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "licetum_background_dropped_total",
 		Help: "Background tasks (cache writes, refreshes) dropped because the queue was full.",
@@ -156,8 +155,8 @@ func newMetrics() *metrics {
 	}, []string{"result"})
 
 	for _, c := range []prometheus.Collector{
-		m.permissionCompute, m.permissionCache, m.checkCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls, m.breakerOpen,
-		m.auditDropped, m.backgroundDropped, m.snapshotFallback, m.revisionRegress, m.l1Cache, m.jwksFetches,
+		m.permissionCompute, m.permissionCache, m.checkCache, m.searchCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls, m.breakerOpen,
+		m.backgroundDropped, m.snapshotFallback, m.revisionRegress, m.l1Cache, m.jwksFetches,
 		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
 		m.httpRequests, m.httpDuration,
 	} {

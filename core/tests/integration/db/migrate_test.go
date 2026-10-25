@@ -31,10 +31,10 @@ func TestMigrateCreatesCurrentSchemaAndSeedsPlatform(t *testing.T) {
 		DB: config.Database{URI: infrastructure.DBURI, PoolSize: 3},
 		Platform: config.Platform{
 			Name: "Licetum", URL: "https://licetum.test", Icon: "https://licetum.test/icon.png",
-			AuthorizationURL: "https://idp.test/auth", TokenURL: "https://idp.test/token", JwksURL: "https://idp.test/jwks",
-			Issuer: "https://idp.test", ClientID: "licetum", ClientSecret: "secret",
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username", AdminClaimValues: []string{"admin"},
 		},
+		AdminAuth: config.AdminAuth{Issuer: "https://idp.test", Audience: "licetum-admin", JWKSURL: "https://idp.test/jwks",
+			SubjectClaim: "preferred_username"},
 	}
 	pool, err := db.Connect(ctx, cfg.DB)
 	if err != nil {
@@ -90,10 +90,10 @@ func platformConfig(uri string, poolSize int) *config.Config {
 		DB: config.Database{URI: uri, PoolSize: poolSize},
 		Platform: config.Platform{
 			Name: "Licetum", URL: "https://licetum.test", Icon: "https://licetum.test/icon.png",
-			AuthorizationURL: "https://idp.test/auth", TokenURL: "https://idp.test/token", JwksURL: "https://idp.test/jwks",
-			Issuer: "https://idp.test", ClientID: "licetum", ClientSecret: "secret",
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username", AdminClaimValues: []string{"admin"},
 		},
+		AdminAuth: config.AdminAuth{Issuer: "https://idp.test", Audience: "licetum-admin", JWKSURL: "https://idp.test/jwks",
+			SubjectClaim: "preferred_username"},
 	}
 }
 

@@ -38,45 +38,47 @@ func NewAPIKey() (full string, keyID string, hash []byte, err error) {
 		return "", "", nil, err
 	}
 	keyID = hex.EncodeToString(id)
-	secret := base64.RawURLEncoding.EncodeToString(raw)
-	return apiKeyPrefix + keyID + "_" + secret, keyID, HashSecret(secret), nil
+	random := base64.RawURLEncoding.EncodeToString(raw)
+	return apiKeyPrefix + keyID + "_" + random, keyID, HashSecret(random), nil
 }
 
 // ParseAPIKey splits an API key into its key id and its secret. It is strict: the length, the prefix, the separator, the
 // lowercase hex of the key id and the base64url alphabet of the secret must all be as the format says, and the secret must
 // decode to exactly 32 bytes with no bits of padding set. Anything else is ErrAPIKeyMalformed.
-func ParseAPIKey(s string) (keyID, secret string, err error) {
+func ParseAPIKey(s string) (keyID, random string, err error) {
 	if len(s) != apiKeyLen || !strings.HasPrefix(s, apiKeyPrefix) || s[len(apiKeyPrefix)+apiKeyIDLen] != '_' {
 		return "", "", ErrAPIKeyMalformed
 	}
 	keyID = s[len(apiKeyPrefix) : len(apiKeyPrefix)+apiKeyIDLen]
-	secret = s[len(apiKeyPrefix)+apiKeyIDLen+1:]
-	if !isLowerHex(keyID) || !isBase64URL(secret) {
+	random = s[len(apiKeyPrefix)+apiKeyIDLen+1:]
+	if !isLowerHex(keyID) || !isBase64URL(random) {
 		return "", "", ErrAPIKeyMalformed
 	}
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(secret)
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(random)
 	if err != nil || len(raw) != 32 {
 		return "", "", ErrAPIKeyMalformed
 	}
-	return keyID, secret, nil
+	return keyID, random, nil
 }
 
-// HashSecret is the hash that is stored for a secret: its SHA-256.
-func HashSecret(secret string) []byte {
-	sum := sha256.Sum256([]byte(secret))
+// HashSecret is the hash that is stored for the random part of an API key: its SHA-256. A fast hash is the right one here: the
+// input is 32 bytes from a cryptographic random source, so there is nothing to guess and nothing to gain from a slow, salted hash;
+// those are for passwords that people choose.
+func HashSecret(random string) []byte {
+	sum := sha256.Sum256([]byte(random))
 	return sum[:]
 }
 
 // CompareSecret reports whether the secret is the one the stored hash was made of. The comparison takes the same time
 // whatever the secret.
-func CompareSecret(stored []byte, secret string) bool {
-	return subtle.ConstantTimeCompare(stored, HashSecret(secret)) == 1
+func CompareSecret(stored []byte, random string) bool {
+	return subtle.ConstantTimeCompare(stored, HashSecret(random)) == 1
 }
 
 // DummyCompare does the work of CompareSecret for a key id that is unknown, so that a request with an unknown key takes as
 // long as one with a known key and the timing does not tell the two apart. Its result is not used.
-func DummyCompare(secret string) {
-	_ = CompareSecret(dummyHash, secret)
+func DummyCompare(random string) {
+	_ = CompareSecret(dummyHash, random)
 }
 
 // isLowerHex reports whether s is made of the characters 0-9 and a-f only.

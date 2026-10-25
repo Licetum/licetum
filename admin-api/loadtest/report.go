@@ -22,13 +22,12 @@ const (
 )
 
 // serverOperation is the operation id each request kind carries in the server's metrics. Requests that reach the same
-// operation (the evaluations of a person and of another person, the batches of ten and of a hundred) share its figure.
+// operation (the batches of ten and of a hundred) share its figure.
 var serverOperation = [numOps]string{
-	opSearchResource:       "authzen_search_resource",
-	opEvaluation:           "authzen_evaluation",
-	opEvaluations10:        "authzen_evaluations",
-	opEvaluations100:       "authzen_evaluations",
-	opEvaluationProperties: "authzen_evaluation",
+	opSearchResource: "authzen_search_resource",
+	opEvaluation:     "authzen_evaluation",
+	opEvaluations10:  "authzen_evaluations",
+	opEvaluations100: "authzen_evaluations",
 }
 
 // Server is what the check server and its database did during a window, read from their own counters. A figure with
@@ -57,7 +56,6 @@ type Settings struct {
 	Mode           string  `json:"mode"`
 	Seed           int64   `json:"seed"`
 	Mix            string  `json:"mix"`
-	Consistency    string  `json:"consistency"`
 	Workload       string  `json:"workload,omitempty"`
 	Concurrency    int     `json:"concurrency"`
 	DBPool         int     `json:"db_pool"`
@@ -154,8 +152,8 @@ func (r *Report) Markdown() string {
 	fmt.Fprintf(&b, "# Load test: %s, %s mode, seed %d\n\n", p.Name, r.Settings.Mode, r.Settings.Seed)
 	fmt.Fprintf(&b, "Policy: %d subjects in %d groups, %d assignment rules, %d resources (%d folders, %d documents).\n",
 		p.Users, p.Groups, r.RulesWritten, p.Resources, p.folders(), p.documents())
-	fmt.Fprintf(&b, "Check server: DB pool %d connections, consistency `%s`, access log %s, CPUs `%s`. Requests: `%s`.\n",
-		r.Settings.DBPool, r.Settings.Consistency, onOff(r.Settings.AccessLog), cpuLabel(r.Settings.CheckCPUs), r.Settings.Mix)
+	fmt.Fprintf(&b, "Check server: DB pool %d connections, access log %s, CPUs `%s`. Requests: `%s`.\n",
+		r.Settings.DBPool, onOff(r.Settings.AccessLog), cpuLabel(r.Settings.CheckCPUs), r.Settings.Mix)
 	fmt.Fprintf(&b, "Load generator: k6 %s, at most %d virtual users, CPUs `%s`. Machine: %d CPUs, %s/%s, %s.\n",
 		strings.TrimPrefix(r.Machine.K6, "k6 v"), r.Settings.Concurrency, cpuLabel(r.Settings.K6CPUs), r.Machine.CPUs, r.Machine.OS,
 		r.Machine.Arch, r.Machine.GoVersion)

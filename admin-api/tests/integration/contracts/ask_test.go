@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 	"github.com/licetum/licetum/core/testsupport/policyfix"
 )
 
@@ -57,8 +58,11 @@ cases:
 		}`},
 	} {
 		req := evaluationsOf("shop", tc.c, tc.c.Questions)
-		if req.Method != http.MethodPost || req.Path != "/service/shop/access/v1/evaluations?consistency=higher" {
+		if req.Method != http.MethodPost || req.Path != "/service/shop/access/v1/evaluations" {
 			t.Errorf("case %q: %s %s", tc.c.Name, req.Method, req.Path)
+		}
+		if got := req.Header.Get(authzenreq.ConsistencyHeader); got != "higher" {
+			t.Errorf("case %q: the freshest answer is not asked for: %s = %q", tc.c.Name, authzenreq.ConsistencyHeader, got)
 		}
 		raw, err := json.Marshal(req.Body)
 		if err != nil {

@@ -68,11 +68,6 @@ type App struct {
 	doneCh chan struct{}
 	// answers collapses the concurrent computations of the same answer (see cachedAnswer).
 	answers singleflight.Group
-	// auditSink is the buffer of the async audit mode (see audit); auditOnce starts it on first use.
-	auditOnce sync.Once
-	auditSink atomic.Pointer[auditSink]
-	// subjects is the buffer of the subjects waiting to be written to the registry (see NoteSubject).
-	subjects subjectBuffer
 	// bg runs the background work (cache writes, refreshes) on a bounded pool, started on first use; Close waits for it.
 	bg     *backgroundPool
 	bgOnce sync.Once
@@ -83,14 +78,14 @@ type App struct {
 
 	// tune is the effective value of the settings of the fast read path.
 	tune tuning
-	// tokensL1 and answersL1 are the in-process levels of the token and the answer caches; invalidTokens remembers the
-	// tokens that failed verification (see VerifyToken). Nil on an App built by hand: they keep nothing.
-	tokensL1      *lruCache[Claims]
-	answersL1     *lruCache[any]
-	invalidTokens *lruCache[error]
+	// answersL1 is the in-process level of the answer cache. Nil on an App built by hand: it keeps nothing.
+	answersL1 *lruCache[any]
 	// jwks holds the key sets of the identity providers, configured on first use (see keySets).
 	jwks     pepauth.KeySets
 	jwksOnce sync.Once
+	// adminVerifier checks the tokens of the administrators (ADMIN_AUTH__*), made on first use (see VerifyAdminToken).
+	adminVerifier     *pepauth.Verifier
+	adminVerifierOnce sync.Once
 	// local keeps the revision of the policy and its snapshot in memory (see localView).
 	local viewState
 	// pep keeps the PEP directory of the process (see PEPDirectory).
@@ -140,21 +135,16 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 	adapter.OnBreakerOpen = func() { m.breakerOpen.WithLabelValues("source").Inc() }
 	t := newTuning(cfg)
 	app := &App{
-		DB:            pool,
-		Redis:         rdb,
-		Sync:          adapter,
-		Cfg:           cfg,
-		HTTP:          &http.Client{},
-		metrics:       m,
-		tune:          t,
-		tokensL1:      newLRU[Claims](t.tokenL1Size),
-		answersL1:     newLRU[any](t.answerL1Size),
-		invalidTokens: newLRU[error](invalidTokenCacheSize),
-		computeSlots:  make(chan struct{}, t.computeConcurrency),
-		workerWake:    make(chan struct{}, 1),
-	}
-	if t.invalidTokenTTL <= 0 {
-		app.invalidTokens = nil
+		DB:           pool,
+		Redis:        rdb,
+		Sync:         adapter,
+		Cfg:          cfg,
+		HTTP:         &http.Client{},
+		metrics:      m,
+		tune:         t,
+		answersL1:    newLRU[any](t.answerL1Size),
+		computeSlots: make(chan struct{}, t.computeConcurrency),
+		workerWake:   make(chan struct{}, 1),
 	}
 	// Every statement and every Redis round trip of the process is counted: in the metrics, and in the Trace of the
 	// request that made it. A pool not made by db.Connect has no tracer and is not counted.
@@ -179,11 +169,6 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 // Close stops new background work, waits for the work in progress (a little while), then closes the connections
 // to the SQL sources.
 func (a *App) Close() {
-	// The buffers are flushed first: the work still in progress may be waiting for the same connections.
-	if sink := a.auditSink.Load(); sink != nil {
-		sink.close()
-	}
-	a.subjects.close()
 	if !a.background().close(closeWait) {
 		slog.Warn("background work did not finish before the shutdown", "wait", closeWait)
 	}
@@ -214,21 +199,17 @@ func (a *App) AfterWrite(ctx context.Context, revision int64) {
 
 // ---------- shared existence checks ----------
 
-const ServiceColumns = `id, name, slug, url, icon, authorization_url, token_url, jwks_url, issuer, client_id, client_secret, trusted_clients`
+const ServiceColumns = `id, name, slug, url, icon`
 
 func ScanService(row pgx.Row) (*model.Service, error) {
 	var s model.Service
-	err := row.Scan(&s.ID, &s.Name, &s.Slug, &s.URL, &s.Icon, &s.AuthorizationURL, &s.TokenURL, &s.JwksURL,
-		&s.Issuer, &s.ClientID, &s.ClientSecret, &s.TrustedClients)
+	err := row.Scan(&s.ID, &s.Name, &s.Slug, &s.URL, &s.Icon)
 	return &s, err
 }
 
-// ServiceIDByRef returns the id of the service a path segment names: the id itself or the slug. A
+// ServiceIDByRef returns the id of the service a path segment names: its slug. A
 // slug is never a UUID (see model.ValidSlug), so the two cannot be confused.
 func (a *App) ServiceIDByRef(ctx context.Context, ref string) (uuid.UUID, error) {
-	if id, err := uuid.Parse(ref); err == nil {
-		return id, nil
-	}
 	if snap := a.policySnapshot(ctx); snap != nil {
 		return snap.serviceID(ref)
 	}

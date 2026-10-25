@@ -10,9 +10,8 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// The check API (the legacy routes, until P2-23) refuses a request attribute that is an object or a list within a list: a
-// scalar or a list of scalars is all it takes.
-func TestLegacyContextObjectsAreRefused(t *testing.T) {
+// A request attribute that is an object or a list within a list is refused: a scalar or a list of scalars is all it takes.
+func TestContextObjectsAreRefused(t *testing.T) {
 	if err := (model.RequestContext{"ip": map[string]any{"x": "1"}}).Validate(); err == nil {
 		t.Error("an object is accepted as a request attribute")
 	}
