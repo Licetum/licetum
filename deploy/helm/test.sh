@@ -43,7 +43,7 @@ if helm template release $chart --kube-version "$kube" > /dev/null 2>&1; then
   status=1
 fi
 
-# The cell profile: the network policy names the cell's own PostgreSQL and Redis and nothing else (F6-10).
+# The cell profile: the network policy names the cell's own PostgreSQL and nothing else (F6-10).
 cell=$(helm template release $chart --kube-version "$kube" -f $chart/values-cell.yaml -f $chart/ci/cell-values.yaml)
 for cidr in $(grep -oE 'cidr: "?[0-9./]+"?' <<< "$cell" | tr -d '"' | awk '{print $2}' | sort -u); do
   case $cidr in

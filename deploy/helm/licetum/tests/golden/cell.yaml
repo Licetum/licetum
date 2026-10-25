@@ -46,10 +46,6 @@ spec:
       ports:
         - {port: 5432, protocol: TCP}
     - to:
-        - ipBlock: {cidr: "10.30.1.0/24"}
-      ports:
-        - {port: 6379, protocol: TCP}
-    - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
@@ -178,7 +174,7 @@ spec:
         licetum.io/region: "cn"
         app.kubernetes.io/component: admin
       annotations:
-        checksum/config: f7d79c665d2e301e93fd0b0da3fc5a08758a58139d32d521b7528a84319cf570
+        checksum/config: 785883942ae137528f6bd193a64c026c83a8ec8b2cecd0c0581e86c16e8b31e4
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -225,11 +221,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: DB__URI
-            - name: REDIS__URI
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: REDIS__URI
           startupProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 2
@@ -294,7 +285,7 @@ spec:
         licetum.io/region: "cn"
         app.kubernetes.io/component: pdp
       annotations:
-        checksum/config: f7d79c665d2e301e93fd0b0da3fc5a08758a58139d32d521b7528a84319cf570
+        checksum/config: 785883942ae137528f6bd193a64c026c83a8ec8b2cecd0c0581e86c16e8b31e4
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -347,17 +338,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: DB__URI
-            - name: DB__READ_URI
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: DB__READ_URI
-                  optional: true
-            - name: REDIS__URI
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: REDIS__URI
           startupProbe:
             httpGet: {path: /readyz, port: ops}
             periodSeconds: 2
@@ -423,7 +403,7 @@ spec:
         licetum.io/region: "cn"
         app.kubernetes.io/component: worker
       annotations:
-        checksum/config: f7d79c665d2e301e93fd0b0da3fc5a08758a58139d32d521b7528a84319cf570
+        checksum/config: 785883942ae137528f6bd193a64c026c83a8ec8b2cecd0c0581e86c16e8b31e4
     spec:
       serviceAccountName: release-licetum
       automountServiceAccountToken: false
@@ -470,11 +450,6 @@ spec:
                 secretKeyRef:
                   name: release-licetum-secrets
                   key: DB__URI
-            - name: REDIS__URI
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: REDIS__URI
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5
@@ -547,7 +522,6 @@ metadata:
 type: Opaque
 stringData:
   DB__URI: "postgres://licetum:licetum@10.30.0.5:5432/licetum"
-  REDIS__URI: "redis://10.30.1.5:6379/0"
 ---
 # Source: licetum/templates/configmap.yaml
 apiVersion: v1
@@ -572,11 +546,8 @@ data:
   DB__POOL_SIZE: "10"
   DB__MAX_OVERFLOW: "20"
   DB__SYNC_POOL_SIZE: "4"
-  DB__MAX_REPLICA_LAG: "10s"
-  DB__LAG_ACTION: "unready"
   SHUTDOWN__DRAIN: "10s"
   SHUTDOWN__TIMEOUT: "30s"
-  SYNC__ENGINE: "postgres"
   PDP__PUBLIC_URL: "https://licetum.example.com"
   PLATFORM__NAME: "Licetum"
   PLATFORM__URL: "https://admin.cn.example.com"
@@ -648,11 +619,6 @@ spec:
                   name: release-licetum-secrets
                   key: DB__MIGRATE_URI
                   optional: true
-            - name: REDIS__URI
-              valueFrom:
-                secretKeyRef:
-                  name: release-licetum-secrets
-                  key: REDIS__URI
           resources:
             limits:
               memory: 256Mi

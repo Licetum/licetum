@@ -59,11 +59,6 @@ spec:
                 name: {{ include "licetum.fullname" . }}-config
           env:
             {{- include "licetum.secretEnv" (dict "root" . "key" "DB__URI") | nindent 12 }}
-            {{- include "licetum.secretEnv" (dict "root" . "key" "REDIS__URI") | nindent 12 }}
-            {{- if .Values.worker.regionAware }}
-            - name: WORKER__REGION
-              value: {{ required "region is required when worker.regionAware is set" .Values.region | quote }}
-            {{- end }}
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5

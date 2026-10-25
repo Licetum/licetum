@@ -3,8 +3,6 @@ region: eu
 publicUrl: https://licetum.example.com
 secrets:
   dbUri: postgres://licetum:licetum@db-primary.example.internal:5432/licetum
-  dbReadUri: postgres://licetum:licetum@db-replica.example.internal:5432/licetum
-  redisUri: redis://redis.example.internal:6379/0
 platform:
   url: https://admin.example.com
   icon: https://admin.example.com/favicon.ico

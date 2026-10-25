@@ -40,7 +40,6 @@ spec:
           env:
             {{- include "licetum.secretEnv" (dict "root" . "key" "DB__URI") | nindent 12 }}
             {{- include "licetum.secretEnv" (dict "root" . "key" "DB__MIGRATE_URI" "optional" true) | nindent 12 }}
-            {{- include "licetum.secretEnv" (dict "root" . "key" "REDIS__URI") | nindent 12 }}
           resources:
             {{- toYaml .Values.migrate.resources | nindent 12 }}
           securityContext:

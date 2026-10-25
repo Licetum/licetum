@@ -19,7 +19,7 @@ admin=http://$release-admin:8000
 
 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n "$ns" apply -f $chart/ci/deps.yaml
-kubectl -n "$ns" rollout status deploy/postgres deploy/redis --timeout=180s
+kubectl -n "$ns" rollout status deploy/postgres --timeout=180s
 
 log() { printf '\n== %s\n' "$*"; }
 curl_pod() { # a command in a pod of the cluster, whose output is the result

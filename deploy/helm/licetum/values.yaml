@@ -1,5 +1,5 @@
-# Licetum: one release is one region (or one cell). Run it in every region with its own db.readUri and redis.uri; the pods that
-# write (admin, worker, migrate) belong in the region of the primary only. docs/deployment.md describes the topology.
+# Licetum: one release is one region (or one cell) with its own PostgreSQL. The pods that write (admin, worker, migrate) belong in
+# the region of the database that holds the policy. docs/deployment.md describes the topology.
 
 # The image of the PDP, the worker and the migrations (the core module), of the admin API, and of the web interface.
 image:
@@ -15,22 +15,19 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# The name of the region (or the cell) this release runs in: a label on every object, and WORKER__REGION of the worker when
-# worker.regionAware is set.
+# The name of the region (or the cell) this release runs in: a label on every object.
 region: ""
 
 # The identifier the PEPs use for the PDP (PDP__PUBLIC_URL, https except on a loopback host): the AuthZEN discovery document is built from it.
 publicUrl: ""
 
 # The secrets. Either name a Secret that holds the keys below (existingSecret, the way to go in production) or give the values and
-# the chart creates one. DB__URI and REDIS__URI are required; DB__READ_URI, DB__MIGRATE_URI and, for the
-# web interface, SESSION_SECRET and OIDC_CLIENT_SECRET (absent for a public client) are optional.
+# the chart creates one. DB__URI is required; DB__MIGRATE_URI and, for the web interface, SESSION_SECRET and OIDC_CLIENT_SECRET
+# (absent for a public client) are optional.
 existingSecret: ""
 secrets:
   dbUri: ""
-  dbReadUri: ""
   dbMigrateUri: ""
-  redisUri: ""
   sessionSecret: ""
   oidcClientSecret: ""
 
@@ -41,10 +38,6 @@ db:
   poolSize: 10
   maxOverflow: 20
   syncPoolSize: 4
-  # Reading from a replica (secrets.dbReadUri set): how far behind the replica may be, and what the PDP does beyond it:
-  # "unready" (the pod leaves the rotation) or "primary" (the reads move to the primary meanwhile).
-  maxReplicaLag: 10s
-  lagAction: unready
 
 # The self-service: Licetum registered within itself, and the platform administrators (PLATFORM__*). It has no OAuth client of
 # its own: administrators sign in at the identity provider of adminAuth.
@@ -78,8 +71,8 @@ policyMaxStaleness: ""
 # Extra environment variables for every pod (name: value).
 env: {}
 
-# The PDP (the AuthZEN decision point): the only thing clients call at request time. It reads the policy from the replica
-# (secrets.dbReadUri) and writes nothing to the graph.
+# The PDP (the AuthZEN decision point): the only thing clients call at request time. It reads the policy from PostgreSQL and
+# writes nothing to the graph.
 pdp:
   replicas: 2
   port: 8001
@@ -129,11 +122,6 @@ worker:
   enabled: true
   replicas: 1
   port: 8002
-  # dbos (default) or postgres. Across regions use postgres: DBOS needs a fast link to the database.
-  engine: dbos
-  # Start the worker with WORKER__REGION set to `region`: it takes only the jobs of the types whose source can be reached from
-  # there (synchronizer regions). Needs engine: postgres.
-  regionAware: false
   resources:
     requests: {cpu: 250m, memory: 512Mi}
     limits: {memory: 2Gi}
@@ -142,7 +130,7 @@ worker:
   tolerations: []
 
 # `licetum migrate` before an install and an upgrade, one Job (a hook): the migrations take an advisory lock, so a second run waits.
-# In a region with only a replica set it to false.
+# Set it to false where another release runs the migrations.
 migrate:
   enabled: true
   resources:
@@ -194,7 +182,7 @@ podAntiAffinity:
   enabled: true
   topologyKey: kubernetes.io/hostname
 
-# NetworkPolicy: the PDP pods may talk to PostgreSQL, Redis, the identity provider and the sources, and to nothing else;
+# NetworkPolicy: the PDP pods may talk to PostgreSQL, the identity provider and the sources, and to nothing else;
 # ingress only on their ports. Give the CIDRs and ports (a policy cannot name a managed database by its host name).
 networkPolicy:
   enabled: false
@@ -204,8 +192,6 @@ networkPolicy:
   monitoringNamespace: monitoring
   dbCidrs: []
   dbPort: 5432
-  redisCidrs: []
-  redisPort: 6379
   # The identity provider and the sources: egress on these ports to anywhere that is not a private range.
   httpsPorts: [443]
   # Allow DNS to the cluster resolver.

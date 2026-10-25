@@ -1,12 +1,11 @@
-# Everything switched on: the web interface, the ingresses, the network policy, the service monitor, a region-aware worker on the
-# table engine, and the custom-metric autoscaling.
+# Everything switched on: the web interface, the ingresses, the network policy, the service monitor, and the custom-metric
+# autoscaling.
 region: eu
 publicUrl: https://licetum.example.com
 existingSecret: licetum-secrets
 policyMaxStaleness: 30s
 db:
   pgbouncer: true
-  lagAction: primary
 platform:
   url: https://admin.example.com
   icon: https://admin.example.com/favicon.ico
@@ -19,9 +18,6 @@ pdp:
   opsPort: 9090
   autoscaling:
     targetInflight: 200
-worker:
-  engine: postgres
-  regionAware: true
 web:
   enabled: true
   appBaseUrl: https://app.example.com
@@ -41,6 +37,5 @@ ingress:
 networkPolicy:
   enabled: true
   dbCidrs: [10.20.0.0/24]
-  redisCidrs: [10.20.1.0/24]
 serviceMonitor:
   enabled: true
