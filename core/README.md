@@ -8,20 +8,21 @@ The admin API (`admin-api/`, AGPL-3.0-only) is a separate module that depends on
 
 ## Commands
 
-`licetum` has three subcommands:
+`licetum` has five subcommands:
 
 | Command | What it does |
 |---|---|
 | `licetum pdp` | the PDP: the AuthZEN API under `/service/{slug}/access/v1/` (default `:8001`); its probes and `/metrics` are on the ops port (`PDP__OPS_ADDR`, default `:9090`) |
+| `licetum worker` | the synchronization worker: runs the jobs that fetch the resource sources (metrics and `/readyz` on `HTTP__ADDR`, default `:8002`), see [Synchronization worker](#synchronization-worker) |
 | `licetum migrate` | applies the database migrations and seeds the platform self-service (idempotent) |
-| `licetum openapi pdp [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server, database or Redis |
+| `licetum failover` | raises every revision of the policy after a standby was promoted to primary, see [`docs/deployment.md`](../docs/deployment.md) |
+| `licetum openapi pdp [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server or a database |
 
 ## Quick start
 
 ```bash
 cd core
 export DB__URI=postgresql://authz:authz@localhost:5432/authz_db   # a +asyncpg suffix is accepted too
-export REDIS__URI=redis://localhost:6379/0
 # the platform self-service is seeded when ADMIN_AUTH__* is set (administrators sign in at that OIDC provider, see Configuration)
 export ADMIN_AUTH__ISSUER=http://localhost:5556/dex ADMIN_AUTH__AUDIENCE=licetum-local ADMIN_AUTH__JWKS_URL=http://localhost:5556/dex/keys
 
@@ -64,7 +65,7 @@ a service is `<PDP__PUBLIC_URL>/service/<slug>`; its metadata is at
 
 ## Full stack
 
-`task dev` (= `docker compose up`) from the repository root starts PostgreSQL, Redis, a local Dex OIDC provider,
+`task dev` (= `docker compose up`) from the repository root starts PostgreSQL, a local Dex OIDC provider,
 the migration, the PDP, the admin API and the web interface. Open `http://localhost:3000` and sign in as
 `admin@example.com` with password `password`. These credentials and the Dex client are for development only; set the
 `ADMIN_AUTH__*` variables of the admin API and the `OIDC_*` variables of the web interface in `.env` to use another identity
@@ -81,17 +82,16 @@ lists accept a JSON array or a comma-separated string.
 
 | Prefix | Variables |
 |---|---|
-| `DB__` | `DB__URI` (required), `DB__READ_URI` (read replica of a PDP), `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL` — see [Read replica](#read-replica-db__read_uri), pool settings (`DB__POOL_SIZE` default 10, `DB__MAX_OVERFLOW` default 20, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO`; behind PgBouncer: `DB__PGBOUNCER` (simple protocol, nothing prepared) and `DB__MIGRATE_URI` (where `licetum migrate` connects, PostgreSQL itself) — see [Resilience and operations](#resilience-and-operations) |
-| `REDIS__` | `REDIS__URI`: the permission cache. `REDIS__HOT_TIMEOUT` (default `50ms`): the PDP's read and write timeout for Redis, without retries; after three failures in a row Redis is skipped for five seconds |
+| `DB__` | `DB__URI` (required; the one PostgreSQL every process reads and writes), pool settings (`DB__POOL_SIZE` default 10, `DB__MAX_OVERFLOW` default 20, `DB__POOL_TIMEOUT`, …), `DB__SYNC_POOL_SIZE` (the worker's synchronization pool, default 4), `DB__ECHO`; behind PgBouncer: `DB__PGBOUNCER` (simple protocol, nothing prepared) and `DB__MIGRATE_URI` (where `licetum migrate` connects, PostgreSQL itself) — see [Resilience and operations](#resilience-and-operations) |
 | `SNAPSHOT__` | the policy kept in memory: `SNAPSHOT__MAX_BYTES` (default 256 MiB; a policy that does not fit is read with queries, a negative value turns the snapshot off), `SNAPSHOT__MAX_AGE` (default `1m`: the snapshot is read again at this age even when the revision did not move) |
-| `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another replica is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `min_revision` waits for its revision before the answer is computed from the data) |
+| `REVISION__` | the revision of the policy lives in PostgreSQL (`revision_state`): `REVISION__POLL_INTERVAL` (default `250ms`: how soon a write made through another process is seen), `REVISION__WAIT_MAX` (default `500ms`: how long a request with `min_revision` waits for its revision before the answer is computed from the data) |
 | `COMPUTE__` | `COMPUTE__CONCURRENCY`: answers computed at once (default half of `DB__POOL_SIZE`); the rest of a wave of cache misses queues. A computation that waits for a synchronization job (the worker's) gives its slot back meanwhile |
 | `AUTH__` | the key sets of the identity providers (PEP issuers and the administrators'): `AUTH__JWKS_TTL` (default `10m`), `AUTH__JWKS_MIN_REFRESH` (default `30s`: an unknown key id refetches the key set at most this often). `AUTH__STATE_SECRET`, `AUTH__STATE_TTL`, `AUTH__TOKEN_L1_SIZE` and `AUTH__INVALID_TOKEN_TTL` are gone with the authentication of people by a service's own provider: they are ignored, and logged at start-up when still set |
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
 | `ADMIN_AUTH__` | how administrators authenticate to the admin API: one OpenID Connect provider. `ADMIN_AUTH__ISSUER` (the `iss` of the tokens, compared exactly), `ADMIN_AUTH__AUDIENCE` (required: a value the `aud` of every token must contain), `ADMIN_AUTH__JWKS_URL` (where its keys are read) and `ADMIN_AUTH__SUBJECT_CLAIM` (the claim that names the administrator, default `preferred_username`, then `sub`). The admin API refuses to start without the first three; the seed of the self-service and `restore-admin` need only these. The web interface is the OIDC client of the provider (`OIDC_*`, see `web/README.md`) |
 | `PLATFORM__` | the self-service: its name, URL and icon (`PLATFORM__NAME`, `PLATFORM__URL`, `PLATFORM__ICON`) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, default `ADMIN_AUTH__SUBJECT_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`). The OAuth client it used to carry (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISSUER`, `__CLIENT_ID`, `__CLIENT_SECRET`) is gone: they are ignored, and logged at start-up when still set |
-| `SYNC__` | `SYNC__ENGINE` (`dbos`, the default, or `postgres`), `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, at least 3, outside `DB__POOL_SIZE`; the process runs at most (size - 1) / 2 enqueues at once, since a duplicate enqueue takes two connections and the listener keeps one), and the synchronization pipeline, see below. `SYNC__LOCK_TTL` and `SYNC__LOCK_WAIT` are deprecated and ignored |
+| `SYNC__` | `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, at least 3, outside `DB__POOL_SIZE`; the process runs at most (size - 1) / 2 enqueues at once, since a duplicate enqueue takes two connections and the listener keeps one), and the synchronization pipeline, see [Synchronization worker](#synchronization-worker) |
 | `SUBJECTS__` | gone: the registry of known subjects was replaced by the subject directory of each service (retention per service, set through `PUT /service/{id}/subjects/settings`). `SUBJECTS__ENABLED` and `SUBJECTS__RETENTION_DAYS` are ignored, and logged at start-up when still set. The retention of the directories runs in the **worker** only (`licetum worker`). |
 | `DELEGATION__`, `CORS__` | gone: the calls on behalf of a person and their audit, and the CORS of the admin API (the browser reaches it through the web interface's server), no longer exist. The settings are ignored, and logged at start-up when still set |
 | `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `HTTP__ADDR` | the listen address: `PDP__ADDR` for the PDP (default `:8001`: the AuthZEN API only), `PDP__OPS_ADDR` for its probes and `/metrics` (default `:9090`), `HTTP__ADDR` for the admin API and the worker; `PDP__PUBLIC_URL` is the identifier the PEPs use for the PDP (`https://licetum.example.com`, required by the PDP; https, except for a loopback host), which the AuthZEN discovery document is built from; `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`) is the audience a PEP's token must carry when its issuer lists none (a token always needs an `aud`) |
@@ -101,24 +101,24 @@ lists accept a JSON array or a comma-separated string.
 | `POLICY__MAX_STALENESS` | how long a process goes on answering from its copy of the policy when it cannot confirm it against PostgreSQL; beyond it requests fail closed (503 `policy_unavailable`). Default `0`: **no limit** — the process answers for as long as PostgreSQL is unreachable and does not see a revocation made meanwhile; set it where that is not acceptable |
 | `SHUTDOWN__DRAIN`, `SHUTDOWN__TIMEOUT` | on SIGTERM: how long the process is not ready but serves (default `10s`) and how long it waits for the requests in progress (default `30s`) |
 | `LOG__LEVEL` | `debug` for debug logs |
+| removed settings | `REDIS__URI`, `REDIS__HOT_TIMEOUT` (there is no Redis: answers are kept in memory), `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL` (a process reads the one PostgreSQL named by `DB__URI`), `SYNC__ENGINE` (DBOS is the only synchronization engine), `SYNC__FETCH_TTL` and the synchronizer's `cache_ttl` (a source's list is not kept between synchronizations), `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT`, `WORKER__REGION`. They are ignored, and logged at start-up with the reason when still set (`config.DeprecatedCatalog`); [Upgrading](../docs/deployment.md#upgrading-to-this-release) says what replaced each |
 
 ## Synchronization pipeline
 
-A request to the PDP that finds its answer in memory sends no query to PostgreSQL and no command to
-Redis. The pieces, all per process:
+A request to the PDP that finds its answer in memory sends no query to PostgreSQL. The pieces, all per process:
 
 - **The policy snapshot** (`engine/snapshot.go`): the services, the type graph, the memberships, the rules, the role items
   and the access groups, built in one read-only transaction for one revision of the policy (`revision_state`, scope `rules`) and
   replaced as a whole when the revision moves. The validity windows of rules and memberships are compared with the clock
   at every request, never built into the snapshot. A policy that does not fit `SNAPSHOT__MAX_BYTES` is not copied: the
-  queries read it (`licetum_snapshot_fallback_total`), as does the lever `consistency=higher` (set by the process that serves the request, never by the caller), which asks for the freshest answer.
+  queries read it (`licetum_snapshot_fallback_total`), as does the internal lever for the freshest answer (`engine.WithConsistency`: set by the process that serves the request, never by the caller; the only freshness a caller can ask for is `min_revision`).
 - **The view** (`engine/localstate.go`): the revision of the rules and of the data of each service as read from PostgreSQL
   (one statement), with the snapshot of that revision. It is renewed every `REVISION__POLL_INTERVAL` (`WatchRevision`, and
   the requests), and at once after a write made through the process or a request that asks (`min_revision`) for a newer
   revision. When the revisions cannot be read the last view is served as it is, marked degraded, for as long as
   `POLICY__MAX_STALENESS` allows (no limit by default), and answers are kept in memory only. The revision and the data change in
-  one transaction, so a replica never sees a revision before its data.
-- **Answers** are kept in memory first (`CACHE__ANSWER_L1_SIZE`, ten seconds at most) and in Redis second: a request that finds its answer only in Redis makes one round trip.
+  one transaction, so a process never sees a revision before its data.
+- **Answers** are kept in memory only (`CACHE__ANSWER_L1_SIZE` entries), each until it stops being current: at most a minute, or the next moment a rule, a role assignment or a membership starts or stops being in force. A process that restarts, or a second pod, computes what it does not find, bounded by `COMPUTE__CONCURRENCY`.
 - **Key sets** of the identity providers are kept per URL (`AUTH__JWKS_TTL`), fetched once for all the requests that wait
   for them, and fetched again for an unknown key id at most once per `AUTH__JWKS_MIN_REFRESH`.
 
@@ -134,10 +134,9 @@ listener (`PDP__ADDR`) serves the AuthZEN API only. The probes below are on the 
   of the binary (a newer schema is fine: during a rolling update the pods of the previous release stay in service on the schema
   the new release has migrated) and the copy of the policy is loaded (a policy too large for `SNAPSHOT__MAX_BYTES` is not copied by
   decision, and does not hold readiness back); 503 `not_ready` with the reason (`database`, `schema`, `snapshot`, `draining`)
-  otherwise. The result of the database check is reused for a second. **Redis is not part of readiness**: without it the process
-  is degraded, not unavailable. The worker answers `/readyz` too (database and schema only).
-- The metric `licetum_degraded{component="redis"|"postgres"}` is 1 while the process runs without that dependency, and
-  `licetum_snapshot_age_seconds` is the time since it last confirmed its copy of the policy against PostgreSQL.
+  otherwise. The result of the database check is reused for a second. The worker answers `/readyz` too (database and schema only).
+- The metric `licetum_degraded{component="postgres"}` is 1 while the process cannot confirm its copy of the policy against
+  PostgreSQL, and `licetum_snapshot_age_seconds` is the time since it last did.
 
 Note that a balancer which takes a pod out of rotation on a failing readiness probe takes it out when PostgreSQL is gone, too: the
 degraded mode below is for clients that reach the pod anyway (a probe with a longer failure threshold, a mesh that retries,
@@ -145,15 +144,12 @@ liveness-only probing), or for a PostgreSQL that is gone for less than the probe
 
 ### Degraded mode
 
-- **Redis gone, slow or read-only**: the PDP skips Redis after three failures in a row (`REDIS__HOT_TIMEOUT`), keeps its
-  key sets and answers in memory (answers are kept until they stop being current while Redis is down, not ten seconds),
-  and computes what it does not find, bounded by `COMPUTE__CONCURRENCY`. Failures of Redis are logged once a second per kind,
-  with the count of the records left out (`licetum_log_suppressed_total`).
 - **PostgreSQL gone**: requests are answered from the copy of the policy and the answers in memory, also past their time
   as long as no validity window has started or ended since (`licetum_permission_cache_total{result="stale"}`), until the copy
   was last confirmed longer ago than `POLICY__MAX_STALENESS`. A request that cannot be answered from memory, or comes after
   that, is refused with 503 `policy_unavailable` and `Retry-After`: the process fails closed. It recovers by itself when
-  PostgreSQL is back.
+  PostgreSQL is back. Failures of the database on the request path are logged once a second per kind, with the count of the
+  records left out (`licetum_log_suppressed_total`).
 
 ### Shutdown
 
@@ -183,8 +179,7 @@ requests in flight when PostgreSQL is slow turns that slowness into 503 `overloa
 ### Connections
 
 One process may hold `DB__POOL_SIZE + DB__MAX_OVERFLOW` connections in its request pool, `DB__SYNC_POOL_SIZE` in the pool of the
-synchronization transactions (the worker and the admin API) and `SYNC__DBOS_POOL_SIZE` for the DBOS client (not with
-`SYNC__ENGINE=postgres`); each process logs its total at start and warns when it alone reaches `max_connections`. The total
+synchronization transactions (the worker and the admin API) and `SYNC__DBOS_POOL_SIZE` for the DBOS client; each process logs its total at start and warns when it alone reaches `max_connections`. The total
 against the server is
 
     connections = replicas × (pool + overflow + DBOS pool) + workers × (sync pool + request pool + DBOS pool) + admin API + a few for you
@@ -198,32 +193,19 @@ pool is too small (acquires that waited) or too large for the server.
 **PgBouncer in transaction mode**: set `DB__PGBOUNCER=true` (the statements go by the simple protocol and nothing is prepared).
 `licetum migrate` holds a session-level advisory lock for its whole run, which transaction pooling cannot carry: give it
 `DB__MIGRATE_URI` pointing at PostgreSQL itself. DBOS prepares its statements: use PgBouncer 1.21 or newer with
-`max_prepared_statements` set, or point `SYNC__DBOS_URI` at PostgreSQL directly, or use `SYNC__ENGINE=postgres`.
+`max_prepared_statements` set, or point `SYNC__DBOS_URI` at PostgreSQL directly.
 
-### Read replica (`DB__READ_URI`)
+### One PostgreSQL
 
-A PDP can read the policy from a read replica of PostgreSQL, normally the one of its own region, so that a request never
-crosses a region. Set `DB__READ_URI` (asynchronous streaming replica; the primary stays `DB__URI`). The snapshot of the policy, the
-revision it follows, the type graph and the closure are read from the replica; the revision a process acts on is therefore the one of
-the data it has. Everything that writes (the admin API, the worker, the revision bump) uses the primary, and so does every read that
-must be current: the lever `consistency=higher`, and `min_revision` `R` when the replica has not reached `R` within `REVISION__WAIT_MAX`
-(such an answer is computed from the primary and not kept under the replica's revision). Use a client that passes `X-Authz-Revision`
-of its write as `context.licetum.min_revision` when it must see the write at once; otherwise a write is seen within the replication lag plus
-`REVISION__POLL_INTERVAL`.
+Every process reads the policy, the revision, the type graph and the closure from the one PostgreSQL named by `DB__URI`, and writes
+to it. A PDP does not route its reads to a standby: `DB__READ_URI` and the lag settings are gone (see the table of removed
+settings above), so a deployment has one region of PostgreSQL with the processes next to it; [`docs/deployment.md`](../docs/deployment.md)
+says how far that goes. A standby for availability is fine (Patroni, CloudNativePG, a managed service): the processes see only the
+primary's address, and after a promotion `licetum failover` raises the revisions.
 
-The process measures the lag every `DB__LAG_INTERVAL` (1 s): the larger of what the replica reports (`pg_last_xact_replay_timestamp`,
-zero when it has replayed everything it received) and how long its revision has been behind the primary's. It is
-`licetum_replica_lag_seconds` (also `licetum_replica_revision_lag` and `licetum_replica_lagging`). Above `DB__MAX_REPLICA_LAG`
-(10 s) `DB__LAG_ACTION` decides: `unready` (default) makes `/readyz` fail with the reason `replica_lag`, so that the balancer sends
-the traffic to another region, and the process recovers by itself; `primary` moves the reads to the primary until the replica has
-caught up. `POLICY__MAX_STALENESS` applies to the replica too: a replica more behind than that, with the reads on the replica, fails
-closed (503 `policy_unavailable`). The pool of the replica is the `read` pool in `licetum_db_pool_*`; size it like the request pool.
-
-The replica needs `wal_retrieve_retry_interval` of 1 s or less (the PostgreSQL default is 5 s). A standby whose link to the primary
-was cut asks for its stream again only that often once the link is back, and replays nothing until it does: a revocation written
-during the cut reaches the region up to that interval after the link returns, before its replay even starts. With the default that
-alone is the 5 s a revocation is meant to take in the region (F6-5, `admin-api/tests/multiregion`). A replica left at the default
-stays safe (the lag is measured, and `POLICY__MAX_STALENESS` fails it closed) but enforces a revocation later after an outage of the link.
+A client that must see a write it has just made passes the `X-Authz-Revision` of the write as `context.licetum.min_revision`: the
+PDP waits for its revision for up to `REVISION__WAIT_MAX`, then computes the answer from the data and does not keep it. Otherwise a write
+made through another process is seen within `REVISION__POLL_INTERVAL`.
 
 ### Migrations
 
@@ -234,22 +216,23 @@ self-service runs under another one. A migration must work with the previous rel
 ## Synchronization worker
 
 The resource sources are synchronized by a separate process: `licetum worker`. The PDP (`licetum pdp`) and the admin
-API only *ask* for a synchronization (a row in `sync_job`) and wait for it for a bounded time; they never write the resource
-graph. The state of the synchronization (`sync_state`: what was applied, when a type is due again, the backoff of a source that
-fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
+API only *ask* for a synchronization (a DBOS workflow, see below) and wait for it for a bounded time; they never write the
+resource graph. The state of the synchronization (`sync_state`: what was applied, when a type is due again, the backoff of a
+source that fails) is in PostgreSQL, so every process and every restart sees the same.
 
-- A job is claimed with `FOR UPDATE SKIP LOCKED` under a lease (`SYNC__LEASE`, 30 s) that the executor renews every lease/3. The
-  transaction that applies the result ends with an update of the job conditioned on the lease token: an executor that lost its
-  lease applies nothing (`licetum_sync_lease_lost_total`).
-- Requests for the same type, in any process, share one job (a unique index on its key); `consistency=higher` has its own job,
-  and the source of a type is asked by fresh jobs at most once per `SYNC__FRESH_MIN_INTERVAL` (1 s).
+- A job runs under a lease (`SYNC__LEASE`, 30 s): the worker writes a heartbeat every lease/3 and the others take over the jobs
+  of a worker whose heartbeat is older than the lease. The transaction that applies the result is fenced by the status of the
+  job: an executor that lost its lease applies nothing (`licetum_sync_lease_lost_total`).
+- Requests for the same type, in any process, share one job; a fresh job (the admin API's refresh of a source) has its own, and
+  the source of a type is asked by fresh jobs at most once per `SYNC__FRESH_MIN_INTERVAL` (1 s).
 - A request that needs the data of a type that was never synchronized waits `SYNC__REQUEST_WAIT` (5 s) for the job. When the
   time passes it answers from what exists — the type contributes no resources — and sets `X-Authz-Sync: pending`. The admin
   paths (resource lists, refresh) wait `SYNC__ADMIN_WAIT` (30 s). A type whose throttle (30 s) ran out is refreshed in the
   background; the request answers from the data as of the last synchronization.
-- A `consistency=higher` request that arrives while a fresh job of the type is already running shares it, so its source call may have started before the request: the source is asked once per `SYNC__FRESH_MIN_INTERVAL`, not once per request. A client that must see a write it has just made at the source asks again after the response (or waits the interval).
+- A fresh request that arrives while a fresh job of the type is already running shares it, so its source call may have started before the request: the source is asked once per `SYNC__FRESH_MIN_INTERVAL`, not once per request. An administrator who must see a write it has just made at the source refreshes again after the response (or waits the interval).
 - A source that does not answer is put in backoff for the whole cluster: `min(30 s · 2^attempts, 10 min)`; nobody asks it
-  until the backoff ends, and the data stays.
+  until the backoff ends (the admin API's inline read of a single resource included), and the data stays. A source's list is
+  not kept between synchronizations: each one asks the source.
 - Writing the graph takes an advisory lock per connected component of the type graph (so unrelated types do not wait for each
   other), with `lock_timeout` 5 s and `statement_timeout` `SYNC__STATEMENT_TIMEOUT` (120 s), on its own pool
   (`DB__SYNC_POOL_SIZE`). A job that cannot get the lock in time is queued again.
@@ -261,8 +244,9 @@ fails) is in PostgreSQL, so a Redis flush or failover starts nothing.
   fields): peak RSS of the worker 1.42 GiB, about 1.5 KB per resource. Documented limit: **2 GiB of memory for the worker per
   1 000 000 resources in its largest type** (the worker applies `SYNC__CONCURRENCY` types at once, so add up the largest types
   that can be applied together).
-- The database role of the PDP pods needs `SELECT` on everything, `INSERT`/`UPDATE` on `sync_job`, and no `INSERT`,
-  `UPDATE` or `DELETE` on `resource_cache`, `resource_edge`, `resource_ancestor` and `sync_state`.
+- The database role of the PDP pods needs `SELECT` on everything, `INSERT`/`UPDATE` on the DBOS tables (schema `SYNC__DBOS_SCHEMA`),
+  and no `INSERT`, `UPDATE` or `DELETE` on `resource_cache`, `resource_edge`, `resource_ancestor` and `sync_state`. The table
+  `sync_job` of the previous release stays in the schema, unused.
 
 Metrics: `licetum_sync_jobs{state}`, `licetum_sync_queue_age_seconds` (read from the database at every scrape, so it grows in
 the PDP and admin processes when every worker is down), `licetum_sync_job_seconds`, `licetum_sync_jobs_finished_total{state}`,
@@ -270,12 +254,12 @@ the PDP and admin processes when every worker is down), `licetum_sync_job_second
 
 ### The DBOS engine
 
-`SYNC__ENGINE=dbos` (the default; `postgres` selects the `sync_job` table) runs the same pipeline on [DBOS Transact](https://github.com/dbos-inc/dbos-transact-golang)
-instead of the `sync_job` table: a database-backed queue `licetum-sync`, a workflow `SyncType` per type, and the DBOS
+The synchronization runs on [DBOS Transact](https://github.com/dbos-inc/dbos-transact-golang), the only engine:
+a database-backed queue `licetum-sync`, a workflow `SyncType` per type, and the DBOS
 deduplication id ("return existing") as the shared job. The system tables are in the schema `SYNC__DBOS_SCHEMA` (default `dbos`)
 of the same database, created by the first worker; the PDP and admin processes talk to it through a DBOS client and answer
 from the existing data until it is ready. Fetch and apply are one step, so a checkpoint is a few dozen bytes whatever the size
-of the type. All workers must run the same `SYNC__ENGINE`.
+of the type.
 
 What the spike found, and what the engine does about it:
 
@@ -304,13 +288,13 @@ go test -race -tags integration ./tests/integration/...   # integration tests
 task go:coverage                                          # coverage reports in reports/ (both modules)
 ```
 
-Integration tests start disposable PostgreSQL and Redis containers with `testcontainers-go`, one isolated database per
+Integration tests start a disposable PostgreSQL container with `testcontainers-go`, one isolated database per
 test. Docker is needed only for them. The Taskfile uses the active Docker context; set `DOCKER_HOST` only when running
 `go test` directly against a non-default socket.
 
 Where Docker cannot create containers, point the tests at servers that are already running:
-`LICETUM_TEST_POSTGRES_URI` (an administrative connection string; every test gets its own database, dropped at the end)
-and `LICETUM_TEST_REDIS_URI`. No containers are started then.
+`LICETUM_TEST_POSTGRES_URI` (an administrative connection string; every test gets its own database, dropped at the end).
+No containers are started then.
 
 ## Linting
 
@@ -330,7 +314,7 @@ and `LICETUM_TEST_REDIS_URI`. No containers are started then.
 ## Layout
 
 ```
-cmd/licetum/       entry point: pdp / migrate / openapi subcommands, graceful shutdown
+cmd/licetum/       entry point: pdp / worker / migrate / failover / openapi subcommands, graceful shutdown
 cli/               the shared command code: configuration, migrations, serving, the OpenAPI printer
 config/            environment variables
 logx/              structured logs, their settings can change at run time
@@ -342,12 +326,12 @@ model/             request and response structs and their validation (the pydant
 engine/            business logic: permission computation (permission.go), decisions (decision.go), synchronization
 server/            HTTP on Huma v2: the PDP, documentation, localization, middleware
 schema/            the exported OpenAPI spec of the PDP
-tests/             unit and integration tests; testsupport/ starts the containers they use
+tests/             unit and integration tests; testsupport/ starts the PostgreSQL container they use
 ```
 
 Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/v5`,
-`golang-jwt/jwt/v5`, `go-jose/v4` (JWK parsing), `goose/v3`, `rs/cors`, `x/sync/singleflight`, `x/text/language`,
-`google/uuid`.
+`golang-jwt/jwt/v5`, `go-jose/v4` (JWK parsing), `goose/v3`, `dbos-transact-golang` (the synchronization engine),
+`prometheus/client_golang`, `rs/zerolog`, `x/sync/singleflight`, `x/text/language`, `google/uuid`.
 
 ## Describing the API
 

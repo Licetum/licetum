@@ -27,7 +27,7 @@ Start the complete development stack:
 task dev
 ```
 
-This starts PostgreSQL, Redis, Dex, the Go services (`core/`, `admin-api/`) and the Next.js interface (`web/`). Open
+This starts PostgreSQL, Dex, the Go services (`core/`, `admin-api/`) and the Next.js interface (`web/`). Open
 <http://localhost:3000> and sign in with the development account:
 
 - Email: `admin@example.com`
@@ -39,10 +39,10 @@ local Compose stack.
 
 ## Repository layout
 
-- `core/` — the MIT module: the engine, the check API, migrations, synchronizers and the check schema
+- `core/` — the MIT module: the engine, the PDP (the AuthZEN API), migrations, synchronizers and the PDP schema
 - `admin-api/` — the AGPL module: the admin API and the commands that go with it (depends on `core/`)
 - `web/` — the Next.js + Ant Design interface (see `web/README.md`)
-- `infra/` — Compose fragments for PostgreSQL, Redis, and Dex
+- `infra/` — Compose fragments for PostgreSQL and Dex
 - `core/schema/` and `admin-api/schema/` — committed OpenAPI schemas used to generate the API client of `web/`
 - `.github/workflows/ci.yml` — checks and tests run by GitHub Actions
 
@@ -83,7 +83,7 @@ after changing an API contract; the generated schemas in `core/schema/` and `adm
 that the code behind the build tags (`integration`, `chaos`, `multiregion`) compiles, module tidiness,
 OpenAPI schema drift, web formatting, TypeScript, and translations.
 
-Backend integration tests use disposable PostgreSQL and Redis containers:
+Backend integration tests use disposable PostgreSQL containers:
 
 ```bash
 task go:test:unit
@@ -92,7 +92,7 @@ task go:coverage
 ```
 
 Docker is required for integration and coverage runs. The suite creates disposable containers and
-its own database schema, so no shared PostgreSQL or Redis instance is needed. The integration and
+its own database schema, so no shared PostgreSQL instance is needed (a server named by `LICETUM_TEST_POSTGRES_URI` is used instead of a container when Docker is not available). The integration and
 coverage tasks resolve the active Docker context automatically; direct `go test` runs should set
 `DOCKER_HOST` when Docker Desktop or another non-default context is active.
 
@@ -100,8 +100,8 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 
 ### Backend and API changes
 
-- Keep the dependency direction: `api` → `service` → `db`/`synchronizer` → `model`/`config`/`i18n`/`apperr`.
-- Keep HTTP concerns in `admin-api/api/` and `core/server/`; business logic belongs in `admin-api/service/` (admin) or `core/engine/` (check).
+- Keep the dependency direction: `admin-api/api` → `admin-api/service` → `core/engine`, and in the core `server` → `engine` → `db`/`synchronizer` → `model`/`config`/`i18n`/`apperr` (depguard enforces it). No package imports a Redis client: there is no Redis, and `task go:deps:check` (part of `task check`) fails on `github.com/redis/go-redis`.
+- Keep HTTP concerns in `admin-api/api/` and `core/server/`; business logic belongs in `admin-api/service/` (admin) or `core/engine/` (decisions, synchronization).
 - Register new Huma operations with an `OperationID`, summary, description, tags, documented errors,
   and model field documentation.
 - Write API descriptions and user-facing API messages in English first.

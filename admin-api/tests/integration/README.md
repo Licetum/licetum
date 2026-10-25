@@ -1,4 +1,4 @@
-# Integration, multi-replica and fault injection tests
+# Integration, multi-PDP-replica and fault injection tests
 
 Tests that need PostgreSQL. They start a disposable container (Testcontainers; Docker is needed), or use the running
 server named by `LICETUM_TEST_POSTGRES_URI`.
@@ -17,7 +17,7 @@ task go:test:chaos         # tag chaos: chaos/ (slower, nightly in .github/workf
 task go:vet:tags           # no services: compiles and vets all the tagged code (integration, chaos, multiregion), with and without -race
 ```
 
-The chaos tests run only nightly, the multi-region environment is switched off until P7 (ADR 0001 §10.7), but `task go:vet:tags` is part of `task check` (`task go:lint`, the CI job
+The chaos tests run only nightly, the multi-region environment (`multiregion/`) is switched off and still describes a deployment that no longer exists (Redis, read replicas; it is rewritten with the regional deployment, ADR 0001 §10.7), but `task go:vet:tags` is part of `task check` (`task go:lint`, the CI job
 `go-lint`), so a change that stops them compiling fails the pull request. A new build tag goes into `GO_BUILD_TAGS` of `Taskfile.yaml`.
 
 ## The decision contracts (P1)
@@ -43,9 +43,9 @@ asked resources (`CoversOf`), the searches every resource (`coverNodes`): the cr
 
 | test | what it proves |
 |---|---|
-| `TestContract_DEC01_*` … `TestContract_DEC13_*` | the fixtures that name the contract get the answers they expect from the engine, and the searches and the older routes of each case agree with them; a fixture that names several contracts is loaded and asked once per test binary; a contract without a fixture is skipped |
-| `TestContract_DECP_*` | on the generated fixtures of the seeds (`LICETUM_DECP_SEEDS`, default 1-20) the engine answers like the reference evaluator, and the searches and the older routes of each case agree with the evaluations |
-| `TestRunner_*` | every field of the fixture format reaches the engine as the fixture means it (validity windows and the hour at the case's time included), `ReplaceRules` leaves nothing of the previous policy, and `Compare` and `Same` report each mismatch; each case is cross-checked and asked through the older routes too |
+| `TestContract_DEC01_*` … `TestContract_DEC13_*` | the fixtures that name the contract get the answers they expect from the engine, and the searches of each case agree with them; a fixture that names several contracts is loaded and asked once per test binary; a contract without a fixture is skipped |
+| `TestContract_DECP_*` | on the generated fixtures of the seeds (`LICETUM_DECP_SEEDS`, default 1-20) the engine answers like the reference evaluator, and the searches of each case agree with the evaluations |
+| `TestRunner_*` | every field of the fixture format reaches the engine as the fixture means it (validity windows and the hour at the case's time included), `ReplaceRules` leaves nothing of the previous policy, and `Compare` and `Same` report each mismatch; each case is cross-checked |
 | `TestCrossCheck*`, `TestSearchesFor*`, `TestEvaluationsOf*` | the cross-check reports a disagreement in either direction, a resource listed twice and a resource listed for a type without resources, and leaves out what the searches cannot answer; each search is asked once; a case is asked as one evaluations request that does not change the fixture |
 
 ## The harness
@@ -55,7 +55,7 @@ database pool and HTTP server, on one shared PostgreSQL schema, next to an
 admin API that sets the policy up, a fake identity provider (`support.IdP`) and a fake source of resources (`support.Source`).
 Tests of a package run one after another: they share the PostgreSQL server.
 
-Each replica has two listeners, as the PDP does: the public one (`Replica.Server`, the AuthZEN and legacy routes, and nothing else)
+Each replica has two listeners, as the PDP does: the public one (`Replica.Server`, the AuthZEN routes, and nothing else)
 and the ops one (`Replica.Ops`, `/healthz`, `/readyz` and `/metrics`). `Replica.Do` and `Replica.Metrics` send each path to the
 right one, so the tests that read `/readyz` or `/metrics` of a replica do not name the listener themselves.
 
@@ -112,7 +112,7 @@ a time (`-p 1`) when they share one PostgreSQL server (`LICETUM_TEST_POSTGRES_UR
 | test | what it proves |
 |---|---|
 | `cluster/f2_test.go` `TestF2_1`, `_2` | a write and its revision commit together (a failed write or batch leaves it, a batch is +1), and the revisions of 20 concurrent writers are strictly increasing without gaps |
-| `TestF2_3`, `_4`, `_5` | `at_least_as_fresh` gives read-your-writes on every replica (100 iterations); an answer for a revision the replica cannot confirm is computed from the data and not kept; a deny rule reaches every replica within a second without any revision asked for |
+| `TestF2_3`, `_4`, `_5` | `context.licetum.min_revision` gives read-your-writes on every replica (100 iterations); an answer for a revision the replica cannot confirm is computed from the data and not kept; a deny rule reaches every replica within a second without any revision asked for |
 | `TestF2_6` | 50 synchronizations of service A leave every answer of service B a hit, while A's follow its data |
 | `TestF2_10` | the poller costs 4 statements a second at rest |
 | `chaos/f2_test.go` `TestF2_7` | a revision bump under 1 500 hot keys at 600 rps: no failure, the pool never over its size |

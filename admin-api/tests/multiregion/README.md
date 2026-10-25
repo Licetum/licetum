@@ -1,5 +1,11 @@
 # Multi-region test environment (F6, tier R)
 
+> **Switched off.** The nightly workflow does not run this environment (`if: false` in `nightly-suite.yml`) and the files below are
+> not kept up to date: they still describe a deployment that no longer exists — a Redis in each region, read replicas read by the
+> PDP (`DB__READ_URI`, `DB__MAX_REPLICA_LAG`), `WORKER__REGION` and the table synchronization engine. All of them were removed from
+> the product. The environment is rewritten with the regional deployment (ADR 0001, §10.7); until then only `task go:vet:tags`
+> keeps it compiling. Nothing here describes how to deploy Licetum: see [`docs/deployment.md`](../../../docs/deployment.md).
+
 Three "regions" on one machine, with the latency of the links between them:
 
 ```
@@ -52,7 +58,7 @@ and takes the stack down. Environment of the scenarios:
 | `TestF6_9_*` | region C is stopped under the load; the others take its traffic |
 
 F6-10 (a cell opens no connection outside itself) is `cluster/f6_cell_test.go` and the network policy of the chart
-(`deploy/helm/test.sh`); F6-11 (failover) is `cluster/f6_test.go` `TestF6_11_*` and the runbook in `docs/deployment.md`.
+(`deploy/helm/test.sh`); F6-11 (failover) is `cluster/failover_test.go` `TestF6_11_*` and the runbook in `docs/deployment.md`.
 
 The same scenarios run in the nightly workflow `.github/workflows/multiregion.yml` (and on demand). They were written without a Docker daemon at hand: they compile
 (`go vet -tags multiregion`) and `docker compose config` accepts the stack, but the first run on a machine with Docker may need adjustments.

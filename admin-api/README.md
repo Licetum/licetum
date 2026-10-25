@@ -13,7 +13,7 @@ under the GNU Affero General Public License v3.0 only (see [`LICENSE`](LICENSE))
 |---|---|
 | `licetum-admin admin` | the admin API (default `:8000`) |
 | `licetum-admin restore-admin [-user name]...` | puts the access of the platform administrators back (see [Locked out](#locked-out)) |
-| `licetum-admin openapi admin [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server, database or Redis |
+| `licetum-admin openapi admin [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server or a database |
 
 The database schema is migrated by the core binary: run `licetum migrate` from [`../core`](../core/README.md) first.
 
@@ -23,7 +23,6 @@ The database schema is migrated by the core binary: run `licetum migrate` from [
 cd core && go run ./cmd/licetum migrate        # the schema and the platform self-service
 cd ../admin-api
 export DB__URI=postgresql://authz:authz@localhost:5432/authz_db
-export REDIS__URI=redis://localhost:6379/0
 export ADMIN_AUTH__ISSUER=http://localhost:5556/dex ADMIN_AUTH__AUDIENCE=licetum-local ADMIN_AUTH__JWKS_URL=http://localhost:5556/dex/keys
 go run ./cmd/licetum-admin admin
 ```
@@ -163,7 +162,7 @@ The results go to `reports/loadtest/`: `summary.md` (the table of the steps and 
 the k6 summaries and logs, and `check.log`. The API key of the run is written, with the script, to a temporary directory and
 removed when the run ends.
 
-Docker runs PostgreSQL and Redis; a server named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI` is used
+Docker runs PostgreSQL; a server named by `LICETUM_TEST_POSTGRES_URI` is used
 instead. The containers preload `pg_stat_statements`; an external server needs it in `shared_preload_libraries` for the
 statement figures. The PDP's pool is `-db-pool` connections (30 by default, with no overflow, so the pool is
 the setting under test); a pool smaller than the traffic makes the requests wait for a connection, which shows as a tail of slow answers.

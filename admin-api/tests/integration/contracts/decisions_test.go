@@ -70,7 +70,7 @@ func TestContract_DEC13_ExplanationsNameTheRules(t *testing.T) {
 }
 
 // runContract asks the questions of every fixture that checks the contract and reports each answer that differs from the
-// expectation, and each question on which the searches, or the older routes of the check API, disagree with the
+// expectation, and each question on which the searches disagree with the
 // evaluations. A contract no fixture checks yet is skipped: its table is still being written.
 func runContract(t *testing.T, contract string) {
 	fixtures, err := policyfix.Decisions()
