@@ -16,18 +16,17 @@ import (
 	support "github.com/licetum/licetum/core/testsupport"
 )
 
-// env is the process side of a run: the database and the cache the harness seeds through the admin application. The
-// traffic needs nothing else from the process: it asks as a PEP client with an API key the seeding issues (seed.go).
+// env is the process side of a run: the database the harness seeds through the admin application. The traffic needs
+// nothing else from the process: it asks as a PEP client with an API key the seeding issues (seed.go).
 type env struct {
-	pool     *pgxpool.Pool
-	app      *engine.App
-	admin    *adminsvc.App
-	dbURI    string
-	redisURI string
-	// checkDBURI and checkRedisURI are what the check servers connect to: the same servers, or, when the run adds latency,
-	// the Toxiproxy links in front of them. The harness itself (seeding, the admin writes) always goes direct.
-	checkDBURI, checkRedisURI string
-	// links are the proxies in front of PostgreSQL and Redis (nil without added latency).
+	pool  *pgxpool.Pool
+	app   *engine.App
+	admin *adminsvc.App
+	dbURI string
+	// checkDBURI is what the check servers connect to: the same server, or, when the run adds latency, the Toxiproxy link
+	// in front of it. The harness itself (seeding, the admin writes) always goes direct.
+	checkDBURI string
+	// links are the proxies in front of PostgreSQL (nil without added latency).
 	links   []*support.Link
 	closers []func() error
 }
@@ -35,11 +34,9 @@ type env struct {
 // newEnv connects to the infrastructure the same way the binaries do (config from the environment, migrations, the
 // engine), so the seeding goes through the same code the admin API runs.
 func newEnv(ctx context.Context, infra *support.Infrastructure) (*env, error) {
-	e := &env{dbURI: infra.DBURI, redisURI: infra.RedisURI, checkDBURI: infra.DBURI, checkRedisURI: infra.RedisURI}
-	for name, value := range map[string]string{"DB__URI": e.dbURI, "REDIS__URI": e.redisURI} {
-		if err := os.Setenv(name, value); err != nil {
-			return nil, fmt.Errorf("set %s: %w", name, err)
-		}
+	e := &env{dbURI: infra.DBURI, checkDBURI: infra.DBURI}
+	if err := os.Setenv("DB__URI", e.dbURI); err != nil {
+		return nil, fmt.Errorf("set DB__URI: %w", err)
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -69,31 +66,25 @@ func newEnv(ctx context.Context, infra *support.Infrastructure) (*env, error) {
 	return e, nil
 }
 
-// insertLinks puts a Toxiproxy link in front of PostgreSQL and in front of Redis for the check servers. The links add no
-// latency yet (see addLatency): the warm-up runs on the plain link, since the first synchronization is not what is measured.
+// insertLinks puts a Toxiproxy link in front of PostgreSQL for the check servers. The link adds no latency yet (see
+// addLatency): the warm-up runs on the plain link, since the first synchronization is not what is measured.
 func (e *env) insertLinks() error {
-	for _, l := range []struct {
-		name string
-		uri  *string
-		to   string
-	}{{"postgres", &e.checkDBURI, e.dbURI}, {"redis", &e.checkRedisURI, e.redisURI}} {
-		u, err := url.Parse(db.NormalizeDSN(l.to))
-		if err != nil {
-			return fmt.Errorf("parse the %s address: %w", l.name, err)
-		}
-		link, err := support.StartLink(l.name, u.Host)
-		if err != nil {
-			return fmt.Errorf("start the %s link: %w", l.name, err)
-		}
-		e.links = append(e.links, link)
-		if *l.uri, err = link.Rewrite(l.to); err != nil {
-			return err
-		}
+	u, err := url.Parse(db.NormalizeDSN(e.dbURI))
+	if err != nil {
+		return fmt.Errorf("parse the postgres address: %w", err)
+	}
+	link, err := support.StartLink("postgres", u.Host)
+	if err != nil {
+		return fmt.Errorf("start the postgres link: %w", err)
+	}
+	e.links = append(e.links, link)
+	if e.checkDBURI, err = link.Rewrite(e.dbURI); err != nil {
+		return err
 	}
 	return nil
 }
 
-// addLatency makes every round trip to PostgreSQL and to Redis take rtt longer: half of it in each direction.
+// addLatency makes every round trip to PostgreSQL take rtt longer: half of it in each direction.
 func (e *env) addLatency(rtt time.Duration) error {
 	for _, l := range e.links {
 		if err := l.SetLatency(rtt/2, 0); err != nil {

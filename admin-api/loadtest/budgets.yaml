@@ -1,12 +1,12 @@
 # Budgets of the check API load test (admin-api/loadtest), see notebook/README.md.
 #
-# One entry per profile, mode and latency added to PostgreSQL and Redis. A nightly run is compared with its entry by
+# One entry per profile, mode and latency added to PostgreSQL. A nightly run is compared with its entry by
 # `licetum-loadtest budget`; a figure more than `tolerance` on the wrong side fails the workflow (a latency also gets
 # `latency_slack_ms` on top: a few milliseconds are jitter on a shared runner):
 #   rps                 the sustained rate (the highest ramp step that met its objectives): a floor
 #   reference_rps       the step the other figures belong to (the sustained step of the baseline)
 #   p50_ms, p99_ms      latency of all the requests of that step: ceilings (p99 0: the step had too few samples)
-#   db_queries_per_request, redis_round_trips_per_request   counted by the server: ceilings
+#   db_queries_per_request   counted by the server: a ceiling
 # The figures come from the baseline of block F0 and are set again, on purpose, when a block improves them
 # (`licetum-loadtest budget -calibrate`). A run that is better than its budget by more than the tolerance does not
 # fail; its report asks for the budget to be set again.
@@ -36,7 +36,6 @@ budgets:
       p50_ms: 932.7
       p99_ms: 0
       db_queries_per_request: 15.42
-      redis_round_trips_per_request: 5.65
       note: 'rps, queries and round trips: lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate, commits b7859306 and 5abcc757 (loadtest/notebook/results); p50 at 8 requests/s: nightly run 39121082518, 8882ff5c'
     - profile: medium
       mode: cold
@@ -46,7 +45,6 @@ budgets:
       p50_ms: 2531.0
       p99_ms: 0
       db_queries_per_request: 15.23
-      redis_round_trips_per_request: 5.19
       note: 'rps, queries and round trips: lowest sustained rate of two baseline runs on ubuntu-latest (4 vCPU), highest costs at that rate, commits b7859306 and 5abcc757 (loadtest/notebook/results); p50 at 4 requests/s: nightly run 39121082518, 8882ff5c'
     - profile: medium
       mode: mix
@@ -56,7 +54,6 @@ budgets:
       p50_ms: 7.48
       p99_ms: 0
       db_queries_per_request: 6.28
-      redis_round_trips_per_request: 2.42
       note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
     - profile: medium
       mode: mix
@@ -66,7 +63,6 @@ budgets:
       p50_ms: 512.73
       p99_ms: 0
       db_queries_per_request: 5.88
-      redis_round_trips_per_request: 0.02
       note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
     - profile: medium
       mode: warm
@@ -76,7 +72,6 @@ budgets:
       p50_ms: 0.6
       p99_ms: 30.89
       db_queries_per_request: 1.66
-      redis_round_trips_per_request: 0.51
       note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'
     - profile: medium
       mode: warm
@@ -86,5 +81,4 @@ budgets:
       p50_ms: 0.42
       p99_ms: 0
       db_queries_per_request: 1.95
-      redis_round_trips_per_request: 0
       note: 'calibrated from the AuthZEN baseline, run 39168508123 at 76384f7c (ubuntu-latest, 4 vCPU): the sustained step and its costs, budget -calibrate'

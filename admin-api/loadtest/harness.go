@@ -40,37 +40,34 @@ const (
 
 // Options are the settings of a run.
 type Options struct {
-	Profile       Profile
-	CheckBin      string        // the licetum binary that serves the check API
-	K6Bin         string        // the k6 binary that sends the traffic
-	OutDir        string        // where the results, the environment, the time series and the k6 logs are written
-	Mode          string        // warm (the caches answer), cold (the evaluations ask what none asked before; a search repeats per subject) or mix (a skewed traffic)
-	Seed          int64         // the seed of the choices of the traffic and of the oracle
-	Mix           Mix           // the share of each request
-	Rate          float64       // arrivals per second of a fixed-rate run
-	Ramp          bool          // ramp the rate instead: start at RateStart, multiply by RateFactor, up to MaxSteps
-	RateStart     float64       // the first rate of a ramp
-	RateFactor    float64       // the rate of the next step is this many times the last one
-	MaxSteps      int           // the ramp ends after this many steps
-	Warm          time.Duration // the warm-up window, outside the measurement (at least the TTL of the caches)
-	Measure       time.Duration // the measured window (each step of a ramp)
-	SLOP99        time.Duration // a ramp step passes while p99 stays within it
-	MaxErrorRate  float64       // and the share of responses that are not 2xx stays within it
-	Concurrency   int           // the most virtual users k6 uses: the requests in flight
-	DBPool        int           // the most connections of the check server to PostgreSQL
-	AccessLog     bool          // whether the check server writes its access log (off: the decisions are measured, not the logs)
-	OracleRate    float64       // the answers per second the oracle checks against the expected decisions
-	K6CPUs        string        // the CPUs k6 is pinned to (taskset), empty for none
-	CheckCPUs     string        // the CPUs the check server is pinned to, empty for none
-	Replicas      int           // check servers sharing the database and the cache (the load is spread over them)
-	RawPoints     bool          // keep the points of every request (for the measurements that need timing per second)
-	WritesEvery   time.Duration // an admin write every this long during the measured window (0 for none)
-	ChaosRedisAt  time.Duration // the Redis container is paused this long into the measured window (0 for none)
-	ChaosRedisFor time.Duration // for this long
-	ChaosRedis    string        // the Redis container of the local test stack
-	RequireRate   float64       // a ramp run fails when the sustained rate is below it
-	// AddedLatency is added to every round trip from the check servers to PostgreSQL and to Redis (through Toxiproxy),
-	// from the end of the warm-up on: half in each direction. 0 puts nothing in the way.
+	Profile      Profile
+	CheckBin     string        // the licetum binary that serves the check API
+	K6Bin        string        // the k6 binary that sends the traffic
+	OutDir       string        // where the results, the environment, the time series and the k6 logs are written
+	Mode         string        // warm (the caches answer), cold (the evaluations ask what none asked before; a search repeats per subject) or mix (a skewed traffic)
+	Seed         int64         // the seed of the choices of the traffic and of the oracle
+	Mix          Mix           // the share of each request
+	Rate         float64       // arrivals per second of a fixed-rate run
+	Ramp         bool          // ramp the rate instead: start at RateStart, multiply by RateFactor, up to MaxSteps
+	RateStart    float64       // the first rate of a ramp
+	RateFactor   float64       // the rate of the next step is this many times the last one
+	MaxSteps     int           // the ramp ends after this many steps
+	Warm         time.Duration // the warm-up window, outside the measurement (at least the TTL of the caches)
+	Measure      time.Duration // the measured window (each step of a ramp)
+	SLOP99       time.Duration // a ramp step passes while p99 stays within it
+	MaxErrorRate float64       // and the share of responses that are not 2xx stays within it
+	Concurrency  int           // the most virtual users k6 uses: the requests in flight
+	DBPool       int           // the most connections of the check server to PostgreSQL
+	AccessLog    bool          // whether the check server writes its access log (off: the decisions are measured, not the logs)
+	OracleRate   float64       // the answers per second the oracle checks against the expected decisions
+	K6CPUs       string        // the CPUs k6 is pinned to (taskset), empty for none
+	CheckCPUs    string        // the CPUs the check server is pinned to, empty for none
+	Replicas     int           // check servers sharing the database (the load is spread over them)
+	RawPoints    bool          // keep the points of every request (for the measurements that need timing per second)
+	WritesEvery  time.Duration // an admin write every this long during the measured window (0 for none)
+	RequireRate  float64       // a ramp run fails when the sustained rate is below it
+	// AddedLatency is added to every round trip from the check servers to PostgreSQL (through Toxiproxy), from the end of
+	// the warm-up on: half in each direction. 0 puts nothing in the way.
 	AddedLatency time.Duration
 	// RampThrough keeps the ramp climbing after a step fails, up to MaxSteps, so the report also shows what the server does
 	// above its limit (the baseline asks for at least 600 requests/s measured, whether or not they are sustained). The
@@ -101,7 +98,6 @@ func DefaultOptions() Options {
 		DBPool:       30,
 		OracleRate:   5,
 		Replicas:     1,
-		ChaosRedis:   "lt-redis",
 	}
 }
 
@@ -190,7 +186,6 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			ExtraSQL:       "",
 			RawPointsKept:  opts.RawPoints,
 			Replicas:       max(opts.Replicas, 1),
-			PauseRedisSecs: opts.ChaosRedisFor.Seconds(),
 			AddedLatencyMS: ms(opts.AddedLatency),
 			RampThrough:    opts.RampThrough,
 		},
@@ -200,7 +195,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	// The server preloads pg_stat_statements, so the time of each statement is known; an external server may not.
 	infra, err := support.StartWith(ctx, testcontainers.WithCmdArgs("-c", "shared_preload_libraries=pg_stat_statements"))
 	if err != nil {
-		return nil, fmt.Errorf("start postgres and redis (Docker, or LICETUM_TEST_POSTGRES_URI): %w", err)
+		return nil, fmt.Errorf("start postgres (Docker, or LICETUM_TEST_POSTGRES_URI): %w", err)
 	}
 	defer func() {
 		if os.Getenv(keepDatabaseEnv) != "" {
@@ -278,7 +273,7 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 		if err := e.addLatency(opts.AddedLatency); err != nil {
 			return finishRun(ctx, rep, e, opts, err, nil)
 		}
-		slog.Info("added latency to PostgreSQL and Redis", "round_trip", opts.AddedLatency)
+		slog.Info("added latency to PostgreSQL", "round_trip", opts.AddedLatency)
 	}
 	if err := applyExtraSQL(ctx, e, &rep.Settings); err != nil {
 		return finishRun(ctx, rep, e, opts, err, nil)
@@ -383,7 +378,7 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 		maxVUs:   m.opts.Concurrency,
 		base:     m.check.base,
 		bases:    m.bases,
-		rawEvery: (m.opts.RawPoints || m.opts.WritesEvery > 0 || m.opts.ChaosRedisFor > 0) && measured,
+		rawEvery: (m.opts.RawPoints || m.opts.WritesEvery > 0) && measured,
 	}
 	if !measured {
 		_, err := m.runner.run(ctx, w)
@@ -426,25 +421,9 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 		close(writesDone)
 	}
 
-	var chaos ChaosEvent
-	chaosDone := make(chan struct{})
-	if m.opts.ChaosRedisFor > 0 && measured {
-		go func() {
-			defer close(chaosDone)
-			ev, err := injectRedisPause(ctx, m.opts.ChaosRedis, m.opts.ChaosRedisAt, m.opts.ChaosRedisFor)
-			if err != nil {
-				slog.Warn("inject the fault", "error", err)
-			}
-			chaos = ev
-		}()
-	} else {
-		close(chaosDone)
-	}
-
 	res, runErr := m.runner.run(ctx, w)
 	close(stopWrites)
 	<-writesDone
-	<-chaosDone
 	close(stopOracle)
 	oracle := <-oracleDone
 	stopSampler()
@@ -465,16 +444,6 @@ func (m measurer) window(ctx context.Context, name string, rate float64, length 
 
 	meas := measurementFrom(res, w, cpuCores(m.opts.K6CPUs))
 	meas.Oracle = oracle
-	if m.opts.ChaosRedisFor > 0 && measured {
-		meas.Chaos = []ChaosEvent{chaos}
-		if points, err := readRequestPoints(filepath.Join(m.outDir, name+".points.json.gz")); err == nil {
-			effect := chaosEffect(points, chaos)
-			meas.ChaosEffect = &effect
-		}
-		if err := writeChaos(m.outDir, name, meas.Chaos); err != nil {
-			slog.Warn("write the fault log", "error", err)
-		}
-	}
 	if wr != nil {
 		meas.Writes = wr.recorded
 		meas.WriteInterval = m.opts.WritesEvery.Seconds()

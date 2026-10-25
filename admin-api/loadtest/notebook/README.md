@@ -14,7 +14,7 @@ notebook shows the machine each run came from. To get the same charts for your o
 | `licetum-loadtest.ipynb` | the charts; reads the directory named by `LICETUM_RESULTS` |
 | `requirements.txt` | the Python packages the notebook needs |
 | `results/` | the runs the notebook is built from: `result.json` and `environment.json` per run (see below) |
-| [`../compose.yml`](../compose.yml) | PostgreSQL 16 and Redis 7 for the runs, on the loopback interface |
+| [`../compose.yml`](../compose.yml) | PostgreSQL 16 for the runs, on the loopback interface |
 | [`../scripts/baseline.sh`](../scripts/baseline.sh) | the campaign: five runs per mode, a ramp, and the aggregate report |
 
 ## Published results (preliminary)
@@ -31,7 +31,7 @@ notebook shows the machine each run came from. To get the same charts for your o
 
 - `baseline-b7859306/` and `baseline-5abcc757/`: the baseline of block F0 of the production-load plan (#32), the medium
   profile (100k resources) on a GitHub-hosted `ubuntu-latest` runner (4 vCPUs shared by the load generator, the server,
-  PostgreSQL and Redis), before any block changes the engine. Per run (`medium-<mode>-<added latency>/`): `warm`, `cold` and
+  PostgreSQL and Redis, which the product used then), before any block changes the engine. Per run (`medium-<mode>-<added latency>/`): `warm`, `cold` and
   `mix`, each with no added latency and with 100 ms added to every round trip to PostgreSQL and Redis; a ramp from 2 to 1024
   or from 10 to 640 requests/s with 90-second windows, going on after a failed step (`-ramp-through`). The table of the
   steps of any run is `licetum-loadtest budget -steps DIR`; the issue #32 has the summary. `budgets.yaml` is made from the
@@ -47,7 +47,7 @@ valid windows on one laptop are not enough for an article's numbers.
 - **Linux** with `taskset`, to pin the load generator and the check server to their own CPUs. Without it, set
   `K6_CPUS=` and `CHECK_CPUS=` to empty; the runs are then not pinned, and `environment.json` says so.
 - **Go** as in `admin-api/go.mod` (1.26).
-- **Docker** with Compose v2, for the PostgreSQL and Redis containers.
+- **Docker** with Compose v2, for the PostgreSQL container.
 - **k6** v2 (the version is recorded in `environment.json`). See
   [the k6 installation guide](https://grafana.com/docs/k6/latest/set-up/install-k6/).
 - **Python 3.11** or newer, for the notebook.
@@ -55,12 +55,11 @@ valid windows on one laptop are not enough for an article's numbers.
 Give the machine nothing else to do while a campaign runs. A browser, an IDE that indexes, or a virtual machine on the
 same cores moves the numbers, and the harness does not see them (see [Limitations](#limitations)).
 
-## 2. Start PostgreSQL and Redis
+## 2. Start PostgreSQL
 
 ```sh
 docker compose -f admin-api/loadtest/compose.yml up -d
 export LICETUM_TEST_POSTGRES_URI="postgres://licetum:licetum@127.0.0.1:55432/postgres?sslmode=disable"
-export LICETUM_TEST_REDIS_URI="redis://127.0.0.1:56379/0"
 ```
 
 The compose file sets the PostgreSQL password to `licetum` unless `LT_PG_PASSWORD` is set; if you set it, put the same
@@ -104,21 +103,21 @@ The campaign runs, for the `smoke` profile at its default settings:
 - one ramp from 50 requests/s, doubling each two-minute step, until a step misses its objectives;
 - the aggregate report (`reports/mine/smoke-report.md`).
 
-Every run starts on a fresh stack: the script restarts the `lt-pg` and `lt-redis` containers, so the buffer cache and
-Redis are empty, and then seeds the policy again. On the test host the campaign takes about three hours. Set
+Every run starts on a fresh stack: the script restarts the `lt-pg` container, so the buffer cache
+is empty, and then seeds the policy again. On the test host the campaign takes about three hours. Set
 `MEASURE=120s` for a first pass: it takes about an hour, the ramp included.
 
 Use the same CPU lists, the same profile and the same settings for every run you compare.
 
 ## 4a. Added latency, per-request counts and budgets
 
-- `-added-latency 100ms` puts Toxiproxy in front of PostgreSQL and Redis for the check servers and adds 100 ms to every
+- `-added-latency 100ms` puts Toxiproxy in front of PostgreSQL for the check servers and adds 100 ms to every
   round trip (50 ms in each direction) from the end of the warm-up. The seeding and the warm-up run on the plain link.
   The setting is in `result.json` (`settings.added_latency_ms`).
-- Each window reports what the server did per API request it served: database queries and Redis round trips, counted by
-  the server itself (`licetum_db_queries_total`, `licetum_redis_ops_total`), background work included.
+- Each window reports what the server did per API request it served: database queries, counted by
+  the server itself (`licetum_db_queries_total`), background work included.
 - `budgets.yaml` holds, per profile, mode and added latency, the sustained rate (a floor), the p50 and p99 and the queries
-  and round trips per request (ceilings), taken at the step the baseline sustained. `licetum-loadtest budget DIR...`
+  per request (ceilings), taken at the step the baseline sustained. `licetum-loadtest budget DIR...`
   compares runs with it and fails when a figure is more than 15 % on the wrong side; a figure better by more than 15 % does
   not fail, it asks for the budget to be set again. `budget -calibrate -out loadtest/budgets.yaml DIR...` writes budgets from
   runs. The budgets are those of the runner they were made on: the nightly workflow `loadtest.yml` runs on

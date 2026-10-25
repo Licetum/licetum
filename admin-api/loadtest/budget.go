@@ -15,7 +15,7 @@ import (
 // (see notebook/README.md).
 const DefaultTolerance = 0.15
 
-// Budget is what a configuration of the load test (a profile, a mode, a latency added to PostgreSQL and Redis) is
+// Budget is what a configuration of the load test (a profile, a mode, a latency added to PostgreSQL) is
 // allowed to cost, calibrated from a baseline run. A run is compared with it at ReferenceRPS, the highest ramp step the
 // baseline sustained: the latencies and the per-request counts are those of that step, so the comparison is at the same
 // load. A zero P99MS is not judged (the step had too few samples for a p99, see MinSamples).
@@ -28,10 +28,9 @@ type Budget struct {
 	// ReferenceRPS is the step the other figures belong to.
 	ReferenceRPS float64 `yaml:"reference_rps"`
 	// These are ceilings: a run above value*(1+tolerance) fails.
-	P50MS                     float64 `yaml:"p50_ms"`
-	P99MS                     float64 `yaml:"p99_ms"`
-	DBQueriesPerRequest       float64 `yaml:"db_queries_per_request"`
-	RedisRoundTripsPerRequest float64 `yaml:"redis_round_trips_per_request"`
+	P50MS               float64 `yaml:"p50_ms"`
+	P99MS               float64 `yaml:"p99_ms"`
+	DBQueriesPerRequest float64 `yaml:"db_queries_per_request"`
 	// Note says where the figures come from (the commit and the machine of the baseline).
 	Note string `yaml:"note,omitempty"`
 }
@@ -152,8 +151,8 @@ func CalibrateRuns(reps []Report, note string) (Budget, error) {
 		b := Budget{
 			Profile: rep.Settings.ProfileName, Mode: rep.Settings.Mode, AddedLatencyMS: rep.Settings.AddedLatencyMS,
 			RPS: rate, ReferenceRPS: step.RateAsked, P50MS: round2(step.Overall.P50),
-			DBQueriesPerRequest: round2(step.Server.DBQueriesPerRequest), RedisRoundTripsPerRequest: round2(step.Server.RedisRoundTripsPerRequest),
-			Note: note,
+			DBQueriesPerRequest: round2(step.Server.DBQueriesPerRequest),
+			Note:                note,
 		}
 		if p99, published := step.Overall.Quantile(0.99, step.Overall.P99); published {
 			b.P99MS = round2(p99)
@@ -166,7 +165,6 @@ func CalibrateRuns(reps []Report, note string) (Budget, error) {
 		}
 		out.P50MS = max(out.P50MS, b.P50MS)
 		out.DBQueriesPerRequest = max(out.DBQueriesPerRequest, b.DBQueriesPerRequest)
-		out.RedisRoundTripsPerRequest = max(out.RedisRoundTripsPerRequest, b.RedisRoundTripsPerRequest)
 		if out.P99MS < 0 || b.P99MS < 0 {
 			out.P99MS = -1
 		} else {
@@ -276,7 +274,6 @@ func CheckBudgets(budgets Budgets, runs map[string]Report) (findings []Finding, 
 			add(Finding{Figure: "p99 ms", Budget: budget.P99MS, Verdict: "skipped", Detail: fmt.Sprintf("%d samples, a p99 needs %d", step.Overall.Samples, MinSamples(0.99))})
 		}
 		ceiling("db queries per request", budget.DBQueriesPerRequest, step.Server.DBQueriesPerRequest, 0)
-		ceiling("redis round trips per request", budget.RedisRoundTripsPerRequest, step.Server.RedisRoundTripsPerRequest, 0)
 	}
 	return findings, ok
 }
@@ -321,13 +318,13 @@ func BudgetsYAML(budgets Budgets) ([]byte, error) {
 	}
 	header := "# Budgets of the check API load test (admin-api/loadtest), see notebook/README.md.\n" +
 		"#\n" +
-		"# One entry per profile, mode and latency added to PostgreSQL and Redis. A nightly run is compared with its entry by\n" +
+		"# One entry per profile, mode and latency added to PostgreSQL. A nightly run is compared with its entry by\n" +
 		"# `licetum-loadtest budget`; a figure more than `tolerance` on the wrong side fails the workflow (a latency also gets\n" +
 		"# `latency_slack_ms` on top: a few milliseconds are jitter on a shared runner):\n" +
 		"#   rps                 the sustained rate (the highest ramp step that met its objectives): a floor\n" +
 		"#   reference_rps       the step the other figures belong to (the sustained step of the baseline)\n" +
 		"#   p50_ms, p99_ms      latency of all the requests of that step: ceilings (p99 0: the step had too few samples)\n" +
-		"#   db_queries_per_request, redis_round_trips_per_request   counted by the server: ceilings\n" +
+		"#   db_queries_per_request   counted by the server: a ceiling\n" +
 		"# The figures come from the baseline of block F0 and are set again, on purpose, when a block improves them\n" +
 		"# (`licetum-loadtest budget -calibrate`). A run that is better than its budget by more than the tolerance does not\n" +
 		"# fail; its report asks for the budget to be set again.\n"
@@ -339,8 +336,8 @@ func BudgetsYAML(budgets Budgets) ([]byte, error) {
 func StepsMarkdown(rep Report) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "#### %s, sustained %.0f requests/s\n\n", runName(rep), rep.SustainedRPS)
-	b.WriteString("| asked rps | answered rps | valid | step | p50 ms | p99 ms | errors | dropped | db queries / request | Redis round trips / request | oracle wrong / unanswered |\n")
-	b.WriteString("|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---|\n")
+	b.WriteString("| asked rps | answered rps | valid | step | p50 ms | p99 ms | errors | dropped | db queries / request | oracle wrong / unanswered |\n")
+	b.WriteString("|---:|---:|---|---|---:|---:|---:|---:|---:|---|\n")
 	for _, m := range rep.Measurements {
 		p99 := "–"
 		if v, ok := m.Overall.Quantile(0.99, m.Overall.P99); ok {
@@ -350,8 +347,8 @@ func StepsMarkdown(rep Report) string {
 		if !m.passes() {
 			verdict = "fail"
 		}
-		fmt.Fprintf(&b, "| %.0f | %.1f | %t | %s | %.1f | %s | %.2f%% | %d | %s | %s | %d / %d |\n", m.RateAsked, m.AchievedRPS, m.Valid, verdict,
-			m.Overall.P50, p99, 100*m.ErrorRate, m.Dropped, num2(m.Server.DBQueriesPerRequest), num2(m.Server.RedisRoundTripsPerRequest), m.Oracle.Mismatches, m.Oracle.Unanswered)
+		fmt.Fprintf(&b, "| %.0f | %.1f | %t | %s | %.1f | %s | %.2f%% | %d | %s | %d / %d |\n", m.RateAsked, m.AchievedRPS, m.Valid, verdict,
+			m.Overall.P50, p99, 100*m.ErrorRate, m.Dropped, num2(m.Server.DBQueriesPerRequest), m.Oracle.Mismatches, m.Oracle.Unanswered)
 	}
 	return b.String()
 }

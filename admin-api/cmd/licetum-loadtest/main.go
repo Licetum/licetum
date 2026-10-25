@@ -10,8 +10,8 @@
 // traffic at the rate, the harness reads the server's counters around each window, and an oracle checks sampled answers
 // against the decisions the generated policy must give. The results go to -out: environment.json, result.json,
 // summary.md, the time series of the server, the k6 summaries and logs. The admin API takes no load: it writes the
-// policy once. Docker is needed for PostgreSQL and Redis, unless LICETUM_TEST_POSTGRES_URI and LICETUM_TEST_REDIS_URI
-// name running servers, and k6 must be installed (or named by -k6-bin).
+// policy once. Docker is needed for PostgreSQL, unless LICETUM_TEST_POSTGRES_URI names a
+// running server, and k6 must be installed (or named by -k6-bin).
 package main
 
 import (
@@ -85,9 +85,7 @@ func runCommand(args []string) error {
 	fs.StringVar(&opts.K6CPUs, "k6-cpus", opts.K6CPUs, "the CPUs k6 is pinned to, as taskset lists them (e.g. 10-11); empty for none")
 	fs.StringVar(&opts.CheckCPUs, "check-cpus", opts.CheckCPUs, "the CPUs the check server is pinned to (e.g. 0-7); empty for none")
 	fs.BoolVar(&opts.RawPoints, "raw-points", opts.RawPoints, "keep the point of every request (a large file, for the timing of the answers)")
-	fs.DurationVar(&opts.ChaosRedisAt, "pause-redis-at", opts.ChaosRedisAt, "pause the Redis container this long into the measured window")
-	fs.DurationVar(&opts.ChaosRedisFor, "pause-redis-for", opts.ChaosRedisFor, "for this long (0 for none)")
-	fs.DurationVar(&opts.AddedLatency, "added-latency", opts.AddedLatency, "latency added to each round trip from the check servers to PostgreSQL and to Redis, through Toxiproxy, from the end of the warm-up (0 for none)")
+	fs.DurationVar(&opts.AddedLatency, "added-latency", opts.AddedLatency, "latency added to each round trip from the check servers to PostgreSQL, through Toxiproxy, from the end of the warm-up (0 for none)")
 	fs.BoolVar(&opts.RampThrough, "ramp-through", opts.RampThrough, "with -ramp: go on after a step fails, up to -max-steps, to see the server above its limit")
 	fs.IntVar(&opts.Replicas, "replicas", opts.Replicas, "check servers sharing the database and the cache; the load is spread over them")
 	fs.DurationVar(&opts.WritesEvery, "writes-every", opts.WritesEvery, "an admin write (a rule created, then deleted) every this long during the window (0 for none)")

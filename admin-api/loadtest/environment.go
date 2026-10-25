@@ -33,7 +33,6 @@ type Environment struct {
 	DockerVersion  string            `json:"docker_version"`
 	PostgresVer    string            `json:"postgres_version"`
 	PostgresConfig map[string]string `json:"postgres_settings"`
-	RedisVersion   string            `json:"redis_version"`
 	CheckBinary    string            `json:"check_binary"`
 	CheckSHA256    string            `json:"check_binary_sha256"`
 	CheckEnv       map[string]string `json:"check_server_env"`
@@ -46,7 +45,7 @@ type Environment struct {
 }
 
 // environmentPrefixes are the settings of the product the report records (secrets are masked, see maskSetting).
-var environmentPrefixes = []string{"DB__", "REDIS__", "SYNC__", "LOG__", "AUTH__", "HTTP__", "LICETUM_", "GOMAXPROCS", "GOGC", "GOMEMLIMIT"}
+var environmentPrefixes = []string{"DB__", "SYNC__", "LOG__", "AUTH__", "HTTP__", "LICETUM_", "GOMAXPROCS", "GOGC", "GOMEMLIMIT"}
 
 // collectEnvironment writes what can be read about the host, the tools and the infrastructure of the run.
 func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin string) (Environment, error) {
@@ -104,7 +103,6 @@ func checkServerEnv(e *env, opts Options) []string {
 		"DB__URI=" + e.checkDBURI,
 		fmt.Sprintf("DB__POOL_SIZE=%d", opts.DBPool),
 		"DB__MAX_OVERFLOW=0",
-		"REDIS__URI=" + e.checkRedisURI,
 		"PEP__RATE_LIMIT=0",
 	}
 }
@@ -215,7 +213,7 @@ func readTrim(path string) string {
 // when the container is not pinned, or "unknown" when docker does not know it.
 func stackCPUs(ctx context.Context) map[string]string {
 	out := map[string]string{}
-	for _, name := range []string{"lt-pg", "lt-redis"} {
+	for _, name := range []string{"lt-pg"} {
 		set := commandOutput(ctx, "docker", "inspect", "--format", "{{.HostConfig.CpusetCpus}}", name)
 		if set == "" {
 			set = "all"

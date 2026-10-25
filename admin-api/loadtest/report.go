@@ -44,10 +44,9 @@ type Server struct {
 	DBCommitsPerRequest     float64            `json:"db_commits_per_request"`
 	DBStatementMSPerRequest float64            `json:"db_statement_ms_per_request"`
 	DBCallsPerRequest       float64            `json:"db_calls_per_request"`
-	// DBQueriesPerRequest and RedisRoundTripsPerRequest are what the check servers themselves counted (the series
-	// licetum_db_queries_total and licetum_redis_ops_total) per API request they served, background work included.
-	DBQueriesPerRequest       float64 `json:"db_queries_per_request"`
-	RedisRoundTripsPerRequest float64 `json:"redis_round_trips_per_request"`
+	// DBQueriesPerRequest is what the check servers themselves counted (the series licetum_db_queries_total) per API
+	// request they served, background work included.
+	DBQueriesPerRequest float64 `json:"db_queries_per_request"`
 }
 
 // Settings are the options of the run that the numbers depend on.
@@ -75,8 +74,7 @@ type Settings struct {
 	RequiredRate   float64 `json:"required_rate"`
 	RawPointsKept  bool    `json:"raw_points_kept"`
 	Replicas       int     `json:"replicas"`
-	PauseRedisSecs float64 `json:"pause_redis_seconds"`
-	// AddedLatencyMS is the latency added to each round trip to PostgreSQL and Redis (0: none).
+	// AddedLatencyMS is the latency added to each round trip to PostgreSQL (0: none).
 	AddedLatencyMS float64 `json:"added_latency_ms"`
 	// RampThrough: the ramp went on after a failed step (see Options.RampThrough).
 	RampThrough bool `json:"ramp_through,omitempty"`
@@ -224,8 +222,7 @@ func (m Measurement) markdown(b *strings.Builder, ramp bool) {
 		m.Dropped, pct(m.AllowedShare), m.Decisions)
 	fmt.Fprintf(b, "- load generator CPU %.0f%% of %d cores; server CPU %s cores; permission cache hit %s, check cache hit %s\n",
 		100*m.K6CPUShare, m.K6Cores, num(m.Server.CPUCores), pct(m.Server.PermissionCacheHit), pct(m.Server.CheckCacheHit))
-	fmt.Fprintf(b, "- per request: %s database queries, %s Redis round trips (counted by the server)\n",
-		num2(m.Server.DBQueriesPerRequest), num2(m.Server.RedisRoundTripsPerRequest))
+	fmt.Fprintf(b, "- per request: %s database queries (counted by the server)\n", num2(m.Server.DBQueriesPerRequest))
 	fmt.Fprintf(b, "- oracle: %d answers checked (%d expected granted), %d wrong answers, %d unanswered\n",
 		m.Oracle.Checked, m.Oracle.Granted, m.Oracle.Mismatches, m.Oracle.Unanswered)
 	if m.Valid {
@@ -275,7 +272,6 @@ func serverSide(before, after counters, requests int, elapsed time.Duration) Ser
 		return !strings.Contains(series, `operation="unmatched"`) && !strings.Contains(series, `operation="healthz"`)
 	})
 	srv.DBQueriesPerRequest = perRequest(sumDelta(before.series, after.series, "licetum_db_queries_total{", nil), int(served))
-	srv.RedisRoundTripsPerRequest = perRequest(sumDelta(before.series, after.series, "licetum_redis_ops_total{", nil), int(served))
 	reads := delta(before.db, after.db, "blks_read")
 	hits := delta(before.db, after.db, "blks_hit")
 	commits := delta(before.db, after.db, "xact_commit")
