@@ -70,7 +70,7 @@ type App struct {
 
 	// tune is the effective value of the settings of the fast read path.
 	tune tuning
-	// answersL1 is the in-process level of the answer cache. Nil on an App built by hand: it keeps nothing.
+	// answersL1 is the answer cache of the process. Nil on an App built by hand: it keeps nothing.
 	answersL1 *lruCache[any]
 	// jwks holds the key sets of the identity providers, configured on first use (see keySets).
 	jwks     pepauth.KeySets

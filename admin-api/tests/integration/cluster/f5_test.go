@@ -7,6 +7,7 @@ package cluster_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -152,7 +153,8 @@ func TestF5_1_ReadyzIsReusedForASecond(t *testing.T) {
 	}
 }
 
-// F5-1: Redis is not part of readiness. Without it the replica is degraded, which the metric says.
+// F5-1: Redis is not part of readiness. The replica sends it nothing on the path of a request (the answers are kept in the
+// memory of the process), so a Redis that is cut changes nothing: the replica stays ready, is not degraded, and answers.
 func TestF5_1_RedisIsNotPartOfReadiness(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithFaultProxies(), harness.WithHotRedis(50*time.Millisecond))
 	p := c.SeedPolicy("org")
@@ -161,27 +163,24 @@ func TestF5_1_RedisIsNotPartOfReadiness(t *testing.T) {
 	degraded := func() float64 {
 		return harness.MetricValue(r.Metrics(c), `licetum_degraded{component="redis"}`)
 	}
-	if res := readyz(c, r); res.Status != http.StatusOK || degraded() != 0 {
-		t.Fatalf("a healthy replica: /readyz %d, licetum_degraded{redis} %v", res.Status, degraded())
+	unchanged := func(when string) {
+		t.Helper()
+		// Subjects the replica has not seen: the answer is computed, and nothing of it goes to Redis.
+		for i := range 5 {
+			token := c.UserToken(fmt.Sprintf("%s-%d-%s", when, i, time.Now().Format("150405.000000")))
+			if res := r.Send(c, harness.Branches(p.Slug, token), token); res.Status != http.StatusOK {
+				t.Fatalf("%s: a request got %d %s", when, res.Status, res.Body)
+			}
+		}
+		if res := readyz(c, r); res.Status != http.StatusOK || degraded() != 0 {
+			t.Fatalf("%s: /readyz %d %s, licetum_degraded{redis} %v", when, res.Status, res.Body, degraded())
+		}
 	}
-
+	unchanged("healthy")
 	c.RedisFault.Cut()
-	// Requests for subjects the replica has not seen need Redis (the token cache), fail to reach it, and trip the fast-fail.
-	eventually(t, 10*time.Second, "licetum_degraded{component=\"redis\"} is 1 with Redis cut", func() bool {
-		token := c.UserToken("user-" + time.Now().Format("150405.000000"))
-		r.Send(c, harness.Branches(p.Slug, token), token)
-		return degraded() == 1
-	})
-	if res := readyz(c, r); res.Status != http.StatusOK {
-		t.Fatalf("/readyz is %d %s with Redis cut: Redis is not part of readiness", res.Status, res.Body)
-	}
-
+	unchanged("cut")
 	c.RedisFault.Reset()
-	eventually(t, 15*time.Second, "licetum_degraded{component=\"redis\"} is 0 once Redis is back", func() bool {
-		token := c.UserToken("back-" + time.Now().Format("150405.000000"))
-		r.Send(c, harness.Branches(p.Slug, token), token)
-		return degraded() == 0
-	})
+	unchanged("back")
 }
 
 // F5-3 (shutdown): once the process is draining it says so on /readyz, asks for the connection to be closed, and goes on

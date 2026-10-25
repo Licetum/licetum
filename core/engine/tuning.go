@@ -19,8 +19,6 @@ const (
 	defaultWorkers        = 16
 	defaultQueue          = 1024
 
-	// maxAnswerL1TTL bounds how long an in-memory entry lives, whatever the entry says.
-	maxAnswerL1TTL = 10 * time.Second
 	// maxStaleAnswerTTL bounds how long an answer that is no longer served is kept in memory for the case PostgreSQL cannot
 	// be reached (see cachedEntry.stale); the size of the level bounds the memory the same way.
 	maxStaleAnswerTTL = 15 * time.Minute

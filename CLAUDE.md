@@ -141,8 +141,8 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
     quietly). A degraded view serves answers past their `Exp` while their `Hold` (the next validity boundary, uncapped by `ResultCacheTTL`; `computed.hold`,
     `Prepared.hold`, `validityUntil`: the exact distance to the boundary, no one-second floor, counted from the start of the computation) has not
     passed (`cachedEntry.stale`, `result="stale"`; `hold_property_test.go` checks it against random policies with a manual clock, `App.clock`); `cachedEntry.serveUntil` is the ordinary serving
-    time of the L1 entry, which now lives in the LRU until `Hold` (at most `maxStaleAnswerTTL`). While Redis is down (`App.redisDegraded`) an L1
-    entry is served until its `Exp`, not ten seconds (`liveWithoutRedis`). `cachedAnswer` waits for the shared computation with `DoChan` and the
+    time of an entry, its `Exp` (a minute at most, or the next validity boundary; there is no shorter cap, since no second level holds the
+    answer): the entry lives in the LRU until `Hold` (at most `maxStaleAnswerTTL`). `cachedAnswer` waits for the shared computation with `DoChan` and the
     caller's context, so a request deadline is honoured. `HTTP__MAX_INFLIGHT` keeps no latency under overload (the admitted requests wait behind
     at most that many others): `core/README.md` says how to size it, `chaos/f5_8_test.go` measures it.
   - **Shutdown** (`cli.StopServing`): `SetDraining` (responses get `Connection: close`), wait `SHUTDOWN__DRAIN`, `http.Server.Shutdown` with
@@ -157,7 +157,7 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   - **Breaker**: a source that does not answer is held back by the backoff in `sync_state` (below), not by a breaker; the Redis breaker is gone.
     `FastFail` does not gate the connection-setup commands (HELLO, ...) that run inside the probe. **Logs**: failures of a
     dependency on the request path go through `logx.Repeated` (`logDependency`, `errKind`; `licetum_log_suppressed_total`): one record per kind per second.
-  - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_REDIS_OUTAGE` shortens the minute, `LICETUM_CHAOS_POSTGRES_OUTAGE` the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
+  - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_POSTGRES_OUTAGE` shortens the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
 - **One PostgreSQL** (the in-process routing of reads to a read replica, `DB__READ_URI` and `DB__MAX_REPLICA_LAG` / `DB__LAG_ACTION` / `DB__LAG_INTERVAL`, was removed in P2e-06; the four
   names are rows of the deprecation catalog): every read of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) and every write use `App.DB`; the
@@ -173,9 +173,10 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
 - The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
   `snapshot.ttl`, ...): a policy that does not fit, the lever `consistency=higher` and the admin simulations use it. Change one, change the other;
   `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` (random policies, both paths, answers and explanations) keeps them equal.
-- Answers: `cachedAnswer` looks in `answersL1` (keyed like the Redis key, so the revision is in it; entries also record the data versions they
-  read and an `exp`, which the value in Redis carries too) before Redis. `App.ClearMemoryCaches` empties the level
-  (tests). Values in these caches are shared by requests and must be treated as read-only.
+- Answers: `cachedAnswer` looks in `answersL1` (the answer cache of the process, keyed by `authz:permission:…` / `authz:check:…`, so the revision
+  is in the key; entries also record the data versions they read and an `Exp` and a `Hold`) and computes on a miss; the answer is kept in memory
+  before the request returns, and no other store holds it (a process that restarts, or another replica, computes its own). `App.ClearMemoryCaches`
+  empties the cache (tests). Values in it are shared by requests and must be treated as read-only.
 - `pepauth.KeySets` (`core/pepauth/jwks.go`, `App.keySets`): one key set per URL, shared fetches (singleflight per URL), refetch for an unknown
   `kid` at most once per `AUTH__JWKS_MIN_REFRESH`; a set is trusted for `AUTH__JWKS_TTL`; transport failures are never cached.
 - `App.Background` runs on a fixed pool with a bounded queue and returns whether the work was accepted; a full queue drops it
@@ -568,7 +569,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    on a `not_sync` type with `sync` descendants still cascades to their resources). Response:
    `{name: {"type": "sync", "resources": [...]} | {"type": "not_sync", "access": [...]}}`; a `not_sync` type
    without rules is absent, on a name collision `sync` wins.
-7. Cached in memory and in Redis per `(service, subject, claims fingerprint, revision of the rules)`: key
+7. Cached in memory per `(service, subject, claims fingerprint, revision of the rules)`: key
    `authz:permission:t9:r<revision>:<service>:<subject>:<fingerprint>` (bump `t9` when the format or the decisions change; the
    fingerprint covers only the claims and the request-context attributes the rules and the role items look at, which the snapshot
    knows — a process without it remembers them per revision, `attrsMemo`). TTL = min(60 s, the next moment a rule, a role item's
@@ -577,7 +578,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one service leaves the answers that
    do not read it in place. The whole computation runs through `cachedAnswer` (`engine/cache.go`): the revisions come from the view
    (`readCacheState`), concurrent misses for the same key share one computation (singleflight) and queue for a computation slot, and the
-   entry is written in the background. `POST /check` answers are cached the same way (`authz:check:t5:…`, keyed by a hash of the
+   entry is kept in memory. `POST /check` answers are cached the same way (`authz:check:t5:…`, keyed by a hash of the
    questions and of `explain`).
 
 ### Decision semantics (deny wins, explicit exceptions)

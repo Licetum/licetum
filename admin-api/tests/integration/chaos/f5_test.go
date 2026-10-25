@@ -2,8 +2,8 @@
 
 package chaos_test
 
-// F5 under faults: a check replica keeps serving when Redis is gone or read-only, serves from its copy of the policy
-// while PostgreSQL is gone (and fails closed when it can no longer vouch for it), and a rolling restart loses no request.
+// F5 under faults: a check replica serves from its copy of the policy while PostgreSQL is gone (and fails closed when it can
+// no longer vouch for it), and a rolling restart loses no request.
 
 import (
 	"context"
@@ -14,17 +14,14 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
-	support "github.com/licetum/licetum/core/testsupport"
 )
 
 // outcome is what one request of a load came to.
@@ -183,126 +180,6 @@ func queriesBy(c *harness.Cluster, r *harness.Replica) map[string]float64 {
 	return out
 }
 
-// redisOutage is the scenario of F5-2 to F5-5: a replica under load while Redis is gone (or read-only) for outage, and
-// after it. break and fix bring the fault about and end it. It returns nothing; it checks the criteria.
-func redisOutage(t *testing.T, c *harness.Cluster, r *harness.Replica, p *harness.Policy, tokens []string, outage time.Duration, breakRedis, fixRedis func()) {
-	t.Helper()
-	const users = 30
-	rps := 600 / loadDivisor
-	logs := newLogCounter()
-	logs.install(t)
-
-	// The tokens, the key set and the answers are in memory when the fault begins.
-	want := map[string]string{}
-	for _, token := range tokens[:users] {
-		res := r.Send(c, harness.Branches(p.Slug, token), token)
-		if res.Status != http.StatusOK {
-			t.Fatalf("warm request: %d %s", res.Status, res.Body)
-		}
-		want[token] = string(res.Body)
-	}
-	time.Sleep(time.Second)
-
-	// About one request a second is for a subject nobody has asked for yet, in every phase: its token and its answer are in no
-	// cache, so it is computed and written, which is what a fault of Redis hurts. Its answer is not compared, only given.
-	coldEvery := rps
-	var cold atomic.Int64
-	do := func(i int) (int, error) {
-		if i%coldEvery == coldEvery-1 {
-			stranger := c.UserToken("u" + strconv.FormatInt(1000+cold.Add(1), 10))
-			status, _, err := r.Try(c, harness.Branches(p.Slug, stranger), stranger, 5*time.Second)
-			return status, err
-		}
-		token := tokens[i%users]
-		status, body, err := r.Try(c, harness.Branches(p.Slug, token), token, 5*time.Second)
-		if err == nil && status == http.StatusOK && string(body) != want[token] {
-			return 0, fmt.Errorf("the answer changed:\n%s\nwant\n%s", body, want[token])
-		}
-		return status, err
-	}
-
-	// Healthy: the figures the fault is compared with.
-	const baseline = 10 * time.Second
-	q0, jwks0 := queries(c, r), c.IdP.JWKSRequests()
-	healthy := openLoop(rps, baseline, 400, do)
-	baseQPS := (queries(c, r) - q0) / baseline.Seconds()
-	t.Logf("healthy: %d requests, %d failed, p99 %v, %.1f statements/s", len(healthy), failures(healthy), percentile(latencies(healthy), 0.99), baseQPS)
-	if f := failures(healthy); f > 0 {
-		t.Fatalf("%d requests failed before the fault", f)
-	}
-
-	// The fault.
-	breakRedis()
-	faultStart := time.Now()
-	q1, jwks1, by1 := queries(c, r), c.IdP.JWKSRequests(), queriesBy(c, r)
-	during := openLoop(rps, outage, 400, do)
-	if t.Failed() {
-		return
-	}
-	by2 := queriesBy(c, r)
-	for op, n := range by2 {
-		if n-by1[op] > 0 {
-			t.Logf("statements in the fault: %s %.0f", op, n-by1[op])
-		}
-	}
-	faultEnd := time.Now()
-	faultQPS := (queries(c, r) - q1) / outage.Seconds()
-	f := failures(during)
-	t.Logf("fault: %d requests, %d failed (%.2f%%), p99 %v, %.1f statements/s, %d key set requests (%d before)",
-		len(during), f, 100*float64(f)/float64(len(during)), percentile(latencies(during), 0.99), faultQPS, c.IdP.JWKSRequests()-jwks1, jwks1-jwks0)
-
-	// F5-2: at most one request in a hundred fails, and none for an answer that is in memory.
-	if float64(f) > 0.01*float64(len(during)) {
-		t.Errorf("F5-2: %d of %d requests failed (%.2f%%), want at most 1%%", f, len(during), 100*float64(f)/float64(len(during)))
-	}
-	for _, o := range during {
-		if !o.ok() {
-			t.Logf("first failure at %v: status %d, %v", o.at, o.status, o.err)
-			break
-		}
-	}
-	// F5-3: the database does not carry what Redis carried; the identity provider is not asked again; the log is quiet.
-	if limit := 2 * max(baseQPS, 1); faultQPS > limit {
-		t.Errorf("F5-3: %.1f statements/s in the fault, the baseline is %.1f/s: want at most %.1f/s", faultQPS, baseQPS, limit)
-	}
-	if n := c.IdP.JWKSRequests() - jwks1; n > 2 {
-		t.Errorf("F5-3: %d key set requests during the fault, want no more than 2", n)
-	}
-	worst, total := logs.between(faultStart, faultEnd)
-	t.Logf("log records of level warning and above: %d in the fault, at most %d in a second; repeated: %v", total, worst, logs.top())
-	if worst > 5 {
-		t.Errorf("F5-3: %d log lines of level warning and above in one second, want at most 5", worst)
-	}
-
-	// F5-4: when Redis is back the 99th percentile returns to the budget within thirty seconds.
-	fixRedis()
-	const recovery = 30 * time.Second
-	after := openLoop(rps, recovery, 400, do)
-	budget := (20*time.Millisecond + hotTimeout) * slowdown
-	recovered := recovery
-	for second := recovery - time.Second; second >= 0; second -= time.Second {
-		window := latencies(between(after, second, second+time.Second))
-		if len(window) == 0 || percentile(window, 0.99) > budget {
-			break
-		}
-		recovered = second
-	}
-	t.Logf("recovery: %d requests, %d failed; the 99th percentile is within %v from %v on", len(after), failures(after), budget, recovered)
-	if recovered > recovery-5*time.Second {
-		t.Errorf("F5-4: the 99th percentile is not within the budget of %v in the last seconds after Redis came back (within it from %v)", budget, recovered)
-	}
-	if recovered > 30*time.Second {
-		t.Errorf("F5-4: the budget was met only %v after Redis came back", recovered)
-	}
-	if f := failures(after); float64(f) > 0.01*float64(len(after)) {
-		t.Errorf("%d of %d requests failed after Redis came back", f, len(after))
-	}
-}
-
-func outageLength(def time.Duration) time.Duration {
-	return outageLengthOf("LICETUM_CHAOS_REDIS_OUTAGE", def)
-}
-
 func outageLengthOf(env string, def time.Duration) time.Duration {
 	if v := os.Getenv(env); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -312,63 +189,8 @@ func outageLengthOf(env string, def time.Duration) time.Duration {
 	return def
 }
 
-// F5-2, F5-3, F5-4: Redis gone for a minute at 600 requests a second. LICETUM_CHAOS_REDIS_OUTAGE shortens it.
-func TestF5_2_RedisGoneForAMinuteUnderLoad(t *testing.T) {
-	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org")
-	tokens := everyone(t, c, p, 30)
-	r := c.Replicas[0]
-	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
-
-	redisOutage(t, c, r, p, tokens, outageLength(60*time.Second), c.RedisFault.Cut, c.RedisFault.Reset)
-}
-
-// F5-2: the same when Redis swallows the traffic and every command waits for its timeout, until it is skipped.
-func TestF5_2_RedisBlackHoledUnderLoad(t *testing.T) {
-	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org")
-	tokens := everyone(t, c, p, 30)
-	r := c.Replicas[0]
-	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
-
-	redisOutage(t, c, r, p, tokens, outageLength(60*time.Second)/2, c.RedisFault.BlackHole, c.RedisFault.Reset)
-}
-
-// F5-5: a Redis in READONLY mode refuses the writes and keeps answering the reads: the replica behaves as with Redis gone.
-func TestF5_5_ReadOnlyRedisUnderLoad(t *testing.T) {
-	ctx := context.Background()
-	uri, stop, err := support.StartSpareRedis(ctx)
-	if err != nil {
-		t.Skipf("no Redis to make read-only (set %s or run Docker): %v", support.EnvSpareRedisURI, err)
-	}
-	t.Cleanup(stop)
-	opts, err := redis.ParseURL(uri)
-	if err != nil {
-		t.Fatal(err)
-	}
-	admin := redis.NewClient(opts)
-	t.Cleanup(func() { _ = admin.Close() })
-
-	c := harness.StartReplicas(t, infra, 1, harness.WithReplicaRedis(uri), harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org")
-	tokens := everyone(t, c, p, 30)
-	r := c.Replicas[0]
-	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
-
-	redisOutage(t, c, r, p, tokens, outageLength(60*time.Second)/3,
-		func() {
-			if err := admin.Do(ctx, "REPLICAOF", "127.0.0.1", "1").Err(); err != nil {
-				t.Fatalf("REPLICAOF: %v", err)
-			}
-		},
-		func() {
-			if err := admin.Do(ctx, "REPLICAOF", "NO", "ONE").Err(); err != nil {
-				t.Fatalf("REPLICAOF NO ONE: %v", err)
-			}
-		})
-}
-
-// errorCodeOf is extra.code of an error body.
+// errorCodeOf is the code of an error body: extra.code of the admin API's, or, for an AuthZEN route, whose error body is the
+// message alone (a JSON string), the code of the one message these tests wait for.
 func errorCodeOf(body []byte) string {
 	var e struct {
 		Extra struct {
@@ -376,7 +198,14 @@ func errorCodeOf(body []byte) string {
 		} `json:"extra"`
 	}
 	_ = json.Unmarshal(body, &e)
-	return e.Extra.Code
+	if e.Extra.Code != "" {
+		return e.Extra.Code
+	}
+	var message string
+	if json.Unmarshal(body, &message) == nil && strings.Contains(message, "policy store cannot be reached") {
+		return "policy_unavailable"
+	}
+	return ""
 }
 
 // F5-6: PostgreSQL gone: the replica answers from its copy of the policy until it has not confirmed it for

@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -15,13 +13,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/redisx"
 )
 
-// The answers of the permission and check APIs are kept in Redis (and in memory). An answer is current while the rules
+// The answers of the permission and check APIs are kept in the memory of the process. An answer is current while the rules
 // have not changed — the revision of the policy, part of its key — and while the resource data it was computed from has
 // not changed. Both numbers live in PostgreSQL, in the table revision_state, and change in the transaction that changes
 // the data they number: a write of an administrator bumps the revision 'rules', a synchronization that changed the data
@@ -48,8 +45,7 @@ type cacheState struct {
 	tag string
 	// snap is the policy snapshot of the revision, when the process keeps the policy in memory (see localView).
 	snap *snapshot
-	// degraded says the revisions could not be read lately and the state is the last one this process read: the answers
-	// are kept in memory only.
+	// degraded says the revisions could not be read lately and the state is the last one this process read.
 	degraded bool
 }
 
@@ -85,15 +81,6 @@ func (s cacheState) forConsistency(ctx context.Context, c Consistency) cacheStat
 	return s
 }
 
-// logRedis logs a failed use of Redis. A command that was skipped because Redis is being skipped (redisx.FastFail) is
-// the consequence of a failure already logged, and at 600 requests a second would flood the log: it is a debug line.
-func logRedis(ctx context.Context, level slog.Level, msg string, err error) {
-	if errors.Is(err, redisx.ErrSkipped) {
-		level = slog.LevelDebug
-	}
-	logDependency(ctx, level, msg, err)
-}
-
 // current reports whether an answer computed from the data versions deps is still current.
 func (s cacheState) current(deps map[string]int64) bool {
 	for svc, v := range deps {
@@ -113,28 +100,21 @@ type computed[T any] struct {
 	hold  time.Duration
 }
 
-// cachedEntry is an answer as the cache keeps it. Exp is when it stops being current (unix milliseconds), so that a
-// process that reads it from Redis knows how long it may keep it in memory; entries written before it was added have none.
-// Hold is when it stops being correct at all (no validity window starts or ends before it): a process that cannot reach
-// PostgreSQL serves the answer until then (see stale).
+// cachedEntry is an answer as the cache keeps it. Exp is when it stops being current (unix milliseconds): the entry is
+// served from memory until then, while PostgreSQL answers. Hold is when it stops being correct at all (no validity window
+// starts or ends before it): a process that cannot reach PostgreSQL serves the answer until then (see stale).
 type cachedEntry[T any] struct {
-	Value T                `json:"value"`
-	Deps  map[string]int64 `json:"deps,omitempty"`
-	Exp   int64            `json:"exp,omitempty"`
-	Hold  int64            `json:"hold,omitempty"`
+	Value T
+	Deps  map[string]int64
+	Exp   int64
+	Hold  int64
 
-	// serveUntil is the end of the time this process serves the entry from memory while PostgreSQL answers (it is not stored).
+	// serveUntil is the end of the time this process serves the entry from memory while PostgreSQL answers.
 	serveUntil time.Time
 }
 
 // fresh: the entry may be served in the usual way.
 func (e *cachedEntry[T]) fresh(now time.Time) bool { return now.Before(e.serveUntil) }
-
-// liveWithoutRedis: the entry is past the ten seconds memory serves it for, and Redis, which would be asked for it next, is
-// gone: it is still current, and the alternative is to compute it from PostgreSQL.
-func (e *cachedEntry[T]) liveWithoutRedis(now time.Time, a *App) bool {
-	return e.Exp > 0 && now.Before(time.UnixMilli(e.Exp)) && a.redisDegraded()
-}
 
 // stale: the entry is past its time, but nothing that could make it wrong has happened as far as this process can tell:
 // the view of the policy it was made under is the one the process still holds, and no validity window has started or ended.
@@ -144,9 +124,9 @@ func (e *cachedEntry[T]) stale(now time.Time) bool {
 }
 
 // cachedAnswer returns the answer of compute for key: from the cache while the entry there is current, otherwise
-// computed. Concurrent misses for the same key share one computation (singleflight), and the answer is written
-// to the cache in the background. consistency=higher skips the read but still refreshes the entry. Without Redis
-// (state.ok false) the answer is computed each time and nothing is kept.
+// computed. Concurrent misses for the same key share one computation (singleflight), and the answer is kept in memory.
+// consistency=higher skips the read but still refreshes the entry. When the revisions cannot be read at all (state.ok
+// false) the answer is computed each time and nothing is kept.
 func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheState, consistency Consistency,
 	results *prometheus.CounterVec, compute func(ctx context.Context) (computed[T], error)) (T, error) {
 	var zero T
@@ -183,7 +163,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 			// the one it was told to trust for POLICY__MAX_STALENESS.
 			if entry, ok := v.(*cachedEntry[T]); ok && state.current(entry.Deps) {
 				switch {
-				case entry.fresh(now), entry.liveWithoutRedis(now, a):
+				case entry.fresh(now):
 					a.metrics.l1Lookup("answer", true)
 					results.WithLabelValues("hit").Inc()
 					return entry.Value, nil
@@ -195,19 +175,6 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 			}
 		}
 		a.metrics.l1Lookup("answer", false)
-		if !state.degraded {
-			raw, err := a.Redis.Get(ctx, key).Bytes()
-			if err == nil {
-				var entry cachedEntry[T]
-				if json.Unmarshal(raw, &entry) == nil && state.current(entry.Deps) {
-					a.keepAnswerInMemory(key, &entry, now)
-					results.WithLabelValues("hit").Inc()
-					return entry.Value, nil
-				}
-			} else if !errors.Is(err, redis.Nil) {
-				logRedis(ctx, slog.LevelWarn, "failed to read the cached answer", err)
-			}
-		}
 		results.WithLabelValues("miss").Inc()
 	}
 
@@ -239,13 +206,6 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		entry := cachedEntry[T]{Value: c.value, Deps: c.deps, Exp: written.Add(c.ttl).UnixMilli(),
 			Hold: started.Add(c.hold).UnixMilli()}
 		a.keepAnswerInMemory(key, &entry, written)
-		if raw, err := json.Marshal(entry); err == nil && !state.degraded {
-			a.Background(func(ctx context.Context) {
-				if err := a.Redis.Set(ctx, key, raw, c.ttl).Err(); err != nil {
-					logRedis(ctx, slog.LevelWarn, "failed to write the cached answer", err)
-				}
-			})
-		}
 		return c.value, nil
 	})
 	select {
@@ -309,13 +269,10 @@ func pauseComputeSlot(ctx context.Context) (resume func(context.Context) error) 
 	return func(context.Context) error { return nil }
 }
 
-// keepAnswerInMemory keeps an answer in the first level of the answer cache. It is served from there until it stops being
-// current, and at most ten seconds (the key holds the revision, so a write makes the entry unreachable, and the data versions
-// it read are compared at every lookup). An entry whose end is unknown (written by an older version) is not kept.
-//
-// While Redis is down the second level is gone, and an answer that left memory has to be computed from PostgreSQL: the
-// cap is lifted then, and an answer stays as long as it is current (a minute at most), so the outage costs the database a
-// computation per answer per minute, not per ten seconds.
+// keepAnswerInMemory keeps an answer in the answer cache. It is served from there until it stops being current (the key
+// holds the revision, so a write makes the entry unreachable, and the data versions it read are compared at every lookup):
+// a minute at most, or the next moment a rule or a membership starts or stops being in force. An entry whose end is
+// unknown is not kept.
 //
 // The entry is kept in memory longer than it is served (until Hold, at most maxStaleAnswerTTL): if PostgreSQL cannot be
 // reached and the revisions cannot be read, it is the only answer there is (see cachedEntry.stale).
@@ -329,9 +286,6 @@ func (a *App) keepAnswerInMemory(key string, entry any, now time.Time) {
 		return
 	}
 	serve := time.UnixMilli(e.expiry()).Sub(now)
-	if !a.redisDegraded() {
-		serve = min(maxAnswerL1TTL, serve)
-	}
 	e.serveFor(now.Add(serve))
 	keep := serve
 	if hold := time.UnixMilli(e.holdTime()).Sub(now); hold > keep {

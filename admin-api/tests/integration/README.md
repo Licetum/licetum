@@ -79,8 +79,7 @@ c.Replicas[1].Warm(c, harness.Branches(p.Slug, alice), alice) // until the cost 
   `http.Request` with `harness.HTTPRequest`.
 - **Counting.** The same counts are in `GET /metrics` (`licetum_db_queries_total`, `licetum_db_query_seconds`,
   `licetum_redis_ops_total`, `licetum_redis_op_seconds`). The Trace does not count what the Redis client sends when it opens a
-  connection (`HELLO`, ...), nor background work (writing a cache entry); the metrics do. Assert exact counts only after
-  `Warm`, or `waitForKeys` for the cache entries to exist.
+  connection (`HELLO`, ...), nor background work; the metrics do. Assert exact counts only after `Warm`.
 - **Fakes.** `support.Source` counts the requests per type (`Calls`, `CallsTo`, `History`), can be delayed (`SetDelay`), made to
   fail (`SetStatus`), padded (`SetBodySize`) or held (`Hold`/`Release`, `WaitForCalls`, `InFlight`). `support.IdP` counts the
   requests for its JWKS (`JWKSRequests`), signs tokens (`Token`), rotates its key (`RotateKey`) and can fail (`SetJWKSStatus`).
@@ -103,9 +102,9 @@ Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in
 
 | test | what it proves |
 |---|---|
-| `cluster/f1_test.go` `TestF1_1`, `_2`, `_3`, `_5`, `_6`, `_7`, `_8` | no query and no Redis command for a warm request; one round trip for an answer only Redis holds; a miss costs the same few queries for 1 000 and for 100 000 rules; slugs and deleted services follow the revision within a second; one key set fetch per TTL, none for bad tokens, one refetch per rotation |
+| `cluster/f1_test.go` `TestF1_1`, `_3`, `_5`, `_6`, `_7`, `_8` | no query and no Redis command for a warm request; a miss costs the same few queries for 1 000 and for 100 000 rules; slugs and deleted services follow the revision within a second; one key set fetch per TTL, none for bad tokens, one refetch per rotation |
 | `api/snapshot_differential_test.go` `TestF1_11` | random policies (validity windows, claim-based and attribute-based rules, roles, nested groups, conditions, denials, exceptions) give the same answers and explanations from the snapshot and from the queries, also after changes and after windows have passed. `LICETUM_DIFF_SEED` repeats a run |
-| `chaos/f1_test.go` `TestF1_4`, `_9`, `_10` | a warm request ignores 150 ms on PostgreSQL and Redis; a Redis that answers after 5 s does not pile up goroutines or memory under 600 rps; a skipped Redis adds at most its timeout |
+| `chaos/f1_test.go` `TestF1_4` | a warm request ignores 150 ms on PostgreSQL |
 
 The replicas follow the revision with a delay of up to `REVISION__POLL_INTERVAL`: `Replica.Permission` asks for at least the revision
 of the last write made through `AdminDo`/`Must`; send `harness.Branches` with `Replica.Send` for a plain request. Run the packages one at
@@ -118,7 +117,7 @@ a time (`-p 1`) when they share one Redis (`LICETUM_TEST_REDIS_URI`).
 | `cluster/f2_test.go` `TestF2_1`, `_2` | a write and its revision commit together (a failed write or batch leaves it, a batch is +1), and the revisions of 20 concurrent writers are strictly increasing without gaps |
 | `TestF2_3`, `_4`, `_5` | `at_least_as_fresh` gives read-your-writes on every replica (100 iterations); an answer for a revision the replica cannot confirm is computed from the data and not kept; a deny rule reaches every replica within a second without any revision asked for |
 | `TestF2_6` | 50 synchronizations of service A leave every answer of service B a hit, while A's follow its data |
-| `TestF2_8`, `_10` | `FLUSHALL` while serving changes no answer; the poller costs 4 statements a second at rest |
+| `TestF2_10` | the poller costs 4 statements a second at rest |
 | `chaos/f2_test.go` `TestF2_7` | a revision bump under 1 500 hot keys at 600 rps: no failure, the pool never over its size |
 
 Not covered: a read replica that lags by two seconds (F2-3, F2-4 in full): the tests of the replica went with its routing and the contract CONS01 (P5)
@@ -149,7 +148,6 @@ brings them back; F2-11 (stage 2, scoped bumps) is a separate pull request.
 | `cluster/f5_test.go` `TestF5_1_*` | `/readyz` is 503 with PostgreSQL cut or the schema older than the binary and 200 otherwise (also with a *newer* schema), `/healthz` stays 200, the result is reused for a second, Redis is not part of readiness (`licetum_degraded{component="redis"}`) |
 | `TestF5_3_*`, `TestF5_8_*` | a draining replica is not ready, serves, and asks for `Connection: close`; above `HTTP__MAX_INFLIGHT` the rest get 503 with `Retry-After` while the probes and the metrics are answered; a request past `HTTP__REQUEST_TIMEOUT` is answered 503 `request_timeout` |
 | `TestF5_9_*` | a pool never holds more than `DB__POOL_SIZE + DB__MAX_OVERFLOW` connections under more concurrent users than connections, and the pool metrics say that acquires waited |
-| `chaos/f5_test.go` `TestF5_2_*`, `TestF5_5_*` | Redis cut, black-holed or read-only (a spare Redis, see below) for a minute (`LICETUM_CHAOS_REDIS_OUTAGE` shortens it) at 600 requests a second: at most 1 % fail, PostgreSQL gets at most twice the statements of the healthy baseline, no key set is fetched again, at most 5 log lines of level warning a second, and the 99th percentile is back within the budget after Redis returns |
 | `TestF5_6_*` | PostgreSQL cut: the replica answers from memory until `POLICY__MAX_STALENESS` has passed since it last confirmed the policy, then 503 `policy_unavailable`; with no limit it keeps answering; it recovers without a restart |
 | `TestF5_7_*` | a rolling restart of three replicas at 600 requests a second behind a balancer that probes `/readyz`: no connection error and no 5xx (and 61 failures without the drain) |
 
@@ -188,6 +186,3 @@ max_client_conn = 2000
 default_pool_size = 60
 max_prepared_statements = 200
 ```
-
-`TestF5_5` needs a Redis it can make read-only: it starts a container, or uses the running server named by
-`LICETUM_TEST_REDIS_SPARE_URI` (and makes it writable again afterwards).

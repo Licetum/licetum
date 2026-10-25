@@ -14,7 +14,7 @@ import (
 // the data they number, and every answer is keyed by them. A process does not read them for every request: it keeps the
 // last reading and the policy snapshot of that revision as one localView, and renews both in the background once the
 // reading is older than REVISION__POLL_INTERVAL (WatchRevision, and the requests themselves). So a request that finds its
-// answer in memory touches neither Redis nor PostgreSQL, and a write made through another replica reaches the process
+// answer in memory touches no PostgreSQL, and a write made through another replica reaches the process
 // within the poll interval.
 //
 // A view is replaced as a whole and never changed. A write made through this process (AfterWrite) and a change of the
@@ -102,7 +102,7 @@ func (a *App) policySnapshot(ctx context.Context) *snapshot {
 // it may fall back to.
 //
 // When the revisions cannot be read, the last view is served and marked degraded, so that the requests go on from memory
-// instead of each waiting for the database; the answers are not kept in Redis then. It is served for as long as
+// instead of each waiting for the database. It is served for as long as
 // POLICY__MAX_STALENESS says (no limit by default); beyond it there is no view, and the request fails closed (the queries
 // of the computation need the database too, and an unreachable one is a 503 policy_unavailable).
 func (a *App) currentView(ctx context.Context) *localView {
@@ -325,14 +325,9 @@ func (a *App) snapshotFor(ctx context.Context, revision int64, previous *localVi
 
 func isTooLarge(err error) bool { return errors.Is(err, errSnapshotTooLarge) }
 
-// ClearMemoryCaches empties the in-process level of the answer cache. Redis keeps what it holds, so the next request is served
-// from it: this is how a test, or an operator, tells the cost of the second level from that of the first.
-func (a *App) ClearMemoryCaches() {
-	a.answersL1.Clear()
-}
-
-// ClearAnswerMemoryCache empties the in-process level of the answer cache only.
-func (a *App) ClearAnswerMemoryCache() { a.answersL1.Clear() }
+// ClearMemoryCaches empties the answer cache of the process: the next request of each answer is computed again. A test uses
+// it to tell the cost of a cold answer from that of a warm one.
+func (a *App) ClearMemoryCaches() { a.answersL1.Clear() }
 
 // PolicySnapshotLoaded reports whether the last view of this process holds a policy snapshot, which the answers that are
 // not cached are decided from. It is false when the policy does not fit SNAPSHOT__MAX_BYTES or the snapshot is off.

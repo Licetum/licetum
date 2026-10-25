@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -169,20 +168,6 @@ func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) 
 	alice := c.UserToken("alice")
 	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 
-	// The answers of the standard request: the pages of the resource search (authz:search) and the permission maps.
-	keys := func() []string {
-		var got []string
-		for _, pattern := range []string{"authz:permission:*", "authz:search:*"} {
-			part, err := c.Redis.Keys(context.Background(), pattern).Result()
-			if err != nil {
-				t.Fatal(err)
-			}
-			got = append(got, part...)
-		}
-		sort.Strings(got)
-		return got
-	}
-	before := keys()
 	ahead := c.Revision() + 1000
 	started := time.Now()
 	res := r.Send(c, harness.Branches(p.Slug, carol, authzenreq.AtLeast(ahead)), carol)
@@ -192,23 +177,18 @@ func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) 
 	if took := time.Since(started); took > 3*time.Second {
 		t.Fatalf("waiting for a revision that never comes took %v, want about REVISION__WAIT_MAX (500ms)", took)
 	}
-	time.Sleep(300 * time.Millisecond) // the cache writes the request would have left in the background
-	after := keys()
-	for _, key := range after {
-		if strings.Contains(key, ":carol:") {
-			t.Fatalf("an answer for carol was kept: %v (before %v)", after, before)
-		}
+	// The same request without the claim of freshness finds nothing kept for carol: it is computed, so it reads the database.
+	first := r.Send(c, harness.Branches(p.Slug, carol), carol)
+	if first.Status != http.StatusOK {
+		t.Fatalf("an ordinary request: %d %s", first.Status, first.Body)
 	}
-	// The same request without the claim of freshness is kept, so the check above can fail.
-	r.Permission(c, p.Slug, carol)
-	r.Send(c, harness.Branches(p.Slug, carol), carol)
-	time.Sleep(300 * time.Millisecond)
-	found := false
-	for _, key := range keys() {
-		found = found || strings.Contains(key, ":carol:")
+	if first.Trace.DBQueries() == 0 {
+		t.Fatalf("the answer for carol was kept by the request that asked for a revision from the future")
 	}
-	if !found {
-		t.Fatal("an ordinary request left no answer in the cache: the check proves nothing")
+	// The ordinary request is kept, so the check above can fail: the next one is answered from memory.
+	if again := r.Send(c, harness.Branches(p.Slug, carol), carol); again.Trace.DBQueries() != 0 {
+		t.Fatalf("an ordinary request left no answer in the cache: the next one made %d queries (%v), the check proves nothing",
+			again.Trace.DBQueries(), again.Trace.DBQueryOps())
 	}
 }
 
@@ -253,7 +233,6 @@ func TestF2_6_ASynchronizationOfOneServiceLeavesTheAnswersOfAnotherInPlace(t *te
 	for _, p := range []*harness.Policy{a, b} {
 		r.Warm(c, harness.Branches(p.Slug, alice), alice)
 	}
-	waitForKeys(t, c, "authz:search:*")
 
 	// The standard request is the resource search, whose pages are cached as search answers.
 	hits := func() float64 {
@@ -304,60 +283,6 @@ func TestF2_6_ASynchronizationOfOneServiceLeavesTheAnswersOfAnotherInPlace(t *te
 	}
 	if recomputed := int(misses() - missesBefore); recomputed < syncs {
 		t.Fatalf("alpha was recomputed %d times in %d changes of its data: the test does not prove the answers follow the data", recomputed, syncs)
-	}
-}
-
-// F2-8: the Redis of the cache is lost while serving (FLUSHALL): the answers stay the same, and no request fails.
-func TestF2_8_FlushingRedisWhileServingChangesNoAnswer(t *testing.T) {
-	c := startReplicas(t, 2)
-	p := c.SeedPolicy("org")
-	alice := c.UserToken("alice")
-	want := map[int]string{}
-	for _, r := range c.Replicas {
-		res := r.Warm(c, harness.Branches(p.Slug, alice), alice)
-		want[r.Index] = string(res.Body)
-	}
-
-	dataBefore := c.DataRevision(p.ServiceID)
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	for _, r := range c.Replicas {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				status, body, err := r.Try(c, harness.Branches(p.Slug, alice), alice, 10*time.Second)
-				if err != nil || status != http.StatusOK || string(body) != want[r.Index] {
-					t.Errorf("replica %d: status %d, %v, body %s (want %s)", r.Index, status, err, body, want[r.Index])
-					return
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-		}()
-	}
-	time.Sleep(300 * time.Millisecond)
-	for range 3 {
-		if err := c.Redis.FlushAll(context.Background()).Err(); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(400 * time.Millisecond)
-	}
-	// A cold replica memory too: everything is read again, from the database and the sources.
-	for _, r := range c.Replicas {
-		r.App.ClearMemoryCaches()
-	}
-	time.Sleep(600 * time.Millisecond)
-	close(stop)
-	wg.Wait()
-	// The synchronization state was lost with Redis and found the rows as they were: the data did not move, so no cached
-	// answer of the other replicas was made stale by it.
-	if got := c.DataRevision(p.ServiceID); got != dataBefore {
-		t.Errorf("the data revision went from %d to %d with nothing written to the source", dataBefore, got)
 	}
 }
 

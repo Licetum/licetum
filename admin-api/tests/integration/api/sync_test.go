@@ -788,32 +788,6 @@ func TestSyncRepeatedSynchronizationChangesNothing(t *testing.T) {
 	}
 }
 
-// F3-13: a Redis flush starts no synchronization and asks no source.
-func TestSyncRedisFlushStartsNothing(t *testing.T) {
-	e := setup(t)
-	src := newSource(t, branches("b1", "b2")...)
-	f := e.syncFixture("flush", src)
-	r := e.checkReplica(nil)
-	r.permission(t, f)
-	jobs, calls := e.jobCount(f.typ, "done"), src.calls.Load()
-
-	if err := e.app.Redis.FlushAll(context.Background()).Err(); err != nil {
-		t.Fatal(err)
-	}
-	for range 5 {
-		if _, body, _ := r.permission(t, f); !strings.Contains(body, `"b2"`) {
-			t.Fatalf("%s", body)
-		}
-	}
-	time.Sleep(500 * time.Millisecond)
-	if got := e.jobCount(f.typ, "done"); got != jobs {
-		t.Fatalf("a Redis flush started %d synchronizations", got-jobs)
-	}
-	if got := src.calls.Load(); got != calls {
-		t.Fatalf("a Redis flush made %d source calls", got-calls)
-	}
-}
-
 // A body that still carries cache_ttl (the list of a source is no longer kept) is accepted, the field is dropped, and
 // neither the answer, the list of the type's synchronizers nor the stored configuration has it.
 func TestSynchronizerBodyWithCacheTTLIsAcceptedAndIgnored(t *testing.T) {

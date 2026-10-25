@@ -2,10 +2,9 @@
 
 package cluster_test
 
-// F1: the fast read path. A warm request sends no query to PostgreSQL and no command to Redis; a request answered from
-// Redis makes one round trip; what a cache miss costs does not grow with the policy; a deleted service or a changed
-// slug is seen by every replica within a second; the key set of the identity provider is fetched once per TTL, and a
-// flood of bad tokens does not reach the provider.
+// F1: the fast read path. A warm request sends no query to PostgreSQL and no command to Redis; what a cache miss costs
+// does not grow with the policy; a deleted service or a changed slug is seen by every replica within a second; the key
+// set of the identity provider is fetched once per TTL, and a flood of bad tokens does not reach the provider.
 
 import (
 	"context"
@@ -83,33 +82,6 @@ func TestF1_1_AWarmRequestSendsNoQueryToPostgreSQL(t *testing.T) {
 			}
 			if got := res.Trace.RedisRoundTrips(); got != 0 {
 				t.Errorf("replica %d, %s: %d round trips to Redis (%v), want 0", r.Index, q.name, got, res.Trace.RedisOps())
-			}
-		}
-	}
-}
-
-// F1-2: with the answer not in memory but in Redis, a request makes one round trip to Redis and sends no query.
-func TestF1_2_ARequestAnsweredFromRedisMakesOneRoundTrip(t *testing.T) {
-	c := startReplicas(t, 2)
-	p := c.SeedPolicy("org")
-	alice := c.UserToken("alice")
-	for _, r := range c.Replicas {
-		for _, q := range requestsOf(p, "alice") {
-			settle(t, c, r, q, alice)
-			r.App.ClearAnswerMemoryCache()
-			res := r.Send(c, q.req, alice)
-			if res.Status != http.StatusOK {
-				t.Fatalf("%s: %d %s", q.name, res.Status, res.Body)
-			}
-			if got := res.Trace.DBQueries(); got != 0 {
-				t.Errorf("replica %d, %s: %d queries (%v), want 0", r.Index, q.name, got, res.Trace.DBQueryOps())
-			}
-			if got := res.Trace.RedisRoundTrips(); got != 1 {
-				t.Errorf("replica %d, %s: %d round trips to Redis (%v), want 1", r.Index, q.name, got, res.Trace.RedisOps())
-			}
-			// The answer from Redis is kept in memory: the next request does not go to Redis.
-			if again := r.Send(c, q.req, alice); again.Trace.RedisRoundTrips() != 0 || again.Trace.DBQueries() != 0 {
-				t.Errorf("replica %d, %s: the answer was not kept in memory: db=%d redis=%d", r.Index, q.name, again.Trace.DBQueries(), again.Trace.RedisRoundTrips())
 			}
 		}
 	}

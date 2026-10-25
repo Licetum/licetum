@@ -60,7 +60,7 @@ func TestF2_7_ARevisionBumpUnderHotKeysDoesNotExhaustThePool(t *testing.T) {
 		wg        sync.WaitGroup
 		peak      atomic.Int32
 	)
-	missesBefore := harness.MetricValue(r.Metrics(c), `licetum_permission_cache_total{result="miss"}`)
+	missesBefore := harness.MetricValue(r.Metrics(c), `licetum_search_cache_total{result="miss"}`)
 	revisionBefore := c.Revision()
 	slots := make(chan struct{}, 300)
 	ticker := time.NewTicker(time.Second / rps)
@@ -109,7 +109,7 @@ func TestF2_7_ARevisionBumpUnderHotKeysDoesNotExhaustThePool(t *testing.T) {
 		}
 	}
 	wg.Wait()
-	misses := int(harness.MetricValue(r.Metrics(c), `licetum_permission_cache_total{result="miss"}`) - missesBefore)
+	misses := int(harness.MetricValue(r.Metrics(c), `licetum_search_cache_total{result="miss"}`) - missesBefore)
 	slices.Sort(latencies)
 	t.Logf("%d requests (%d failed): p50 %v, p99 %v, max %v; pool peak %d of %d", len(latencies), failures.Load(),
 		percentile(latencies, 0.5), percentile(latencies, 0.99), latencies[len(latencies)-1], peak.Load(), maxConns)
