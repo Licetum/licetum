@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -68,20 +69,49 @@ func TestServiceSlugFormat(t *testing.T) {
 	}
 }
 
-func TestSynchronizerCacheTTLIsBounded(t *testing.T) {
+// A body that still carries cache_ttl (the list cache is gone) is accepted and the field is dropped.
+func TestSynchronizerCacheTTLInABodyIsAcceptedAndIgnored(t *testing.T) {
 	const dsn = `"dsn":"postgresql://reader:secret@db.example:5432/app"`
-	for _, ttl := range []string{"0", "30", "86400"} {
+	for _, ttl := range []string{"0", "30", "-1", "86401", `"soon"`} {
 		raw := `{"config":{"kind":"sql",` + dsn + `,"query":"SELECT id, name, parent_id FROM t WHERE id = :id",` +
 			`"list_query":"SELECT id, name, parent_id FROM t","cache_ttl":` + ttl + `}}`
-		if _, err := decodeAndValidate[model.SynchronizerInput](t, raw); err != nil {
+		in, err := decodeAndValidate[model.SynchronizerInput](t, raw)
+		if err != nil {
 			t.Errorf("cache_ttl %s: %v", ttl, err)
+			continue
+		}
+		if _, ok := in.Config.StoredConfig()["cache_ttl"]; ok {
+			t.Errorf("cache_ttl %s was stored", ttl)
+		}
+		out, err := json.Marshal(in.Config)
+		if err != nil || strings.Contains(string(out), "cache_ttl") {
+			t.Errorf("cache_ttl %s is shown: %s (%v)", ttl, out, err)
 		}
 	}
-	for _, ttl := range []string{"-1", "86401"} {
-		raw := `{"config":{"kind":"sql",` + dsn + `,"query":"SELECT id, name, parent_id FROM t WHERE id = :id",` +
-			`"list_query":"SELECT id, name, parent_id FROM t","cache_ttl":` + ttl + `}}`
-		if _, err := decodeAndValidate[model.SynchronizerInput](t, raw); err == nil {
-			t.Errorf("cache_ttl %s must be rejected", ttl)
-		}
+	raw := `{"config":{"kind":"http","url":"https://src.example/branch","cache_ttl":30}}`
+	in, err := decodeAndValidate[model.SynchronizerInput](t, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := in.Config.StoredConfig()["cache_ttl"]; ok {
+		t.Error("cache_ttl of an http source was stored")
+	}
+}
+
+// A configuration stored by an earlier release has cache_ttl: it is read without it, and written back without it.
+func TestAStoredSynchronizerConfigWithCacheTTLIsReadWithoutIt(t *testing.T) {
+	cfg, err := model.ConfigFromDB("HTTP", []byte(`{"url":"https://src.example/branch","cache_ttl":30}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Kind != model.KindHTTP || cfg.URL != "https://src.example/branch" {
+		t.Fatalf("config = %+v", cfg)
+	}
+	if _, ok := cfg.StoredConfig()["cache_ttl"]; ok {
+		t.Error("cache_ttl survives a read and a write back")
+	}
+	out, err := json.Marshal(cfg)
+	if err != nil || strings.Contains(string(out), "cache_ttl") {
+		t.Errorf("cache_ttl is shown: %s (%v)", out, err)
 	}
 }

@@ -315,7 +315,7 @@ func outageLengthOf(env string, def time.Duration) time.Duration {
 // F5-2, F5-3, F5-4: Redis gone for a minute at 600 requests a second. LICETUM_CHAOS_REDIS_OUTAGE shortens it.
 func TestF5_2_RedisGoneForAMinuteUnderLoad(t *testing.T) {
 	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	tokens := everyone(t, c, p, 30)
 	r := c.Replicas[0]
 	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
@@ -326,7 +326,7 @@ func TestF5_2_RedisGoneForAMinuteUnderLoad(t *testing.T) {
 // F5-2: the same when Redis swallows the traffic and every command waits for its timeout, until it is skipped.
 func TestF5_2_RedisBlackHoledUnderLoad(t *testing.T) {
 	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	tokens := everyone(t, c, p, 30)
 	r := c.Replicas[0]
 	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
@@ -350,7 +350,7 @@ func TestF5_5_ReadOnlyRedisUnderLoad(t *testing.T) {
 	t.Cleanup(func() { _ = admin.Close() })
 
 	c := harness.StartReplicas(t, infra, 1, harness.WithReplicaRedis(uri), harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	tokens := everyone(t, c, p, 30)
 	r := c.Replicas[0]
 	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])
@@ -385,7 +385,7 @@ func TestF5_6_PostgreSQLGoneTheReplicaAnswersFromItsCopyThenFailsClosed(t *testi
 	const staleness = 5 * time.Second
 	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout),
 		harness.WithConfig(func(cfg *config.Config) { cfg.Policy.MaxStaleness = staleness }))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
 	asked := harness.Branches(p.Slug, alice)
@@ -475,7 +475,7 @@ func TestF5_6_PostgreSQLGoneTheReplicaAnswersFromItsCopyThenFailsClosed(t *testi
 // F5-6: without a limit (the default) the replica answers from its copy for as long as PostgreSQL is gone.
 func TestF5_6_WithoutALimitTheReplicaKeepsAnsweringFromItsCopy(t *testing.T) {
 	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
 	asked := harness.Branches(p.Slug, alice)
@@ -521,7 +521,7 @@ func TestF5_7_ARollingRestartLosesNoRequest(t *testing.T) {
 	)
 	rps := 600 / loadDivisor
 	c := harness.StartReplicas(t, infra, replicas, harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	tokens := everyone(t, c, p, 30)
 	for _, r := range c.Replicas {
 		r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])

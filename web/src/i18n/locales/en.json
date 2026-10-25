@@ -1316,9 +1316,6 @@
   "sources": {
     "addHeader": "Add a header",
     "attrsNote": "Any other field of a resource becomes its attribute; accesses can then pick resources by it (for example owner = anna).",
-    "cache": "The list is kept for {{seconds}} s",
-    "cacheTtl": "Keep the list for",
-    "cacheTtlHelp": "Requests in this window don’t go to the source, so the data may lag it by as much. Empty — the default (10 s), 0 — no caching.",
     "col": {
       "source": "Source"
     },
@@ -1353,7 +1350,6 @@
     "query": "Query of one resource by :id",
     "queryHelp": "The same columns; the parameter is written :id.",
     "rawNote": "How a service’s code asks Licetum:",
-    "seconds": "seconds",
     "test": {
       "attrs": "Attributes of the resources",
       "duplicates_few": "{{count}} ids come more than once; the last row wins.",

@@ -48,7 +48,7 @@ const delay = 150 * time.Millisecond
 func setup(t *testing.T) (*harness.Cluster, *harness.Replica, *harness.Policy, string) {
 	t.Helper()
 	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies())
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
 	r.Warm(c, harness.Branches(p.Slug, alice), alice)
@@ -232,7 +232,7 @@ func TestF0_4_ReadOnlyRedisFailsTheWrites(t *testing.T) {
 	}
 
 	c := harness.StartReplicas(t, infra, 1, harness.WithReplicaRedis(uri))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
 	if res := r.Permission(c, p.Slug, alice); res.Status != http.StatusOK {

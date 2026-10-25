@@ -17,7 +17,7 @@ func TestF6_6_RegionsOfASynchronizerThroughTheAPI(t *testing.T) {
 	src := newSource(t, branches("b1")...)
 	path := "/service/" + org + "/type_resource/" + typ + "/resource/synchronizer"
 	body := map[string]any{
-		"config":            map[string]any{"kind": "http", "url": src.URL + "/src", "cache_ttl": 0},
+		"config":            map[string]any{"kind": "http", "url": src.URL + "/src"},
 		"probe_resource_id": "b1",
 		"regions":           []string{"us", "eu", "us"},
 	}

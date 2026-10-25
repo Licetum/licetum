@@ -93,7 +93,7 @@ func (e *env) syncFixture(name string, src *source) *syncFixture {
 	org := e.must("POST", "/service", servicePayload(e, name))["id"].(string)
 	typ := e.must("POST", "/service/"+org+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
 	e.must("POST", "/service/"+org+"/type_resource/"+typ+"/resource/synchronizer", map[string]any{
-		"config":            map[string]any{"kind": "http", "url": src.URL + "/src", "cache_ttl": 0},
+		"config":            map[string]any{"kind": "http", "url": src.URL + "/src"},
 		"probe_resource_id": "b1",
 	})
 	e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": typ, "access": []string{"read"}, "subject": "alice"})
@@ -842,5 +842,34 @@ func TestSyncStateOfThePreviousReleaseIsImported(t *testing.T) {
 	after, _ := e.app.Redis.HGetAll(context.Background(), "authz:data_versions").Result()
 	if before[f.service] != after[f.service] {
 		t.Fatalf("the data revision of the service changed after the import: %v -> %v", before, after)
+	}
+}
+
+// A body that still carries cache_ttl (the list of a source is no longer kept) is accepted, the field is dropped, and
+// neither the answer, the list of the type's synchronizers nor the stored configuration has it.
+func TestSynchronizerBodyWithCacheTTLIsAcceptedAndIgnored(t *testing.T) {
+	e := setup(t)
+	src := newSource(t)
+	org := e.must("POST", "/service", servicePayload(e, "ttl-org"))["id"].(string)
+	typ := e.must("POST", "/service/"+org+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
+	path := "/service/" + org + "/type_resource/" + typ + "/resource/synchronizer"
+	created := e.must("POST", path, map[string]any{
+		"config":            map[string]any{"kind": "http", "url": src.URL + "/src", "cache_ttl": 30},
+		"probe_resource_id": "b1",
+	})
+	if raw, _ := json.Marshal(created); strings.Contains(string(raw), "cache_ttl") {
+		t.Fatalf("the answer of the create shows cache_ttl: %s", raw)
+	}
+	status, raw := e.do("GET", e.admin.URL+path, nil)
+	if status != http.StatusOK || strings.Contains(string(raw), "cache_ttl") {
+		t.Fatalf("GET %s: %d %s", path, status, raw)
+	}
+	var stored bool
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT config ? 'cache_ttl' FROM synchronizer WHERE type_resource_id = $1`, typ).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored {
+		t.Fatal("cache_ttl was stored")
 	}
 }

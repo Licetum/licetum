@@ -21,7 +21,7 @@ const revocationSLO = 5 * time.Second
 // by every replica within the revocation SLO; an enabled client and a new key are accepted again.
 func TestContract_PEP02_APIKeysAreHashedRotateAndARevokedKeyIsRefusedByEveryPDP(t *testing.T) {
 	c := startReplicas(t, 3)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	base := "/service/" + p.ServiceID + "/pep-clients"
 	client := c.Must(http.MethodPost, base, map[string]any{"name": "checkout", "kind": "api_key"})["id"].(string)
 

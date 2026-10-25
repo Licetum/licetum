@@ -42,7 +42,7 @@ func createRule(body map[string]any) map[string]any {
 // exactly one, a batch adds one whatever its size, and a batch that fails adds none.
 func TestF2_1_AWriteAndItsRevisionCommitAtomically(t *testing.T) {
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 
 	before := c.Revision()
 	status, raw, rev := c.AdminWrite(http.MethodPost, "/assignment_rule", ruleBody(p, "bob", nil))
@@ -85,7 +85,7 @@ func TestF2_1_AWriteAndItsRevisionCommitAtomically(t *testing.T) {
 // share a revision and none is skipped.
 func TestF2_2_RevisionsOfConcurrentWritesAreStrictlyIncreasing(t *testing.T) {
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	first := c.Revision()
 
 	const writers, each = 20, 5
@@ -124,7 +124,7 @@ func TestF2_2_RevisionsOfConcurrentWritesAreStrictlyIncreasing(t *testing.T) {
 // it, every time. (The replicas read the database they write to: a lagging read replica is the subject of F6.)
 func TestF2_3_AWriteIsSeenByEveryReplicaThatAsksForItsRevision(t *testing.T) {
 	c := startReplicas(t, 3)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	bob := c.UserToken("bob")
 	for _, r := range c.Replicas {
 		if res := r.Permission(c, p.Slug, bob); res.Status != http.StatusOK { // every replica has a view, and an answer in memory
@@ -164,7 +164,7 @@ func TestF2_3_AWriteIsSeenByEveryReplicaThatAsksForItsRevision(t *testing.T) {
 // leaves nothing in the cache under a revision it was not computed for.
 func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) {
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	r := c.Replicas[0]
 	carol := c.UserToken("carol")
 	alice := c.UserToken("alice")
@@ -216,7 +216,7 @@ func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) 
 // F2-5: after a deny rule is created, every replica answers deny within a second, without being asked for a revision.
 func TestF2_5_ARevocationReachesEveryReplicaWithinASecond(t *testing.T) {
 	c := startReplicas(t, 3)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	for _, r := range c.Replicas {
 		r.Warm(c, harness.Branches(p.Slug, alice), alice)
@@ -247,8 +247,8 @@ func TestF2_5_ARevocationReachesEveryReplicaWithinASecond(t *testing.T) {
 // F2-6: a synchronization of the data of one service does not invalidate the answers of the services that did not read it.
 func TestF2_6_ASynchronizationOfOneServiceLeavesTheAnswersOfAnotherInPlace(t *testing.T) {
 	c := startReplicas(t, 1)
-	a := c.SeedPolicy("alpha", 0)
-	b := c.SeedPolicyOn("beta", 0, "division-b", "branch-b")
+	a := c.SeedPolicy("alpha")
+	b := c.SeedPolicyOn("beta", "division-b", "branch-b")
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
 	for _, p := range []*harness.Policy{a, b} {
@@ -311,7 +311,7 @@ func TestF2_6_ASynchronizationOfOneServiceLeavesTheAnswersOfAnotherInPlace(t *te
 // F2-8: the Redis of the cache is lost while serving (FLUSHALL): the answers stay the same, and no request fails.
 func TestF2_8_FlushingRedisWhileServingChangesNoAnswer(t *testing.T) {
 	c := startReplicas(t, 2)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	want := map[int]string{}
 	for _, r := range c.Replicas {
@@ -365,7 +365,7 @@ func TestF2_8_FlushingRedisWhileServingChangesNoAnswer(t *testing.T) {
 // F2-9: the replicas of the previous release follow the Redis counters; the write of this release bumps them too.
 func TestF2_9_APreviousReleaseCanStillFollowTheWrites(t *testing.T) {
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	ctx := context.Background()
 	before, err := redisx.GetVersion(ctx, c.Redis)
 	if err != nil {
@@ -396,7 +396,7 @@ func TestF2_9_APreviousReleaseCanStillFollowTheWrites(t *testing.T) {
 // F2-10: the poller costs at most four statements a second per replica when nothing happens.
 func TestF2_10_FollowingTheRevisionCostsFewStatementsAtRest(t *testing.T) {
 	c := startReplicas(t, 2)
-	c.SeedPolicy("org", 0)
+	c.SeedPolicy("org")
 	time.Sleep(time.Second) // the watchers have started
 	for _, r := range c.Replicas {
 		before := harness.MetricValue(r.Metrics(c), "licetum_db_queries_total")

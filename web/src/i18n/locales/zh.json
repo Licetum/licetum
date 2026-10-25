@@ -1215,9 +1215,6 @@
   "sources": {
     "addHeader": "添加请求头",
     "attrsNote": "资源的任何其他字段都会成为它的属性；访问权限随后可以按它选择资源（例如 owner = anna）。",
-    "cache": "列表保留 {{seconds}} 秒",
-    "cacheTtl": "列表保留时间",
-    "cacheTtlHelp": "此时间窗口内的请求不会访问数据源，因此数据最多可能滞后这么久。留空 — 默认（10 秒），0 — 不缓存。",
     "col": {
       "source": "数据源"
     },
@@ -1252,7 +1249,6 @@
     "query": "按 :id 查询单个资源",
     "queryHelp": "相同的列；参数写作 :id。",
     "rawNote": "服务的代码如何询问 Licetum：",
-    "seconds": "秒",
     "test": {
       "attrs": "资源的属性",
       "duplicates_other": "有 {{count}} 个 id 出现多次；以最后一行为准。",

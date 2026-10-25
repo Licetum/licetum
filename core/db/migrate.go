@@ -285,13 +285,10 @@ func seedPlatformType(ctx context.Context, tx pgx.Tx, dsn string, t model.Platfo
 	src := platformSources[t]
 	list := fmt.Sprintf("SELECT id::text AS id, %s AS name, NULL::text AS parent_id FROM %s WHERE %s",
 		src.name, src.table, src.alive)
-	// cache_ttl 0: the lists of the platform's own entities are never kept, or an entity created a moment ago would
-	// be missing from them (and answered with 403) until the cached list ran out.
 	syncConfig, err := json.Marshal(map[string]any{
 		"dsn":        dsn,
 		"query":      list + " AND id::text = :id",
 		"list_query": list,
-		"cache_ttl":  0,
 	})
 	if err != nil {
 		return false, err

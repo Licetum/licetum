@@ -336,7 +336,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   (`SynchronizerConfig.Masked`); the mask sent back in an update means "keep"
   (`SynchronizerConfig.RestoreSecrets`, applied before the probe).
   The fetched list is not kept anywhere: a synchronization asks the source (the throttle of 30 s and the spacing of a fresh job,
-  `SYNC__FRESH_MIN_INTERVAL`, are what limit the calls); `cache_ttl` and `SYNC__FETCH_TTL` are still accepted and ignored. An answer
+  `SYNC__FRESH_MIN_INTERVAL`, are what limit the calls); a body that still carries `cache_ttl` is accepted and the field dropped, a stored config that has it is read without it, and `SYNC__FETCH_TTL` is a row of the deprecation catalog. An answer
   with no resources is the source's answer too. A source that does not answer (transport error, bad status, malformed or `null` body,
   SQL source without `list_query`) is an error (`FetchAll` returns it): the sync is skipped and the data stays. The admin's inline refresh of one resource
   (`resolve`) does not ask a source whose type is in backoff (`sync_state`): it answers from the copy.

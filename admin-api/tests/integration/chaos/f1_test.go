@@ -90,7 +90,7 @@ func TestF1_4_AWarmRequestIgnoresTheLatencyOfPostgreSQLAndRedis(t *testing.T) {
 func hotSetup(t *testing.T, users int) (*harness.Cluster, *harness.Replica, *harness.Policy, []string) {
 	t.Helper()
 	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies(), harness.WithHotRedis(hotTimeout))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	tokens := everyone(t, c, p, users)
 	r := c.Replicas[0]
 	r.Warm(c, harness.Branches(p.Slug, tokens[0]), tokens[0])

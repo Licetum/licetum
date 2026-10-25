@@ -27,7 +27,7 @@ import (
 // link too; the guide says to run the admin API in the region of the primary for that reason.
 func TestF6_7_AnAdminWriteFromAFarRegionCostsFewRoundTrips(t *testing.T) {
 	c := harness.StartReplicas(t, infra, 1, harness.WithFaultProxies())
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 
 	cfg := *c.Cfg
 	cfg.DB.URI = c.PostgresFault.Rewrite(c.Cfg.DB.URI)

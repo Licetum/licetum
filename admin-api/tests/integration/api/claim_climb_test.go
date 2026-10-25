@@ -54,7 +54,7 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 		types[name] = id
 		// The probe asks the source for one resource; nothing reaches the local copy before a synchronization.
 		e.must("POST", "/service/"+service+"/type_resource/"+id+"/resource/synchronizer", map[string]any{
-			"config":            map[string]any{"kind": "http", "url": src.ListURL(name), "cache_ttl": 0},
+			"config":            map[string]any{"kind": "http", "url": src.ListURL(name)},
 			"probe_resource_id": probe,
 		})
 	}

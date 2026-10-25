@@ -3178,12 +3178,6 @@ components:
     SynchronizerConfig:
       additionalProperties: true
       properties:
-        cache_ttl:
-          description: Seconds to keep the list of the source's resources in Redis, so that requests in this window do not go to the source (0 — no cache; omitted — the default SYNC__FETCH_TTL). The resource cache may lag the source by this much
-          examples:
-            - 30
-          format: int64
-          type: integer
         dsn:
           description: "kind=sql: connection string of the PostgreSQL source"
           examples:

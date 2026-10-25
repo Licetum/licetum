@@ -107,9 +107,9 @@ func TestMinimizeLatencyRefreshesAChangedSourceInTheBackground(t *testing.T) {
 
 	org := e.must("POST", "/service", servicePayload(e, "refresh-org"))["id"].(string)
 	branch := e.must("POST", "/service/"+org+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
-	// cache_ttl 0: every synchronization asks the source itself, so a change of the source is seen by it.
+	// No list of the source is kept: every synchronization asks the source itself, so a change of the source is seen by it.
 	e.must("POST", "/service/"+org+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
-		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch", "cache_ttl": 0},
+		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch"},
 		"probe_resource_id": "b1",
 	})
 	e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": branch, "access": []string{"read"}, "subject": "alice"})
@@ -167,7 +167,7 @@ func TestCheckAnswersFollowARuleChangeAtOnce(t *testing.T) {
 	org := e.must("POST", "/service", servicePayload(e, "check-org"))["id"].(string)
 	branch := e.must("POST", "/service/"+org+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
 	e.must("POST", "/service/"+org+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
-		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch", "cache_ttl": 300},
+		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch"},
 		"probe_resource_id": "b1",
 	})
 	rule := e.must("POST", "/assignment_rule", map[string]any{
@@ -231,7 +231,7 @@ func TestSourceAnswersDecideWhetherTheTypeIsEmptied(t *testing.T) {
 	org := e.must("POST", "/service", servicePayload(e, "empty-org"))["id"].(string)
 	branch := e.must("POST", "/service/"+org+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
 	e.must("POST", "/service/"+org+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
-		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch", "cache_ttl": 0},
+		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch"},
 		"probe_resource_id": "b1",
 	})
 	e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": branch, "access": []string{"read"}, "subject": "alice"})

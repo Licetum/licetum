@@ -142,9 +142,6 @@ func (a AdminAuth) IsConfigured() bool {
 
 // Sync tunes resource synchronization (see service.ensureSynced and synchronizer.Adapter).
 type Sync struct {
-	// FetchTTL is how long a fetched list of a source's resources is kept in Redis, so that requests
-	// in this window do not go to the source. A synchronizer's own cache_ttl overrides it; 0 — no cache.
-	FetchTTL time.Duration
 	// DBOSPoolSize is the size of the connection pool of the DBOS client of a process; it is outside DB__POOL_SIZE.
 	DBOSPoolSize int
 
@@ -324,7 +321,6 @@ func Load() (*Config, error) {
 			SubjectClaim: e.str("ADMIN_AUTH__SUBJECT_CLAIM", DefaultSubjectClaim),
 		},
 		Sync: Sync{
-			FetchTTL:         e.seconds("SYNC__FETCH_TTL", 10),
 			DBOSPoolSize:     e.int("SYNC__DBOS_POOL_SIZE", 20),
 			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
 			DBOSURI:          e.str("SYNC__DBOS_URI", ""),
@@ -447,6 +443,8 @@ var deprecatedSettings = []Deprecated{
 	// The synchronization runs on DBOS only.
 	{"SYNC__ENGINE", "DBOS is the only synchronization engine; a value of postgres no longer selects the sync_job table"},
 	{"WORKER__REGION", "a source with regions may be asked by any executor until regions are enforced again; the worker no longer filters the jobs by region"},
+	// The lists of the sources are not kept between synchronizations.
+	{"SYNC__FETCH_TTL", "the list a source returned is no longer kept between synchronizations, so a synchronizer's cache_ttl is ignored too; every synchronization asks the source, spaced by the backoff of sync_state and by SYNC__FRESH_MIN_INTERVAL for a fresh one"},
 	// The PDP reads the policy from one PostgreSQL.
 	{"DB__READ_URI", readReplicaGone},
 	{"DB__MAX_REPLICA_LAG", readReplicaGone},

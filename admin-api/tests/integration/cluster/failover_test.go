@@ -24,7 +24,7 @@ import (
 // promotion by taking the last write away from the database and putting the revision back.
 func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing.T) {
 	c := startReplicas(t, 2, harness.WithConfig(func(cfg *config.Config) { cfg.Revision.WaitMax = 200 * time.Millisecond }))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	const user = "grace"
 	token := c.UserToken(user)
 	ctx := context.Background()

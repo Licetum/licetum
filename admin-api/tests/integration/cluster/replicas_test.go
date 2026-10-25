@@ -24,7 +24,7 @@ func TestF0_1_ThreeReplicasAnswerTheSameRequestIdentically(t *testing.T) {
 	if len(c.Replicas) != 3 {
 		t.Fatalf("started %d replicas, want 3", len(c.Replicas))
 	}
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 
 	var first []byte

@@ -23,16 +23,15 @@ func (c *Cluster) ServicePayload(name string) map[string]any {
 }
 
 // SeedPolicy registers the service slug with the two types and puts the given rows in the fake source: divisions as
-// {id, name} and branches as {id, name, parent_id}. cacheTTL is the synchronizers' cache_ttl in seconds; 0 makes every
-// synchronization ask the source itself.
-func (c *Cluster) SeedPolicy(slug string, cacheTTL int) *Policy {
+// {id, name} and branches as {id, name, parent_id}.
+func (c *Cluster) SeedPolicy(slug string) *Policy {
 	c.T.Helper()
-	return c.SeedPolicyOn(slug, cacheTTL, "division", "branch")
+	return c.SeedPolicyOn(slug, "division", "branch")
 }
 
 // SeedPolicyOn is SeedPolicy with the sources the two types read named by divisionKind and branchKind: a second service
 // reads sources of its own, so that a change of one service's data is not a change of the other's.
-func (c *Cluster) SeedPolicyOn(slug string, cacheTTL int, divisionKind, branchKind string) *Policy {
+func (c *Cluster) SeedPolicyOn(slug string, divisionKind, branchKind string) *Policy {
 	c.T.Helper()
 	c.Source.Set(divisionKind,
 		map[string]any{"id": "d1", "name": "North"}, map[string]any{"id": "d2", "name": "South"})
@@ -48,7 +47,7 @@ func (c *Cluster) SeedPolicyOn(slug string, cacheTTL int, divisionKind, branchKi
 		map[string]any{"name": "branch", "type_resource_parent_id": p.Division})["id"].(string)
 	for _, t := range []struct{ id, kind, probe string }{{p.Division, divisionKind, "d1"}, {p.Branch, branchKind, "b1"}} {
 		c.Must(http.MethodPost, "/service/"+p.ServiceID+"/type_resource/"+t.id+"/resource/synchronizer", map[string]any{
-			"config":            map[string]any{"kind": "http", "url": c.Source.ListURL(t.kind), "cache_ttl": cacheTTL},
+			"config":            map[string]any{"kind": "http", "url": c.Source.ListURL(t.kind)},
 			"probe_resource_id": t.probe,
 		})
 	}

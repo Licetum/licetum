@@ -90,7 +90,6 @@ const (
 	AssignmentRuleTargetRequired  Key = "assignment_rule_target_required"
 	ServiceSlugInvalid            Key = "service_slug_invalid"
 	ServiceSlugTaken              Key = "service_slug_taken"
-	CacheTTLInvalid               Key = "synchronizer_cache_ttl_invalid"
 	SynchronizerRegionsInvalid    Key = "synchronizer_regions_invalid"
 	SynchronizerHeaderInvalid     Key = "synchronizer_header_invalid"
 
@@ -530,11 +529,6 @@ var catalog = map[Key]Text{
 		EN: "Invalid service slug %q: use lowercase Latin letters, digits, '-' and '_', starting with a letter or a digit, up to 64 characters; a UUID is not allowed",
 		RU: "Недопустимый slug сервиса %q: латиница в нижнем регистре, цифры, «-» и «_», начало с буквы или цифры, до 64 символов; UUID не допускается",
 		ZH: "服务 slug %q 无效：仅允许小写拉丁字母、数字、“-”和“_”，以字母或数字开头，最多 64 个字符，且不能是 UUID",
-	},
-	CacheTTLInvalid: {
-		EN: "config.cache_ttl must be between 0 and %d seconds",
-		RU: "config.cache_ttl должен быть от 0 до %d секунд",
-		ZH: "config.cache_ttl 必须在 0 到 %d 秒之间",
 	},
 	SynchronizerRegionsInvalid: {
 		EN: "regions: at most 16 names of lowercase letters, digits and hyphens (up to 32 characters each); %s",

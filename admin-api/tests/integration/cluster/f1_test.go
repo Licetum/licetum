@@ -73,7 +73,7 @@ func settle(t *testing.T, c *harness.Cluster, r *harness.Replica, q request, tok
 // F1-1: a request whose token and answer are cached sends no query to PostgreSQL (and none to Redis).
 func TestF1_1_AWarmRequestSendsNoQueryToPostgreSQL(t *testing.T) {
 	c := startReplicas(t, 2)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	for _, r := range c.Replicas {
 		for _, q := range requestsOf(p, "alice") {
@@ -91,7 +91,7 @@ func TestF1_1_AWarmRequestSendsNoQueryToPostgreSQL(t *testing.T) {
 // F1-2: with the answer not in memory but in Redis, a request makes one round trip to Redis and sends no query.
 func TestF1_2_ARequestAnsweredFromRedisMakesOneRoundTrip(t *testing.T) {
 	c := startReplicas(t, 2)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	for _, r := range c.Replicas {
 		for _, q := range requestsOf(p, "alice") {
@@ -137,7 +137,7 @@ func insertRules(t *testing.T, c *harness.Cluster, typeID string, n int) {
 func missCost(t *testing.T, n int) (queries int, ops map[string]int) {
 	t.Helper()
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	c.Must(http.MethodPost, "/assignment_rule", map[string]any{
 		"type_resource_id": p.Branch, "access": []string{"read"}, "subject": "bob",
 	})
@@ -227,7 +227,7 @@ func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := startReplicas(t, 3)
-			p := c.SeedPolicy("org", 0)
+			p := c.SeedPolicy("org")
 			alice := c.UserToken("alice")
 			for _, r := range c.Replicas {
 				r.Warm(c, harness.Branches(p.Slug, alice), alice)
@@ -261,7 +261,7 @@ func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) 
 func pepJWTCluster(t *testing.T, replicas int, opts ...harness.Option) (*harness.Cluster, *harness.Policy, func(token string) *harness.Result) {
 	t.Helper()
 	c := startReplicas(t, replicas, opts...)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	c.RegisterPEPIssuer()
 	c.JWTClient(p.Slug, "checkout")
 	ask := func(token string) *harness.Result {
@@ -402,7 +402,7 @@ func TestF1_8_KeyRotationCostsOneRefetch(t *testing.T) {
 // fallback is counted.
 func TestF1_ThePolicyThatDoesNotFitIsReadWithQueries(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithConfig(func(cfg *config.Config) { cfg.Snapshot.MaxBytes = 2_000 }))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
 	res := r.Permission(c, p.Slug, alice)
@@ -428,7 +428,7 @@ func TestF1_ThePolicyThatDoesNotFitIsReadWithQueries(t *testing.T) {
 // SNAPSHOT__MAX_BYTES below zero turns the snapshot off altogether.
 func TestF1_TheSnapshotCanBeTurnedOff(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithConfig(func(cfg *config.Config) { cfg.Snapshot.MaxBytes = -1 }))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
 	warm := r.Warm(c, harness.Branches(p.Slug, alice), alice)

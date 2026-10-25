@@ -191,10 +191,7 @@ type changedType struct {
 // (the closure is built from it) and the synchronizer configuration. A state stored under another structure is not
 // current, so the type has no usable data until the worker has synchronized it again (see ensure).
 func structureOf(g *TypeGraph, typeID uuid.UUID, cfg model.SynchronizerConfig) string {
-	// cache_ttl only sets how long the list of the source stays in Redis: it does not change the data.
-	cfg = cfg.Masked()
-	cfg.CacheTTL = nil
-	raw, _ := json.Marshal(cfg)
+	raw, _ := json.Marshal(cfg.Masked())
 	sum := sha256.Sum256(raw)
 	return g.signature(typeID) + "-" + hex.EncodeToString(sum[:8])
 }

@@ -135,7 +135,7 @@ func TestF6_10_ACellOpensNoConnectionOutsideItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := startReplicas(t, 2)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	otherPG, otherRedis := newDecoy(t), newDecoy(t)
 
 	// What the cell may talk to: its PostgreSQL and Redis, the identity provider, the source, and its own servers.

@@ -42,7 +42,7 @@ func newOverloadRig(t *testing.T, maxInflight int) *overloadRig {
 		opts = append(opts, harness.WithConfig(func(cfg *config.Config) { cfg.HTTP.MaxInflight = maxInflight }))
 	}
 	c := harness.StartReplicas(t, infra, 1, opts...)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	rig := &overloadRig{c: c, r: c.Replicas[0], ref: p.Slug}
 	rig.tokens = make([]string, 4000)
 	for i := range rig.tokens {

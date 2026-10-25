@@ -15,7 +15,7 @@ import (
 // F0-3: the fake source and the fake identity provider report how often they were called.
 func TestF0_3_TheFakeSourceCountsAndCanBeHeld(t *testing.T) {
 	c := startReplicas(t, 2)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	refresh := "/type_resource/" + p.Branch + "/resource/refresh"
 
 	if c.Source.Calls() != 0 {

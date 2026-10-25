@@ -66,7 +66,7 @@ func errorCode(t *testing.T, res *harness.Result) string {
 // is 200 in both cases.
 func TestF5_1_ReadyzFollowsPostgreSQLAndTheSchema(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithFaultProxies())
-	c.SeedPolicy("org", 0)
+	c.SeedPolicy("org")
 	r := c.Replicas[0]
 	ctx := context.Background()
 
@@ -133,7 +133,7 @@ func TestF5_1_ReadyzFollowsPostgreSQLAndTheSchema(t *testing.T) {
 // F5-1: the result of the check is reused for a second, so that probes do not become queries.
 func TestF5_1_ReadyzIsReusedForASecond(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithFaultProxies())
-	c.SeedPolicy("org", 0)
+	c.SeedPolicy("org")
 	r := c.Replicas[0]
 	eventually(t, 5*time.Second, "/readyz is 200", func() bool { return readyz(c, r).Status == http.StatusOK })
 
@@ -155,7 +155,7 @@ func TestF5_1_ReadyzIsReusedForASecond(t *testing.T) {
 // F5-1: Redis is not part of readiness. Without it the replica is degraded, which the metric says.
 func TestF5_1_RedisIsNotPartOfReadiness(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithFaultProxies(), harness.WithHotRedis(50*time.Millisecond))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	r := c.Replicas[0]
 
 	degraded := func() float64 {
@@ -188,7 +188,7 @@ func TestF5_1_RedisIsNotPartOfReadiness(t *testing.T) {
 // serving requests, which the balancer still sends for a while.
 func TestF5_3_ADrainingReplicaIsNotReadyButServes(t *testing.T) {
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
 	if res := r.Permission(c, p.Slug, alice); res.Status != http.StatusOK {
@@ -227,7 +227,7 @@ func TestF5_3_ADrainingReplicaIsNotReadyButServes(t *testing.T) {
 // and the metrics are always answered, and what was admitted is served.
 func TestF5_8_RequestsAboveTheLimitAreRefusedAtOnce(t *testing.T) {
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
 	if res := r.Permission(c, p.Slug, alice); res.Status != http.StatusOK {
@@ -294,7 +294,7 @@ func TestF5_8_RequestsAboveTheLimitAreRefusedAtOnce(t *testing.T) {
 // not hold its place until the work it waits for ends.
 func TestF5_8_ARequestIsAnsweredWhenItsDeadlinePasses(t *testing.T) {
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
 	if res := r.Permission(c, p.Slug, alice); res.Status != http.StatusOK {
@@ -327,7 +327,7 @@ func TestF5_9_APoolNeverExceedsItsSizeAndTheMetricsSayWhenItIsTooSmall(t *testin
 		cfg.DB.PoolSize, cfg.DB.MaxOverflow = poolSize, overflow
 		cfg.Compute.Concurrency = 16 // more computations than connections: they wait for the pool
 	}))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	users := make([]string, 24)
 	for i := range users {
 		users[i] = c.UserToken("pool-user-" + string(rune('a'+i)))
@@ -388,7 +388,7 @@ func TestF5_9_APoolNeverExceedsItsSizeAndTheMetricsSayWhenItIsTooSmall(t *testin
 // nor the allowance of a person against whom a denial has started. The replica cannot compute the new answer, so it refuses.
 func TestF5_6_AnAnswerKeptWithoutPostgreSQLEndsAtTheNextValidityBoundary(t *testing.T) {
 	c := startReplicas(t, 1, harness.WithFaultProxies())
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
 	r.Warm(c, harness.Branches(p.Slug, alice), alice) // the types are synchronized

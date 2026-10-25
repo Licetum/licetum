@@ -73,15 +73,16 @@ func TestMigrateCreatesCurrentSchemaAndSeedsPlatform(t *testing.T) {
 		t.Fatalf("platform seed is incomplete: services=%d groups=%d policies=%d", services, groups, policies)
 	}
 
-	// The lists of the platform's own entities are never served from the cache of fetched lists: an entity created a
-	// moment ago would be missing from it, and changing it would be answered with 403 until the list ran out.
-	var uncached int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM synchronizer s JOIN type_resource t ON t.id = s.type_resource_id
-		WHERE t.service_id = $1 AND s.config->>'cache_ttl' = '0'`, model.PlatformServiceID).Scan(&uncached); err != nil {
+	// Every platform type has its own source, and the seed writes no cache_ttl: no list of a source is kept, so an
+	// entity created a moment ago is in the next list.
+	var sources, withTTL int
+	if err := pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE s.config ? 'cache_ttl')
+		FROM synchronizer s JOIN type_resource t ON t.id = s.type_resource_id
+		WHERE t.service_id = $1`, model.PlatformServiceID).Scan(&sources, &withTTL); err != nil {
 		t.Fatal(err)
 	}
-	if uncached != len(model.PlatformTypes) {
-		t.Fatalf("%d of %d platform sources have no list cache", uncached, len(model.PlatformTypes))
+	if sources != len(model.PlatformTypes) || withTTL != 0 {
+		t.Fatalf("%d of %d platform sources, %d with a cache_ttl", sources, len(model.PlatformTypes), withTTL)
 	}
 }
 

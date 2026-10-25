@@ -50,7 +50,7 @@ func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
 	// pooler, that happened in two runs out of four on a loaded machine. The replicas poll once a minute here; the requests
 	// that ask for a newer revision still read it at once (Replica.Permission asks for the revision of the last write).
 	c := startReplicas(t, 2, harness.WithConfig(func(cfg *config.Config) { cfg.Revision.PollInterval = time.Minute }))
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	first, second := c.Replicas[0], c.Replicas[1]
 
@@ -101,7 +101,7 @@ func TestF0_2_ARequestHasExactDatabaseAndRedisCounts(t *testing.T) {
 // A Trace created outside the server keeps counting through it (the way a test or a middleware reads a request's cost).
 func TestF0_2_ATraceOfTheCallerCountsTheWholeRequest(t *testing.T) {
 	c := startReplicas(t, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	alice := c.UserToken("alice")
 	r := c.Replicas[0]
 	r.Permission(c, p.Slug, alice)

@@ -22,7 +22,7 @@ func TestF2_7_ARevisionBumpUnderHotKeysDoesNotExhaustThePool(t *testing.T) {
 		rps   = 600 / loadDivisor
 	)
 	c := harness.StartReplicas(t, infra, 1)
-	p := c.SeedPolicy("org", 0)
+	p := c.SeedPolicy("org")
 	c.Must(http.MethodPost, "/assignment_rule", map[string]any{
 		"type_resource_id": p.Branch, "access": []string{"read"},
 		"predicate": []any{map[string]any{"attr": "preferred_username", "op": "regex", "value": "^u[0-9]+$"}},
