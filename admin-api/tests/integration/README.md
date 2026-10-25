@@ -133,6 +133,7 @@ brings them back; F2-11 (stage 2, scoped bumps) is a separate pull request.
 |---|---|
 | `api/sync_test.go` `TestSyncOneSourceCallForAConcurrentFirstRequest`, `TestSyncFreshRequestsShareTheSourceCall` | concurrent first requests, and concurrent `fresh` ones, ask the source once |
 | `TestSyncFailingSourceIsAskedOncePerBackoff` | the cluster asks a source that fails once per backoff window, whatever the number of replicas and requests |
+| `TestSyncAdminResolveDoesNotAskASourceInBackoff` | the admin's inline refresh of one resource asks the source outside the backoff and answers from the copy inside it |
 | `TestSyncLateExecutorIsFenced` | an executor that outlives its lease applies nothing once another one has taken the job over (`licetum_sync_lease_lost_total`), and the job ends once |
 | `TestSyncConcurrentDuplicateEnqueuesDoNotExhaustTheDBOSPool` | concurrent duplicate enqueues of many types do not wedge the pool of the DBOS client |
 | `api/sync_crash_test.go` `TestSyncKillNineOfTheWorker` | a worker killed while it fetches or while it commits: the job is taken over within twice the lease, no partial type, a consistent closure, one done job |

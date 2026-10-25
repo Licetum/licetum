@@ -5,9 +5,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
-	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/licetum/licetum/core/engine"
@@ -15,7 +13,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // A role is a set of permissions: its items reach a subject through the assignment rule that grants the role.
@@ -155,55 +152,6 @@ func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 	if status, _ := e.permission("orders-v2", alice); status != http.StatusOK {
 		t.Fatalf("the new slug: %d", status)
-	}
-}
-
-// cache_ttl keeps the list of a source in Redis: a synchronization that runs again (an admin write ends the
-// throttle) reads the cached list, while consistency=higher asks the source every time.
-func TestSynchronizerCacheTTLKeepsTheSourceListInRedis(t *testing.T) {
-	e := setup(t)
-	var listCalls atomic.Int32
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /src/branch", func(w http.ResponseWriter, _ *http.Request) {
-		listCalls.Add(1)
-		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "b1", "name": "Branch1"}, {"id": "b2", "name": "Branch2"}})
-	})
-	mux.HandleFunc("GET /src/branch/{id}", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": r.PathValue("id"), "name": "Branch"})
-	})
-	source := newTestServer(t, mux)
-
-	org := e.must("POST", "/service", servicePayload(e, "cache-org"))["id"].(string)
-	branch := e.must("POST", "/service/"+org+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
-	e.must("POST", "/service/"+org+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
-		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch", "cache_ttl": 300},
-		"probe_resource_id": "b1",
-	})
-	e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": branch, "access": []string{"read"}, "subject": "alice"})
-
-	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub"})
-	ask := func(opts ...authzenreq.Option) {
-		t.Helper()
-		status, ids := e.search("cache-org", alice, "branch", "read", opts...)
-		if status != http.StatusOK || !slices.Contains(ids, "b2") {
-			t.Fatalf("search: %d %v", status, ids)
-		}
-	}
-
-	ask()
-	if got := listCalls.Load(); got != 1 {
-		t.Fatalf("the first synchronization asks the source %d times, want 1", got)
-	}
-	// Another admin write ends the throttle of the synchronization: it runs again, but the list is in Redis.
-	e.must("POST", "/service", servicePayload(e, "unrelated"))
-	ask()
-	if got := listCalls.Load(); got != 1 {
-		t.Fatalf("a synchronization within cache_ttl asked the source again: %d calls", got)
-	}
-	// consistency=higher never answers from the cached list.
-	ask(authzenreq.Fresh())
-	if got := listCalls.Load(); got != 2 {
-		t.Fatalf("consistency=higher must ask the source: %d calls, want 2", got)
 	}
 }
 

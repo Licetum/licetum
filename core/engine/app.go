@@ -120,9 +120,7 @@ func (a *App) NewEnv(claims Claims, context map[string]any) Env {
 
 func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 	m := newMetrics()
-	adapter := synchronizer.NewAdapter(rdb)
-	adapter.DefaultFetchTTL = cfg.Sync.FetchTTL
-	adapter.OnBreakerOpen = func() { m.breakerOpen.WithLabelValues("source").Inc() }
+	adapter := synchronizer.NewAdapter()
 	t := newTuning(cfg)
 	app := &App{
 		DB:           pool,

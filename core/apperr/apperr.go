@@ -145,7 +145,7 @@ func Unprocessable(key i18n.Key, args ...any) *Error {
 	return New(http.StatusUnprocessableEntity, key, args...)
 }
 
-// FailedDependency — 424: an upstream is unavailable (IdP, JWKS, synchronizer, circuit breaker open).
+// FailedDependency — 424: an upstream is unavailable (IdP, JWKS, synchronizer).
 func FailedDependency(key i18n.Key, args ...any) *Error {
 	return New(http.StatusFailedDependency, key, args...)
 }

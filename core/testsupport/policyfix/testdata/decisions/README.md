@@ -63,7 +63,7 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestRolePermissionsReachSubjectsThroughAssignments | dec12_roles (the shape of the response is not a decision) |
 | TestRoleValidationAndBlocking | not a decision test (dec12_roles holds its policy) |
 | TestServiceSlugAddressesTheServiceInTheCheckAPI | not a decision test |
-| TestSynchronizerCacheTTLKeepsTheSourceListInRedis | dec02_whole_type_and_wildcard, dec01_what_a_rule_covers (the whole-type read it asks incidentally; the list kept in Redis is synchronization) |
+| ~~TestSynchronizerCacheTTLKeepsTheSourceListInRedis~~ | deleted with the fetched-list cache, a synchronization property, not a decision (its incidental whole-type read is in dec02_whole_type_and_wildcard, dec01_what_a_rule_covers) |
 | TestRoleItemOnAPlatformPolicyNeedsWriteOnThePolicy | not a decision test |
 | TestLookupTypeOfAClaimTargetCannotBeDeleted | not a decision test |
 

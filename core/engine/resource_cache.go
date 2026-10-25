@@ -1115,7 +1115,8 @@ func (r *cachedResource) resource() *model.Resource {
 
 // resolve returns a resource by its external id: a live request to the source (refreshing the cache), then a
 // cache read. If the source is unavailable, the last cached value is returned; a resource switched off by the
-// synchronization is not returned.
+// synchronization is not returned. A source that did not answer the synchronization lately (the type is in backoff in
+// sync_state, for every replica) is not asked: the cached value is returned at once.
 func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID string) (*cachedResource, error) {
 	g, err := a.LoadTypeGraph(ctx)
 	if err != nil {
@@ -1129,6 +1130,13 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 		return nil, err
 	}
 	if sync != nil {
+		states, err := loadSyncStates(ctx, a.DB, []uuid.UUID{typeResourceID})
+		if err != nil {
+			return nil, err
+		}
+		if states[typeResourceID].Backoff {
+			return a.CacheLookup(ctx, g, typeResourceID, externalID)
+		}
 		if row := a.Sync.FetchOne(ctx, sync.Config, externalID, sync.ID.String()); row != nil {
 			normalized, _ := NormalizeResources(g, typeResourceID, []model.Resource{*row})
 			changed := false

@@ -32,7 +32,6 @@ type metrics struct {
 	syncJobSeconds    prometheus.Histogram
 	syncLeaseLost     prometheus.Counter
 	sourceCalls       *prometheus.CounterVec // type, outcome: ok | error
-	breakerOpen       *prometheus.CounterVec // dependency: source | jwks
 	httpRequests      *prometheus.CounterVec // operation, status
 	httpDuration      *prometheus.HistogramVec
 	dbQueries         *prometheus.CounterVec   // operation, result
@@ -99,10 +98,6 @@ func newMetrics() *metrics {
 		Name: "licetum_source_calls_total",
 		Help: "Calls that asked the source of a resource type for its list, by type and outcome.",
 	}, []string{"type", "outcome"})
-	m.breakerOpen = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "licetum_breaker_open_total",
-		Help: "Calls skipped because the circuit breaker of a dependency was open.",
-	}, []string{"dependency"})
 	m.httpRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_http_requests_total",
 		Help: "HTTP requests by API operation and status.",
@@ -155,7 +150,7 @@ func newMetrics() *metrics {
 	}, []string{"result"})
 
 	for _, c := range []prometheus.Collector{
-		m.permissionCompute, m.permissionCache, m.checkCache, m.searchCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls, m.breakerOpen,
+		m.permissionCompute, m.permissionCache, m.checkCache, m.searchCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls,
 		m.backgroundDropped, m.snapshotFallback, m.revisionRegress, m.l1Cache, m.jwksFetches,
 		m.dbQueries, m.dbQueryDuration, m.redisOps, m.redisOpDuration,
 		m.httpRequests, m.httpDuration,

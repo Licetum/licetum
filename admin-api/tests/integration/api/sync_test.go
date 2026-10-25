@@ -39,11 +39,13 @@ import (
 // source is an HTTP source of resources whose answers the test controls.
 type source struct {
 	*httptest.Server
-	calls atomic.Int32
-	mu    sync.Mutex
-	list  []map[string]any
-	fail  atomic.Bool
-	delay atomic.Int64 // nanoseconds
+	calls atomic.Int32 // requests for the list
+	// pointCalls counts the requests for one resource (the admin inline refresh); they answer even while the list fails.
+	pointCalls atomic.Int32
+	mu         sync.Mutex
+	list       []map[string]any
+	fail       atomic.Bool
+	delay      atomic.Int64 // nanoseconds
 }
 
 func newSource(t *testing.T, resources ...map[string]any) *source {
@@ -64,6 +66,7 @@ func newSource(t *testing.T, resources ...map[string]any) *source {
 		_ = json.NewEncoder(w).Encode(s.list)
 	})
 	mux.HandleFunc("GET /src/{id}", func(w http.ResponseWriter, r *http.Request) {
+		s.pointCalls.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": r.PathValue("id"), "name": "x"})
 	})
 	s.Server = newTestServer(t, mux)
@@ -391,6 +394,43 @@ func TestSyncFailingSourceIsAskedOncePerBackoff(t *testing.T) {
 	}
 	if attempts != 1 || lastError == "" {
 		t.Fatalf("the failure is not recorded: attempts=%d error=%q", attempts, lastError)
+	}
+}
+
+// The backoff of a source lives in sync_state, so it holds back the admin's inline refresh of one resource too: while the
+// type is in backoff the cached value is returned and the source is not asked; outside it the source is asked.
+func TestSyncAdminResolveDoesNotAskASourceInBackoff(t *testing.T) {
+	e := setup(t)
+	src := newSource(t, branches("b1", "b2")...)
+	f := e.syncFixture("resolve", src)
+	rs := replicas(e, 1, nil)
+	burst(t, rs, f, 2) // synchronized
+	url := e.admin.URL + "/service/" + f.service + "/type_resource/" + f.typ + "/resource?resource_id=b2"
+
+	src.pointCalls.Store(0)
+	if status, body := e.do(http.MethodGet, url, nil); status != http.StatusOK {
+		t.Fatalf("resolve outside the backoff: %d %s", status, body)
+	}
+	if got := src.pointCalls.Load(); got != 1 {
+		t.Fatalf("outside the backoff the source was asked %d times for the resource, want 1", got)
+	}
+
+	src.fail.Store(true)
+	e.makeDue(f.typ)
+	burst(t, rs, f, 4)
+	waitFor(t, "the type to be in backoff", func() bool {
+		var attempts int
+		_ = e.pool.QueryRow(context.Background(), `SELECT attempts FROM sync_state WHERE type_resource_id = $1`, f.typ).Scan(&attempts)
+		return attempts > 0
+	})
+
+	src.pointCalls.Store(0)
+	status, body := e.do(http.MethodGet, url, nil)
+	if status != http.StatusOK || !strings.Contains(string(body), `"b2"`) {
+		t.Fatalf("resolve in the backoff does not answer from the cache: %d %s", status, body)
+	}
+	if got := src.pointCalls.Load(); got != 0 {
+		t.Fatalf("in the backoff the source was asked %d times for the resource, want none", got)
 	}
 }
 

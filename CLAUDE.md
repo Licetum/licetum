@@ -156,8 +156,8 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
     `db.RunMigrate` (`DB__MIGRATE_URI`, never the simple protocol) is what `licetum migrate` and the tests call; `db.Migrate` uses the goose
     session locker (`newProvider`, 1 s polling) and `SeedPlatform` runs under `pg_advisory_xact_lock(seedLockKey)`. `SYNC__DBOS_URI` gives
     DBOS a URI of its own (it prepares statements).
-  - **Breaker**: `redisx.RecordFailure` is one Lua script (INCR, PEXPIRE on the first failure or when the key has none, SET of the open key); `redisx.Breaker`
-    carries the parameters for tests. `FastFail` does not gate the connection-setup commands (HELLO, ...) that run inside the probe. **Logs**: failures of a
+  - **Breaker**: a source that does not answer is held back by the backoff in `sync_state` (below), not by a breaker; the Redis breaker is gone.
+    `FastFail` does not gate the connection-setup commands (HELLO, ...) that run inside the probe. **Logs**: failures of a
     dependency on the request path go through `logx.Repeated` (`logDependency`, `errKind`; `licetum_log_suppressed_total`): one record per kind per second.
   - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_REDIS_OUTAGE` shortens the minute, `LICETUM_CHAOS_POSTGRES_OUTAGE` the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
@@ -328,18 +328,18 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   only. The query path and the snapshot path read the same graph, so they agree.
 - **Synchronizer**: per-TypeResource adapter (SQL query or HTTP endpoint, see
   `internal/synchronizer/adapter.go`) that fetches the live list of concrete resources for a type
-  from the owning service. Wrapped in a Redis circuit breaker (`internal/redisx`) and
-  `singleflight` to collapse concurrent duplicate fetches. SQL sources use SQLAlchemy-style `:id`
+  from the owning service. `singleflight` collapses concurrent duplicate fetches (per synchronizer; a `fresh` fetch never joins one that
+  started before it). A source that does not answer is held back by the backoff in `sync_state`, which every replica reads. SQL sources use SQLAlchemy-style `:id`
   in the stored query (translated to `$1` by `BindIDParam`) — keep that format for compatibility.
   An HTTP config takes optional `headers` (e.g. `Authorization`) sent to the source and never
   logged. Secrets (the DSN password, header values) are returned masked as `********`
   (`SynchronizerConfig.Masked`); the mask sent back in an update means "keep"
   (`SynchronizerConfig.RestoreSecrets`, applied before the probe).
-  `cache_ttl` (seconds, 0–86400; omitted means `SYNC__FETCH_TTL`, default 10) keeps the fetched list in Redis
-  under `authz:fetch_all:<synchronizer id>:<sha256 of the config with its secrets masked>` (`Adapter.FetchAll`;
-  an empty list is kept too: it is the source's answer). The lever `consistency=higher` (`fresh`) asks the source anyway and
-  refreshes that list. A source that does not answer (transport error, bad status, malformed or `null` body, open breaker,
-  SQL source without `list_query`) is an error (`FetchAll` returns it): the sync is skipped and the data stays.
+  The fetched list is not kept anywhere: a synchronization asks the source (the throttle of 30 s and the spacing of a fresh job,
+  `SYNC__FRESH_MIN_INTERVAL`, are what limit the calls); `cache_ttl` and `SYNC__FETCH_TTL` are still accepted and ignored. An answer
+  with no resources is the source's answer too. A source that does not answer (transport error, bad status, malformed or `null` body,
+  SQL source without `list_query`) is an error (`FetchAll` returns it): the sync is skipped and the data stays. The admin's inline refresh of one resource
+  (`resolve`) does not ask a source whose type is in backoff (`sync_state`): it answers from the copy.
   A synchronization is a **job**, a DBOS workflow (`engine/sync_jobs.go`, `engine/sync_dbos.go`, `engine/sync_worker.go`): the PDP and
   admin processes ask for it with `Ensure` and wait for the result for a bounded time, the `worker` role executes it (see item 3 of the
   permission computation). Requests for the same type, in any process, share one job; the source of a type is asked once.
@@ -536,8 +536,8 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    a type's source at most once per `SYNC__FRESH_MIN_INTERVAL`. There is one job per type (the DBOS deduplication id, policy "return
    existing"; a request that waited names the job after the state it read, `jobName`): concurrent requests in any process attach to it
    and wait for its result (`waitJobs`, one poller per job per process). The worker (`RunWorker`: the DBOS runtime, `SYNC__CONCURRENCY`
-   workflows at once) fetches the sources in parallel (circuit breaker + singleflight; lists cached in Redis for the
-   synchronizer's `cache_ttl`), compares the digest with `sync_state` and applies the changed types in **one transaction**: it
+   workflows at once) fetches the sources in parallel (singleflight per synchronizer; a source that
+   failed is held back by the backoff below), compares the digest with `sync_state` and applies the changed types in **one transaction**: it
    takes the advisory lock of the connected component of the type graph (`ComponentKeys`; `lock_timeout` 5 s, `statement_timeout`
    `SYNC__STATEMENT_TIMEOUT`; on `DB__SYNC_POOL_SIZE` connections, apart from the request pool), upserts rows, switches missing
    ones off, diffs edges, resolves unresolved edges, rebuilds the closure for the touched nodes and their descendants
@@ -730,7 +730,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   compute time and cache hit/miss/bypass, the in-process caches (`licetum_l1_cache_total`), JWKS fetches (`licetum_jwks_fetch_total`),
   dropped background work (`licetum_background_dropped_total`), requests that had no policy snapshot (`licetum_snapshot_fallback_total`),
   Redis commands skipped by the fast-fail (`licetum_redis_skipped_total`), check decisions, source fetch time and sync results,
-  breaker-open counters, HTTP requests/duration by operation. `App.metrics` may be nil (an `App`
+  HTTP requests/duration by operation. `App.metrics` may be nil (an `App`
   built only to describe the API) — helpers are nil-safe.
 
 PEP tokens are verified by `core/pepauth` (`pepauth.Verifier`, key sets in `pepauth/jwks.go`): the algorithm allowlist, `aud` required, `exp`/`nbf` with leeway, `at+jwt` when the
