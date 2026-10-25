@@ -39,11 +39,9 @@ flowchart LR
   C["Сервис-потребитель (PEP)<br/>API, поиск, MCP, отчёты"]
   L["Licetum PDP<br/>правила и каталог ресурсов"]
   DB[(PostgreSQL)]
-  R[(Redis)]
   S -- "SQL-представление или HTTP endpoint" --> L
   C -- "AuthZEN: POST /service/{slug}/access/v1/..." --> L
   L --- DB
-  L --- R
 ```
 
 PDP говорит на [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html) в границах одного
@@ -134,8 +132,8 @@ Content-Type: application/json
 task dev
 ```
 
-Команда поднимает PostgreSQL, Redis, локальный провайдер Dex OIDC, PDP, административный API и веб-интерфейс
-с горячей перезагрузкой для Go-сервисов и веб-интерфейса.
+Команда поднимает PostgreSQL, локальный провайдер Dex OIDC, PDP, воркер синхронизации, административный API и
+веб-интерфейс с горячей перезагрузкой для Go-сервисов и веб-интерфейса.
 
 | Компонент | Адрес |
 |---|---|

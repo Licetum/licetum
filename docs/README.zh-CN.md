@@ -32,11 +32,9 @@ flowchart LR
   C["使用方服务（PEP）<br/>API、搜索、MCP、报表"]
   L["Licetum PDP<br/>规则与资源目录"]
   DB[(PostgreSQL)]
-  R[(Redis)]
   S -- "SQL 视图或 HTTP endpoint" --> L
   C -- "AuthZEN: POST /service/{slug}/access/v1/..." --> L
   L --- DB
-  L --- R
 ```
 
 PDP 使用 [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html)，并限定在单个服务内：路径
@@ -111,7 +109,7 @@ Content-Type: application/json
 task dev
 ```
 
-该命令会启动 PostgreSQL、Redis、本地 Dex OIDC 提供方、PDP、管理 API 和 Web 界面。Go 服务和 Web 界面都支持热重载。
+该命令会启动 PostgreSQL、本地 Dex OIDC 提供方、PDP、同步 worker、管理 API 和 Web 界面。Go 服务和 Web 界面都支持热重载。
 
 | 组件 | 地址 |
 |---|---|

@@ -40,11 +40,9 @@ flowchart LR
   C["Consumer service (PEP)<br/>API, search, MCP, reporting"]
   L["Licetum PDP<br/>rules and resource catalog"]
   DB[(PostgreSQL)]
-  R[(Redis)]
   S -- "SQL view or HTTP endpoint" --> L
   C -- "AuthZEN: POST /service/{slug}/access/v1/..." --> L
   L --- DB
-  L --- R
 ```
 
 The PDP speaks the [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html),
@@ -134,8 +132,8 @@ You need Docker and [Task](https://taskfile.dev).
 task dev
 ```
 
-This starts PostgreSQL, Redis, a local Dex OIDC provider, the PDP, the admin API and the web interface,
-with hot reload for the Go services and the web interface.
+This starts PostgreSQL, a local Dex OIDC provider, the PDP, the synchronization worker, the admin API and the web
+interface, with hot reload for the Go services and the web interface.
 
 | Component | URL |
 |---|---|

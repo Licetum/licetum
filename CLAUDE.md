@@ -50,7 +50,7 @@ Tasks for the whole repo live in `Taskfile.yaml` (go-task): `task check` runs ev
 without changing files (as CI would), `task lint` does the same but fixes and formats, `task test`,
 `task generate` (OpenAPI schemas → orval client), `task dev` (docker compose). `task --list` for the rest.
 CI (`.github/workflows/ci.yml`, on pull requests and pushes to main) runs `task check` + `pnpm build`
-and `task backend:coverage` with disposable PostgreSQL/Redis Testcontainers, so integration tests
+and `task backend:coverage` with a disposable PostgreSQL Testcontainer, so integration tests
 run there too. `task go:deps:check` (also part of `task go:lint`) fails when `go list -deps -test`, with the same tags, lists `github.com/redis/go-redis` in either module (and depguard `no-redis` refuses the import): Redis is not used any more. `task go:vet:tags` (part of `task go:lint`, so of `task check` and of the CI job `go-lint`) compiles and vets the
 code behind the build tags `integration`, `chaos` and `multiregion` in both modules, with and without `-race`, and builds the
 load test, so the suites that run only nightly cannot stop compiling unseen; a new build tag goes into `GO_BUILD_TAGS` of
@@ -96,6 +96,11 @@ public release all earlier migrations were folded into it). A schema change from
 format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite an applied one. The platform self-service
 (the Licetum service within itself, its policy types, their sources, the admin group) is seeded by `db.SeedPlatform`, run by
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
+Step 2e of P2 (no Redis, no read-replica routing, no table synchronization engine) added **no migration**, and nothing that P2 stopped using was dropped (ADR 0001, 11.1 and 11.6.2).
+**Schema left behind for P3**, to be dropped with the other leftovers when schema v2 lands: the table engine's `sync_job` with `sync_job_token_seq` and the indexes
+`sync_job_active`, `sync_job_claim` and `sync_job_created` (nothing reads or writes them since the table engine was deleted; rows an old worker left queued are never run);
+`known_subject` (replaced by the subject directory); `delegated_call`; the OAuth columns and `trusted_clients` of `service` (NULL or empty, unread). `sync_demand` and
+`sync_executor` are still used (`ensure`, the DBOS heartbeat) and go in P5 with `ensure`.
 
 Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `background.go`, `tuning.go`, `keysets.go`; the key sets in `core/pepauth/jwks.go`;
 settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`; the numbers are in `core/README.md`):
@@ -113,7 +118,7 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   and when the request asks for a newer revision (`context.licetum.min_revision`): `renewView` then waits for the revision for at most
   `REVISION__WAIT_MAX`, and if it does not come the answer is computed from the data and **not kept** (`cachedAnswer`, `store`).
   Cache misses queue for `COMPUTE__CONCURRENCY` slots (`computeSlots`, default half of `DB__POOL_SIZE`).
-  A write made through another replica is therefore seen within the poll interval, not at once: a client that needs it at once passes the
+  A write made through another process is therefore seen within the poll interval, not at once: a client that needs it at once passes the
   `X-Authz-Revision` of its write as `context.licetum.min_revision`. When the revisions cannot be read, the last view is served (as long as `POLICY__MAX_STALENESS` allows, no limit by default; see "Resilience") and marked
   `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
 - The snapshot holds what a decision reads: services (id, name, slug: `ServiceColumns`), the type graph, the enabled
@@ -152,19 +157,18 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
     `db.RunMigrate` (`DB__MIGRATE_URI`, never the simple protocol) is what `licetum migrate` and the tests call; `db.Migrate` uses the goose
     session locker (`newProvider`, 1 s polling) and `SeedPlatform` runs under `pg_advisory_xact_lock(seedLockKey)`. `SYNC__DBOS_URI` gives
     DBOS a URI of its own (it prepares statements).
-  - **Breaker**: a source that does not answer is held back by the backoff in `sync_state` (below), not by a breaker; the Redis breaker is gone.
+  - **Breaker**: a source that does not answer is held back by the backoff in `sync_state` (below); there is no circuit breaker.
     **Logs**: failures of PostgreSQL on the request path go through `logx.Repeated` (`logDependency`, `errKind`: timeout, connection,
     `postgres:<code>`, other; `licetum_log_suppressed_total`): one record per kind per second.
   - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_POSTGRES_OUTAGE` shortens the 30 s without PostgreSQL), `core/tests/integration/db`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
-- **One PostgreSQL** (the in-process routing of reads to a read replica, `DB__READ_URI` and `DB__MAX_REPLICA_LAG` / `DB__LAG_ACTION` / `DB__LAG_INTERVAL`, was removed in P2e-06; the four
-  names are rows of the deprecation catalog): every read of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) and every write use `App.DB`; the
-  PDP's PostgreSQL may itself be a replica set behind one DSN, which is not Licetum's business until the postgres adapter on streaming replicas returns in P5. The tests that needed a real
-  streaming replica are deleted (P2e-05; the contracts REV02, CONS01 and FC01-FC03 bring them back in P5/P6 and `task go:test:integration:replica` returns with them; `scripts/pg-replica.sh` stays);
-  `cluster/failover_test.go` (`TestF6_11_*`) keeps `licetum failover` tested without a replica.
+- **One PostgreSQL**: every read of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) and every write use `App.DB`; the
+  PDP's PostgreSQL may itself be a replica set behind one DSN, which is not Licetum's business until the postgres adapter on streaming replicas returns in P5. There is no test against a real
+  streaming replica meanwhile (the contracts REV02, CONS01 and FC01-FC03 bring them back in P5/P6, and `task go:test:integration:replica` returns with them; `scripts/pg-replica.sh` stays);
+  `cluster/failover_test.go` (`TestF6_11_*`) tests `licetum failover` without a replica.
   `licetum failover` (`db.BumpAllRevisions`) raises every revision after a promotion and a revision that goes backwards is counted
-  (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` is stored but not enforced: the table engine that filtered jobs by
-  `WORKER__REGION` is gone, and any executor may ask a source until regions are enforced again; `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
+  (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` is stored but not enforced: any executor may ask a source until regions are
+  enforced again; `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
   `docs/deployment.md`, the Compose environment `admin-api/tests/multiregion` (tag `multiregion`, `task go:test:multiregion`, `multiregion.yml`, switched off until P7 per ADR 0001 §10.7).
   An admin write is six round trips to the primary at most (`mutate` sends the change record and the revision bump as one batch; `checkAssignmentRuleRefs` reads
   the type once and returns its service): `chaos/f6_test.go` `TestF6_7_*` keeps it so, since the admin API of a far region pays the link for each.
@@ -181,12 +185,12 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   (`licetum_background_dropped_total`). Work that registers a marker (`refreshInBackground`) must clear it when dropped.
 
 Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` is counted
-(`licetum_db_*` metrics, `engine.Trace.DBQueries()` for tests; `engine.New(pool, cfg)` takes no Redis client, no process connects to Redis and none demands `REDIS__URI`: `cli.LoadConfig` asks for `DB__URI` only; `admin-api/tests/integration/api/process_test.go` starts `licetum pdp`, `licetum worker` and `licetum-admin admin` without any `REDIS__*` and waits for `/readyz`);
-`harness.StartReplicas` builds several PDP replicas on one PostgreSQL (`WithConfig`, `WithFaultProxies`; the test infrastructure starts no Redis and knows no `LICETUM_TEST_REDIS_URI`). The tests build
+(`licetum_db_*` metrics, `engine.Trace.DBQueries()` for tests; `engine.New(pool, cfg)` needs a pool only, and `cli.LoadConfig` asks for `DB__URI` alone: `admin-api/tests/integration/api/process_test.go` starts `licetum pdp`, `licetum worker` and `licetum-admin admin` with nothing else set and waits for `/readyz`);
+`harness.StartReplicas` builds several PDP replicas on one PostgreSQL (`WithConfig`, `WithFaultProxies`; the only external service of the tests is PostgreSQL, `LICETUM_TEST_POSTGRES_URI`). The tests build
 their AuthZEN requests with `core/testsupport/authzenreq`: `Replica.Permission` sends the resource search for branches
 (`harness.Branches`) for at least the revision of the last admin write (`Cluster.LastRevision`), and `Replica.Fresh` sends it with the
 test lever `harness.Higher()` (the `X-Test-Consistency` header, not a query parameter). `admin-api/tests/oldendpoints_test.go` counts
-the lines that send a route the PDP no longer has (`/permission`, `/check`, `/on_behalf`) or spell an AuthZEN path outside
+the lines that send a route the PDP no longer has or spell an AuthZEN path outside
 `authzenreq`, per file; the allowance of each file can only go down. `core/testsupport` has the fake source, the
 fake IdP and the Toxiproxy `FaultProxy`; tests under the `chaos` build tag (`task go:test:chaos`, nightly `chaos.yml`) inject faults;
 `admin-api/loadtest/budgets.yaml` holds the budgets the nightly `loadtest.yml` compares runs with (`licetum-loadtest budget`).
@@ -205,9 +209,9 @@ pnpm orval          # generate src/api from ../backend/schema/admin.yaml (gitign
 
 Full stack via Docker Compose (from repo root): `docker compose up` (`task dev`) — a dev setup: sources
 are mounted, the Go apps run under air (hot reload, `dev` target of `backend/Dockerfile`), the web interface
-runs `pnpm dev`. It runs postgres, redis, a one-shot `postgres_init` migration container
-(`licetum migrate`), both backend apps and the web interface — see `docker-compose.yml` /
-`infra/*.compose.yml` for the env vars each service expects (`DB__*`, `AUTH__*`, `REDIS__*`,
+runs `pnpm dev`. It runs postgres, a local Dex OIDC provider, a one-shot `postgres_init` migration container
+(`licetum migrate`), the PDP, the synchronization worker, the admin API and the web interface — see `docker-compose.yml` /
+`infra/*.compose.yml` for the env vars each service expects (`DB__*`, `ADMIN_AUTH__*`,
 `PLATFORM__*`). The `runtime` target of `backend/Dockerfile` is the production image.
 
 The orval client `web/src/api` is **not committed**: only `backend/schema/*.yaml` is. It is generated
@@ -244,7 +248,7 @@ self-service (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISS
 
 Errors: return `*apperr.Error` from the service layer, created from an i18n catalog key
 (`apperr.NotFound(i18n.ServiceNotFound, id)`, `apperr.BlockedBy(list, i18n.RoleDeleteBlocked, id)`,
-`apperr.FailedDependency(...)` for upstream/circuit-breaker failures). It implements
+`apperr.FailedDependency(...)` for upstream failures). It implements
 `huma.StatusError` and is itself the error body `{"detail": ..., "extra": {"type":
 "generic"|"missing"|"blocked_by", "code": "<catalog key>"}}`; `huma.NewErrorWithContext` is overridden
 (`internal/api/server.go`) so Huma's own validation errors use the same shape. Any other error becomes a logged 500 without details. Admin writes that affect permissions bump the revision of
@@ -272,9 +276,8 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   segment — its slug only (`App.ServiceIDByRef`; the uuid form is gone). Licetum itself is registered with the slug
   `model.PlatformSlug` (`licetum`, reserved: no other service takes it; a name that makes an invalid slug
   falls back to `service-<12 hex digits of the id>`, `00009_service_slug.sql`). The application `url` and the `icon` are optional and are never requested
-  (no live check from the server: `""` removes them in PATCH). A service has no sign-in configuration and no trusted clients: the callers of its PDP
-  are its PEP clients (see "Check, AuthZEN, metrics"). The OAuth columns and `trusted_clients` of the `service` table stay in the schema (they are NULL
-  or empty; nothing reads or writes them) until schema v2 (P3).
+  (no live check from the server: `""` removes them in PATCH). A service has no sign-in configuration: the callers of its PDP
+  are its PEP clients (see "Check, AuthZEN, metrics"). The unused columns of the `service` table stay in the schema until schema v2 (P3, see "Migrations" above).
 - **TypeResource**: a resource *type* belonging to a service (e.g. "project", "branch"), with any
   number of parent types (`type_resource_parent(type_resource_id, parent_id, inherit)`) — a DAG, not
   a tree. The parent link is both structural *and* the permission-inheritance chain — it can cross
@@ -330,7 +333,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   (`SynchronizerConfig.Masked`); the mask sent back in an update means "keep"
   (`SynchronizerConfig.RestoreSecrets`, applied before the probe).
   The fetched list is not kept anywhere: a synchronization asks the source (the throttle of 30 s and the spacing of a fresh job,
-  `SYNC__FRESH_MIN_INTERVAL`, are what limit the calls); a body that still carries `cache_ttl` is accepted and the field dropped, a stored config that has it is read without it, and `SYNC__FETCH_TTL` is a row of the deprecation catalog. An answer
+  `SYNC__FRESH_MIN_INTERVAL`, are what limit the calls); a body that still carries the removed `cache_ttl` is accepted and the field dropped, and a stored config that has it is read without it. An answer
   with no resources is the source's answer too. A source that does not answer (transport error, bad status, malformed or `null` body,
   SQL source without `list_query`) is an error (`FetchAll` returns it): the sync is skipped and the data stays. The admin's inline refresh of one resource
   (`resolve`) does not ask a source whose type is in backoff (`sync_state`): it answers from the copy.
@@ -500,8 +503,8 @@ item on a platform policy need more: the policy as a whole (`api/admin_targets.g
 `service.wholeTypeAccess`) — a point write does not allow creating. `GET /platform` returns the platform service id, the id of the admin group and the platform policy types with their ids; `GET /platform/me` returns the caller's
 access per type (`whole_type`, `entries` — entities whose levels differ from it, `denied` — entities with denied
 levels; a denial beats the whole-type access, `Access.Can` looks at the entity's own entry only); `GET /platform`
-and the OAuth endpoints stay public. Writes that change a policy's entities (services, types, groups, members,
-roles, role items, rules) bump the permission cache version.
+stays public. Writes that change a policy's entities (services, types, groups, members,
+roles, role items, rules) bump the revision of the rules.
 
 ### Permission computation (`internal/service/permission.go`)
 
@@ -549,8 +552,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    queues due types that someone asked for within `SYNC__DEMAND_WINDOW` (all with `SYNC__KEEP_WARM`). DBOS does not hand the
    interrupted workflows of a dead executor to a live one, so every executor writes a heartbeat to `sync_executor` (`SYNC__LEASE`, every
    lease/3) and a janitor of each worker cancels the workflows of an executor whose heartbeat is older than the lease, queues a
-   replacement under the id `<id>+r` (the waiters follow the chain) and prunes the old workflows (`dbosJanitor`); `SYNC__ENGINE` and
-   `WORKER__REGION` are deprecated settings (see `config.DeprecatedCatalog`). The integration suites of the synchronization
+   replacement under the id `<id>+r` (the waiters follow the chain) and prunes the old workflows (`dbosJanitor`). The integration suites of the synchronization
    (`admin-api/tests/integration/api/sync_test.go`, `sync_crash_test.go`) and `core/engine/sync_dbos_test.go` are the evidence for the
    engine. `App.Role` (pdp, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
    outside the worker. Every committed change of a type's data bumps the data revision of its service in the same transaction
@@ -639,7 +641,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   `extra.operation` and nothing is applied; `CheckOperations` checks the shape first. Each operation needs the policy of
   the admin route that makes the same write. An entity the batch creates is covered by the right that created it: the
   caller's access was read before the batch.
-- Inside a batch, `mutate` writes into the batch's transaction (`withBatch`, `tx.go`), and the cache version is bumped
+- Inside a batch, `mutate` writes into the batch's transaction (`withBatch`, `tx.go`), and the revision of the rules is bumped
   once, after the commit. Creates take an optional id: the history and the import use it to restore or name entities.
 - The change log keeps the entity before and after each change, so it is the undo log. `PlanRevert` and `PlanRollback`
   (`history.go`) turn records into operations: create -> delete, delete -> create with the same id, update -> write the
@@ -731,10 +733,8 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
 PEP tokens are verified by `core/pepauth` (`pepauth.Verifier`, key sets in `pepauth/jwks.go`): the algorithm allowlist, `aud` required, `exp`/`nbf` with leeway, `at+jwt` when the
 issuer asks; only transport failures of the key set are a 424. The same verifier checks the tokens of the administrators (`ADMIN_AUTH__*`).
 The PDP takes no token of a person and keeps no OAuth state (PKCE, tokens, refresh): the settings `AUTH__STATE_*`, `AUTH__TOKEN_L1_SIZE`,
-`AUTH__INVALID_TOKEN_TTL`, `DELEGATION__*` and `CORS__*` went with those features (`config.DeprecatedSettings` warns when one is still set), and so did the
-routes `GET …/permission`, `POST …/check`, `POST …/on_behalf/…`, the admin `…/oauth/*`, `…/simulate/check|permission` and `…/delegated_calls`, and the
-query parameters `consistency` and `at_least_as_fresh`. `delegated_call`, `known_subject` and the OAuth columns stay in the schema until P3. The header
-`X-Authz-Sync: pending` stays until P5 (it goes with `ensure`).
+`AUTH__INVALID_TOKEN_TTL`, `DELEGATION__*` and `CORS__*` went with those features (`config.DeprecatedSettings` warns when one is still set). Freshness
+is asked for with `context.licetum.min_revision` only. The header `X-Authz-Sync: pending` stays until P5 (it goes with `ensure`).
 
 Claim values are compared as Python `str()` would render them (`service.PyStr`: `True`, `5`,
 `['a', 'b']`) so predicates written for the old implementation keep matching.
