@@ -6,6 +6,7 @@ package api_test
 // for the subject and the properties a request names, with the explanation always on and nothing recorded.
 
 import (
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/logx"
 	"github.com/licetum/licetum/core/model"
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
@@ -125,9 +127,54 @@ func TestSimulationSearchesAndTheirPagingAreThePDPs(t *testing.T) {
 	if people, _ := out["results"].([]any); status != http.StatusOK || len(people) != 1 || people[0].(map[string]any)["id"] != hierarchySubject {
 		t.Fatalf("subject search: %d %v", status, out)
 	}
-	// Nothing was recorded: a PEP client's subject search would be audited as a call on behalf of people.
-	if n := w.countRows(`SELECT count(*) FROM delegated_call`); n != 0 {
-		t.Errorf("the simulation wrote %d records of delegated calls", n)
+}
+
+// TestSimulationRecordsNoDecision: an administrator who simulates is not a client of the service, so nothing the simulation
+// decides reaches the decision log. The same question asked by a PEP client does, which keeps the test from passing for want
+// of a log.
+func TestSimulationRecordsNoDecision(t *testing.T) {
+	w := newWorld(t)
+	w.rule("division", "D1", nil)
+	w.sendPeople(w.org, person(hierarchySubject, "User One", nil))
+
+	// Every decision is logged, the allowed ones too.
+	var out lockedBuffer
+	sw, err := logx.New(&out, logx.DefaultOptions(slog.LevelInfo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.app.Logs = sw
+	previous := slog.Default()
+	slog.SetDefault(slog.New(sw))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	decisions := func() int { return strings.Count(out.String(), `"msg":"decision"`) }
+
+	allowed := authzenreq.Evaluation(w.org, hierarchySubject, authzenreq.On("branch", "B1"), "read")
+	denied := authzenreq.Evaluation(w.org, hierarchySubject, authzenreq.On("branch", "B1"), "write")
+	for name, req := range map[string]authzenreq.Request{
+		"an allowed evaluation": allowed,
+		"a denied evaluation":   denied,
+		"a batch": authzenreq.Evaluations(w.org, hierarchySubject, []authzenreq.Question{
+			{Resource: authzenreq.On("branch", "B1"), Action: "read"}, {Resource: authzenreq.On("branch", "B1"), Action: "write"}}),
+		"a resource search": authzenreq.SearchResource(w.org, hierarchySubject, "branch", "read"),
+		"an action search":  authzenreq.SearchAction(w.org, hierarchySubject, authzenreq.On("branch", "B1")),
+		"a subject search":  authzenreq.SearchSubject(w.org, authzenreq.On("branch", "B1"), "read"),
+	} {
+		if status, out := w.simulate(req); status != http.StatusOK {
+			t.Fatalf("%s: %d %v", name, status, out)
+		}
+		if n := decisions(); n != 0 {
+			t.Fatalf("the simulation of %s logged %d decisions", name, n)
+		}
+	}
+
+	key, _ := w.pepKey(w.pepClient(w.org, "evaluator", db.PEPKindAPIKey, engine.PEPEvaluate))
+	// The PDP names the service by its slug; the simulation by its id.
+	if status, _, raw := w.askWithHeader(authzenreq.Evaluation("org", hierarchySubject, authzenreq.On("branch", "B1"), "read"), key); status != http.StatusOK {
+		t.Fatalf("the PEP client asks: %d %s", status, raw)
+	}
+	if decisions() == 0 {
+		t.Fatal("a PEP client's evaluation is not logged either: the test proves nothing")
 	}
 }
 

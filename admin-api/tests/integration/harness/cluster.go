@@ -73,7 +73,7 @@ type Cluster struct {
 }
 
 // Replica is one check API instance: its own App, database pool and HTTP servers. Server is the public port
-// (the AuthZEN and the legacy routes); Ops is the operations listener, where the probes and the metrics are.
+// (the AuthZEN API); Ops is the operations listener, where the probes and the metrics are.
 type Replica struct {
 	Index  int
 	App    *engine.App

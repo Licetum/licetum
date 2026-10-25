@@ -362,7 +362,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}/access",
 		Summary:     "Who has access to a resource",
-		Description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the registry of known subjects — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target.",
+		Description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target.",
 		Tags:        []string{"Resource"},
 	}, requireWholeType(model.PlatformAssignmentRule, model.ActionRead)), func(ctx context.Context, in *struct {
 		TypeResourcePath
@@ -545,7 +545,7 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	const memberDescription = "Membership is defined either by a predicate (AND conditions over token claims; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively."
+	const memberDescription = "Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively."
 
 	server.Register(api, withPolicy(huma.Operation{
 		OperationID: "create_group_member",
@@ -799,7 +799,7 @@ services. A specific resource can only be targeted on a type with a synchronizer
 has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
 Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-**predicate** (AND conditions over token claims) or **member_of_group_id** (all members of a group). If none is set,
+**predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
 the rule applies to everyone.
 
 **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an

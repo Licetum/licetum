@@ -17,7 +17,7 @@ import (
 
 // checkResourceTarget: a type without a synchronizer has no resources to point at — a permission on it
 // grants access to the type as a whole (no resource_id, no resource_from_claim and no resource_where), and
-// /permission returns such a type as not_sync. Used for inline rules and for the items of roles alike.
+// the permission result lists such a type as not_sync. Used for inline rules and for the items of roles alike.
 func (a *App) checkResourceTarget(ctx context.Context, q db.Querier, typeResourceID uuid.UUID, resourceID *string,
 	fromClaim *model.ResourceFromClaim, where []model.PredicateCondition) error {
 	if resourceID == nil && fromClaim == nil && len(where) == 0 {

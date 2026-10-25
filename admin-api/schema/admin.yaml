@@ -128,7 +128,7 @@ components:
       additionalProperties: false
       properties:
         dynamic:
-          description: "Rules that find their resource from a claim of whoever asks: whether they reach this one depends on that person's token"
+          description: "Rules that find their resource from a claim of whoever asks: whether they reach this one depends on that person's claims"
           items:
             $ref: "#/components/schemas/AccessEntry"
           type: array
@@ -277,7 +277,7 @@ components:
             - apply
           type: string
         predicate:
-          description: AND conditions over token attributes
+          description: AND conditions over the claims and the request
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -419,7 +419,7 @@ components:
             - string
             - "null"
         predicate:
-          description: AND conditions over token attributes; mutually exclusive with subject and member_of_group_id
+          description: AND conditions over the claims and the request; mutually exclusive with subject and member_of_group_id
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -536,7 +536,7 @@ components:
             - apply
           type: string
         predicate:
-          description: AND conditions over token attributes
+          description: AND conditions over the claims and the request
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -2381,7 +2381,7 @@ components:
           type: array
         claims:
           additionalProperties: {}
-          description: The claims of its token
+          description: The claims of the subject (subject.properties of an AuthZEN request)
           type: object
         context:
           additionalProperties: {}
@@ -2551,7 +2551,7 @@ components:
             - in_cidr
           type: string
         source:
-          description: "Where the attribute comes from: claim (a token claim, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"
+          description: "Where the attribute comes from: claim (a claim of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"
           enum:
             - claim
             - context
@@ -2653,7 +2653,7 @@ components:
       additionalProperties: true
       properties:
         claim:
-          description: Name of the token claim whose value is looked up in the source
+          description: Name of the claim of the subject whose value is looked up in the source
           examples:
             - branch_name
           type: string
@@ -3547,7 +3547,7 @@ paths:
         has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
         Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-        **predicate** (AND conditions over token claims) or **member_of_group_id** (all members of a group). If none is set,
+        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
         the rule applies to everyone.
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
@@ -3773,7 +3773,7 @@ paths:
         has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
         Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-        **predicate** (AND conditions over token claims) or **member_of_group_id** (all members of a group). If none is set,
+        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
         the rule applies to everyone.
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
@@ -4587,7 +4587,7 @@ paths:
       tags:
         - Group member
     post:
-      description: Membership is defined either by a predicate (AND conditions over token claims; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
+      description: Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
       operationId: create_group_member
       parameters:
         - description: Group id
@@ -4745,7 +4745,7 @@ paths:
       tags:
         - Group member
     patch:
-      description: Membership is defined either by a predicate (AND conditions over token claims; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
+      description: Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
       operationId: update_group_member
       parameters:
         - description: Group id
@@ -8846,7 +8846,7 @@ paths:
         - Type resource
   /service/{service_id}/type_resource/{type_resource_id}/access:
     get:
-      description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the registry of known subjects — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target."
+      description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target."
       operationId: who_has_access
       parameters:
         - description: Service id

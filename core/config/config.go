@@ -69,7 +69,7 @@ type Revision struct {
 	// PollInterval is how often a process reads the revisions: a write made through another replica reaches this process
 	// within this time.
 	PollInterval time.Duration
-	// WaitMax is how long a request that asks for at least a revision (at_least_as_fresh) waits for this process to reach
+	// WaitMax is how long a request that asks for at least a revision (context.licetum.min_revision) waits for this process to reach
 	// it before it computes the answer from the data.
 	WaitMax time.Duration
 }
@@ -268,7 +268,6 @@ func Load() (*Config, error) {
 			MigrateURI:         e.str("DB__MIGRATE_URI", ""),
 		},
 		Auth: Auth{
-
 			JWKSTTL:        e.duration("AUTH__JWKS_TTL", 10*time.Minute),
 			JWKSMinRefresh: e.duration("AUTH__JWKS_MIN_REFRESH", 30*time.Second),
 		},

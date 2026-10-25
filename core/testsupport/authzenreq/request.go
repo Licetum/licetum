@@ -257,7 +257,7 @@ func (s *spec) with(body map[string]any) map[string]any {
 }
 
 // Evaluation is the access evaluation of the subject doing the action on the resource (POST …/access/v1/evaluation).
-// The subject is the holder of the token (see SubjectOf), or, for a trusted client, another person given WithProperties.
+// The subject is the holder of the token (see SubjectOf), or, for a PEP client, another person given WithProperties.
 func Evaluation(ref, subject string, resource Resource, action string, opts ...Option) Request {
 	s := newSpec(opts)
 	s.allow("Evaluation", featExplain|featProperties)

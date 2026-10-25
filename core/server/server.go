@@ -286,7 +286,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 // token, the caller; the outermost middleware writes the access (audit) log line and records the metrics.
 type requestInfo struct {
 	id, operation, user string
-	// onBehalfOf is the person a trusted client asked about (the delegated endpoints); user is then the client.
+	// onBehalfOf is the person a PEP client asked about (the subject of its AuthZEN request); user is then the client.
 	onBehalfOf string
 	// trace is what the request leaves for the service layer (the actor, the revision of its write).
 	trace *engine.Trace
@@ -310,7 +310,7 @@ func SetRequestUser(ctx context.Context, subject string) {
 	}
 }
 
-// SetOnBehalfOf records the person a trusted client asked about, in the audit log line.
+// SetOnBehalfOf records the person a PEP client asked about, in the access log line.
 func SetOnBehalfOf(ctx context.Context, subject string) {
 	if info := requestInfoFrom(ctx); info != nil {
 		info.onBehalfOf = subject
@@ -322,7 +322,7 @@ const requestIDHeader = "X-Request-ID"
 // requestIDMax is the longest X-Request-ID that is returned as it was received.
 const requestIDMax = 128
 
-// revisionHeader carries the revision of a write: pass it back as at_least_as_fresh to get answers that reflect the write.
+// revisionHeader carries the revision of a write: pass it back as context.licetum.min_revision to get answers that reflect the write.
 const revisionHeader = "X-Authz-Revision"
 
 // licetumRevisionHeader carries the revision of the policy: the one an answer was read at, or the one a write made. Its

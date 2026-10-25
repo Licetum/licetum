@@ -181,7 +181,7 @@ func ScanService(row pgx.Row) (*model.Service, error) {
 }
 
 // ServiceIDByRef returns the id of the service a path segment names: its slug. A
-// slug is never a UUID (see model.ValidSlug), so the two cannot be confused.
+// slug is never a UUID (see model.ValidSlug).
 func (a *App) ServiceIDByRef(ctx context.Context, ref string) (uuid.UUID, error) {
 	if snap := a.policySnapshot(ctx); snap != nil {
 		return snap.serviceID(ref)

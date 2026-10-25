@@ -33,7 +33,7 @@ func (a *App) GetPlatform(ctx context.Context) (*model.Platform, error) {
 // model.PlatformTypes). The admin API checks it on every request.
 type Access struct {
 	Subject string
-	// permission is the sync part of the regular /permission result for the self-service: grants —
+	// permission is the sync part of the permission result of the engine for the self-service: grants —
 	// including whole-type ones — are already expanded into one entry per existing entity, with the
 	// denials applied.
 	permission map[string][]model.ResourceAccess

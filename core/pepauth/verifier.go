@@ -242,8 +242,7 @@ func audienceIn(aud any, audiences []string) bool {
 	return false
 }
 
-// identities reads the subject and the client of a verified token as the check API reads them (SubjectFromClaims in the
-// engine): the subject is preferred_username when it is set, else sub; the client is azp, else client_id, else sub.
+// identities reads the subject and the client of a verified token as the AuthZEN API reads them: the subject is preferred_username when it is set, else sub; the client is azp, else client_id, else sub.
 func identities(claims jwt.MapClaims) (subject, client string) {
 	sub := stringClaim(claims, "sub")
 	subject = stringClaim(claims, "preferred_username")

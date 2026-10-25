@@ -185,7 +185,7 @@ func TestContract_AZ01_ActionSearchNeedsNoAction(t *testing.T) {
 }
 
 // The subject of a request is a person, or a group's subject in the form group:<uuid>: the bounds of its type and its id
-// are the ones of PrepareSubject, which the AuthZEN requests and the on_behalf routes share.
+// are the ones of PrepareSubject, which every AuthZEN request uses.
 func TestContract_API03_SubjectTypeBounds(t *testing.T) {
 	for typ, ok := range map[string]bool{
 		strings.Repeat("t", 64): true,
@@ -222,7 +222,7 @@ func TestContract_API03_SubjectIDBounds(t *testing.T) {
 			t.Errorf("subject id %q (%d bytes): accepted %v, want %v", c.id, len(c.id), err == nil, c.ok)
 		}
 	}
-	// The AuthZEN request checks the same id, and the on_behalf routes refuse it with the same error.
+	// The AuthZEN request refuses an id of that length with the same error as PrepareSubject.
 	r := model.AuthzenEvaluationRequest{Subject: subject("user", strings.Repeat("a", 257)), Resource: resource("branch", "b1"), Action: action("read")}
 	rejectedWith(t, r.Validate(), i18n.DelegationSubjectInvalid)
 }
@@ -357,7 +357,7 @@ func TestLicetumIsNotAnAttributeName(t *testing.T) {
 		t.Fatal("licetum is a valid attribute name")
 	}
 	if err := (model.RequestContext{"licetum": "x"}).Validate(); err == nil {
-		t.Fatal("the legacy check refuses licetum as an attribute")
+		t.Fatal("RequestContext.Validate refuses licetum as an attribute")
 	}
 }
 

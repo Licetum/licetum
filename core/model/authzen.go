@@ -395,8 +395,8 @@ type PreparedSubject struct {
 }
 
 // PrepareSubject checks a subject and builds the claims the decision reads from its properties. The type is checked when
-// it is given: the legacy calls on behalf of a person name the person by the id alone, and pass "". The claims are a copy of
-// the properties, with preferred_username set to the id unless the properties hold a truthy one (the rules that name a
+// it is given (an empty type is not checked). The claims are a copy of the properties, with preferred_username set to
+// the id unless the properties hold a truthy one (the rules that name a
 // person read it).
 //
 // The id is 1 to 256 characters, holds no control character, and does not look like a group (group:…). The properties are at
@@ -445,7 +445,7 @@ func checkSubjectProperties(properties map[string]any) error {
 	return nil
 }
 
-// truthy is the truth value of a claim as Python has it, which the rules and the on_behalf routes follow (the same rule
+// truthy is the truth value of a claim as Python has it, which the rules and the AuthZEN subject properties follow (the same rule
 // as engine.PyTruthy): "", 0, false, null and empty lists and objects are false.
 func truthy(v any) bool {
 	switch x := v.(type) {

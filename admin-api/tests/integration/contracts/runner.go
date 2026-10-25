@@ -14,7 +14,6 @@
 // levels of a type without resources), through another path of the engine (coverNodes instead of CoversOf). CrossCheck asks
 // the searches for a case and compares what they list with the evaluations of the same case, so that the tables and the
 // generated policies check that path too.
-
 package contracts
 
 import (

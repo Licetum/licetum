@@ -13,7 +13,7 @@ type AccessLookup struct {
 	Resource *string       `json:"resource_id" doc:"The resource asked about; null for the type as a whole"`
 	Name     *string       `json:"name" doc:"Name of the resource; null for the type as a whole"`
 	Entries  []AccessEntry `json:"entries" nullable:"false" doc:"The rules that cover the resource, denials included"`
-	Dynamic  []AccessEntry `json:"dynamic" nullable:"false" doc:"Rules that find their resource from a claim of whoever asks: whether they reach this one depends on that person's token"`
+	Dynamic  []AccessEntry `json:"dynamic" nullable:"false" doc:"Rules that find their resource from a claim of whoever asks: whether they reach this one depends on that person's claims"`
 	People   AccessPeople  `json:"people" doc:"What is known of the people the entries reach"`
 }
 

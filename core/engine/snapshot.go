@@ -32,7 +32,7 @@ type snapshot struct {
 	// bytes is the estimated memory of the snapshot.
 	bytes int64
 
-	services map[uuid.UUID]*model.Service // without client_secret
+	services map[uuid.UUID]*model.Service // without the secrets of the service
 	bySlug   map[string]uuid.UUID
 	graph    *TypeGraph
 

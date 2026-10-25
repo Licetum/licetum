@@ -175,7 +175,7 @@ type Resource struct {
 	Active *bool `json:"active,omitempty" required:"false" doc:"false for a resource that disappeared from its source: it is kept, switched off, and listed only with include_inactive"`
 }
 
-// ResourceAccess is an item of the /permission response.
+// ResourceAccess is an item of the permission result of the engine (engine.PermissionResult).
 type ResourceAccess struct {
 	ID     string   `json:"id" doc:"Resource id in the external system" example:"b1"`
 	Name   string   `json:"name" doc:"Resource name" example:"Branch1"`
@@ -189,7 +189,7 @@ type ResourceRefresh struct {
 }
 
 // A type's mode is derived, not stored: a type is sync when a live (not deleted) synchronizer
-// points at it — it has resources, and /permission lists them — otherwise it is not_sync, a
+// points at it — it has resources, and the permission result lists them — otherwise it is not_sync, a
 // "permission without resources" (a capability such as advanced_working_mode): a rule with
 // resource_id = NULL grants access to the type as a whole.
 const (

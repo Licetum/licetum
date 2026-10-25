@@ -223,3 +223,34 @@ func TestPEPTokenOfARegisteredIssuerAuthenticatesItsClient(t *testing.T) {
 	status, header, raw := w.askWithHeader(authzenreq.Evaluation("org", hierarchySubject, authzenreq.On("branch", "B1"), "read"), person, legacyToken, "1")
 	requireAuthzenError(t, status, header, raw, http.StatusUnauthorized, "token_invalid")
 }
+
+// The claims of a PEP client's own token are the client's: they never become the claims of the person it asks about. A token that
+// carries department=sales and a preferred_username does not make the person it asks about a member of sales or that user.
+func TestPEPTokenClaimsAreNotTheClaimsOfThePerson(t *testing.T) {
+	w := newWorld(t)
+	sales := w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	w.must("POST", "/group/"+sales+"/member", map[string]any{
+		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
+	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1", "member_of_group_id": sales, "access": []string{"read"}})
+	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1", "subject": "dave", "access": []string{"read"}})
+
+	idp := w.pepIssuer()
+	issuer, checkout := idp.Issuer(), "checkout"
+	w.registerPEPClient(db.PEPClient{ServiceID: uuid.MustParse(w.org), Name: "checkout", Kind: db.PEPKindJWT, Issuer: &issuer,
+		ClientID: &checkout, Operations: []string{engine.PEPEvaluate}, Enabled: true})
+	token := idp.SignToken(jwt.MapClaims{
+		"azp": checkout, "sub": "service-account-checkout", "department": "sales", "preferred_username": "dave",
+	}, support.Audience(pepAudience), support.HeaderType("at+jwt"))
+
+	for _, person := range []string{"somebody-else", "dave-the-namesake"} {
+		if status, _, raw := w.evaluate("org", token, person); w.decisionOf(status, raw) {
+			t.Fatalf("%s reads B1 on the claims of the client's token: %s", person, raw)
+		}
+	}
+	// What the caller sends as the properties of the person does decide.
+	status, _, raw := w.askWithHeader(authzenreq.Evaluation("org", "somebody-else", authzenreq.On("branch", "B1"), "read",
+		authzenreq.WithProperties(map[string]any{"department": "sales"})), token)
+	if !w.decisionOf(status, raw) {
+		t.Fatalf("a person from sales reads B1: %s", raw)
+	}
+}

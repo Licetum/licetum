@@ -14,7 +14,7 @@ import (
 // PolicyClaims lists the claims and request attributes the policy of a service reads: the conditions of the enabled rules
 // that apply to its resource types (and to those above them) and of their guards, the claim-based targets of those rules
 // and of their roles, and the conditions of the group memberships (groups are shared by every service). It tells what a
-// trusted client has to put into the claims it sends, or into the tokens it gets, for the answers to be the real ones.
+// PEP client has to put into subject.properties of its AuthZEN requests for the answers to be the real ones.
 func (a *App) PolicyClaims(ctx context.Context, serviceID uuid.UUID) ([]model.PolicyClaim, error) {
 	if _, err := a.GetExistingService(ctx, a.DB, serviceID); err != nil {
 		return nil, err

@@ -121,11 +121,9 @@ func newKey(kid, alg string) *idpKey {
 // URL is the base address of the provider.
 func (i *IdP) URL() string { return i.base }
 
-// Issuer is the iss of the tokens; AuthorizationURL, TokenURL and JWKSURL are the addresses a service is registered with.
-func (i *IdP) Issuer() string           { return i.base + "/realm" }
-func (i *IdP) AuthorizationURL() string { return i.base + "/realm/auth" }
-func (i *IdP) TokenURL() string         { return i.base + "/realm/token" }
-func (i *IdP) JWKSURL() string          { return i.base + "/jwks" }
+// Issuer is the iss of the tokens; JWKSURL is the address of its key set.
+func (i *IdP) Issuer() string  { return i.base + "/realm" }
+func (i *IdP) JWKSURL() string { return i.base + "/jwks" }
 
 // AppURL and IconURL answer 200, for a service that is registered with an address and an icon.
 func (i *IdP) AppURL() string  { return i.base + "/app" }
