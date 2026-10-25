@@ -61,9 +61,6 @@ const (
 	// syncLockTimeout is how long a synchronization transaction waits for a lock before it gives up (and the job is
 	// tried again); it never holds a pooled connection waiting for longer.
 	syncLockTimeout = 5 * time.Second
-
-	// maxJobClaims is how many times a job is claimed before it is given up (a job that kills its worker every time).
-	maxJobClaims = 5
 )
 
 // syncState is the row of sync_state of a type, with the comparisons against the clock made by the database.

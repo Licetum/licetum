@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -153,23 +152,14 @@ func (a AdminAuth) IsConfigured() bool {
 }
 
 // Sync tunes resource synchronization (see service.ensureSynced and synchronizer.Adapter).
-// regionName is the form of a region name (see model.ValidRegion).
-var regionName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
-
 type Sync struct {
-	// WorkerRegion is the region a worker runs in (WORKER__REGION): it claims the synchronization jobs of the types whose source
-	// can be reached from there (the regions of the synchronizer, see model.Synchronizer.Regions) or from anywhere. Empty: every
-	// job. Needs the postgres engine, which claims jobs from a table; the dbos queue cannot be filtered by region.
-	WorkerRegion string
 	// FetchTTL is how long a fetched list of a source's resources is kept in Redis, so that requests
 	// in this window do not go to the source. A synchronizer's own cache_ttl overrides it; 0 — no cache.
 	FetchTTL time.Duration
-	// DBOSPoolSize is the size of the connection pool of the DBOS client of a process (engine dbos); it is outside DB__POOL_SIZE.
+	// DBOSPoolSize is the size of the connection pool of the DBOS client of a process; it is outside DB__POOL_SIZE.
 	DBOSPoolSize int
 
-	// Engine runs the synchronization jobs: "dbos" (default: DBOS workflows and queue) or "postgres" (the sync_job table).
-	Engine string
-	// DBOSSchema is the schema of the DBOS system tables (engine dbos).
+	// DBOSSchema is the schema of the DBOS system tables.
 	DBOSSchema string
 	// DBOSURI is the connection string of the DBOS client when it must differ from DB__URI: DBOS prepares its statements,
 	// which PgBouncer in transaction mode carries only from version 1.21 with max_prepared_statements set, so behind an older
@@ -351,8 +341,6 @@ func Load() (*Config, error) {
 		Sync: Sync{
 			FetchTTL:         e.seconds("SYNC__FETCH_TTL", 10),
 			DBOSPoolSize:     e.int("SYNC__DBOS_POOL_SIZE", 20),
-			WorkerRegion:     strings.ToLower(e.str("WORKER__REGION", "")),
-			Engine:           strings.ToLower(e.str("SYNC__ENGINE", "dbos")),
 			DBOSSchema:       e.str("SYNC__DBOS_SCHEMA", "dbos"),
 			DBOSURI:          e.str("SYNC__DBOS_URI", ""),
 			Lease:            e.seconds("SYNC__LEASE", 30),
@@ -421,15 +409,6 @@ func Load() (*Config, error) {
 	if cfg.PDP.SearchScanBudget < 1 {
 		e.errs = append(e.errs, fmt.Errorf("PDP__SEARCH_SCAN_BUDGET must be positive, got %d", cfg.PDP.SearchScanBudget))
 	}
-	if r := cfg.Sync.WorkerRegion; r != "" && !regionName.MatchString(r) {
-		e.errs = append(e.errs, fmt.Errorf("WORKER__REGION must be lowercase letters, digits and hyphens (at most 32 characters), got %q", r))
-	}
-	if cfg.Sync.WorkerRegion != "" && cfg.Sync.Engine == "dbos" {
-		e.errs = append(e.errs, errors.New("WORKER__REGION needs SYNC__ENGINE=postgres: the dbos queue cannot be filtered by region"))
-	}
-	if cfg.Sync.Engine != "postgres" && cfg.Sync.Engine != "dbos" {
-		e.errs = append(e.errs, fmt.Errorf("SYNC__ENGINE must be postgres or dbos, got %q", cfg.Sync.Engine))
-	}
 	if len(e.errs) > 0 {
 		return nil, errors.Join(e.errs...)
 	}
@@ -486,6 +465,9 @@ var deprecatedSettings = []Deprecated{
 	{"CORS__ALLOW_CREDENTIALS", corsGone},
 	{"CORS__ALLOW_METHODS", corsGone},
 	{"CORS__ALLOW_HEADERS", corsGone},
+	// The synchronization runs on DBOS only.
+	{"SYNC__ENGINE", "DBOS is the only synchronization engine; a value of postgres no longer selects the sync_job table"},
+	{"WORKER__REGION", "a source with regions may be asked by any executor until regions are enforced again; the worker no longer filters the jobs by region"},
 }
 
 // The reasons shared by the rows of one feature.

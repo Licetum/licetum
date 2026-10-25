@@ -59,13 +59,8 @@ type App struct {
 	jobFlights singleflight.Group
 	// syncAsked remembers when this process last asked for the refresh of a type (see requestInBackground).
 	syncAsked sync.Map
-	// dbos is the DBOS handle of the process (engine dbos).
+	// dbos is the DBOS handle of the process: the client that enqueues the synchronization jobs, or the worker's runtime.
 	dbos dbosState
-	// workerWake wakes the workers of this process when a job is queued (the other processes get a NOTIFY).
-	workerWake chan struct{}
-	// doneMu guards doneCh, which is closed when a job ends in this process.
-	doneMu sync.Mutex
-	doneCh chan struct{}
 	// answers collapses the concurrent computations of the same answer (see cachedAnswer).
 	answers singleflight.Group
 	// bg runs the background work (cache writes, refreshes) on a bounded pool, started on first use; Close waits for it.
@@ -144,7 +139,6 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 		tune:         t,
 		answersL1:    newLRU[any](t.answerL1Size),
 		computeSlots: make(chan struct{}, t.computeConcurrency),
-		workerWake:   make(chan struct{}, 1),
 	}
 	// Every statement and every Redis round trip of the process is counted: in the metrics, and in the Trace of the
 	// request that made it. A pool not made by db.Connect has no tracer and is not counted.

@@ -210,19 +210,11 @@ func (c *syncQueueCollector) Collect(ch chan<- prometheus.Metric) {
 	defer cancel()
 	var queued, running int64
 	var age float64
-	var err error
-	if c.app.useDBOS() {
-		err = c.app.DB.QueryRow(ctx, fmt.Sprintf(`
-			SELECT count(*) FILTER (WHERE status = 'ENQUEUED'), count(*) FILTER (WHERE status = 'PENDING'),
-			       COALESCE((EXTRACT(EPOCH FROM now()) * 1000 - min(created_at) FILTER (WHERE status = 'ENQUEUED')) / 1000, 0)::float8
-			FROM %s.workflow_status WHERE queue_name = $1 AND status IN ('ENQUEUED', 'PENDING')`,
-			pgx.Identifier{c.app.dbosSchema()}.Sanitize()), dbosQueue).Scan(&queued, &running, &age)
-	} else {
-		err = c.app.DB.QueryRow(ctx, `
-			SELECT count(*) FILTER (WHERE state = 'queued'), count(*) FILTER (WHERE state = 'running'),
-			       COALESCE(EXTRACT(EPOCH FROM now() - min(created_at) FILTER (WHERE state = 'queued')), 0)::float8
-			FROM sync_job WHERE state IN ('queued', 'running')`).Scan(&queued, &running, &age)
-	}
+	err := c.app.DB.QueryRow(ctx, fmt.Sprintf(`
+		SELECT count(*) FILTER (WHERE status = 'ENQUEUED'), count(*) FILTER (WHERE status = 'PENDING'),
+		       COALESCE((EXTRACT(EPOCH FROM now()) * 1000 - min(created_at) FILTER (WHERE status = 'ENQUEUED')) / 1000, 0)::float8
+		FROM %s.workflow_status WHERE queue_name = $1 AND status IN ('ENQUEUED', 'PENDING')`,
+		pgx.Identifier{c.app.dbosSchema()}.Sanitize()), dbosQueue).Scan(&queued, &running, &age)
 	if err != nil {
 		return
 	}

@@ -32,8 +32,9 @@ The backend is written in Go (`backend/`), one binary with subcommands:
   (the AuthZEN API under `/service/{ref}/access/v1/`, as a PEP client), kept in its own process/port (8001, `-addr` or `PDP__ADDR` overrides it) so it can be
   scaled/deployed independently of the admin surface. Its probes and `/metrics` are on the ops port (9090, `PDP__OPS_ADDR`), never on
   this one. Routes: `core/server/authzen_routes.go`.
-- `licetum worker` — the synchronization worker: executes the jobs that fetch the resource sources into the local copy, and keeps the
-  types in use fresh on a schedule. Metrics on :8002. The PDP and admin processes never apply a synchronization.
+- `licetum worker` — the synchronization worker: runs the DBOS runtime that executes the jobs that fetch the resource sources into the
+  local copy (`engine/sync_dbos.go`), and keeps the types in use fresh on a schedule. Metrics on :8002. The PDP and admin processes never
+  apply a synchronization.
 - `licetum migrate` — apply DB migrations and seed the platform self-service.
 - `licetum restore-admin [-user name]...` — the way back in when nobody can manage the platform: puts the admin group, its
   memberships (`PLATFORM__ADMIN_CLAIM_VALUES` and each `-user`, matched by the claim of `ADMIN_AUTH__SUBJECT_CLAIM`), the admin rules of every policy back in force and switches off
@@ -169,8 +170,8 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   `cluster/f6_test.go` against a real streaming replica (`scripts/pg-replica.sh`, `LICETUM_TEST_REPLICA_ADDR`, `task go:test:integration:replica`).
   Beyond that: a replica that cannot be compared with the primary counts as stale (`replicaUnconfirmed`, only for `POLICY__MAX_STALENESS`, not for
   readiness); `licetum failover` (`db.BumpAllRevisions`) raises every revision after a promotion and a revision that goes backwards is counted
-  (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` + `WORKER__REGION` (table engine only) keep a source that one
-  region reaches off the workers of the others (`claimJob`); `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
+  (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` is stored but not enforced: the table engine that filtered jobs by
+  `WORKER__REGION` is gone, and any executor may ask a source until regions are enforced again; `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
   `docs/deployment.md`, the Compose environment `admin-api/tests/multiregion` (tag `multiregion`, `task go:test:multiregion`, `multiregion.yml`, switched off until P7 per ADR 0001 §10.7).
   An admin write is six round trips to the primary at most (`mutate` sends the change record and the revision bump as one batch; `checkAssignmentRuleRefs` reads
   the type once and returns its service): `chaos/f6_test.go` `TestF6_7_*` keeps it so, since the admin API of a far region pays the link for each.
@@ -342,8 +343,8 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   an empty list is kept too: it is the source's answer). The lever `consistency=higher` (`fresh`) asks the source anyway and
   refreshes that list. A source that does not answer (transport error, bad status, malformed or `null` body, open breaker,
   SQL source without `list_query`) is an error (`FetchAll` returns it): the sync is skipped and the data stays.
-  A synchronization is a **job** (`sync_job`, `engine/sync_jobs.go`, `engine/sync_worker.go`): the PDP and admin processes
-  ask for it with `Ensure` and wait for the result for a bounded time, the `worker` role executes it (see item 3 of the
+  A synchronization is a **job**, a DBOS workflow (`engine/sync_jobs.go`, `engine/sync_dbos.go`, `engine/sync_worker.go`): the PDP and
+  admin processes ask for it with `Ensure` and wait for the result for a bounded time, the `worker` role executes it (see item 3 of the
   permission computation). Requests for the same type, in any process, share one job; the source of a type is asked once.
   A type has **one** source: a second `POST` is 409 `synchronizer_exists`. `POST …/resource/synchronizer/test` tries a
   configuration without saving it (`service/source_check.go`: total, sample, repeated ids, parents that are nowhere, attributes;
@@ -526,24 +527,26 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    types the service reaches (`role_permission` joined with `type_resource`, deleted types excluded).
 3. `ensure` (`engine/sync_jobs.go`) makes sure the types the rules reach are synchronized; **the check path never writes the
    graph**. State is in PostgreSQL: `sync_state` (per type: the digest `format`/`data_hash`/`graph_sig` of the last
-   synchronization, `applied_at`, `next_due_at` = the throttle of 30 s or the end of the backoff, `attempts`, `last_error`) and
-   `sync_job` (queued | running | done | failed, with the lease). One query reads the states of the involved types, and each
+   synchronization, `applied_at`, `next_due_at` = the throttle of 30 s or the end of the backoff, `attempts`, `last_error`); the jobs
+   are DBOS workflows on the queue `licetum-sync` (the `sync_job` table of the previous engine is no longer used: its rows are never
+   run, P3 drops it). One query reads the states of the involved types, and each
    type falls in one case: no data under the current structure (never synchronized, or the type graph above it or its
    synchronizer changed: `structureOf`) or a platform type that a write made due → the request enqueues the job and
    **waits** for it up to `SYNC__REQUEST_WAIT` (5 s), then answers from what exists (the type contributes no resources, the
    answer is cached for 2 s only, the response has `X-Authz-Sync: pending`); throttle run out → the job is queued without
    waiting and the answer comes from the data as of the last synchronization; in backoff → nobody asks. `consistency=higher`
    always waits for a *fresh* job (its own dedup key) that skips the throttle and the cached source list; fresh jobs ask
-   a type's source at most once per `SYNC__FRESH_MIN_INTERVAL`. There is one job per type (`dedup_key`, unique while
-   queued/running): concurrent requests in any process attach to it and poll `sync_job` (50–500 ms, one poller per job per
-   process). The worker claims a job with `FOR UPDATE SKIP LOCKED` under a lease (`SYNC__LEASE`, renewed every lease/3, new
-   `lease_token` per claim), fetches the sources in parallel (circuit breaker + singleflight; lists cached in Redis for the
+   a type's source at most once per `SYNC__FRESH_MIN_INTERVAL`. There is one job per type (the DBOS deduplication id, policy "return
+   existing"; a request that waited names the job after the state it read, `jobName`): concurrent requests in any process attach to it
+   and wait for its result (`waitJobs`, one poller per job per process). The worker (`RunWorker`: the DBOS runtime, `SYNC__CONCURRENCY`
+   workflows at once) fetches the sources in parallel (circuit breaker + singleflight; lists cached in Redis for the
    synchronizer's `cache_ttl`), compares the digest with `sync_state` and applies the changed types in **one transaction**: it
    takes the advisory lock of the connected component of the type graph (`ComponentKeys`; `lock_timeout` 5 s, `statement_timeout`
    `SYNC__STATEMENT_TIMEOUT`; on `DB__SYNC_POOL_SIZE` connections, apart from the request pool), upserts rows, switches missing
    ones off, diffs edges, resolves unresolved edges, rebuilds the closure for the touched nodes and their descendants
-   (`rebuildClosureSQL`), writes `sync_state`, and ends with `UPDATE sync_job SET state='done' … WHERE id AND lease_token`:
-   zero rows = the lease was lost, the transaction rolls back (`licetum_sync_lease_lost_total`). A source that did not answer
+   (`rebuildClosureSQL`), writes `sync_state`, and ends with the fence: the status of the workflow row is read `FOR SHARE`, and a
+   workflow that was cancelled meanwhile (taken over) applies nothing, the transaction rolls back (`licetum_sync_lease_lost_total`).
+   A source that did not answer
    sets `attempts+1`, `last_error` and `next_due_at = now() + min(30 s · 2^attempts, 10 min)` for all replicas; the data stays.
    An answer with no resources is the source's truth: it switches off every resource of the type. An admin write marks the
    platform types due (`AfterWrite` → `invalidatePlatformSync`, `invalidated_at`): the next request waits for a job that
@@ -551,8 +554,13 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    changes its structure signature instead). The digest keeps its shape; `format` 5 (4 is read too) is rewritten only when
    data or graph signature changed, and a start of the worker imports the previous release's Redis hashes
    (`authz:resource_sync:hash:<type>`, `v4:<data>:<graph>`) for types without a row. The worker's schedule (`SYNC__SCHEDULE_TICK`)
-   queues due types that someone asked for within `SYNC__DEMAND_WINDOW` (all with `SYNC__KEEP_WARM`), gives up a job claimed
-   5 times, and prunes old jobs. `SYNC__ENGINE` is `dbos` by default (`postgres` selects the `sync_job` table below); the DBOS engine runs the same pipeline on DBOS workflows (`engine/sync_dbos.go`, see core/README.md: queue `licetum-sync`, dedup id as the shared job, an executor heartbeat in `sync_executor` and a janitor that takes over the workflows of dead executors, the workflow row read `FOR SHARE` as the fence); the integration suites of the synchronization (`admin-api/tests/integration/api/sync_test.go`, `sync_crash_test.go`) run on the DBOS engine only, with no engine switch in the tests. `App.Role` (pdp, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
+   queues due types that someone asked for within `SYNC__DEMAND_WINDOW` (all with `SYNC__KEEP_WARM`). DBOS does not hand the
+   interrupted workflows of a dead executor to a live one, so every executor writes a heartbeat to `sync_executor` (`SYNC__LEASE`, every
+   lease/3) and a janitor of each worker cancels the workflows of an executor whose heartbeat is older than the lease, queues a
+   replacement under the id `<id>+r` (the waiters follow the chain) and prunes the old workflows (`dbosJanitor`); `SYNC__ENGINE` and
+   `WORKER__REGION` are deprecated settings (see `config.DeprecatedCatalog`). The integration suites of the synchronization
+   (`admin-api/tests/integration/api/sync_test.go`, `sync_crash_test.go`) and `core/engine/sync_dbos_test.go` are the evidence for the
+   engine. `App.Role` (pdp, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
    outside the worker. Every committed change of a type's data bumps the data revision of its service in the same transaction
    (`bumpDataRevisions`, see F2), and the worker then calls `invalidateView` (and `recordDataChange` for the previous release). `resolve` (one resource
    refreshed inline by the admin API) writes under the same component lock and timeouts.

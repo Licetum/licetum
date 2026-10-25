@@ -293,9 +293,8 @@ func warnDeprecated(log *slog.Logger) {
 
 // connectionBudget is the most connections to PostgreSQL a process may hold: the request pool (DB__POOL_SIZE +
 // DB__MAX_OVERFLOW), the pool of the synchronization transactions where the process has one (DB__SYNC_POOL_SIZE: the
-// worker and the admin API) and the pool of the DBOS client (SYNC__DBOS_POOL_SIZE, outside the others, when the
-// synchronization runs on DBOS). The connections of all the replicas add up against max_connections of the server, or
-// against default_pool_size of PgBouncer.
+// worker and the admin API) and the pool of the DBOS client (SYNC__DBOS_POOL_SIZE, outside the others). The connections of
+// all the replicas add up against max_connections of the server, or against default_pool_size of PgBouncer.
 func connectionBudget(cfg *config.Config, withSyncPool, withReadPool bool) (total int, parts []any) {
 	request := cfg.DB.MaxConns()
 	total = request
@@ -309,14 +308,12 @@ func connectionBudget(cfg *config.Config, withSyncPool, withReadPool bool) (tota
 		total += syncPool
 		parts = append(parts, "sync_pool", syncPool)
 	}
-	if cfg.Sync.Engine != "postgres" {
-		dbosPool := cfg.Sync.DBOSPoolSize
-		if dbosPool <= 0 {
-			dbosPool = 20
-		}
-		total += dbosPool
-		parts = append(parts, "dbos_pool", dbosPool)
+	dbosPool := cfg.Sync.DBOSPoolSize
+	if dbosPool <= 0 {
+		dbosPool = 20
 	}
+	total += dbosPool
+	parts = append(parts, "dbos_pool", dbosPool)
 	return total, parts
 }
 

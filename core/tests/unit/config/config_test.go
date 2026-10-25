@@ -241,21 +241,23 @@ func TestLoadSyncPipelineSettings(t *testing.T) {
 	}
 }
 
-func TestSyncEngineDefaultsToDBOS(t *testing.T) {
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Sync.Engine != "dbos" {
-		t.Errorf("default engine = %q, want dbos", cfg.Sync.Engine)
-	}
-	t.Setenv("SYNC__ENGINE", "postgres")
-	if cfg, err = config.Load(); err != nil || cfg.Sync.Engine != "postgres" {
-		t.Errorf("engine = %q, %v", cfg.Sync.Engine, err)
-	}
+// DBOS is the only synchronization engine and the worker no longer filters jobs by region: a deployment that still sets
+// SYNC__ENGINE (to postgres, or to anything) or WORKER__REGION (to anything) starts, and is told by the deprecation warning.
+func TestTheSettingsOfTheRemovedSynchronizationEngineAndRegionAreIgnored(t *testing.T) {
+	unsetDeprecated(t)
 	t.Setenv("SYNC__ENGINE", "kafka")
-	if _, err := config.Load(); err == nil {
-		t.Error("an unknown engine must be refused")
+	t.Setenv("WORKER__REGION", "Not A Region!")
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("a removed setting must not stop the start: %v", err)
+	}
+	got := config.DeprecatedSettings()
+	for _, name := range []string{"SYNC__ENGINE", "WORKER__REGION"} {
+		if !slices.Contains(got, name) {
+			t.Errorf("%s is not reported as deprecated: %v", name, got)
+		}
+	}
+	if reason, _ := config.DeprecatedReason("SYNC__ENGINE"); !strings.Contains(reason, "DBOS") {
+		t.Errorf("the reason of SYNC__ENGINE must name DBOS, got %q", reason)
 	}
 }
 

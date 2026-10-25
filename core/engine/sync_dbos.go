@@ -20,8 +20,7 @@ import (
 	"github.com/licetum/licetum/core/db"
 )
 
-// The DBOS engine (SYNC__ENGINE=dbos) runs the synchronization jobs as DBOS workflows on a database-backed queue, in place
-// of the sync_job table. The PDP and admin processes enqueue through a DBOS client and wait for the workflow; the worker
+// The synchronization jobs are DBOS workflows on a database-backed queue. The PDP and admin processes enqueue through a DBOS client and wait for the workflow; the worker
 // launches the DBOS runtime and executes them. What stays the same: one job per type shared by all callers (the DBOS
 // deduplication id, policy "return existing"), the state in sync_state, and the apply transaction.
 //
@@ -425,7 +424,6 @@ func (a *App) dbosSyncWorkflow(ctx dbos.Context, in dbosSyncIn) (dbosSyncOut, er
 		a.metrics.syncJobs.WithLabelValues(state).Inc()
 		a.metrics.syncJobSeconds.Observe(time.Since(started).Seconds())
 	}
-	a.notifyJobsDone()
 	return out, err
 }
 
@@ -608,6 +606,3 @@ func (a *App) closeDBOS() {
 		_ = dbos.Shutdown(c, 2*time.Second)
 	}
 }
-
-// useDBOS says the synchronization runs on DBOS, the default; only SYNC__ENGINE=postgres selects the sync_job table.
-func (a *App) useDBOS() bool { return a.Cfg == nil || a.Cfg.Sync.Engine != "postgres" }

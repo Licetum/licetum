@@ -8,22 +8,20 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/licetum/licetum/core/model"
 )
 
-// The synchronization pipeline has one executor per job. The processes that serve requests (check, admin) only ask for
-// a synchronization — a row in sync_job — and wait for the result for a bounded time; the worker (sync_worker.go) claims
-// the job under a lease, fetches the sources and applies the result in one transaction that ends with a fence.
+// The synchronization pipeline has one executor per job. The processes that serve requests (pdp, admin) only ask for a
+// synchronization — a DBOS workflow — and wait for the result for a bounded time; the worker (sync_worker.go, sync_dbos.go)
+// runs the job, fetches the sources and applies the result in one transaction that ends with a fence.
 
-// syncBackend is what runs the jobs: the sync_job table (default) or DBOS workflows. Both give the same guarantees: one
-// execution per type shared by all callers, recovery after the death of an executor, and a result the callers wait for.
+// syncBackend is what runs the jobs: DBOS workflows. It gives one execution per type shared by all callers, recovery after
+// the death of an executor, and a result the callers wait for.
 type syncBackend interface {
 	// enqueue makes sure there is an active job for each type and returns a reference to it. seen, when it is not nil, holds
 	// the version of the state of the types the caller read before it decided to wait for their job (see jobName).
@@ -36,12 +34,7 @@ type syncBackend interface {
 // the request answers from the data that exists.
 var errSyncUnavailable = errors.New("the synchronization backend is not available")
 
-func (a *App) backend() syncBackend {
-	if a.useDBOS() {
-		return a.dbosBackend()
-	}
-	return pgBackend{a}
-}
+func (a *App) backend() syncBackend { return a.dbosBackend() }
 
 // SyncOptions tells Ensure what the caller needs.
 type SyncOptions struct {
@@ -71,7 +64,7 @@ type SyncCoordinator interface {
 	Ensure(ctx context.Context, typeIDs []uuid.UUID, opts SyncOptions) (SyncResult, error)
 }
 
-// Coordinator is the PostgreSQL job table implementation of SyncCoordinator.
+// Coordinator is the implementation of SyncCoordinator that asks the synchronization jobs of the worker.
 func (a *App) Coordinator() SyncCoordinator { return coordinator{a} }
 
 type coordinator struct{ a *App }
@@ -250,7 +243,7 @@ func isPlatformType(g *TypeGraph, id uuid.UUID) bool {
 }
 
 // requestInBackground asks for the synchronization of the given types without waiting (and off the request goroutine). A process asks for a type at most
-// once a second: a burst of requests that all find the type due is one row in the table, not one write each.
+// once a second: a burst of requests that all find the type due is one job, not one enqueue each.
 func (a *App) requestInBackground(typeIDs []uuid.UUID, source string) {
 	now := time.Now()
 	var ask []uuid.UUID
@@ -263,7 +256,7 @@ func (a *App) requestInBackground(typeIDs []uuid.UUID, source string) {
 	if len(ask) == 0 {
 		return
 	}
-	// The writes (the demand, the job, the notification) are not part of the answer: they run on the background pool, and a
+	// The writes (the demand, the job) are not part of the answer: they run on the background pool, and a
 	// full queue drops them — the next request asks again.
 	accepted := a.Background(func(bg context.Context) {
 		if _, err := a.enqueueSync(bg, ask, false, source, nil); err != nil {
@@ -296,62 +289,6 @@ func (a *App) enqueueSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, 
 	}
 	return a.backend().enqueue(ctx, typeIDs, fresh, source, seen)
 }
-
-type pgBackend struct{ a *App }
-
-// enqueue queues the jobs of the sync_job table, whose key is unique while a job is queued or running; the jobs are not named
-// after a state (seen).
-func (b pgBackend) enqueue(ctx context.Context, typeIDs []uuid.UUID, fresh bool, source string, _ map[uuid.UUID]string) (map[uuid.UUID]string, error) {
-	a := b.a
-	keys := make([]string, len(typeIDs))
-	for i, id := range typeIDs {
-		keys[i] = dedupKey([]uuid.UUID{id}, fresh)
-	}
-	rows, err := a.DB.Query(ctx, `
-		INSERT INTO sync_job (dedup_key, type_ids, fresh, source)
-		SELECT u.key, ARRAY[u.type_id], $3, $4
-		FROM unnest($1::text[], $2::uuid[]) AS u(key, type_id)
-		ON CONFLICT (dedup_key) WHERE state IN ('queued', 'running') DO UPDATE SET dedup_key = EXCLUDED.dedup_key
-		RETURNING id, type_ids[1], (xmax = 0)`, keys, typeIDs, fresh, source)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	jobs := map[uuid.UUID]string{}
-	created := false
-	for rows.Next() {
-		var id int64
-		var typeID uuid.UUID
-		var inserted bool
-		if err := rows.Scan(&id, &typeID, &inserted); err != nil {
-			return nil, err
-		}
-		jobs[typeID] = strconv.FormatInt(id, 10)
-		created = created || inserted
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if created {
-		a.wakeWorkers(ctx)
-	}
-	return jobs, nil
-}
-
-// wakeWorkers tells the workers there is a job: this process's own, directly, the others through NOTIFY. A worker that
-// misses it finds the job on its next poll.
-func (a *App) wakeWorkers(ctx context.Context) {
-	select {
-	case a.workerWake <- struct{}{}:
-	default:
-	}
-	if _, err := a.DB.Exec(ctx, `SELECT pg_notify($1, '')`, syncChannel); err != nil {
-		slog.DebugContext(ctx, "failed to notify the synchronization workers", "error", err)
-	}
-}
-
-const syncChannel = "licetum_sync"
 
 // jobOutcome is what a finished job says: the types whose source did not answer.
 type jobOutcome struct {
@@ -415,61 +352,8 @@ func (a *App) waitJobs(ctx context.Context, jobs map[uuid.UUID]string, d time.Du
 }
 
 // jobPollCap bounds how long one poller watches a job: a job still unfinished by then is somebody else's problem, and
-// the waiters have given up long before.
+// the waiters have given up long before. One poller serves every waiter of the job in this process (singleflight).
 const jobPollCap = 2 * time.Minute
-
-// pollJob watches a job until it ends, with the interval growing from 25 ms to 500 ms. One poller serves every waiter of
-// the job in this process (singleflight). A job that ended in this very process wakes it at once.
-func (b pgBackend) poll(ref string) (jobOutcome, error) {
-	a := b.a
-	jobID, err := strconv.ParseInt(ref, 10, 64)
-	if err != nil {
-		return jobOutcome{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), jobPollCap)
-	defer cancel()
-	delay := 25 * time.Millisecond
-	for {
-		done := a.jobsDone()
-		var o jobOutcome
-		err := a.DB.QueryRow(ctx, `SELECT state, COALESCE(error, ''), unanswered FROM sync_job WHERE id = $1`, jobID).
-			Scan(&o.state, &o.err, &o.unanswered)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			return jobOutcome{state: "done"}, nil // pruned: it ended long ago
-		case err != nil:
-			return o, err
-		case o.state == "done" || o.state == "failed":
-			return o, nil
-		}
-		select {
-		case <-done:
-		case <-time.After(delay):
-		case <-ctx.Done():
-			return o, ctx.Err()
-		}
-		delay = min(delay*2, 500*time.Millisecond)
-	}
-}
-
-// jobsDone returns a channel that is closed when a job ends in this process.
-func (a *App) jobsDone() <-chan struct{} {
-	a.doneMu.Lock()
-	defer a.doneMu.Unlock()
-	if a.doneCh == nil {
-		a.doneCh = make(chan struct{})
-	}
-	return a.doneCh
-}
-
-func (a *App) notifyJobsDone() {
-	a.doneMu.Lock()
-	defer a.doneMu.Unlock()
-	if a.doneCh != nil {
-		close(a.doneCh)
-		a.doneCh = nil
-	}
-}
 
 func (a *App) requestWait() time.Duration {
 	if a.Cfg == nil || a.Cfg.Sync.RequestWait <= 0 {
