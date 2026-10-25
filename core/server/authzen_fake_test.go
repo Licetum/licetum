@@ -131,6 +131,9 @@ func (f *fakePDP) SearchResources(_ context.Context, _ uuid.UUID, _ string, _ en
 	return page, nil
 }
 
+// NoteReadRevision: the fake has no policy to read a revision of.
+func (f *fakePDP) NoteReadRevision(context.Context) {}
+
 func (f *fakePDP) DirectoryAfter(context.Context, uuid.UUID, string, *db.DirectoryKey, int) ([]db.DirectoryEntry, error) {
 	return nil, nil
 }
@@ -396,13 +399,28 @@ func TestAuthzenErrorsHaveAStringBodyAndACode(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		check(t, rec, http.StatusUnauthorized, "auth_header_required")
-		if got := rec.Header().Get("WWW-Authenticate"); got != "Bearer" {
-			t.Errorf("WWW-Authenticate %q, want Bearer", got)
+		if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="licetum"` {
+			t.Errorf("WWW-Authenticate %q, want Bearer with a fixed realm (no PDP__PUBLIC_URL)", got)
 		}
 	})
 	t.Run("a credential that is not one of a PEP is a 401", func(t *testing.T) {
 		rec := authzenCallAs(h, path, valid, "Bearer a-token-of-a-person")
 		check(t, rec, http.StatusUnauthorized, "token_invalid")
+		if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="licetum", error="invalid_token"` {
+			t.Errorf("WWW-Authenticate %q, want the invalid_token challenge with the realm", got)
+		}
+	})
+	t.Run("the realm of a 401 is the PDP identifier of the service", func(t *testing.T) {
+		named := authzenTestAPI(newFakePDP(), &config.Config{PDP: config.PDP{PublicURL: "https://pdp.example.com"}})
+		want := `Bearer realm="https://pdp.example.com/service/` + fakeServiceRef + `"`
+		rec := authzenCallAs(named, path, valid, "")
+		if got := rec.Header().Get("WWW-Authenticate"); got != want {
+			t.Errorf("no credentials: WWW-Authenticate %q, want %q", got, want)
+		}
+		rec = authzenCallAs(named, path, valid, "Bearer a-token-of-a-person")
+		if got := rec.Header().Get("WWW-Authenticate"); got != want+`, error="invalid_token"` {
+			t.Errorf("rejected credential: WWW-Authenticate %q, want %q", got, want+`, error="invalid_token"`)
+		}
 	})
 	t.Run("the person is the one the body names, whoever holds the key", func(t *testing.T) {
 		body := `{"subject":{"type":"user","id":"bob"},"resource":{"type":"todo","id":"1"},"action":{"name":"can_read"}}`

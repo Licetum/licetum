@@ -227,6 +227,33 @@ func TestContract_API03_SubjectIDBounds(t *testing.T) {
 	rejectedWith(t, r.Validate(), i18n.DelegationSubjectInvalid)
 }
 
+// The bounds of a subject count characters, not bytes (ADR 0001, 7.4): an id of 150 CJK characters (450 bytes) is within 256.
+func TestContract_API03_SubjectBoundsCountCharacters(t *testing.T) {
+	for _, c := range []struct {
+		id string
+		ok bool
+	}{
+		{strings.Repeat("中", 150), true},
+		{strings.Repeat("中", 256), true},
+		{strings.Repeat("中", 257), false},
+	} {
+		if _, err := model.PrepareSubject("", c.id, nil); (err == nil) != c.ok {
+			t.Errorf("subject id of %d characters: accepted %v, want %v", len([]rune(c.id)), err == nil, c.ok)
+		}
+	}
+	for _, c := range []struct {
+		typ string
+		ok  bool
+	}{
+		{strings.Repeat("中", 64), true},
+		{strings.Repeat("中", 65), false},
+	} {
+		if _, err := model.PrepareSubject(c.typ, "alice", nil); (err == nil) != c.ok {
+			t.Errorf("subject type of %d characters: accepted %v, want %v", len([]rune(c.typ)), err == nil, c.ok)
+		}
+	}
+}
+
 // The claims of a subject are at most 100 claims and 16 KiB of JSON, and the boundary is the one that is accepted.
 func TestContract_API03_SubjectPropertyBounds(t *testing.T) {
 	many := map[string]any{}

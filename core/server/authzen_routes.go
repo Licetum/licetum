@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -92,7 +93,7 @@ a client over its rate limit a 429. An error has its message as a JSON string, a
 			return nil, err
 		}
 		// The wait for a revision comes after the credential is checked: a caller that is not authenticated holds nothing.
-		ctx, aerr = authzenFreshness(ctx, settings)
+		ctx, aerr = authzenFreshness(ctx, app, settings)
 		if aerr != nil {
 			return nil, aerr
 		}
@@ -134,7 +135,7 @@ a client over its rate limit a 429. An error has its message as a JSON string, a
 			return nil, err
 		}
 		// The wait for a revision comes after the credential is checked: a caller that is not authenticated holds nothing.
-		ctx, aerr = authzenFreshness(ctx, settings)
+		ctx, aerr = authzenFreshness(ctx, app, settings)
 		if aerr != nil {
 			return nil, aerr
 		}
@@ -177,7 +178,7 @@ there are more results; send it back as page.token with the same request. The re
 			return nil, err
 		}
 		// The wait for a revision comes after the credential is checked: a caller that is not authenticated holds nothing.
-		ctx, aerr = authzenFreshness(ctx, settings)
+		ctx, aerr = authzenFreshness(ctx, app, settings)
 		if aerr != nil {
 			return nil, aerr
 		}
@@ -215,7 +216,7 @@ there are more results; send it back as page.token with the same request. The re
 			return nil, err
 		}
 		// The wait for a revision comes after the credential is checked: a caller that is not authenticated holds nothing.
-		ctx, aerr = authzenFreshness(ctx, settings)
+		ctx, aerr = authzenFreshness(ctx, app, settings)
 		if aerr != nil {
 			return nil, aerr
 		}
@@ -253,7 +254,7 @@ there are more results; send it back as page.token with the same request. The re
 			return nil, err
 		}
 		// The wait for a revision comes after the credential is checked: a caller that is not authenticated holds nothing.
-		ctx, aerr = authzenFreshness(ctx, settings)
+		ctx, aerr = authzenFreshness(ctx, app, settings)
 		if aerr != nil {
 			return nil, aerr
 		}
@@ -298,7 +299,10 @@ func authzenSettings(top map[string]any) (model.AuthzenLicetum, *apperr.Error) {
 
 // authzenFreshness carries into the request the revision its answers must reflect: context.licetum.min_revision. The decision is
 // then computed from the data when the view has not reached the revision (see WithMinRevision), so no answer older than it is given.
-func authzenFreshness(ctx context.Context, settings model.AuthzenLicetum) (context.Context, *apperr.Error) {
+func authzenFreshness(ctx context.Context, app pdpEngine, settings model.AuthzenLicetum) (context.Context, *apperr.Error) {
+	// Every 200 carries the revision it was answered at, also when no answer reads the policy: the request notes the view once,
+	// before its own wait for min_revision, and the lowest revision of the request is the one reported.
+	app.NoteReadRevision(ctx)
 	var rev int64
 	if settings.MinRevision != "" {
 		v, err := strconv.ParseInt(settings.MinRevision, 10, 64)
@@ -325,5 +329,6 @@ func authzenMetadata(base, slug string) model.AuthzenMetadata {
 		SearchSubjectEndpoint:     pdp + "/access/v1/search/subject",
 		SearchActionEndpoint:      pdp + "/access/v1/search/action",
 		SearchResourceEndpoint:    pdp + "/access/v1/search/resource",
+		Capabilities:              slices.Clone(model.AuthzenCapabilities),
 	}
 }

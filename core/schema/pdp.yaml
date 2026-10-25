@@ -135,6 +135,13 @@ components:
         access_evaluations_endpoint:
           description: URL of the Access Evaluations API
           type: string
+        capabilities:
+          description: "The extensions of Licetum this PDP supports, as URNs that are not registered with IANA: a resource id of * for the type as a whole, context.licetum.min_revision for reading your writes, and context.licetum.explain for an explanation of a decision. A PEP that does not know them is not affected"
+          examples:
+            - - urn:licetum:whole-type-resource-id
+          items:
+            type: string
+          type: array
         policy_decision_point:
           description: "The identifier of the Policy Decision Point: the base URL of the service, which is also where the default paths of the API are appended"
           examples:
@@ -156,6 +163,7 @@ components:
         - search_subject_endpoint
         - search_action_endpoint
         - search_resource_endpoint
+        - capabilities
       type: object
     AuthzenOptions:
       additionalProperties: true
@@ -266,7 +274,7 @@ components:
       additionalProperties: true
       properties:
         id:
-          description: "Subject id: 1 to 256 bytes, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it"
+          description: "Subject id: 1 to 256 characters, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it"
           examples:
             - alice
           type: string
@@ -275,7 +283,7 @@ components:
           description: "The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"
           type: object
         type:
-          description: "Subject type (not interpreted): 1 to 64 bytes, and not group"
+          description: "Subject type (not interpreted): 1 to 64 characters, and not group"
           examples:
             - user
           type: string

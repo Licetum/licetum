@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -45,6 +46,9 @@ type PEPCaller struct {
 //   - A valid credential that does not give the operation is the same 403 authzen_forbidden whatever the reason: the service does
 //     not exist, the client is not registered for it or is disabled, or the operation is not among its operations. The answer does not
 //     tell a caller which services exist (ADR 0001, 7.10).
+//   - The exception is the API key of a client that is disabled: the directory holds the enabled clients of live services only (see
+//     PEPDirectory.APIKey), so such a key is not found and is a 401, like the key of a deleted client. A token of a disabled client
+//     reaches the client row and is the 403.
 func (a *App) AuthenticatePEP(ctx context.Context, credential, serviceRef, operation string) (*PEPCaller, error) {
 	dir, err := a.PEPDirectory(ctx)
 	if err != nil {
@@ -69,7 +73,7 @@ func (a *App) AuthenticatePEP(ctx context.Context, credential, serviceRef, opera
 		}
 		verified, err := verifier.Verify(ctx, credential)
 		if err != nil {
-			return nil, verifyFailure(err)
+			return nil, verifyFailure(ctx, err)
 		}
 		issuer, viaClient = verified.Issuer, verified.Client
 	}
@@ -101,10 +105,12 @@ func (a *App) AuthenticatePEP(ctx context.Context, credential, serviceRef, opera
 
 // verifyFailure is the answer to a token the verifier did not accept: a key set that could not be read is a 424 (the token is
 // neither accepted nor refused), anything else a 401 invalid_token.
-func verifyFailure(err error) error {
+func verifyFailure(ctx context.Context, err error) error {
 	if errors.Is(err, pepauth.ErrJWKSUnavailable) {
 		var unavailable *apperr.Error
 		if errors.As(err, &unavailable) {
+			// The caller learns that the key set could not be read, not where it is or why: the cause is for the log.
+			logDependency(ctx, slog.LevelWarn, "the key set of an issuer could not be read", unavailable.Unwrap())
 			return unavailable
 		}
 		return err

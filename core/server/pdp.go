@@ -25,6 +25,7 @@ type pdpEngine interface {
 	GetPermission(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, consistency engine.Consistency) (engine.PermissionResult, error)
 	SearchResources(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, q engine.ResourceSearch, consistency engine.Consistency) (engine.ResourcePage, error)
 	DirectoryAfter(ctx context.Context, serviceID uuid.UUID, subjectType string, after *db.DirectoryKey, limit int) ([]db.DirectoryEntry, error)
+	NoteReadRevision(ctx context.Context)
 }
 
 var _ pdpEngine = (*engine.App)(nil)

@@ -34,7 +34,7 @@ type speaker struct {
 
 // speaker says who a subject object stands for: the person named in the body, with the claims given as its properties.
 func (c *authzenCaller) speaker(ctx context.Context, s *model.AuthzenSubject) (speaker, *apperr.Error) {
-	claims, err := subjectClaims(s.ID, s.Properties)
+	claims, err := subjectClaims(s.Type, s.ID, s.Properties)
 	if err != nil {
 		return speaker{}, badRequest(err)
 	}
@@ -47,9 +47,11 @@ func (c *authzenCaller) speaker(ctx context.Context, s *model.AuthzenSubject) (s
 
 // subjectClaims checks the person a question names and builds the claims the decision reads: those the caller sends, with
 // preferred_username set to the subject unless the caller sent one (the rules that name a person read it). The checks are those of
-// model.PrepareSubject, which the AuthZEN requests share.
-func subjectClaims(subject string, properties map[string]any) (engine.Claims, error) {
-	prepared, err := model.PrepareSubject("", subject, properties)
+// model.PrepareSubject, which the AuthZEN requests share. The type is checked when it is given: an evaluation of a batch is
+// refused here (not by the request's own validation) for a type the single endpoint refuses, and the people of the directory
+// are asked about without one.
+func subjectClaims(typ, subject string, properties map[string]any) (engine.Claims, error) {
+	prepared, err := model.PrepareSubject(typ, subject, properties)
 	if err != nil {
 		return nil, err
 	}

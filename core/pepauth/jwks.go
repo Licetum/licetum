@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -39,7 +40,7 @@ type Key struct {
 func (k *Key) Parsed() (*jose.JSONWebKey, error) {
 	k.once.Do(func() { k.err = k.jwk.UnmarshalJSON(k.raw) })
 	if k.err != nil {
-		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSKeyInvalid, k.err)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSKeyInvalid).Wrap(k.err)}
 	}
 	return &k.jwk, nil
 }
@@ -185,21 +186,24 @@ func (ks *KeySets) fetchJWKS(ctx context.Context, jwksURL string) (*jwksDocument
 	ctx, cancel := context.WithTimeout(ctx, jwksTimeout)
 	defer cancel()
 
+	// The answer to a caller does not say where the key set is or why it could not be read (the URL and the transport error
+	// would tell a caller who presents a token of an unregistered issuer's look-alike what the PDP can reach): the cause is
+	// kept for the log only.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
 	if err != nil {
-		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSUnavailable).Wrap(err)}
 	}
 	resp, err := ks.HTTP.Do(req)
 	if err != nil {
-		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSUnavailable, err)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSUnavailable).Wrap(err)}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSRejected, resp.StatusCode)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSRejected).Wrap(fmt.Errorf("the key set answered %d", resp.StatusCode))}
 	}
 	var doc jwksDocument
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil {
-		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSBadJSON, err)}
+		return nil, Unavailable{apperr.FailedDependency(i18n.JWKSBadJSON).Wrap(err)}
 	}
 	return &doc, nil
 }

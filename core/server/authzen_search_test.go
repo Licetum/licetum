@@ -123,6 +123,39 @@ func TestContract_AZ04_AChangedRequestIsRefused(t *testing.T) {
 	}
 }
 
+// TestContract_AZ04_ThePageDigestFollowsWhatTheSearchReads: between two pages a newer min_revision applies to the page that
+// carries it, and a key the API ignores is not part of the request, so both leave the token valid; the properties of the
+// subject are read by the resource search, so a change of them is a changed request (400 authzen_page_invalid).
+func TestContract_AZ04_ThePageDigestFollowsWhatTheSearchReads(t *testing.T) {
+	fake := newFakePDP()
+	fake.searchPages = []engine.ResourcePage{
+		{Hits: []engine.ResourceHit{{ID: "1"}}, Last: "1"},
+		{Hits: []engine.ResourceHit{{ID: "2"}}, Last: "2", Done: true},
+		{Hits: []engine.ResourceHit{{ID: "2"}}, Last: "2", Done: true},
+	}
+	h := authzenTestAPI(fake, &config.Config{})
+	body := func(token, subjectExtra, context string) string {
+		return fmt.Sprintf(`{"subject":{"type":"user","id":%q%s},"resource":{"type":"todo"},"action":{"name":"read"},"context":%s,"page":{"limit":1,"token":%q}}`,
+			fakeCaller, subjectExtra, context, token)
+	}
+	properties := `,"properties":{"department":"sales"}`
+	first := decodeSearch(t, authzenCall(h, searchResourcePath, body("", properties, `{"ip":"10.0.0.1","licetum":{"min_revision":"1.1"}}`)))
+	token := first.nextToken()
+	if token == "" {
+		t.Fatal("the first page has a token")
+	}
+	// A newer min_revision and an ignored nested key: the same request.
+	second := authzenCall(h, searchResourcePath, body(token, properties, `{"ip":"10.0.0.1","nested":{"x":"y"},"licetum":{"min_revision":"1.2"}}`))
+	if second.Code != http.StatusOK {
+		t.Errorf("an ignored key must not change the request: %d %s", second.Code, second.Body)
+	}
+	// The properties of the subject changed: another request.
+	rec := authzenCall(h, searchResourcePath, body(token, `,"properties":{"department":"hr"}`, `{"ip":"10.0.0.1"}`))
+	if rec.Code != http.StatusBadRequest || rec.Header().Get("Licetum-Error-Code") != "authzen_page_invalid" {
+		t.Errorf("changed subject.properties: %d %s %s, want 400 authzen_page_invalid", rec.Code, rec.Header().Get("Licetum-Error-Code"), rec.Body)
+	}
+}
+
 // TestContract_AZ13_TheEngineIsAskedForTheRequestedTypeWithTheScanBudget: the search reads only the type asked for, at most
 // PDP__SEARCH_SCAN_BUDGET candidates (the default when the setting is not loaded), and a page that the budget stopped, shorter
 // than its limit even when empty, still carries a next_token that continues after the last candidate read.
@@ -190,7 +223,7 @@ func TestContract_AZ04_ATokenWithAKeyTheDatabaseCannotTakeIsRefused(t *testing.T
 		Subject:  &model.AuthzenSubject{Type: "user", ID: fakeCaller},
 		Resource: &model.AuthzenResource{Type: "todo"},
 		Action:   &model.AuthzenAction{Name: "read"},
-	}, 1)
+	}, model.RequestContext{}, 1)
 	rec := authzenCall(h, searchResourcePath, resourceSearchBody(1, encodeCursor("a\x00b", sum), "read"))
 	if rec.Code != http.StatusBadRequest || rec.Header().Get("Licetum-Error-Code") != "authzen_page_invalid" {
 		t.Errorf("%d %s, want 400 authzen_page_invalid", rec.Code, rec.Body)

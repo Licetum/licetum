@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/i18n"
@@ -29,7 +30,7 @@ const AuthzenWholeType = "*"
 // attribute of the rules (see ParseAuthzenContext).
 const authzenLicetumKey = "licetum"
 
-// The bounds of a subject, in bytes: the checks of the on_behalf routes have always counted them so.
+// The bounds of a subject, in characters (runes), as the ADR states them.
 const (
 	subjectTypeMax       = 64
 	subjectIDMax         = 256
@@ -42,8 +43,8 @@ const (
 // AuthzenSubject is the subject of an evaluation or of a search.
 type AuthzenSubject struct {
 	_          struct{}       `additionalProperties:"true"`
-	Type       string         `json:"type" doc:"Subject type (not interpreted): 1 to 64 bytes, and not group" example:"user"`
-	ID         string         `json:"id" required:"false" doc:"Subject id: 1 to 256 bytes, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it" example:"alice"`
+	Type       string         `json:"type" doc:"Subject type (not interpreted): 1 to 64 characters, and not group" example:"user"`
+	ID         string         `json:"id" required:"false" doc:"Subject id: 1 to 256 characters, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it" example:"alice"`
 	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"`
 }
 
@@ -194,6 +195,15 @@ type AuthzenMetadata struct {
 	SearchSubjectEndpoint     string `json:"search_subject_endpoint" doc:"URL of the Subject Search API"`
 	SearchActionEndpoint      string `json:"search_action_endpoint" doc:"URL of the Action Search API"`
 	SearchResourceEndpoint    string `json:"search_resource_endpoint" doc:"URL of the Resource Search API"`
+	// Capabilities are not registered URNs (ADR 0001, 7.3): a documented deviation, and a PEP that does not know them is not affected.
+	Capabilities []string `json:"capabilities" nullable:"false" doc:"The extensions of Licetum this PDP supports, as URNs that are not registered with IANA: a resource id of * for the type as a whole, context.licetum.min_revision for reading your writes, and context.licetum.explain for an explanation of a decision. A PEP that does not know them is not affected" example:"[\"urn:licetum:whole-type-resource-id\"]"`
+}
+
+// The capabilities of the PDP, in the order the metadata lists them.
+var AuthzenCapabilities = []string{
+	"urn:licetum:whole-type-resource-id",
+	"urn:licetum:context:min-revision",
+	"urn:licetum:context:explain",
 }
 
 // ---------- validation ----------
@@ -389,7 +399,7 @@ type PreparedSubject struct {
 // the properties, with preferred_username set to the id unless the properties hold a truthy one (the rules that name a
 // person read it).
 //
-// The id is 1 to 256 bytes, holds no control character, and does not look like a group (group:…). The properties are at
+// The id is 1 to 256 characters, holds no control character, and does not look like a group (group:…). The properties are at
 // most 100 claims and 16 KiB of JSON.
 func PrepareSubject(typ, id string, properties map[string]any) (PreparedSubject, error) {
 	if typ != "" {
@@ -397,7 +407,7 @@ func PrepareSubject(typ, id string, properties map[string]any) (PreparedSubject,
 			return PreparedSubject{}, err
 		}
 	}
-	if id == "" || len(id) > subjectIDMax || strings.HasPrefix(id, GroupSubjectPrefix) || strings.ContainsFunc(id, unicode.IsControl) {
+	if id == "" || utf8.RuneCountInString(id) > subjectIDMax || strings.HasPrefix(id, GroupSubjectPrefix) || strings.ContainsFunc(id, unicode.IsControl) {
 		return PreparedSubject{}, apperr.Unprocessable(i18n.DelegationSubjectInvalid)
 	}
 	if err := checkSubjectProperties(properties); err != nil {
@@ -413,9 +423,9 @@ func PrepareSubject(typ, id string, properties map[string]any) (PreparedSubject,
 	return PreparedSubject{Type: typ, ID: id, Claims: claims}, nil
 }
 
-// checkSubjectType checks the type of a subject: 1 to 64 bytes, and not group.
+// checkSubjectType checks the type of a subject: 1 to 64 characters, and not group.
 func checkSubjectType(typ string) error {
-	if typ == "" || len(typ) > subjectTypeMax || typ == subjectGroupType {
+	if typ == "" || utf8.RuneCountInString(typ) > subjectTypeMax || typ == subjectGroupType {
 		return apperr.Unprocessable(i18n.AuthzenSubjectTypeInvalid)
 	}
 	return nil

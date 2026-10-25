@@ -25,7 +25,7 @@ func (a *App) VerifyAdminToken(ctx context.Context, token string) (pepauth.Verif
 	})
 	verified, err := a.adminVerifier.Verify(ctx, token)
 	if err != nil {
-		return pepauth.Verified{}, verifyFailure(err)
+		return pepauth.Verified{}, verifyFailure(ctx, err)
 	}
 	return verified, nil
 }

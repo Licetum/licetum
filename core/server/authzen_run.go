@@ -300,20 +300,25 @@ func pageLimit(p *model.AuthzenPageRequest) int {
 }
 
 // searchSum digests the parts of a search request that must not change between its pages. The identifier of the entity
-// searched for is ignored by the API, so it is left out.
-func searchSum(kind string, in searchInput, limit int) string {
+// searched for is ignored by the API, so it is left out, and so are the properties of the subject of the subject search
+// (the people it returns carry their stored ones). The context is the one the search reads (attrs: the attributes it
+// keeps), so a key the API ignores, and the settings of Licetum such as a newer min_revision, which applies to the page
+// that carries it, do not change the digest.
+func searchSum(kind string, in searchInput, attrs model.RequestContext, limit int) string {
 	type digest struct {
 		Kind                                 string
 		SubjectType, SubjectID               string
+		SubjectProperties                    map[string]any
 		ResourceType, ResourceID, ActionName string
 		Context                              map[string]any
 		Limit                                int
 	}
-	d := digest{Kind: kind, Context: in.Context, Limit: limit}
+	d := digest{Kind: kind, Context: attrs, Limit: limit}
 	if in.Subject != nil {
 		d.SubjectType = in.Subject.Type
 		if kind != "subject" {
 			d.SubjectID = in.Subject.ID
+			d.SubjectProperties = in.Subject.Properties
 		}
 	}
 	if in.Resource != nil {
@@ -371,7 +376,7 @@ func parseSearch(kind string, in searchInput) (*search, *apperr.Error) {
 		return nil, badRequest(err)
 	}
 	s.attrs = attrs
-	s.sum = searchSum(kind, in, s.limit)
+	s.sum = searchSum(kind, in, attrs, s.limit)
 	var token string
 	if in.Page != nil {
 		token = in.Page.Token
@@ -584,7 +589,7 @@ func (c *authzenCaller) decideKnown(ctx context.Context, consistency engine.Cons
 	eg.SetLimit(authzenScanWorkers)
 	for i, e := range batch {
 		eg.Go(func() error {
-			claims, err := subjectClaims(e.ID, e.Properties)
+			claims, err := subjectClaims("", e.ID, e.Properties)
 			if err != nil {
 				return nil
 			}

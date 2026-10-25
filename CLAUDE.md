@@ -675,10 +675,14 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   | `permit_on_first_permit`: the batch is decided as a whole and cut at the stopping evaluation; without `evaluations` it is one evaluation and the
   answer is `{decision}`; an evaluation that cannot be decided in a batch is `decision: false` with `context.error {status, message}`, the single
   endpoint answers the HTTP error); `POST …/access/v1/search/{subject,resource,action}` (`page.limit` up to 1000, `page.token` is an opaque cursor with
-  a digest of the request, a changed request is 400 `authzen_page_invalid`); `GET /.well-known/authzen-configuration/service/{ref}` (the discovery
-  document, from `PDP__PUBLIC_URL`; 404 `authzen_metadata_disabled` without it). A request that is not valid is a 400, not Huma's 422 (the
+  a digest of the request, a changed request is 400 `authzen_page_invalid`: the digest (`searchSum`) covers the attributes the search reads (`ParseAuthzenContext`: a newer
+  `min_revision` and a key the API ignores do not change it) and, for the resource and action searches, `subject.properties`); `GET /.well-known/authzen-configuration/service/{ref}` (the discovery
+  document, from `PDP__PUBLIC_URL`, with the three `capabilities` URNs of ADR 7.3; 404 `authzen_metadata_disabled` without it). Every 200 of the five operations carries `Licetum-Revision`
+  (`App.NoteReadRevision`, called once per authenticated request by `authzenFreshness`; the metadata, a cacheable public document, carries none), and a 401 carries `WWW-Authenticate: Bearer realm="<PDP__PUBLIC_URL>/service/<slug>"`
+  (`realm="licetum"` without the public URL; `error="invalid_token"` follows for a credential that was presented and rejected, `apperr.Error.WithRealm`). A 424 for keys that cannot be read says so and
+  nothing of where they are: the URL and the transport error stay in the cause, which is logged. The person of the access log is `on_behalf_of`, hashed or omitted by the `subject` log setting (`log_settings`) like `subject` and `user`. A request that is not valid is a 400, not Huma's 422 (the
   `NewErrorWithContext` hook maps it for the `AuthZEN` tag; `badRequest` does it for errors of the handlers). The callers are PEP clients (below): the person of a question is the body's `subject`, whose claims are in
-  `subject.properties` (`subjectClaims`, `model.PrepareSubject`: at most 100 claims and 16 KiB, no `group:` prefix, `preferred_username` defaults to `subject.id`),
+  `subject.properties` (`subjectClaims`, `model.PrepareSubject`: `subject.type` of 1–64 and `subject.id` of 1–256 characters (not bytes), at most 100 claims and 16 KiB, no `group` type and no `group:` prefix, for the evaluations of a batch too; `preferred_username` defaults to `subject.id`),
   and nothing about a call is recorded in the database. `context.licetum.explain` puts the explanation
   into `context.reason_admin`, `context.licetum.min_revision` asks for an answer that reflects a revision (the only freshness a caller can ask for); the other context keys are the request attributes. Resource search (`engine.SearchResources`) reads the candidates of the type from `resource_cache` by a keyset scan in bytewise order
   (`ORDER BY external_id COLLATE "C"`, the index `ix_resource_cache_type_external_c` of migration `00007`) and decides them in batches of 500 under

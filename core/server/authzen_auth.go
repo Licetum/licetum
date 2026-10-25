@@ -5,8 +5,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/licetum/licetum/core/apperr"
@@ -27,6 +29,15 @@ func newAuthzenAuth(app pdpEngine, cfg *config.Config) *authzenAuth {
 	return &authzenAuth{app: app, cfg: cfg, limits: newClientLimits(cfg.PEP, time.Now)}
 }
 
+// realm is the PDP identifier of the service the request is about (PDP__PUBLIC_URL/service/<ref>, ADR 0001 7.8), or a fixed name
+// when the public URL is not set. The reference is the one the caller put in the path.
+func (au *authzenAuth) realm(serviceRef string) string {
+	if au.cfg.PDP.PublicURL == "" {
+		return "licetum"
+	}
+	return strings.TrimSuffix(au.cfg.PDP.PublicURL, "/") + "/service/" + serviceRef
+}
+
 // caller authenticates the caller of an operation on the service named by serviceRef (its slug), from the Authorization header.
 //
 // A PEP client needs the PEP operation (engine.PEPEvaluate and the others), and the explain operation as well when the request asks
@@ -37,14 +48,18 @@ func newAuthzenAuth(app pdpEngine, cfg *config.Config) *authzenAuth {
 // a PEP credential.
 func (au *authzenAuth) caller(ctx context.Context, serviceRef, authorization, operation string, explain bool) (*authzenCaller, error) {
 	if authorization == "" {
-		return nil, apperr.Unauthorized(i18n.AuthHeaderRequired)
+		return nil, apperr.Unauthorized(i18n.AuthHeaderRequired).WithRealm(au.realm(serviceRef))
 	}
 	token, isBearer := httpx.BearerToken(authorization)
 	if !isBearer {
-		return nil, apperr.Unauthorized(i18n.AuthHeaderRequired)
+		return nil, apperr.Unauthorized(i18n.AuthHeaderRequired).WithRealm(au.realm(serviceRef))
 	}
 	pep, err := au.app.AuthenticatePEP(ctx, token, serviceRef, operation)
 	if err != nil {
+		var challenged *apperr.Error
+		if errors.As(err, &challenged) {
+			return nil, challenged.WithRealm(au.realm(serviceRef))
+		}
 		return nil, err
 	}
 	if explain && !slices.Contains(pep.Client.Operations, engine.PEPExplain) {

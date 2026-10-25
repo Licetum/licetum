@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/licetum/licetum/core/i18n"
 )
@@ -70,6 +71,29 @@ func (e *Error) WithHeader(name, value string) *Error {
 	}
 	e.headers.Add(name, value)
 	return e
+}
+
+// WithRealm returns a copy of a 401 whose WWW-Authenticate challenge names the realm (RFC 6750 §3: realm="…", then error="…" when
+// there is one). It copies because the error may be shared; an error without a challenge is returned as it is.
+func (e *Error) WithRealm(realm string) *Error {
+	challenges := e.headers.Values("WWW-Authenticate")
+	if len(challenges) == 0 {
+		return e
+	}
+	c := *e
+	c.headers = e.headers.Clone()
+	c.headers.Del("WWW-Authenticate")
+	quoted := `realm="` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(realm) + `"`
+	for _, v := range challenges {
+		rest := strings.TrimPrefix(v, "Bearer")
+		if rest = strings.TrimSpace(rest); rest != "" {
+			v = "Bearer " + quoted + ", " + rest
+		} else {
+			v = "Bearer " + quoted
+		}
+		c.headers.Add("WWW-Authenticate", v)
+	}
+	return &c
 }
 
 // Key returns the catalog key (also available to clients as extra.code).

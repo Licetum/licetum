@@ -85,6 +85,20 @@ func (a *App) cacheState(ctx context.Context) cacheState {
 	return v.state
 }
 
+// NoteReadRevision records the revision of the policy the request is answered at, from the same view its answers read (in a
+// process without a view the revisions are held for the request, so the answers do not read them again). An answer that reads
+// none (a batch with nothing to decide, an empty directory) then still carries Licetum-Revision, as every 200 of the PDP
+// does. The lowest revision of the request wins (see Trace.noteReadRevision), so the answers read later cannot raise it.
+func (a *App) NoteReadRevision(ctx context.Context) {
+	t := TraceFrom(ctx)
+	if t == nil {
+		return
+	}
+	if state := a.cacheState(ctx); state.ok {
+		t.noteReadRevision(state.version)
+	}
+}
+
 // policySnapshot is the snapshot of the current view, nil when the policy is not kept in memory (or the revisions could not be
 // read, so the revision is not known).
 func (a *App) policySnapshot(ctx context.Context) *snapshot {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,27 +95,65 @@ func TestParseSearchReadsTheContextAndThePage(t *testing.T) {
 func TestSearchSumIgnoresTheEntitySearchedFor(t *testing.T) {
 	a, b := searchRequest(), searchRequest()
 	b.Resource.ID = "other"
-	if searchSum("resource", a, 10) != searchSum("resource", b, 10) {
+	if searchSum("resource", a, nil, 10) != searchSum("resource", b, nil, 10) {
 		t.Error("the resource search ignores resource.id")
 	}
-	if searchSum("action", a, 10) == searchSum("action", b, 10) {
+	if searchSum("action", a, nil, 10) == searchSum("action", b, nil, 10) {
 		t.Error("the action search is about resource.id")
 	}
 	b = searchRequest()
 	b.Subject.ID = "bob"
-	if searchSum("subject", a, 10) != searchSum("subject", b, 10) {
+	if searchSum("subject", a, nil, 10) != searchSum("subject", b, nil, 10) {
 		t.Error("the subject search ignores subject.id")
 	}
-	if searchSum("resource", a, 10) == searchSum("resource", b, 10) {
+	if searchSum("resource", a, nil, 10) == searchSum("resource", b, nil, 10) {
 		t.Error("the resource search is about the subject")
 	}
-	if searchSum("resource", a, 10) == searchSum("resource", a, 20) {
+	if searchSum("resource", a, nil, 10) == searchSum("resource", a, nil, 20) {
 		t.Error("the limit is part of the request")
 	}
-	b = searchRequest()
-	b.Context = map[string]any{"ip": "10.0.0.1"}
-	if searchSum("resource", a, 10) == searchSum("resource", b, 10) {
+	if searchSum("resource", a, nil, 10) == searchSum("resource", a, model.RequestContext{"ip": "10.0.0.1"}, 10) {
 		t.Error("the context is part of the request")
+	}
+}
+
+// The digest is built from the attributes a search reads and the properties of the subject it asks about: a key the API
+// ignores and a newer min_revision (which applies to the page that carries it) leave it as it was, a changed property of the
+// subject does not (the resource and action searches decide with them); the subject search returns the stored ones, so it
+// ignores them.
+func TestSearchSumFollowsWhatTheSearchReads(t *testing.T) {
+	plain := searchRequest()
+	withProps := searchRequest()
+	withProps.Subject.Properties = map[string]any{"department": "sales"}
+	other := searchRequest()
+	other.Subject.Properties = map[string]any{"department": "hr"}
+	for _, kind := range []string{"resource", "action"} {
+		if searchSum(kind, plain, nil, 10) == searchSum(kind, withProps, nil, 10) {
+			t.Errorf("the %s search decides with subject.properties: they belong to the digest", kind)
+		}
+		if searchSum(kind, withProps, nil, 10) == searchSum(kind, other, nil, 10) {
+			t.Errorf("the %s search: a changed subject property must change the digest", kind)
+		}
+	}
+	if searchSum("subject", withProps, nil, 10) != searchSum("subject", other, nil, 10) {
+		t.Error("the subject search returns the stored properties: those of the request are not part of the digest")
+	}
+	// What a context contributes is what ParseAuthzenContext keeps of it.
+	parse := func(raw map[string]any) model.RequestContext {
+		attrs, _, err := model.ParseAuthzenContext(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return attrs
+	}
+	base := parse(map[string]any{"ip": "10.0.0.1", "licetum": map[string]any{"min_revision": "1.10"}})
+	newer := parse(map[string]any{"ip": "10.0.0.1", "licetum": map[string]any{"min_revision": "1.12"}, "nested": map[string]any{"x": "y"}})
+	if searchSum("resource", plain, base, 10) != searchSum("resource", plain, newer, 10) {
+		t.Error("min_revision and a key the API ignores must not change the digest")
+	}
+	changed := parse(map[string]any{"ip": "10.0.0.2"})
+	if searchSum("resource", plain, base, 10) == searchSum("resource", plain, changed, 10) {
+		t.Error("an attribute the search reads belongs to the digest")
 	}
 }
 
@@ -324,5 +363,39 @@ func TestAuthzenMetadataNeedsAPublicURL(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound || rec.Header().Get("Licetum-Error-Code") != "authzen_metadata_disabled" {
 		t.Fatalf("without PDP__PUBLIC_URL there is no document: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// An evaluation of a batch is decided on its own: a subject type the single endpoint refuses (group, or longer than 64
+// characters) is that evaluation's denial with its reason, the same bounds as a single evaluation, and the other evaluations of the
+// batch are decided.
+func TestEvaluationsOfABatchRefuseASubjectTypeTheSingleEndpointRefuses(t *testing.T) {
+	fake := newFakePDP()
+	h := authzenTestAPI(fake, &config.Config{})
+	const path = "/service/" + fakeServiceRef + "/access/v1/evaluations"
+	item := func(typ string) string {
+		return fmt.Sprintf(`{"subject":{"type":%q,"id":%q},"resource":{"type":"todo","id":"1"},"action":{"name":"can_read"}}`, typ, fakeCaller)
+	}
+	for name, typ := range map[string]string{"group": "group", "too long": strings.Repeat("t", 65), "too long in characters": strings.Repeat("中", 65)} {
+		rec := authzenCall(h, path, `{"evaluations":[`+item("user")+`,`+item(typ)+`]}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: a batch with one subject out of bounds is answered: %d %s", name, rec.Code, rec.Body)
+		}
+		out := decodeAnswer(t, rec)
+		if len(out.Evaluations) != 2 || out.Evaluations[1].Decision || out.Evaluations[1].Context["error"] == nil {
+			t.Errorf("%s: the evaluation with the type %q must be a denial with an error: %+v", name, typ, out.Evaluations)
+		}
+		if out.Evaluations[0].Context["error"] != nil {
+			t.Errorf("%s: the other evaluation is decided: %+v", name, out.Evaluations[0])
+		}
+		single := authzenCall(h, "/service/"+fakeServiceRef+"/access/v1/evaluation", item(typ))
+		if single.Code != http.StatusBadRequest && single.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: the single endpoint refuses the same subject: %d %s", name, single.Code, single.Body)
+		}
+	}
+	// 64 characters of three bytes each are within the bound.
+	rec := authzenCall(h, path, `{"evaluations":[`+item(strings.Repeat("中", 64))+`]}`)
+	if out := decodeAnswer(t, rec); rec.Code != http.StatusOK || len(out.Evaluations) != 1 || out.Evaluations[0].Context["error"] != nil {
+		t.Errorf("a type of 64 characters is accepted: %d %s", rec.Code, rec.Body)
 	}
 }

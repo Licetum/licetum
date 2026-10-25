@@ -252,7 +252,9 @@ func replacer(opts Options) func([]string, slog.Attr) slog.Attr {
 			}
 			return a
 		}
-		if a.Key == "subject" || a.Key == "user" {
+		// A person is named by subject (the decision lines), user (the caller of the request) and on_behalf_of (the person a PEP
+		// client asked about): all three follow the setting.
+		if a.Key == "subject" || a.Key == "user" || a.Key == "on_behalf_of" {
 			switch opts.Subject {
 			case "omit":
 				return slog.Attr{}

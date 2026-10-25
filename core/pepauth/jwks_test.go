@@ -7,12 +7,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+
+	"github.com/licetum/licetum/core/i18n"
 )
 
 // jwksServer serves a key set whose keys the test changes, and counts the requests.
@@ -162,6 +165,32 @@ func TestContract_PEP03_TransportFailureIsNotAnInvalidToken(t *testing.T) {
 	srv.mu.Unlock()
 	if key, err := a.KeyFor(t.Context(), srv.URL, "k1", true); err != nil || key == nil {
 		t.Fatalf("after the provider recovered: %v, %v", key, err)
+	}
+}
+
+// The 424 a caller gets does not say where the key set is or why it could not be read: the body is the same sentence for a
+// refused connection, a bad status and a bad document, and the cause is kept for the log.
+func TestContract_PEP03_TheBodyOfTheFailureNamesNeitherTheURLNorTheCause(t *testing.T) {
+	gone := newJWKSServer(t, "k1")
+	url := gone.URL
+	gone.Close()
+	bad := newJWKSServer(t, "k1")
+	bad.status = http.StatusInternalServerError
+	for name, jwksURL := range map[string]string{"refused connection": url, "bad status": bad.URL} {
+		a := jwksKeySets(10*time.Minute, 30*time.Second)
+		_, err := a.KeyFor(t.Context(), jwksURL, "k1", true)
+		var unavailable Unavailable
+		if !errors.As(err, &unavailable) {
+			t.Fatalf("%s: err = %v, want a JWKS failure", name, err)
+		}
+		body := unavailable.err.Localize(i18n.EN).Detail
+		host := strings.TrimPrefix(jwksURL, "http://")
+		if strings.Contains(body, host) || strings.Contains(body, "http") || strings.Contains(body, "dial") || strings.Contains(body, "500") {
+			t.Errorf("%s: the body %q tells the caller what the PDP reached", name, body)
+		}
+		if unavailable.err.Unwrap() == nil {
+			t.Errorf("%s: the cause must be kept for the log", name)
+		}
 	}
 }
 
