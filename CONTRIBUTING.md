@@ -100,7 +100,7 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 
 ### Backend and API changes
 
-- Keep the dependency direction: `api` → `service` → `db`/`redisx`/`synchronizer` → `model`/`config`/`i18n`/`apperr`.
+- Keep the dependency direction: `api` → `service` → `db`/`synchronizer` → `model`/`config`/`i18n`/`apperr`.
 - Keep HTTP concerns in `admin-api/api/` and `core/server/`; business logic belongs in `admin-api/service/` (admin) or `core/engine/` (check).
 - Register new Huma operations with an `OperationID`, summary, description, tags, documented errors,
   and model field documentation.

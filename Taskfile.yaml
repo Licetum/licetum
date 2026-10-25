@@ -106,13 +106,27 @@ tasks:
         done
       - cd admin-api && go build ./loadtest/... ./cmd/...
 
+  # The exit criterion of the removal of Redis as code: no package of either module, tests and tagged code included, depends on
+  # a Redis client (ADR 0001, 11.6 Exit). depguard (`no-redis`) stops an import; this stops a dependency that comes in through another module.
+  go:deps:check:
+    desc: No go-redis in the dependency graph of either module (go list -deps -test, with the build tags {{.GO_BUILD_TAGS}})
+    cmds:
+      - |
+        for m in core admin-api; do
+          deps=$(cd $m && go list -deps -test -tags {{.GO_BUILD_TAGS}} ./... 2>&1) || { echo "$deps" >&2; exit 1; }
+          case "$deps" in
+            *github.com/redis/go-redis*) echo "$m depends on github.com/redis/go-redis" >&2; exit 1 ;;
+          esac
+        done
+
   # golangci-lint goes first and alone: it may change files, the rest only read them.
   go:lint:
-    desc: All Go checks of both modules (golangci-lint fixes and formats first, then the tagged code compiles, go mod tidy, the schema drift check and the contracts)
+    desc: All Go checks of both modules (golangci-lint fixes and formats first, then the tagged code compiles, go mod tidy, no go-redis in the dependencies, the schema drift check and the contracts)
     cmds:
       - task: go:golangci
       - task: go:vet:tags
       - task: go:tidy
+      - task: go:deps:check
       - task: go:schema:check
       - task: contracts:check
 
@@ -183,7 +197,7 @@ tasks:
           export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
         fi
         for m in core admin-api; do
-          (cd $m && mkdir -p reports && go test -race -count=1 -timeout 30m -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./httpx/...,./pepauth/...,./redisx/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
+          (cd $m && mkdir -p reports && go test -race -count=1 -timeout 30m -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./httpx/...,./pepauth/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
         done
 
   go:schema:

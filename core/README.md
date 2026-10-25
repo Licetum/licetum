@@ -317,10 +317,11 @@ and `LICETUM_TEST_REDIS_URI`. No containers are started then.
 `task go:lint` runs in both modules (`task check` is the CI mode, which changes nothing):
 
 - golangci-lint v2 (`.golangci.yml`): gofmt and goimports, the standard set (govet, staticcheck, errcheck, unused),
-  gosec, and depguard enforcing the layers: `server` → `engine` → `db`, `redisx`, `synchronizer` → `model`, `config`,
-  `i18n`, `apperr`; the core must not import the admin module;
+  gosec, and depguard enforcing the layers: `server` → `engine` → `db`, `synchronizer` → `model`, `config`,
+  `i18n`, `apperr`; the core must not import the admin module, and no package imports a Redis client;
 - `task go:vet:tags`: the code behind the build tags (`integration`, `chaos`, `multiregion`) compiles and passes `go vet`, with and
   without `-race`, and the load test builds; no other job compiles the nightly-only suites;
+- `task go:deps:check`: `go list -deps -test` with the build tags lists no `github.com/redis/go-redis` in either module;
 - `go mod tidy -diff`;
 - the exported OpenAPI schema matches the code.
 
@@ -336,7 +337,6 @@ logx/              structured logs, their settings can change at run time
 apperr/            API errors → {"detail": ..., "extra": {"type": ..., "code": ...}}
 i18n/              supported languages, Accept-Language negotiation, the error message catalog
 db/                pgx pool, goose migrations (embedded SQL in db/migrations), the platform seed
-redisx/            Redis: the permission cache version, the circuit breaker
 synchronizer/      resource source adapters (SQL and HTTP)
 model/             request and response structs and their validation (the pydantic equivalent)
 engine/            business logic: permission computation (permission.go), decisions (decision.go), synchronization
@@ -345,7 +345,7 @@ schema/            the exported OpenAPI spec of the PDP
 tests/             unit and integration tests; testsupport/ starts the containers they use
 ```
 
-Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/v5`, `go-redis/v9`,
+Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/v5`,
 `golang-jwt/jwt/v5`, `go-jose/v4` (JWK parsing), `goose/v3`, `rs/cors`, `x/sync/singleflight`, `x/text/language`,
 `google/uuid`.
 

@@ -51,7 +51,7 @@ without changing files (as CI would), `task lint` does the same but fixes and fo
 `task generate` (OpenAPI schemas → orval client), `task dev` (docker compose). `task --list` for the rest.
 CI (`.github/workflows/ci.yml`, on pull requests and pushes to main) runs `task check` + `pnpm build`
 and `task backend:coverage` with disposable PostgreSQL/Redis Testcontainers, so integration tests
-run there too. `task go:vet:tags` (part of `task go:lint`, so of `task check` and of the CI job `go-lint`) compiles and vets the
+run there too. `task go:deps:check` (also part of `task go:lint`) fails when `go list -deps -test`, with the same tags, lists `github.com/redis/go-redis` in either module (and depguard `no-redis` refuses the import): Redis is not used any more. `task go:vet:tags` (part of `task go:lint`, so of `task check` and of the CI job `go-lint`) compiles and vets the
 code behind the build tags `integration`, `chaos` and `multiregion` in both modules, with and without `-race`, and builds the
 load test, so the suites that run only nightly cannot stop compiling unseen; a new build tag goes into `GO_BUILD_TAGS` of
 `Taskfile.yaml` (the task fails until it does).
@@ -155,7 +155,7 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   - **Breaker**: a source that does not answer is held back by the backoff in `sync_state` (below), not by a breaker; the Redis breaker is gone.
     **Logs**: failures of PostgreSQL on the request path go through `logx.Repeated` (`logDependency`, `errKind`: timeout, connection,
     `postgres:<code>`, other; `licetum_log_suppressed_total`): one record per kind per second.
-  - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_POSTGRES_OUTAGE` shortens the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
+  - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_POSTGRES_OUTAGE` shortens the 30 s without PostgreSQL), `core/tests/integration/db`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
 - **One PostgreSQL** (the in-process routing of reads to a read replica, `DB__READ_URI` and `DB__MAX_REPLICA_LAG` / `DB__LAG_ACTION` / `DB__LAG_INTERVAL`, was removed in P2e-06; the four
   names are rows of the deprecation catalog): every read of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) and every write use `App.DB`; the
@@ -222,7 +222,7 @@ server on :3000).
 Layout under `backend/internal/`: `api/` (Huma v2 on top of stdlib `net/http`: operations with
 OpenAPI docs, schema validation, middleware — HTTP concerns only) → `service/` (business logic, one file per domain, methods on
 `*service.App`) → `db/` (pgx pool, `Querier` interface shared by pool and tx, goose migrations,
-seed), `redisx/` (cache version, circuit breaker), `synchronizer/` (resource source adapters).
+seed), `synchronizer/` (resource source adapters).
 `model/` holds request/response structs and their `Validate()` (the pydantic equivalent);
 `config/` reads env vars. Handlers never touch the DB directly; they call `service.App` methods.
 

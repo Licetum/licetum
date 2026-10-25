@@ -20,8 +20,14 @@ linters:
   settings:
     depguard:
       # The modules: core (MIT) is the engine, the check API and the schema, and must not depend on the admin module
-      # (admin-api, AGPL). The layers inside core: server → engine → db, redisx, synchronizer → model, config, i18n, apperr.
+      # (admin-api, AGPL). The layers inside core: server → engine → db, synchronizer → model, config, i18n, apperr. No package of either module
+      # imports a Redis client: the rule `no-redis` keeps it so (task go:deps:check checks the built dependency graph too).
       rules:
+        no-redis:
+          files: ["$all"]
+          deny:
+            - pkg: github.com/redis/go-redis
+              desc: Redis is not used; the policy, the answers and the synchronization live in PostgreSQL and in memory
         core-is-independent:
           files: ["**/core/**"]
           deny:
@@ -33,7 +39,7 @@ linters:
             - pkg: github.com/licetum/licetum/core/server
               desc: the engine must not know about HTTP
         infrastructure:
-          files: ["**/core/db/**", "**/core/redisx/**", "**/core/synchronizer/**"]
+          files: ["**/core/db/**", "**/core/synchronizer/**"]
           deny:
             - pkg: github.com/licetum/licetum/core/server
               desc: infrastructure must not depend on the HTTP layer
@@ -48,13 +54,11 @@ linters:
               desc: foundation packages are leaves
             - pkg: github.com/licetum/licetum/core/db
               desc: foundation packages are leaves
-            - pkg: github.com/licetum/licetum/core/redisx
-              desc: foundation packages are leaves
             - pkg: github.com/licetum/licetum/core/synchronizer
               desc: foundation packages are leaves
         leaves:
-          # The HTTP helpers and the key sets of the PEP verifier are leaves: they depend on no engine, server, storage or
-          # Redis, so that the PEP authentication can be read, and reused by the admin API, on its own.
+          # The HTTP helpers and the key sets of the PEP verifier are leaves: they depend on no engine, server or
+          # storage, so that the PEP authentication can be read, and reused by the admin API, on its own.
           files: ["**/core/httpx/**", "**/core/pepauth/**"]
           deny:
             - pkg: github.com/licetum/licetum/core/server
@@ -63,12 +67,8 @@ linters:
               desc: httpx and pepauth are leaves
             - pkg: github.com/licetum/licetum/core/db
               desc: httpx and pepauth are leaves
-            - pkg: github.com/licetum/licetum/core/redisx
-              desc: httpx and pepauth are leaves
             - pkg: github.com/licetum/licetum/core/synchronizer
               desc: httpx and pepauth are leaves
-            - pkg: github.com/redis/go-redis
-              desc: httpx and pepauth do not use Redis
         reference-evaluator:
           # The oracle of the decision contracts must not share code with what it checks.
           files: ["**/core/testsupport/refeval/**"]
