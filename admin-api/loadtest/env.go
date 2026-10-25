@@ -13,7 +13,6 @@ import (
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
-	"github.com/licetum/licetum/core/redisx"
 	support "github.com/licetum/licetum/core/testsupport"
 )
 
@@ -56,13 +55,7 @@ func newEnv(ctx context.Context, infra *support.Infrastructure) (*env, error) {
 		e.close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	rdb, err := redisx.Connect(ctx, cfg.Redis.URI)
-	if err != nil {
-		e.close()
-		return nil, fmt.Errorf("connect to redis: %w", err)
-	}
-	e.closers = append(e.closers, rdb.Close)
-	e.app = engine.New(pool, rdb, cfg)
+	e.app = engine.New(pool, cfg)
 	e.closers = append(e.closers, func() error { e.app.Close(); return nil })
 	// The synchronization jobs are executed by a worker: the harness runs one in-process next to the APIs under test.
 	workerCtx, stopWorker := context.WithCancel(context.Background())

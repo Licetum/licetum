@@ -14,11 +14,10 @@ import (
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/pepauth"
-	"github.com/licetum/licetum/core/redisx"
 	support "github.com/licetum/licetum/core/testsupport"
 )
 
-// pepFixture is an engine with the policy in memory (Redis and the snapshot on), on an empty database with one live service.
+// pepFixture is an engine with the policy in memory (the snapshot on), on an empty database with one live service.
 // The poll interval is an hour, so that nothing renews the view but the requests and the writes the test makes.
 type pepFixture struct {
 	pool    *pgxpool.Pool
@@ -42,13 +41,8 @@ func newPEPFixture(t *testing.T) *pepFixture {
 	if err := db.MigrateUpTo(ctx, pool, db.LatestMigration()); err != nil {
 		t.Fatal(err)
 	}
-	rdb, err := redisx.Connect(ctx, infrastructure.RedisURI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = rdb.Close() })
 
-	app := engine.New(pool, rdb, &config.Config{Revision: config.Revision{PollInterval: time.Hour}})
+	app := engine.New(pool, &config.Config{Revision: config.Revision{PollInterval: time.Hour}})
 	t.Cleanup(app.Close)
 
 	service := uuid.New()

@@ -294,7 +294,7 @@ func TestContract_AZ03_ShortCircuitEvaluatesNothingAfterTheStop(t *testing.T) {
 // TestContract_AZ07_RequestIDIsReturnedVerbatimWhenSafe: a request id that is safe for a header comes back exactly as it was
 // sent; one that is not (a space, a control character, an empty or an overlong value) is replaced by a generated one.
 func TestContract_AZ07_RequestIDIsReturnedVerbatimWhenSafe(t *testing.T) {
-	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
+	h := NewPDPHandler(engine.New(nil, &config.Config{}))
 	get := func(id string) string {
 		// The public port serves no operation of its own any more: the 404 of the route table goes through the same stack.
 		req := httptest.NewRequest(http.MethodGet, "/", nil)

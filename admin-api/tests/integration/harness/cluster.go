@@ -77,13 +77,12 @@ type Cluster struct {
 	callers *support.PEPCallers
 }
 
-// Replica is one check API instance: its own App, database pool, Redis client and HTTP servers. Server is the public port
+// Replica is one check API instance: its own App, database pool and HTTP servers. Server is the public port
 // (the AuthZEN and the legacy routes); Ops is the operations listener, where the probes and the metrics are.
 type Replica struct {
 	Index  int
 	App    *engine.App
 	Pool   *pgxpool.Pool
-	Redis  *redis.Client
 	Server *httptest.Server
 	Ops    *httptest.Server
 
@@ -174,12 +173,7 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 		t.Fatal(err)
 	}
 	t.Cleanup(adminPool.Close)
-	adminRedis, err := redisx.Connect(ctx, infra.RedisURI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = adminRedis.Close() })
-	c.Admin = service.New(engine.New(adminPool, adminRedis, c.Cfg))
+	c.Admin = service.New(engine.New(adminPool, c.Cfg))
 	t.Cleanup(c.Admin.Close)
 	c.startWorker()
 	c.AdminServer = serve(t, api.NewAdminHandler(c.Admin))
@@ -207,7 +201,7 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 	}
 	c.replicaDBURI, c.replicaRedisURI = replicaDB, replicaRedis
 	for i := 0; i < n; i++ {
-		c.Replicas = append(c.Replicas, c.startReplica(i, replicaDB, replicaRedis))
+		c.Replicas = append(c.Replicas, c.startReplica(i, replicaDB))
 	}
 	return c
 }
@@ -215,7 +209,7 @@ func StartReplicas(t testing.TB, infra *support.Infrastructure, n int, opts ...O
 // AddReplica starts one more check API replica, as a pod that replaces another one in a rolling update does.
 func (c *Cluster) AddReplica() *Replica {
 	c.T.Helper()
-	r := c.startReplica(len(c.Replicas), c.replicaDBURI, c.replicaRedisURI)
+	r := c.startReplica(len(c.Replicas), c.replicaDBURI)
 	c.Replicas = append(c.Replicas, r)
 	return r
 }
@@ -235,12 +229,7 @@ func (c *Cluster) startWorker() {
 		t.Fatalf("worker: connect to PostgreSQL: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	rdb, err := redisx.Connect(ctx, c.Infra.RedisURI)
-	if err != nil {
-		t.Fatalf("worker: connect to Redis: %v", err)
-	}
-	t.Cleanup(func() { _ = rdb.Close() })
-	app := engine.New(pool, rdb, c.Cfg)
+	app := engine.New(pool, c.Cfg)
 	app.Role = engine.RoleWorker
 	t.Cleanup(app.Close)
 	runCtx, stop := context.WithCancel(ctx)
@@ -252,7 +241,7 @@ func (c *Cluster) startWorker() {
 	t.Cleanup(func() { stop(); <-done })
 }
 
-func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
+func (c *Cluster) startReplica(index int, dbURI string) *Replica {
 	t := c.T
 	ctx := context.Background()
 	cfg := *c.Cfg
@@ -262,19 +251,14 @@ func (c *Cluster) startReplica(index int, dbURI, redisURI string) *Replica {
 		t.Fatalf("replica %d: connect to PostgreSQL: %v", index, err)
 	}
 	t.Cleanup(pool.Close)
-	rdb, err := redisx.ConnectWith(ctx, redisURI, redisx.Options{HotTimeout: c.hotRedis})
-	if err != nil {
-		t.Fatalf("replica %d: connect to Redis: %v", index, err)
-	}
-	t.Cleanup(func() { _ = rdb.Close() })
-	app := engine.New(pool, rdb, &cfg)
+	app := engine.New(pool, &cfg)
 	t.Cleanup(app.Close)
 	// As in the check process: the replica follows the revision of the policy by itself, whether requests come or not.
 	watchCtx, stopWatching := context.WithCancel(ctx)
 	go app.WatchRevision(watchCtx)
 	t.Cleanup(stopWatching)
 
-	r := &Replica{Index: index, App: app, Pool: pool, Redis: rdb}
+	r := &Replica{Index: index, App: app, Pool: pool}
 	// Levers: a test sets the freshness of a request with a header (Higher), not with a parameter of the API.
 	handler := Levers(server.NewPDPHandler(app))
 	// The Trace of a request is created here, so the test can read what the request cost; the server keeps it.

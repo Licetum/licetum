@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"net/url"
 	"os"
 	"strconv"
 	"testing"
@@ -25,7 +24,6 @@ import (
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 type policyGenerator struct {
@@ -284,7 +282,7 @@ func TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath(t *testing.T) {
 	w.projectWorld()
 	ctx := context.Background()
 
-	// The engine of the query path: its own pool and its own Redis database, the snapshot off.
+	// The engine of the query path: its own pool, the snapshot off.
 	legacyCfg := *w.cfg
 	legacyCfg.Snapshot.MaxBytes = -1
 	pool, err := db.Connect(ctx, legacyCfg.DB)
@@ -292,20 +290,7 @@ func TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	redisURL, err := url.Parse(testInfrastructure.RedisURI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	redisURL.Path = "/1"
-	rdb, err := redisx.Connect(ctx, redisURL.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = rdb.Close() })
-	if err := rdb.FlushDB(ctx).Err(); err != nil {
-		t.Fatal(err)
-	}
-	legacy := engine.New(pool, rdb, &legacyCfg)
+	legacy := engine.New(pool, &legacyCfg)
 	t.Cleanup(legacy.Close)
 	fast := w.app.App
 

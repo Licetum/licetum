@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,40 +27,12 @@ import (
 	"github.com/licetum/licetum/core/engine"
 )
 
-// workerBinary builds `licetum worker` once per test run.
-var (
-	workerBuild  sync.Once
-	workerPath   string
-	workerBuildE error
-)
-
-func buildWorker(t *testing.T) string {
-	t.Helper()
-	workerBuild.Do(func() {
-		dir, err := os.MkdirTemp("", "licetum-worker")
-		if err != nil {
-			workerBuildE = err
-			return
-		}
-		workerPath = filepath.Join(dir, "licetum")
-		cmd := exec.Command("go", "build", "-o", workerPath, "./cmd/licetum")
-		cmd.Dir = "../../../../core"
-		if out, err := cmd.CombinedOutput(); err != nil {
-			workerBuildE = fmt.Errorf("build the worker: %v\n%s", err, out)
-		}
-	})
-	if workerBuildE != nil {
-		t.Fatal(workerBuildE)
-	}
-	return workerPath
-}
-
 // workerProcess starts `licetum worker` against the test database.
 func (e *env) workerProcess(lease int) *exec.Cmd {
 	e.t.Helper()
-	cmd := exec.Command(buildWorker(e.t), "worker", "-addr", "127.0.0.1:0")
+	cmd := exec.Command(buildBinary(e.t, coreModule, "./cmd/licetum"), "worker", "-addr", "127.0.0.1:0")
 	cmd.Env = append(os.Environ(),
-		"DB__URI="+e.cfg.DB.URI, "REDIS__URI="+testInfrastructure.RedisURI,
+		"DB__URI="+e.cfg.DB.URI,
 		"SYNC__LEASE="+strconv.Itoa(lease), "SYNC__CONCURRENCY=1", "SYNC__FRESH_MIN_INTERVAL=0",
 		"SYNC__DBOS_SCHEMA="+e.cfg.Sync.DBOSSchema)
 	cmd.Stdout, cmd.Stderr = nil, nil

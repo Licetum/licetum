@@ -18,7 +18,6 @@ import (
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 // F6-7: an admin write issued from a region that is not the primary's (its database link has the latency of the region) completes
@@ -38,12 +37,7 @@ func TestF6_7_AnAdminWriteFromAFarRegionCostsFewRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	rdb, err := redisx.Connect(ctx, c.Infra.RedisURI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = rdb.Close() })
-	app := service.New(engine.New(pool, rdb, &cfg))
+	app := service.New(engine.New(pool, &cfg))
 	t.Cleanup(app.Close)
 
 	var lastOps map[string]int

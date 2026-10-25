@@ -287,7 +287,7 @@ func post(t *testing.T, h http.Handler, path, body string) (int, string, string)
 // Each invalid request is a 400 in the error shape, with the code of what was wrong: the schema (validation_failed), or the
 // request types' checks of the endpoint (the code of the catalog key).
 func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
-	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
+	h := NewPDPHandler(engine.New(nil, &config.Config{}))
 	const base = "/service/orders/access/v1/"
 	for name, c := range map[string]struct{ path, body, code string }{
 		"subject without type":         {"evaluation", `{"subject":{"id":"a"},"resource":{"type":"t"},"action":{"name":"r"}}`, "validation_failed"},
@@ -318,7 +318,7 @@ func TestAuthzenInvalidRequestsAreBadRequests(t *testing.T) {
 }
 
 func TestAuthzenMetadataNeedsAPublicURL(t *testing.T) {
-	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
+	h := NewPDPHandler(engine.New(nil, &config.Config{}))
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/authzen-configuration/service/orders", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

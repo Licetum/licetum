@@ -49,7 +49,7 @@ type viewState struct {
 
 // localEnabled reports whether this process keeps the revision and the policy in memory.
 func (a *App) localEnabled() bool {
-	return a.DB != nil && a.Redis != nil && a.tuningOrDefault().snapshotMaxBytes > 0
+	return a.DB != nil && a.tuningOrDefault().snapshotMaxBytes > 0
 }
 
 // invalidateView makes the next request read the revision and the data versions again. Call it after a change the

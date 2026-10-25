@@ -99,7 +99,7 @@ func restoreAdmin(ctx context.Context, args []string) error {
 	fs.Var(&also, "user", "also make this user (preferred_username) an administrator; repeatable")
 	_ = fs.Parse(args)
 
-	cfg, err := cli.LoadConfig(false)
+	cfg, err := cli.LoadConfig()
 	if err != nil {
 		return err
 	}

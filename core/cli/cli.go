@@ -25,12 +25,11 @@ import (
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/logx"
-	"github.com/licetum/licetum/core/redisx"
 	"github.com/licetum/licetum/core/server"
 )
 
-// LoadConfig reads the environment; with requireAll the Redis and the auth settings must be set too.
-func LoadConfig(requireAll bool) (*config.Config, error) {
+// LoadConfig reads the environment; the database must be set. Each command checks the settings only it needs.
+func LoadConfig() (*config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
@@ -38,17 +37,12 @@ func LoadConfig(requireAll bool) (*config.Config, error) {
 	if err := cfg.RequireDB(); err != nil {
 		return nil, err
 	}
-	if requireAll {
-		if err := cfg.RequireRedis(); err != nil {
-			return nil, err
-		}
-	}
 	return cfg, nil
 }
 
 // Migrate applies the database migrations and seeds the self-service.
 func Migrate(ctx context.Context) error {
-	cfg, err := LoadConfig(false)
+	cfg, err := LoadConfig()
 	if err != nil {
 		return err
 	}
@@ -62,7 +56,7 @@ func Failover(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("failover", flag.ExitOnError)
 	jump := fs.Int64("jump", db.DefaultFailoverJump, "how much to add to every revision")
 	_ = fs.Parse(args)
-	cfg, err := LoadConfig(false)
+	cfg, err := LoadConfig()
 	if err != nil {
 		return err
 	}
@@ -90,7 +84,7 @@ func Failover(ctx context.Context, args []string) error {
 // defaultAddr. build creates the handler from the engine. The PDP also serves its operations endpoints on PDP__OPS_ADDR
 // (server.NewOpsHandler).
 func Serve(ctx context.Context, name string, args []string, defaultAddr string, build func(*engine.App) http.Handler, logs *logx.Switch) error {
-	cfg, err := LoadConfig(true)
+	cfg, err := LoadConfig()
 	if err != nil {
 		return err
 	}
@@ -125,19 +119,7 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	defer pool.Close()
 	logConnectionBudget(ctx, pool, cfg, name, name == "admin")
 
-	// The PDP answers within a budget: its Redis client times out fast, does not retry, and skips Redis for a while
-	// after repeated failures (see redisx.FastFail). The admin API waits for Redis as long as the default allows.
-	var redisOptions redisx.Options
-	if name == "pdp" && cfg.Redis.HotTimeout > 0 {
-		redisOptions.HotTimeout = cfg.Redis.HotTimeout
-	}
-	rdb, err := redisx.ConnectWith(ctx, cfg.Redis.URI, redisOptions)
-	if err != nil {
-		return err
-	}
-	defer rdb.Close()
-
-	app := engine.New(pool, rdb, cfg)
+	app := engine.New(pool, cfg)
 	defer app.Close()
 	app.Logs = logs
 	app.Role = roleOf(name)
@@ -333,7 +315,7 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 	if err != nil {
 		return err
 	}
-	if err := errors.Join(cfg.RequireDB(), cfg.RequireRedis()); err != nil {
+	if err := cfg.RequireDB(); err != nil {
 		return err
 	}
 	fs := flag.NewFlagSet("worker", flag.ExitOnError)
@@ -358,13 +340,7 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 		return err
 	}
 	defer syncPool.Close()
-	rdb, err := redisx.Connect(ctx, cfg.Redis.URI)
-	if err != nil {
-		return err
-	}
-	defer rdb.Close()
-
-	app := engine.New(pool, rdb, cfg)
+	app := engine.New(pool, cfg)
 	defer app.Close()
 	app.Logs = logs
 	app.Role = engine.RoleWorker
@@ -420,7 +396,7 @@ func PrintOpenAPI(args []string, apps map[string]func() huma.API) error {
 	return err
 }
 
-// OpenAPI is the spec of an application, as the openapi command prints it, without connecting to the DB or Redis:
+// OpenAPI is the spec of an application, as the openapi command prints it, without connecting to the DB:
 // registering routes does not need those dependencies. args is "<name> [-yaml] [-lang en|ru|zh]"; apps maps each name to
 // the function that builds its API. The document ends with a newline.
 func OpenAPI(args []string, apps map[string]func() huma.API) ([]byte, error) {

@@ -113,7 +113,7 @@ func scrape(t *testing.T, app *engine.App) string {
 func TestMetricsCountTheDatabaseAndNothingElse(t *testing.T) {
 	// The process depends on PostgreSQL alone: it reports no series of a cache server, and licetum_degraded has one
 	// component.
-	body := scrape(t, engine.New(nil, nil, &config.Config{}))
+	body := scrape(t, engine.New(nil, &config.Config{}))
 	if strings.Contains(body, "licetum_redis") || strings.Contains(body, `component="redis"`) {
 		t.Errorf("/metrics still names Redis:\n%s", body)
 	}

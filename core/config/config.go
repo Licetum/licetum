@@ -259,7 +259,7 @@ type Config struct {
 }
 
 // Load reads the whole environment. Required variables are checked only for the sections the
-// calling command actually needs (see RequireDB/RequireAuth/RequireRedis).
+// calling command actually needs (see RequireDB/RequireAdminAuth).
 func Load() (*Config, error) {
 	e := &envReader{}
 	cfg := &Config{
@@ -393,13 +393,6 @@ func Load() (*Config, error) {
 func (c *Config) RequireDB() error {
 	if c.DB.URI == "" {
 		return errors.New("environment variable DB__URI is not set")
-	}
-	return nil
-}
-
-func (c *Config) RequireRedis() error {
-	if c.Redis.URI == "" {
-		return errors.New("environment variable REDIS__URI is not set")
 	}
 	return nil
 }

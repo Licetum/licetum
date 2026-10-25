@@ -96,7 +96,7 @@ func newWalkFixture(tb testing.TB) *walkFixture {
 		tb.Fatal(err)
 	}
 
-	fx := &walkFixture{pool: pool, app: engine.New(pool, nil, &config.Config{}), types: map[string]uuid.UUID{}}
+	fx := &walkFixture{pool: pool, app: engine.New(pool, &config.Config{Snapshot: config.Snapshot{MaxBytes: -1}}), types: map[string]uuid.UUID{}}
 	service := uuid.New()
 	mustExec(tb, pool, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'walk', '', '', 'walk')`, service)
 	for _, t := range walkTypes {

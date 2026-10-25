@@ -45,13 +45,13 @@ func TestF0_1_ThreeReplicasAnswerTheSameRequestIdentically(t *testing.T) {
 		t.Fatalf("alice should see the three branches: %s", first)
 	}
 
-	// The replicas are separate processes in all but name: each has its own pool, client and counters.
+	// The replicas are separate processes in all but name: each has its own pool, App and counters.
 	seen := map[any]bool{}
 	for _, r := range c.Replicas {
-		if seen[r.Pool] || seen[r.Redis] || seen[r.App] {
-			t.Fatalf("replica %d shares its pool, client or App with another", r.Index)
+		if seen[r.Pool] || seen[r.App] {
+			t.Fatalf("replica %d shares its pool or App with another", r.Index)
 		}
-		seen[r.Pool], seen[r.Redis], seen[r.App] = true, true, true
+		seen[r.Pool], seen[r.App] = true, true
 	}
 
 	// A change made through the admin API reaches every replica: the revision is in the shared state.

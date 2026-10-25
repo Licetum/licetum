@@ -20,12 +20,12 @@ import (
 	"github.com/licetum/licetum/core/logx"
 )
 
-// replica builds another engine.App on the world's database and Redis, with the given tuning applied to a copy of the config.
+// replica builds another engine.App on the world's database, with the given tuning applied to a copy of the config.
 func (w *world) replica(tune func(*config.Config)) *engine.App {
 	w.t.Helper()
 	cfg := *w.cfg
 	tune(&cfg)
-	app := engine.New(w.pool, w.app.Redis, &cfg)
+	app := engine.New(w.pool, &cfg)
 	w.t.Cleanup(app.Close)
 	return app
 }

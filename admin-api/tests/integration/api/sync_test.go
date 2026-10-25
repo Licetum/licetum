@@ -3,7 +3,7 @@
 package api_test
 
 // Acceptance tests of the synchronization pipeline (issue F3): one executor per job, state in PostgreSQL, no graph writes
-// in the check path. The "replicas" are several engine.App values on the same database and Redis, each with its own pools
+// in the check path. The "replicas" are several engine.App values on the same database, each with its own pools
 // and HTTP server, as separate pods would be.
 
 import (
@@ -30,7 +30,6 @@ import (
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
-	"github.com/licetum/licetum/core/redisx"
 	"github.com/licetum/licetum/core/server"
 	support "github.com/licetum/licetum/core/testsupport"
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
@@ -123,12 +122,7 @@ func (e *env) newApp(role engine.Role, tune func(*config.Config)) *engine.App {
 		e.t.Fatal(err)
 	}
 	e.t.Cleanup(pool.Close)
-	rdb, err := redisx.Connect(ctx, testInfrastructure.RedisURI)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	e.t.Cleanup(func() { _ = rdb.Close() })
-	app := engine.New(pool, rdb, &cfg)
+	app := engine.New(pool, &cfg)
 	app.Role = role
 	if role == engine.RoleWorker {
 		// The worker applies on its own pool of DB__SYNC_POOL_SIZE connections, as the binary does.
@@ -707,12 +701,7 @@ func (e *env) restrictedApp(role string) *engine.App {
 		e.t.Fatal(err)
 	}
 	e.t.Cleanup(pool.Close)
-	rdb, err := redisx.Connect(ctx, testInfrastructure.RedisURI)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	e.t.Cleanup(func() { _ = rdb.Close() })
-	app := engine.New(pool, rdb, &cfg)
+	app := engine.New(pool, &cfg)
 	app.Role = engine.RolePDP
 	e.t.Cleanup(app.Close)
 	return e.track(app)

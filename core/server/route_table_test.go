@@ -24,7 +24,7 @@ var update = flag.Bool("update", false, "rewrite the golden files of testdata")
 // http.ServeMux does not list its patterns, and the public handler adds nothing but the JSON 404 for every other path. A route
 // added or removed on purpose is recorded with go test -update; a route that is not AuthZEN fails whatever the golden says.
 func TestContract_AZ10_ThePublicPortServesExactlyTheAuthzenRoutes(t *testing.T) {
-	_, api := NewPDPAPI(engine.New(nil, nil, &config.Config{}))
+	_, api := NewPDPAPI(engine.New(nil, &config.Config{}))
 	var routes []string
 	for path, item := range api.OpenAPI().Paths {
 		for method, op := range map[string]*huma.Operation{
@@ -68,7 +68,7 @@ func TestContract_AZ10_ThePublicPortServesExactlyTheAuthzenRoutes(t *testing.T) 
 // The probes, the metrics, the docs and the component schemas of the document are not on the PDP's public port: the probes and
 // the metrics are on the ops listener, the rest is not served at all.
 func TestPDPPublicPortServesNoOperationsEndpoint(t *testing.T) {
-	h := NewPDPHandler(engine.New(nil, nil, &config.Config{}))
+	h := NewPDPHandler(engine.New(nil, &config.Config{}))
 	for _, path := range []string{"/healthz", "/readyz", "/metrics", "/openapi.json", "/openapi.yaml", "/docs", "/schemas/Error.json", "/schemas/Error"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -81,7 +81,7 @@ func TestPDPPublicPortServesNoOperationsEndpoint(t *testing.T) {
 // The ops listener answers the probes and the metrics, and nothing else of the PDP. Without a database the readiness probe
 // says 503; liveness does not depend on anything, and a draining process is not ready.
 func TestOpsHandlerServesTheProbesAndTheMetrics(t *testing.T) {
-	app := engine.New(nil, nil, &config.Config{})
+	app := engine.New(nil, &config.Config{})
 	h := NewOpsHandler(app)
 	get := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()

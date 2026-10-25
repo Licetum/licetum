@@ -97,9 +97,8 @@ format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite 
 (the Licetum service within itself, its policy types, their sources, the admin group) is seeded by `db.SeedPlatform`, run by
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
 
-Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `background.go`, `tuning.go`, `keysets.go`; the key sets in `core/pepauth/jwks.go`; `core/redisx/fastfail.go`;
-settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`,
-`REDIS__HOT_TIMEOUT`; the numbers are in `core/README.md`):
+Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `background.go`, `tuning.go`, `keysets.go`; the key sets in `core/pepauth/jwks.go`;
+settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`; the numbers are in `core/README.md`):
 - **The revision lives in PostgreSQL** (`revision_state`, migration `00002`, `db.BumpRevision` / `db.LoadRevisions`, `core/db/revision.go`):
   scope `rules` numbers every write that can change a decision (rules, memberships, groups, roles and items, access groups, services, types,
   synchronizers), scope `data:<service id>` numbers the resource data of a service. A write bumps `rules` **in its own transaction**
@@ -182,7 +181,7 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   (`licetum_background_dropped_total`). Work that registers a marker (`refreshInBackground`) must clear it when dropped.
 
 Test infrastructure for the production-load work (`admin-api/tests/integration/README.md`): every pool made by `db.Connect` is counted
-(`licetum_db_*` metrics, `engine.Trace.DBQueries()` for tests; the Redis client that `engine.New` still takes is not counted any more);
+(`licetum_db_*` metrics, `engine.Trace.DBQueries()` for tests; `engine.New(pool, cfg)` takes no Redis client, no process connects to Redis and none demands `REDIS__URI`: `cli.LoadConfig` asks for `DB__URI` only; `admin-api/tests/integration/api/process_test.go` starts `licetum pdp`, `licetum worker` and `licetum-admin admin` without any `REDIS__*` and waits for `/readyz`);
 `harness.StartReplicas` builds several PDP replicas on one PostgreSQL and Redis (`WithConfig`, `WithHotRedis`). The tests build
 their AuthZEN requests with `core/testsupport/authzenreq`: `Replica.Permission` sends the resource search for branches
 (`harness.Branches`) for at least the revision of the last admin write (`Cluster.LastRevision`), and `Replica.Fresh` sends it with the

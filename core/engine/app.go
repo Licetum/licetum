@@ -17,7 +17,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/licetum/licetum/core/apperr"
@@ -31,8 +30,7 @@ import (
 )
 
 type App struct {
-	DB    *pgxpool.Pool
-	Redis *redis.Client
+	DB *pgxpool.Pool
 	// SyncDB is the pool of the synchronization transactions (DB__SYNC_POOL_SIZE connections), apart from the request pool,
 	// so that a synchronization waiting for a lock never takes a connection a request needs. Nil: DB is used.
 	SyncDB *pgxpool.Pool
@@ -117,13 +115,12 @@ func (a *App) NewEnv(claims Claims, context map[string]any) Env {
 	return Env{Claims: claims, Context: context, Now: a.now()}
 }
 
-func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
+func New(pool *pgxpool.Pool, cfg *config.Config) *App {
 	m := newMetrics()
 	adapter := synchronizer.NewAdapter()
 	t := newTuning(cfg)
 	app := &App{
 		DB:           pool,
-		Redis:        rdb,
 		Sync:         adapter,
 		Cfg:          cfg,
 		HTTP:         &http.Client{},

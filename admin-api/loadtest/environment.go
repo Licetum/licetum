@@ -84,9 +84,6 @@ func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin stri
 	if err := readPostgresSettings(ctx, e.pool, env.PostgresConfig); err != nil {
 		return env, err
 	}
-	if info, err := e.app.Redis.Info(ctx, "server").Result(); err == nil {
-		env.RedisVersion = redisField(info, "redis_version")
-	}
 	for _, kv := range os.Environ() {
 		key, value, _ := strings.Cut(kv, "=")
 		if hasAnyPrefix(key, environmentPrefixes) {
@@ -158,15 +155,6 @@ func readPostgresSettings(ctx context.Context, pool *pgxpool.Pool, out map[strin
 		out[name] = value
 	}
 	return rows.Err()
-}
-
-func redisField(info, field string) string {
-	for _, line := range strings.Split(info, "\n") {
-		if k, v, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && k == field {
-			return v
-		}
-	}
-	return ""
 }
 
 // readOSRelease is the pretty name of the operating system.

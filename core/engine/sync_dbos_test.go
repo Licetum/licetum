@@ -70,7 +70,7 @@ func newDBOSFixture(t *testing.T, workflow func(dbos.Context, dbosSyncIn) (dbosS
 
 // process is a process on the database of the fixture, with a DBOS client of its own.
 func (f *dbosFixture) process(t *testing.T) *App {
-	a := New(f.pool, nil, f.cfg)
+	a := New(f.pool, f.cfg)
 	t.Cleanup(a.Close)
 	return a
 }

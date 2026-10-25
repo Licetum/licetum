@@ -66,7 +66,7 @@ func docStrings(t *testing.T, doc []byte) map[string]bool {
 // TestContract_API02_DocsTranslationsComplete: every English string of the two OpenAPI documents has a translation in each of the other
 // languages, and no translation is left over from a string the documents no longer have.
 func TestContract_API02_DocsTranslationsComplete(t *testing.T) {
-	app := service.New(engine.New(nil, nil, &config.Config{}))
+	app := service.New(engine.New(nil, &config.Config{}))
 	english := map[string]bool{}
 	for _, build := range []func(*service.App) (http.Handler, huma.API){NewAdminAPI, pdpAPIOf} {
 		_, api := build(app)
