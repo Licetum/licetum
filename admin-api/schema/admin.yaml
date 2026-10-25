@@ -3157,7 +3157,7 @@ components:
           format: uuid
           type: string
         regions:
-          description: Regions the source can be reached from; empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type
+          description: "Regions the source can be reached from; empty means from anywhere. The list is stored but selects no executor yet: any worker may ask the source"
           examples:
             - - eu
           items:
@@ -3243,7 +3243,7 @@ components:
             - b1
           type: string
         regions:
-          description: Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type. Absent on an update keeps them
+          description: "Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. The list is stored and validated but selects no executor yet: any worker may ask the source. Absent on an update keeps them"
           examples:
             - - eu
           items:

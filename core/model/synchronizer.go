@@ -191,7 +191,7 @@ type SynchronizerInput struct {
 	Config          SynchronizerConfig `json:"config" doc:"Source configuration"`
 	ProbeResourceID string             `json:"probe_resource_id" doc:"Id of an existing resource used to check the source before saving" example:"b1"`
 	// Regions: absent keeps the regions a synchronizer has (empty on creation), an empty list clears them.
-	Regions []string `json:"regions,omitempty" required:"false" doc:"Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type. Absent on an update keeps them" example:"eu"`
+	Regions []string `json:"regions,omitempty" required:"false" doc:"Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. The list is stored and validated but selects no executor yet: any worker may ask the source. Absent on an update keeps them" example:"eu"`
 }
 
 // NormalizeRegions validates the regions of an input and returns them sorted and without repeats (nil stays nil: absent).
@@ -316,7 +316,7 @@ type Synchronizer struct {
 	ID             uuid.UUID          `json:"id" format:"uuid" doc:"Synchronizer id"`
 	TypeResourceID uuid.UUID          `json:"type_resource_id" format:"uuid" doc:"Resource type id"`
 	Config         SynchronizerConfig `json:"config" doc:"Source configuration"`
-	Regions        []string           `json:"regions" doc:"Regions the source can be reached from; empty means from anywhere. Only the workers of these regions (WORKER__REGION) synchronize the type" example:"eu"`
+	Regions        []string           `json:"regions" doc:"Regions the source can be reached from; empty means from anywhere. The list is stored but selects no executor yet: any worker may ask the source" example:"eu"`
 }
 
 // ValidRegion reports a region name: lowercase Latin letters, digits and hyphens, starting with a letter or a digit, at most 32.
