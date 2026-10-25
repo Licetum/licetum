@@ -72,31 +72,34 @@ func TestF4_4_RetentionDropsWhatIsLeftOfTheRetiredRegistryAfterNinetyDays(t *tes
 	}
 }
 
-func TestF4_4_RetentionRunsOncePerIntervalAcrossReplicas(t *testing.T) {
+// Every worker applies the retention at its start and then every interval; there is no lock that makes it run once. Two workers that
+// start together divide the old rows and neither waits for the other: all of them are gone, and each was deleted by one.
+func TestF4_4_WorkersApplyTheRetentionAtTheSameTimeAndDivideTheWork(t *testing.T) {
 	w := newWorld(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	old := func(subject string) {
-		if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject, last_seen) VALUES ($1, now() - interval '400 days')`, subject); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := w.pool.Exec(ctx, `
+		INSERT INTO known_subject (subject, last_seen)
+		SELECT 's' || g, now() - interval '400 days' FROM generate_series(1, 30000) g`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject) VALUES ('fresh')`); err != nil {
+		t.Fatal(err)
 	}
 	tune := func(c *config.Config) {}
 	a, b := w.replica(tune), w.replica(tune)
 
-	old("old-1")
+	started := time.Now()
 	go a.WatchRetention(ctx)
-	for deadline := time.Now().Add(5 * time.Second); w.countRows(`SELECT count(*) FROM known_subject`) != 0; time.Sleep(50 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("the first replica did not apply the retention")
-		}
-	}
-	// Within the interval another replica leaves the table alone.
-	old("old-2")
 	go b.WatchRetention(ctx)
-	time.Sleep(time.Second)
-	if got := w.countRows(`SELECT count(*) FROM known_subject`); got != 1 {
-		t.Fatalf("a second replica applied the retention within the interval: %d records", got)
+	for w.countRows(`SELECT count(*) FROM known_subject`) != 1 {
+		if time.Since(started) > 30*time.Second {
+			t.Fatalf("%d records left, want only the fresh one", w.countRows(`SELECT count(*) FROM known_subject`))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := w.countRows(`SELECT count(*) FROM known_subject WHERE subject = 'fresh'`); got != 1 {
+		t.Fatal("the fresh record was deleted")
 	}
 }
 

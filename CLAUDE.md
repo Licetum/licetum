@@ -441,7 +441,9 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   as sent and never starts with `group:`. The upsert writes only a row whose name or properties differ (`UpsertDirectory`, `IS DISTINCT
   FROM`): an unchanged batch touches no row of `subject_directory` and takes **no revision** (no decision reads the directory); the time
   an entry was last sent is kept apart in `subject_directory_seen` and refreshed at most hourly. The worker's retention (`RunRetention`,
-  `db.PruneDirectory`, 10 000-row chunks) deletes the entries not sent within their service's `retention_days`. Until the roles of the
+  `db.PruneDirectory`, 10 000-row chunks) deletes the entries not sent within their service's `retention_days`; every worker runs it hourly
+  and there is no lock: a chunk takes its rows with `FOR UPDATE SKIP LOCKED` (the same for the `known_subject` prune), so overlapping runs
+  divide the work and never wait for each other (a cross-worker once-per-interval guarantee is a P5 task of the writer's leader). Until the roles of the
   service (P4) the routes are governed by the platform policy `group_member` (whole type). The key of a scan is (type, id) bytewise
   (`DirectoryAfter`, index `ix_subject_directory_scan`). Tests: `directory_test.go` in `admin-api/tests/integration/api` (DIR02, DIR04) and
   in `core/tests/integration/db`.

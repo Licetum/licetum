@@ -2,32 +2,29 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 
 	"github.com/licetum/licetum/core/db"
 )
 
 const (
-	// retentionEvery is how often the retention of the audit, of the left-over known subjects and of the directories is applied.
+	// retentionEvery is how often the retention of the left-over known subjects and of the directories is applied.
 	retentionEvery = time.Hour
 	// retentionChunk bounds the rows one DELETE removes, to keep its locks short.
 	retentionChunk = 10_000
-	retentionKey   = "authz:retention:lock"
 	// knownSubjectKeepDays is how long a row of the retired registry of known subjects is kept.
 	knownSubjectKeepDays = 90
 )
 
-// WatchRetention applies the retention every retentionEvery until ctx ends. A Redis lock held for a little less than the
-// interval makes it run once per interval across the replicas; without Redis the work runs anyway (it is idempotent).
+// WatchRetention applies the retention every retentionEvery until ctx ends. Every worker runs it: nothing makes it run once per
+// interval across the workers, and none has to, because the deletes of one chunk skip the rows another worker has taken
+// (FOR UPDATE SKIP LOCKED), so the workers divide the work and never wait for each other.
 func (a *App) WatchRetention(ctx context.Context) {
 	ticker := time.NewTicker(retentionEvery)
 	defer ticker.Stop()
 	for {
-		a.runRetentionGuarded(ctx)
+		a.RunRetention(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -36,25 +33,16 @@ func (a *App) WatchRetention(ctx context.Context) {
 	}
 }
 
-func (a *App) runRetentionGuarded(ctx context.Context) {
-	ok, err := a.Redis.SetNX(ctx, retentionKey, "1", retentionEvery-5*time.Minute).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		slog.WarnContext(ctx, "retention lock unavailable, running without it", "error", err)
-	} else if !ok {
-		return
-	}
-	a.RunRetention(ctx)
-}
-
 // RunRetention removes the rows left in the retired registry of known subjects, and the directory entries that were not sent
-// within the retention period of their service, chunk by chunk until nothing is left. The audit of the calls on behalf of a person
-// is gone with those calls: nothing writes delegated_call, and its table goes with the schema of P3.
+// within the retention period of their service, chunk by chunk until nothing is left. It may run in several processes at once.
+// The audit of the calls on behalf of a person is gone with those calls: nothing writes delegated_call, and its table goes with
+// the schema of P3.
 func (a *App) RunRetention(ctx context.Context) {
 	// The registry of known subjects is gone (the subject directory replaced it) and nothing writes its table any more; what the
 	// previous release left in it is dropped after the period it was kept for. The table itself goes with the schema of P3.
 	a.pruneInChunks(ctx, "known_subject", `
 		DELETE FROM known_subject WHERE ctid IN (
-			SELECT ctid FROM known_subject WHERE last_seen < now() - make_interval(days => $1) LIMIT $2)`, knownSubjectKeepDays)
+			SELECT ctid FROM known_subject WHERE last_seen < now() - make_interval(days => $1) LIMIT $2 FOR UPDATE SKIP LOCKED)`, knownSubjectKeepDays)
 	a.pruneDirectory(ctx)
 }
 

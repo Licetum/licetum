@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/licetum/licetum/core/db"
 )
@@ -124,5 +126,121 @@ func TestPruneDirectoryDeletesInChunksAndOnlyWhatARetentionPeriodCovers(t *testi
 	}
 	if s, err := db.GetDirectorySettings(ctx, pool, service); err != nil || s.RetentionDays != nil {
 		t.Fatalf("the settings after removing the period: %+v, %v", s, err)
+	}
+}
+
+// Workers that run the retention at the same time divide the expired entries between them: each is deleted once, by one of
+// them, and a worker that meets entries another one has taken leaves them to it instead of waiting.
+func TestPruneDirectoryRunsOfSeveralWorkersDeleteEveryExpiredEntryOnce(t *testing.T) {
+	pool, service := newPEPPool(t)
+	ctx := context.Background()
+	const total = 400
+	var entries []db.DirectoryEntry
+	for i := range total {
+		entries = append(entries, entry("user", fmt.Sprintf("u%03d", i)))
+	}
+	if _, err := db.UpsertDirectory(ctx, pool, service, entries); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
+		t.Fatal(err)
+	}
+	days := 30
+	if err := db.PutDirectorySettings(ctx, pool, service, db.DirectorySettings{RetentionDays: &days}); err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		deleted int64
+	)
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				n, err := db.PruneDirectory(ctx, pool, 25)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				deleted += n
+				mu.Unlock()
+				if n < 25 {
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	// A worker that stops on a short chunk may leave entries that another one had taken and was still deleting: one more pass
+	// finds nothing, and the sum is exactly the number of entries.
+	n, err := db.PruneDirectory(ctx, pool, total)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted += n
+	if deleted != total {
+		t.Fatalf("the workers deleted %d entries, want %d, each once", deleted, total)
+	}
+	left, err := db.DirectoryAfter(ctx, pool, service, "", nil, total)
+	if err != nil || len(left) != 0 {
+		t.Fatalf("%d entries left (%v), want none", len(left), err)
+	}
+}
+
+// The entries another worker is deleting are skipped: the retention does not wait for the transaction that holds them.
+func TestPruneDirectorySkipsTheEntriesAnotherWorkerHasTakenWithoutWaiting(t *testing.T) {
+	pool, service := newPEPPool(t)
+	ctx := context.Background()
+	var entries []db.DirectoryEntry
+	for i := range 10 {
+		entries = append(entries, entry("user", fmt.Sprintf("u%02d", i)))
+	}
+	if _, err := db.UpsertDirectory(ctx, pool, service, entries); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
+		t.Fatal(err)
+	}
+	days := 30
+	if err := db.PutDirectorySettings(ctx, pool, service, db.DirectorySettings{RetentionDays: &days}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another worker holds four of the entries in a transaction that has not ended.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM subject_directory_seen WHERE service_id = $1 AND subject_id < 'u04' FOR UPDATE`, service); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan int64, 1)
+	go func() {
+		n, err := db.PruneDirectory(ctx, pool, 100)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- n
+	}()
+	select {
+	case n := <-done:
+		if n != 6 {
+			t.Fatalf("deleted %d entries while four were taken, want the other 6", n)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the retention waits for the entries another worker holds")
+	}
+
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.PruneDirectory(ctx, pool, 100); err != nil || n != 4 {
+		t.Fatalf("deleted %d entries after the others were released (%v), want the remaining 4", n, err)
 	}
 }
