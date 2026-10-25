@@ -182,8 +182,8 @@ func TestLoadFastReadPathSettings(t *testing.T) {
 	if cfg.Snapshot.MaxBytes != 256<<20 || cfg.Revision.PollInterval != 250*time.Millisecond || cfg.Revision.WaitMax != 500*time.Millisecond || cfg.Snapshot.MaxAge != time.Minute ||
 		cfg.Cache.AnswerL1Size != 50_000 ||
 		cfg.Auth.JWKSTTL != 10*time.Minute || cfg.Auth.JWKSMinRefresh != 30*time.Second ||
-		cfg.Background.Workers != 16 || cfg.Background.Queue != 1024 || cfg.Redis.HotTimeout != 50*time.Millisecond {
-		t.Errorf("wrong defaults: %+v %+v %+v %+v %+v", cfg.Snapshot, cfg.Auth, cfg.Cache, cfg.Background, cfg.Redis)
+		cfg.Background.Workers != 16 || cfg.Background.Queue != 1024 {
+		t.Errorf("wrong defaults: %+v %+v %+v %+v", cfg.Snapshot, cfg.Auth, cfg.Cache, cfg.Background)
 	}
 
 	t.Setenv("SNAPSHOT__MAX_BYTES", "1048576")
@@ -195,20 +195,19 @@ func TestLoadFastReadPathSettings(t *testing.T) {
 	t.Setenv("CACHE__ANSWER_L1_SIZE", "20")
 	t.Setenv("BACKGROUND__WORKERS", "4")
 	t.Setenv("BACKGROUND__QUEUE", "8")
-	t.Setenv("REDIS__HOT_TIMEOUT", "75ms")
 	cfg, err = config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Snapshot.MaxBytes != 1<<20 || cfg.Revision.PollInterval != 100*time.Millisecond || cfg.Revision.WaitMax != time.Second || cfg.Compute.Concurrency != 3 || cfg.Auth.JWKSTTL != 5*time.Minute ||
 		cfg.Auth.JWKSMinRefresh != 5*time.Second || cfg.Cache.AnswerL1Size != 20 ||
-		cfg.Background.Workers != 4 || cfg.Background.Queue != 8 || cfg.Redis.HotTimeout != 75*time.Millisecond {
-		t.Errorf("wrong values: %+v %+v %+v %+v %+v", cfg.Snapshot, cfg.Auth, cfg.Cache, cfg.Background, cfg.Redis)
+		cfg.Background.Workers != 4 || cfg.Background.Queue != 8 {
+		t.Errorf("wrong values: %+v %+v %+v %+v", cfg.Snapshot, cfg.Auth, cfg.Cache, cfg.Background)
 	}
 }
 
 func TestLoadRejectsABadDuration(t *testing.T) {
-	t.Setenv("REDIS__HOT_TIMEOUT", "fast")
+	t.Setenv("REVISION__POLL_INTERVAL", "fast")
 	if _, err := config.Load(); err == nil {
 		t.Fatal("a duration that is not one must be refused")
 	}
@@ -522,6 +521,82 @@ func TestTheReasonOfARenamedOrReplacedSettingNamesItsReplacement(t *testing.T) {
 		reason, ok := config.DeprecatedReason(name)
 		if !ok || !strings.Contains(reason, replacement) {
 			t.Errorf("the reason of %s is %q, want it to name %s", name, reason, replacement)
+		}
+	}
+}
+
+// No process reads a Redis setting: Load() starts without any and with the old ones set, which are then listed as deprecated.
+func TestLoadWithoutAnyRedisSetting(t *testing.T) {
+	unsetDeprecated(t)
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("Load without REDIS__* settings: %v", err)
+	}
+	if got := config.DeprecatedSettings(); len(got) != 0 {
+		t.Errorf("with nothing set DeprecatedSettings = %v", got)
+	}
+}
+
+func TestLoadStartsWithRedisSettingsStillSetAndListsThemAsDeprecated(t *testing.T) {
+	unsetDeprecated(t)
+	t.Setenv("REDIS__URI", "redis://localhost:6379/0")
+	t.Setenv("REDIS__HOT_TIMEOUT", "not a duration")
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("a Redis setting that is still set must not stop the start: %v", err)
+	}
+	if got := config.DeprecatedSettings(); !slices.Equal(got, []string{"REDIS__URI", "REDIS__HOT_TIMEOUT"}) {
+		t.Errorf("DeprecatedSettings = %v, want the two Redis settings", got)
+	}
+}
+
+// removedSettingsOfThePDPStage is the exit list of the step that removed Redis, the read replica and the table
+// synchronization engine, in the order of the catalog: each is a row with its reason, and a deployment that still sets one
+// starts and is told once (the cli test checks the log).
+var removedSettingsOfThePDPStage = []string{
+	"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT",
+	"SYNC__ENGINE", "WORKER__REGION",
+	"SYNC__FETCH_TTL",
+	"DB__READ_URI", "DB__MAX_REPLICA_LAG", "DB__LAG_ACTION", "DB__LAG_INTERVAL",
+	"REDIS__URI", "REDIS__HOT_TIMEOUT",
+}
+
+func TestTheCatalogHoldsEverySettingRemovedWithRedisTheReplicaAndTheTableEngine(t *testing.T) {
+	rows := map[string]string{}
+	for _, d := range config.DeprecatedCatalog() {
+		rows[d.Name] = d.Reason
+	}
+	for _, name := range removedSettingsOfThePDPStage {
+		if reason, ok := rows[name]; !ok || strings.TrimSpace(reason) == "" {
+			t.Errorf("%s is not a catalog row with a reason (reason %q)", name, reason)
+		}
+	}
+	// The earlier rows stay: the exit list comes on top of them, not instead of them.
+	for _, name := range []string{"HTTP__PUBLIC_URL", "PLATFORM__CLIENT_SECRET", "SUBJECTS__ENABLED", "AUTH__STATE_SECRET",
+		"AUTH__TOKEN_L1_SIZE", "DELEGATION__AUDIT_MODE", "CORS__ALLOW_ORIGINS"} {
+		if _, ok := rows[name]; !ok {
+			t.Errorf("%s left the catalog", name)
+		}
+	}
+	// With each of them set the process starts and reports exactly that one.
+	unsetDeprecated(t)
+	for _, name := range removedSettingsOfThePDPStage {
+		t.Setenv(name, "x")
+		if _, err := config.Load(); err != nil {
+			t.Errorf("Load with %s set: %v", name, err)
+		}
+		if got := config.DeprecatedSettings(); !slices.Equal(got, []string{name}) {
+			t.Errorf("with only %s set DeprecatedSettings = %v", name, got)
+		}
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestTheReasonOfTheRedisSettingsSaysThereIsNoRedis(t *testing.T) {
+	for _, name := range []string{"REDIS__URI", "REDIS__HOT_TIMEOUT"} {
+		reason, ok := config.DeprecatedReason(name)
+		if !ok || !strings.Contains(reason, "no Redis") {
+			t.Errorf("the reason of %s is %q", name, reason)
 		}
 	}
 }

@@ -2,7 +2,7 @@
 //
 //	licetum-admin admin                         — admin API (default :8000)
 //	licetum-admin restore-admin [-user name]... — put the access of the platform administrators back
-//	licetum-admin openapi admin [-yaml] [-lang en|ru|zh] — print the OpenAPI spec (no DB or Redis needed)
+//	licetum-admin openapi admin [-yaml] [-lang en|ru|zh] — print the OpenAPI spec (no DB needed)
 //
 // The database is migrated by the core binary (licetum migrate). The address can be overridden with -addr or HTTP__ADDR.
 package main

@@ -1,5 +1,5 @@
 // Package config reads settings from environment variables grouped by prefix (DB__, AUTH__,
-// REDIS__, PLATFORM__, HTTP__). Names are case-insensitive. Lists (
+// PLATFORM__, HTTP__). Names are case-insensitive. Lists (
 // PLATFORM__ADMIN_CLAIM_VALUES, ...) are accepted both as a JSON array (`["http://a","http://b"]`)
 // and comma-separated.
 package config
@@ -47,14 +47,7 @@ type Auth struct {
 	JWKSMinRefresh time.Duration
 }
 
-type Redis struct {
-	URI string
-	// HotTimeout is the read and write timeout of the Redis client of the check API (no retries): a slow Redis costs a
-	// request at most this much. After a few failures in a row Redis is skipped for a while (see redisx.FastFail).
-	HotTimeout time.Duration
-}
-
-// Cache tunes the in-process caches in front of Redis.
+// Cache tunes the in-process caches.
 type Cache struct {
 	// AnswerL1Size is how many computed answers a process keeps in memory. Zero takes the default, a negative value
 	// turns the level off.
@@ -242,7 +235,6 @@ type Shutdown struct {
 type Config struct {
 	DB         Database
 	Auth       Auth
-	Redis      Redis
 	Platform   Platform
 	AdminAuth  AdminAuth
 	Sync       Sync
@@ -279,10 +271,6 @@ func Load() (*Config, error) {
 
 			JWKSTTL:        e.duration("AUTH__JWKS_TTL", 10*time.Minute),
 			JWKSMinRefresh: e.duration("AUTH__JWKS_MIN_REFRESH", 30*time.Second),
-		},
-		Redis: Redis{
-			URI:        e.str("REDIS__URI", ""),
-			HotTimeout: e.duration("REDIS__HOT_TIMEOUT", 50*time.Millisecond),
 		},
 		Cache: Cache{
 			AnswerL1Size: e.int("CACHE__ANSWER_L1_SIZE", 50_000),
@@ -443,6 +431,9 @@ var deprecatedSettings = []Deprecated{
 	{"DB__MAX_REPLICA_LAG", readReplicaGone},
 	{"DB__LAG_ACTION", readReplicaGone},
 	{"DB__LAG_INTERVAL", readReplicaGone},
+	// There is no Redis: the answers are kept in the process.
+	{"REDIS__URI", redisGone},
+	{"REDIS__HOT_TIMEOUT", redisGone},
 }
 
 // The reasons shared by the rows of one feature.
@@ -453,6 +444,7 @@ const (
 	personCacheGone     = "the PDP no longer verifies the token of a person against a service, so it keeps no cache of them; PEP clients authenticate with API keys or the tokens of a registered pep_issuer (AUTH__JWKS_TTL and AUTH__JWKS_MIN_REFRESH still apply to their key sets)"
 	delegationGone      = "calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request"
 	corsGone            = "the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server"
+	redisGone           = "there is no Redis any more: the process keeps its answers in memory and no setting names a Redis server"
 	readReplicaGone     = "the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone"
 )
 

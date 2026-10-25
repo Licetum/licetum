@@ -95,3 +95,35 @@ func TestWarnDeprecatedLogsEverySetSettingInCatalogOrder(t *testing.T) {
 		}
 	}
 }
+
+// The settings removed with Redis, the read replica and the table synchronization engine: a deployment that still sets all
+// of them starts, and the process logs exactly one record for each, with the setting and the reason of its catalog row.
+func TestWarnDeprecatedLogsExactlyOneRecordForEachSettingOfTheRemovedStage(t *testing.T) {
+	removed := []string{
+		"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT", "SYNC__ENGINE", "WORKER__REGION", "SYNC__FETCH_TTL",
+		"DB__READ_URI", "DB__MAX_REPLICA_LAG", "DB__LAG_ACTION", "DB__LAG_INTERVAL", "REDIS__URI", "REDIS__HOT_TIMEOUT",
+	}
+	clearDeprecated(t)
+	for _, name := range removed {
+		t.Setenv(name, "x")
+	}
+	rec := &recorder{}
+	warnDeprecated(slog.New(rec))
+	if len(rec.records) != len(removed) {
+		t.Fatalf("got %d records, want %d", len(rec.records), len(removed))
+	}
+	seen := map[string]int{}
+	for _, r := range rec.records {
+		a := attrs(r)
+		reason, ok := config.DeprecatedReason(a["setting"])
+		if !ok || a["reason"] != reason || reason == "" {
+			t.Errorf("record %v carries no catalog reason", a)
+		}
+		seen[a["setting"]]++
+	}
+	for _, name := range removed {
+		if seen[name] != 1 {
+			t.Errorf("%s was logged %d times, want once", name, seen[name])
+		}
+	}
+}
