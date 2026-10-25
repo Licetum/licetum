@@ -161,16 +161,12 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
     dependency on the request path go through `logx.Repeated` (`logDependency`, `errKind`; `licetum_log_suppressed_total`): one record per kind per second.
   - Tests: `cluster/f5_test.go` (I/M), `chaos/f5_test.go` (C, `LICETUM_CHAOS_REDIS_OUTAGE` shortens the minute, `LICETUM_CHAOS_POSTGRES_OUTAGE` the 30 s without PostgreSQL), `core/tests/integration/{db,redisx}`. The
     suites run through PgBouncer in transaction mode with `LICETUM_TEST_PGBOUNCER_ADDR` (`Infrastructure.Isolate` gives each test a database).
-- **Read replica** (F6; `engine/replica.go`, `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL`; `core/README.md` has the description): a PDP process
-  may set `App.ReadDB` (`UseReadReplica`, `cli.Serve`). `App.reader(ctx)` is the pool of a read of the policy: the replica, or `DB` when there is none, when
-  the request needs a current read (`withPrimary`: the lever `consistency=higher`, or a revision the view did not reach, set in `cachedAnswer`; such an answer is not kept)
-  or while the replica lags with `DB__LAG_ACTION=primary`. Reads of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) use `reader(ctx)`;
-  writes, the worker and the sync pool use `DB`. `WatchReplica` measures the lag (replay lag and the time the revision has been behind the
-  primary's); `/readyz` fails with `replica_lag` under the `unready` action; `replicaGate` makes a replica behind `POLICY__MAX_STALENESS` fail closed (503). The tests that needed a real
+- **One PostgreSQL** (the in-process routing of reads to a read replica, `DB__READ_URI` and `DB__MAX_REPLICA_LAG` / `DB__LAG_ACTION` / `DB__LAG_INTERVAL`, was removed in P2e-06; the four
+  names are rows of the deprecation catalog): every read of the check path (snapshot, revisions, closure, type graph, `ServiceIDByRef`) and every write use `App.DB`; the
+  PDP's PostgreSQL may itself be a replica set behind one DSN, which is not Licetum's business until the postgres adapter on streaming replicas returns in P5. The tests that needed a real
   streaming replica are deleted (P2e-05; the contracts REV02, CONS01 and FC01-FC03 bring them back in P5/P6 and `task go:test:integration:replica` returns with them; `scripts/pg-replica.sh` stays);
   `cluster/failover_test.go` (`TestF6_11_*`) keeps `licetum failover` tested without a replica.
-  Beyond that: a replica that cannot be compared with the primary counts as stale (`replicaUnconfirmed`, only for `POLICY__MAX_STALENESS`, not for
-  readiness); `licetum failover` (`db.BumpAllRevisions`) raises every revision after a promotion and a revision that goes backwards is counted
+  `licetum failover` (`db.BumpAllRevisions`) raises every revision after a promotion and a revision that goes backwards is counted
   (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` is stored but not enforced: the table engine that filtered jobs by
   `WORKER__REGION` is gone, and any executor may ask a source until regions are enforced again; `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
   `docs/deployment.md`, the Compose environment `admin-api/tests/multiregion` (tag `multiregion`, `task go:test:multiregion`, `multiregion.yml`, switched off until P7 per ADR 0001 §10.7).

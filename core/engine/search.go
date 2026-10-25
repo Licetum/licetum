@@ -73,9 +73,6 @@ func (a *App) SearchResources(ctx context.Context, serviceID uuid.UUID, subject 
 		return ResourcePage{}, err
 	}
 	sum := sha256.Sum256(ask)
-	if err := a.replicaGate(); err != nil {
-		return ResourcePage{}, err
-	}
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
 	key := fmt.Sprintf("authz:search:%s:r%d:%s:%s:%s:%s", searchResultFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env), hex.EncodeToString(sum[:]))
@@ -168,13 +165,13 @@ func (a *App) resourceKeysAfter(ctx context.Context, typeID uuid.UUID, after *st
 	var rows pgx.Rows
 	var err error
 	if after == nil {
-		rows, err = a.reader(ctx).Query(ctx, `
+		rows, err = a.DB.Query(ctx, `
 			SELECT external_id, name FROM resource_cache
 			WHERE type_resource_id = $1 AND active
 			ORDER BY external_id COLLATE "C"
 			LIMIT $2`, typeID, limit)
 	} else {
-		rows, err = a.reader(ctx).Query(ctx, `
+		rows, err = a.DB.Query(ctx, `
 			SELECT external_id, name FROM resource_cache
 			WHERE type_resource_id = $1 AND active AND external_id COLLATE "C" > $2
 			ORDER BY external_id COLLATE "C"

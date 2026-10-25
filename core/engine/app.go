@@ -32,11 +32,8 @@ import (
 )
 
 type App struct {
-	DB *pgxpool.Pool
-	// ReadDB is the pool of the read replica a check process reads the policy from (DB__READ_URI). Nil: DB serves the reads
-	// too. See reader.
-	ReadDB *pgxpool.Pool
-	Redis  *redis.Client
+	DB    *pgxpool.Pool
+	Redis *redis.Client
 	// SyncDB is the pool of the synchronization transactions (DB__SYNC_POOL_SIZE connections), apart from the request pool,
 	// so that a synchronization waiting for a lock never takes a connection a request needs. Nil: DB is used.
 	SyncDB *pgxpool.Pool
@@ -96,8 +93,6 @@ type App struct {
 	computeSlots chan struct{}
 	// snapshotWarn logs once that the policy does not fit in memory.
 	snapshotWarn sync.Once
-	// replica is what WatchReplica measured about ReadDB.
-	replica replicaState
 	// clock is the time of the decisions and of the answer cache; nil is time.Now. Tests replace it (SetClock) to follow
 	// hours of validity windows at once, or to ask a question at a given moment.
 	clock func() time.Time
@@ -155,7 +150,6 @@ func New(pool *pgxpool.Pool, rdb *redis.Client, cfg *config.Config) *App {
 	m.registry.MustRegister(&syncQueueCollector{app: app})
 	m.registry.MustRegister(&poolCollector{app: app})
 	m.registry.MustRegister(&degradedCollector{app: app})
-	m.registry.MustRegister(&replicaCollector{app: app})
 	app.registerAdmissionMetrics(m)
 	return app
 }
@@ -208,7 +202,7 @@ func (a *App) ServiceIDByRef(ctx context.Context, ref string) (uuid.UUID, error)
 		return snap.serviceID(ref)
 	}
 	var id uuid.UUID
-	err := a.reader(ctx).QueryRow(ctx, `SELECT id FROM service WHERE slug = $1 AND deleted_at IS NULL`, ref).Scan(&id)
+	err := a.DB.QueryRow(ctx, `SELECT id FROM service WHERE slug = $1 AND deleted_at IS NULL`, ref).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, apperr.NotFound(i18n.ServiceNotFound, ref)
 	}
@@ -221,7 +215,7 @@ func (a *App) serviceExists(ctx context.Context, state cacheState, serviceID uui
 		_, err := state.snap.service(serviceID)
 		return err
 	}
-	_, err := a.GetExistingService(ctx, a.reader(ctx), serviceID)
+	_, err := a.GetExistingService(ctx, a.DB, serviceID)
 	return err
 }
 

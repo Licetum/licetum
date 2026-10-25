@@ -34,17 +34,6 @@ type Database struct {
 	// session-level advisory lock, which needs the same server connection for the whole run, so behind PgBouncer in
 	// transaction mode it points at PostgreSQL itself. Empty: URI.
 	MigrateURI string
-	// ReadURI is the connection string of the read replica the PDP reads the policy from (the snapshot, the
-	// revisions, the closure). Empty: URI, that is, one pool for everything. Writes, the synchronization and the reads that
-	// must be current (consistency=higher, a revision the replica has not reached) always use URI.
-	ReadURI string
-	// MaxReplicaLag is how far behind the primary the replica may be before LagAction applies.
-	MaxReplicaLag time.Duration
-	// LagAction is what a process does when the replica lags more than MaxReplicaLag: "unready" (readiness fails, the
-	// balancer sends the traffic to another region) or "primary" (the reads move to the primary until the replica catches up).
-	LagAction string
-	// LagInterval is how often the lag of the replica is measured.
-	LagInterval time.Duration
 }
 
 // MaxConns is how many connections the request pool of a process may hold: the pool size plus the overflow.
@@ -288,10 +277,6 @@ func Load() (*Config, error) {
 			SyncPoolSize:       e.int("DB__SYNC_POOL_SIZE", 4),
 			PgBouncer:          e.bool("DB__PGBOUNCER", false),
 			MigrateURI:         e.str("DB__MIGRATE_URI", ""),
-			ReadURI:            e.str("DB__READ_URI", ""),
-			MaxReplicaLag:      e.duration("DB__MAX_REPLICA_LAG", 10*time.Second),
-			LagAction:          strings.ToLower(e.str("DB__LAG_ACTION", "unready")),
-			LagInterval:        e.duration("DB__LAG_INTERVAL", time.Second),
 		},
 		Auth: Auth{
 
@@ -372,12 +357,6 @@ func Load() (*Config, error) {
 	}
 	if cfg.DB.MaxOverflow < 0 {
 		e.errs = append(e.errs, fmt.Errorf("DB__MAX_OVERFLOW must not be negative, got %d", cfg.DB.MaxOverflow))
-	}
-	if a := cfg.DB.LagAction; a != "unready" && a != "primary" {
-		e.errs = append(e.errs, fmt.Errorf("DB__LAG_ACTION must be unready or primary, got %q", a))
-	}
-	if cfg.DB.MaxReplicaLag <= 0 || cfg.DB.LagInterval <= 0 {
-		e.errs = append(e.errs, fmt.Errorf("DB__MAX_REPLICA_LAG and DB__LAG_INTERVAL must be positive, got %s and %s", cfg.DB.MaxReplicaLag, cfg.DB.LagInterval))
 	}
 	if cfg.Policy.MaxStaleness < 0 {
 		e.errs = append(e.errs, fmt.Errorf("POLICY__MAX_STALENESS must not be negative (0 means no limit), got %s", cfg.Policy.MaxStaleness))
@@ -468,6 +447,11 @@ var deprecatedSettings = []Deprecated{
 	// The synchronization runs on DBOS only.
 	{"SYNC__ENGINE", "DBOS is the only synchronization engine; a value of postgres no longer selects the sync_job table"},
 	{"WORKER__REGION", "a source with regions may be asked by any executor until regions are enforced again; the worker no longer filters the jobs by region"},
+	// The PDP reads the policy from one PostgreSQL.
+	{"DB__READ_URI", readReplicaGone},
+	{"DB__MAX_REPLICA_LAG", readReplicaGone},
+	{"DB__LAG_ACTION", readReplicaGone},
+	{"DB__LAG_INTERVAL", readReplicaGone},
 }
 
 // The reasons shared by the rows of one feature.
@@ -478,6 +462,7 @@ const (
 	personCacheGone     = "the PDP no longer verifies the token of a person against a service, so it keeps no cache of them; PEP clients authenticate with API keys or the tokens of a registered pep_issuer (AUTH__JWKS_TTL and AUTH__JWKS_MIN_REFRESH still apply to their key sets)"
 	delegationGone      = "calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request"
 	corsGone            = "the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server"
+	readReplicaGone     = "the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone"
 )
 
 // DeprecatedCatalog is the table of the removed settings with the reason of each, whether or not they are set. The caller

@@ -58,7 +58,7 @@ type cacheState struct {
 
 // readCacheState reads the revisions from PostgreSQL, in one statement. An error leaves the state not ok.
 func (a *App) readCacheState(ctx context.Context) cacheState {
-	rev, err := db.LoadRevisions(ctx, a.reader(ctx))
+	rev, err := db.LoadRevisions(ctx, a.DB)
 	if err != nil {
 		logDependency(ctx, slog.LevelWarn, "failed to read the revision of the policy", err)
 		return cacheState{}
@@ -166,9 +166,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		t.noteReadRevision(state.version)
 	}
 
-	// With a read replica a consistency=higher answer is computed from the primary, whose data may be newer than the revision the
-	// replica showed: it is not kept under that revision.
-	store := a.ReadDB == nil || !consistency.fresh()
+	store := true
 	if minRevisionFrom(ctx) > state.version {
 		// This process did not reach the revision the caller asks for (see WithMinRevision) within REVISION__WAIT_MAX:
 		// the answer is computed from the data, and not kept under a revision it could not be confirmed to reflect.
@@ -221,10 +219,6 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 	flightResult := a.answers.DoChan(flight, func() (any, error) {
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), computeTimeout)
 		defer cancel()
-		// An answer that must be current (consistency=higher, or a revision the replica has not reached) is computed from the primary.
-		if consistency.fresh() || !store {
-			cctx = withPrimary(cctx)
-		}
 		// A wave of misses (a revision moved under many hot keys) queues here instead of exhausting the database pool.
 		if a.computeSlots != nil {
 			slot := &computeSlot{slots: a.computeSlots}

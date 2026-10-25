@@ -78,9 +78,6 @@ func (a *App) GetPermission(ctx context.Context, serviceID uuid.UUID, subject st
 // GetPermissionData is GetPermission with what the self-service needs too: the denials, and the levels
 // on each type as a whole.
 func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, consistency Consistency) (*permissionData, error) {
-	if err := a.replicaGate(); err != nil {
-		return nil, err
-	}
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
 	key := fmt.Sprintf("authz:permission:%s:r%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env))
@@ -128,7 +125,7 @@ const notNowSQL = `COALESCE(c->>'source', 'claim') <> 'now'`
 // RequestAttributes reads the attributes the rules look at: the conditions of the rules, of their guards and of the group
 // memberships, and the claims of the resource_from_claim specs (of rules and of role items).
 func (a *App) RequestAttributes(ctx context.Context) ([]string, error) {
-	return requestAttributes(ctx, a.reader(ctx))
+	return requestAttributes(ctx, a.DB)
 }
 
 func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
@@ -223,7 +220,7 @@ func (a *App) LiveMemberships(ctx context.Context) ([]model.GroupMember, error) 
 // liveMembershipsAt reads the group memberships in force at now. The moment is the App's (see SetClock), not the database's:
 // the snapshot compares the windows in memory with it too.
 func (a *App) liveMembershipsAt(ctx context.Context, now time.Time) ([]model.GroupMember, error) {
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT `+GroupMemberColumns+` FROM group_member
 		WHERE enabled AND (valid_from IS NULL OR valid_from <= $1) AND (expires_at IS NULL OR expires_at > $1)`, now)
 	if err != nil {
@@ -288,7 +285,7 @@ func IdentityOf(members []model.GroupMember, subject string, env Env) (identityS
 
 // LoadRules reads assignment rules (the assignmentRuleColumns columns of alias ar).
 func (a *App) LoadRules(ctx context.Context, sql string, args ...any) ([]model.AssignmentRule, error) {
-	rows, err := a.reader(ctx).Query(ctx, sql, args...)
+	rows, err := a.DB.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -406,7 +403,7 @@ func (a *App) ExpandRoles(ctx context.Context, rules []model.AssignmentRule, typ
 
 	items := map[uuid.UUID][]model.RolePermission{}
 	if len(roleIDs) > 0 {
-		rows, err := a.reader(ctx).Query(ctx, `
+		rows, err := a.DB.Query(ctx, `
 			SELECT `+RolePermissionColumns+`
 			FROM role_permission rp
 			JOIN type_resource t ON t.id = rp.type_resource_id
@@ -525,7 +522,7 @@ func validityUntil(until *time.Time, now time.Time) (ttl, hold time.Duration) {
 // being in force, counted from now. Capped at ResultCacheTTL.
 func (a *App) cacheTTL(ctx context.Context, typeIDs []uuid.UUID, now time.Time) (ttl, hold time.Duration) {
 	var until *time.Time
-	err := a.reader(ctx).QueryRow(ctx, `
+	err := a.DB.QueryRow(ctx, `
 		SELECT min(b) FROM (
 			-- a role assignment has no type of its own: its boundaries count for every type
 			SELECT valid_from AS b FROM assignment_rule
@@ -556,7 +553,7 @@ func ServiceTypes(g *TypeGraph, serviceID uuid.UUID) []uuid.UUID {
 
 // TypesWithSynchronizer returns which of the given types have a live synchronizer (are sync types).
 func (a *App) TypesWithSynchronizer(ctx context.Context, typeIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
-	rows, err := a.reader(ctx).Query(ctx,
+	rows, err := a.DB.Query(ctx,
 		`SELECT DISTINCT type_resource_id FROM synchronizer WHERE type_resource_id = ANY($1) AND deleted_at IS NULL`, typeIDs)
 	if err != nil {
 		return nil, err

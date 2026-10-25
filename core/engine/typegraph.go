@@ -295,7 +295,7 @@ func (g *TypeGraph) signature(id uuid.UUID) string {
 
 // LoadTypeGraph reads the whole type graph (all services, live and deleted types).
 func (a *App) LoadTypeGraph(ctx context.Context) (*TypeGraph, error) {
-	return loadTypeGraph(ctx, a.reader(ctx))
+	return loadTypeGraph(ctx, a.DB)
 }
 
 // LiveSynchronizerExists is the single SQL definition of a type's mode: a type with a live (not deleted) synchronizer is

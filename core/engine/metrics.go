@@ -267,12 +267,6 @@ func (c *poolCollector) Collect(ch chan<- prometheus.Metric) {
 			pool *pgxpool.Pool
 		}{"sync", c.app.SyncDB})
 	}
-	if c.app.ReadDB != nil {
-		pools = append(pools, struct {
-			name string
-			pool *pgxpool.Pool
-		}{"read", c.app.ReadDB})
-	}
 	for _, p := range pools {
 		if p.pool == nil {
 			continue

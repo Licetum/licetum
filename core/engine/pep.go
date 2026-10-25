@@ -92,7 +92,7 @@ func pepStaleLimit(t tuning) time.Duration {
 func (a *App) PEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 	state := a.cacheState(ctx)
 	if !state.ok {
-		d, err := a.loadPEPDirectory(ctx, 0)
+		d, err := a.loadPEPDirectory(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +107,7 @@ func (a *App) PEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 		cur.behind.CompareAndSwap(0, time.Now().UnixNano())
 	}
 	got, err, _ := a.pep.loads.Do(strconv.FormatInt(state.pep, 10), func() (any, error) {
-		d, err := a.loadPEPDirectory(ctx, state.pep)
+		d, err := a.loadPEPDirectory(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -132,15 +132,11 @@ func (a *App) PEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 	return cur, nil
 }
 
-// loadPEPDirectory reads the directory in one statement, through the reader of the check path. A replica that is behind the revision
-// the view has (asked) does not serve the directory: the primary does, so that the directory is never older than the view.
-func (a *App) loadPEPDirectory(ctx context.Context, asked int64) (*PEPDirectory, error) {
+// loadPEPDirectory reads the directory in one statement.
+func (a *App) loadPEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pepLoadTimeout)
 	defer cancel()
-	data, err := db.LoadPEPDirectory(ctx, a.reader(ctx))
-	if err == nil && data.Revision < asked && a.ReadDB != nil {
-		data, err = db.LoadPEPDirectory(ctx, a.reader(withPrimary(ctx)))
-	}
+	data, err := db.LoadPEPDirectory(ctx, a.DB)
 	if err != nil {
 		logDependency(ctx, slog.LevelWarn, "failed to read the PEP directory", err)
 		return nil, err

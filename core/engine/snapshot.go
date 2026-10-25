@@ -117,7 +117,7 @@ func (a *App) loadSnapshot(ctx context.Context, revision, max int64) (*snapshot,
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), computeTimeout)
 	defer cancel()
 
-	tx, err := a.reader(ctx).BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, err := a.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, err
 	}

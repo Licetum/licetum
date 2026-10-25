@@ -32,8 +32,6 @@ const (
 	ReasonDatabase = "database"
 	ReasonSchema   = "schema"
 	ReasonSnapshot = "snapshot"
-	// ReasonReplicaLag: the read replica is further behind than DB__MAX_REPLICA_LAG and DB__LAG_ACTION is unready.
-	ReasonReplicaLag = "replica_lag"
 )
 
 // NotReadyError is the reason Ready gives.
@@ -86,10 +84,6 @@ func (a *App) Ready(ctx context.Context) error {
 	if err := a.databaseReady(); err != nil {
 		return err
 	}
-	if a.replicaLagging() && a.Cfg.DB.LagAction == "unready" {
-		return &NotReadyError{Reason: ReasonReplicaLag, Err: fmt.Errorf("the read replica is %s behind the primary (limit %s)",
-			a.replicaLag().Round(time.Millisecond), a.Cfg.DB.MaxReplicaLag)}
-	}
 	return a.snapshotReady(ctx)
 }
 
@@ -121,11 +115,7 @@ func (a *App) checkDatabase(ctx context.Context) error {
 	if a.DB == nil {
 		return &NotReadyError{Reason: ReasonDatabase, Err: errors.New("no database")}
 	}
-	pool := a.DB
-	if a.ReadDB != nil && a.Role != RoleWorker {
-		pool = a.ReadDB // the pool the PDP serves from
-	}
-	version, err := db.SchemaVersion(ctx, pool)
+	version, err := db.SchemaVersion(ctx, a.DB)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "42P01" { // undefined_table: the database was never migrated

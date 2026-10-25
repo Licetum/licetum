@@ -139,7 +139,7 @@ func writeString(w io.Writer, s string) {
 // The order is fixed: if a type has several synchronizers (nothing forbids it), the same one is
 // always taken — otherwise its resources would flicker.
 func (a *App) liveSynchronizers(ctx context.Context, typeIDs []uuid.UUID) ([]model.Synchronizer, error) {
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT DISTINCT ON (type_resource_id) `+SynchronizerColumns+`
 		FROM synchronizer
 		WHERE type_resource_id = ANY($1) AND deleted_at IS NULL
@@ -161,7 +161,7 @@ func (a *App) liveSynchronizers(ctx context.Context, typeIDs []uuid.UUID) ([]mod
 }
 
 func (a *App) ActiveCounts(ctx context.Context, typeIDs []uuid.UUID) (map[uuid.UUID]int, error) {
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT type_resource_id, count(*) FROM resource_cache
 		WHERE active AND type_resource_id = ANY($1) GROUP BY type_resource_id`, typeIDs)
 	if err != nil {
@@ -640,7 +640,7 @@ func (a *App) anchorRowIDs(ctx context.Context, refs []anchorRef) (map[anchorRef
 	for i, r := range refs {
 		types[i], exts[i] = r.Type, r.Ext
 	}
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT c.type_resource_id, c.external_id, c.id
 		FROM unnest($1::uuid[], $2::varchar[]) AS q(type_id, ext)
 		JOIN resource_cache c ON c.type_resource_id = q.type_id AND c.external_id = q.ext AND c.active`, types, exts)
@@ -757,7 +757,7 @@ func (a *App) findAncestorsBatch(ctx context.Context, lookups []ancestorLookup) 
 		if attr == nil {
 			attr = make([]string, len(batch))
 		}
-		rows, err := a.reader(ctx).Query(ctx, ancestorWalkSQL(match), idx, lookup, target, value, attr, allowed)
+		rows, err := a.DB.Query(ctx, ancestorWalkSQL(match), idx, lookup, target, value, attr, allowed)
 		if err != nil {
 			return err
 		}
@@ -822,7 +822,7 @@ func (a *App) ExpandAnchors(ctx context.Context, anchors []uuid.UUID, resultType
 	if len(anchors) == 0 || len(resultTypes) == 0 {
 		return out, nil
 	}
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT q.ord, w.descendant_id, w.descendant_type_id, w.descendant_external_id, w.descendant_name, w.inherit
 		FROM unnest($1::uuid[]) WITH ORDINALITY AS q(id, ord)
 		JOIN resource_ancestor w ON w.ancestor_id = q.id
@@ -850,7 +850,7 @@ func (a *App) listCachedResources(ctx context.Context, typeIDs []uuid.UUID) (map
 	if len(typeIDs) == 0 {
 		return out, nil
 	}
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT id, type_resource_id, external_id, name FROM resource_cache
 		WHERE type_resource_id = ANY($1) AND active`, typeIDs)
 	if err != nil {
@@ -879,7 +879,7 @@ func (a *App) pairMasks(ctx context.Context, pairs [][2]uuid.UUID) (map[[2]uuid.
 	for i, p := range pairs {
 		anc[i], desc[i] = p[0], p[1]
 	}
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT q.a, q.d, ra.inherit
 		FROM unnest($1::uuid[], $2::uuid[]) AS q(a, d)
 		JOIN resource_ancestor ra ON ra.ancestor_id = q.a AND ra.descendant_id = q.d
@@ -906,7 +906,7 @@ func (a *App) AncestorMasks(ctx context.Context, nodes []uuid.UUID) (map[uuid.UU
 	if len(nodes) == 0 {
 		return out, nil
 	}
-	rows, err := a.reader(ctx).Query(ctx, `SELECT descendant_id, ancestor_id, inherit FROM resource_ancestor WHERE descendant_id = ANY($1)`, nodes)
+	rows, err := a.DB.Query(ctx, `SELECT descendant_id, ancestor_id, inherit FROM resource_ancestor WHERE descendant_id = ANY($1)`, nodes)
 	if err != nil {
 		return nil, err
 	}
@@ -965,7 +965,7 @@ func (a *App) UnresolvedParents(ctx context.Context, g *TypeGraph, typeIDs []uui
 			WHERE p.type_resource_id = ANY($2)`
 		args = append(args, left)
 	}
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT anc.descendant_id, x.type_resource_id, e.parent_type_id, anc.inherit
 		FROM (`+links+`) e
 		JOIN resource_cache x ON x.id = e.child_id AND x.active
@@ -1042,7 +1042,7 @@ func (a *App) resourceParents(ctx context.Context, g *TypeGraph, typeID uuid.UUI
 		return out, nil
 	}
 	labels := parentLabels(g, typeID)
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT child_id, parent_type_id, parent_external_id, parent_id IS NOT NULL FROM resource_edge
 		WHERE child_id = ANY($1) ORDER BY parent_type_id, parent_external_id`, ids)
 	if err != nil {
@@ -1077,7 +1077,7 @@ func (a *App) CacheLookup(ctx context.Context, g *TypeGraph, typeResourceID uuid
 		return nil, nil
 	}
 	var r cachedResource
-	err := a.reader(ctx).QueryRow(ctx,
+	err := a.DB.QueryRow(ctx,
 		`SELECT id, external_id, name, meta FROM resource_cache
 		 WHERE type_resource_id = $1 AND external_id = $2 AND active`, typeResourceID, externalID,
 	).Scan(&r.ID, &r.ExternalID, &r.Name, &r.Meta)
@@ -1185,7 +1185,7 @@ func (a *App) IsCovered(ctx context.Context, typeResourceID uuid.UUID, resourceI
 	if _, err := a.EnsureSynced(ctx, g, []uuid.UUID{typeResourceID}, false); err != nil {
 		return false, err
 	}
-	return Exists(ctx, a.reader(ctx), `
+	return Exists(ctx, a.DB, `
 		SELECT 1
 		FROM resource_cache d
 		JOIN resource_ancestor ra ON ra.descendant_id = d.id
@@ -1217,7 +1217,7 @@ func (a *App) ListResources(ctx context.Context, typeResourceID uuid.UUID, inclu
 	if !synced[typeResourceID] {
 		return out, nil
 	}
-	rows, err := a.reader(ctx).Query(ctx, `
+	rows, err := a.DB.Query(ctx, `
 		SELECT id, external_id, name, meta, active FROM resource_cache
 		WHERE type_resource_id = $1 AND ($2 OR active) ORDER BY name, external_id`, typeResourceID, includeInactive)
 	if err != nil {
