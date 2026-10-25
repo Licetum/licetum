@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/apperr"
+	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
 )
@@ -93,7 +95,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 			static = append(static, r)
 		}
 	}
-	insts, err := a.BuildInstances(ctx, static, engine.NewEnv(nil, nil), nil)
+	insts, err := a.BuildInstances(ctx, g, static, engine.NewEnv(nil, nil), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +113,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 		if err != nil {
 			return nil, err
 		}
-		unresolved, err := a.UnresolvedParents(ctx, []uuid.UUID{typeResourceID})
+		unresolved, err := a.UnresolvedParents(ctx, g, []uuid.UUID{typeResourceID})
 		if err != nil {
 			return nil, err
 		}
@@ -123,9 +125,9 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 		return nil, err
 	}
 	var entryRules, dynamicRules []*model.AssignmentRule
-	for _, c := range covers {
-		in := &insts[c.Inst]
-		entry := entryOf(in, p.RuleRef(c.Inst), c.Mask, c.Assumed, names)
+	for _, reach := range reachesOf(insts, covers) {
+		in := &insts[reach.inst]
+		entry := entryOf(in, p.RuleRef(reach.inst), reach, names)
 		entry.Via = viaOf(in, row, resourceID != nil)
 		out.Entries = append(out.Entries, entry)
 		entryRules = append(entryRules, in.Rule)
@@ -134,7 +136,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 		r := &dynamic[i]
 		in := &engine.Instance{Rule: r, Deny: r.Effect == model.EffectDeny, Exception: r.Exception, Levels: r.Access,
 			AnchorType: *r.TypeResourceID, Note: engine.RuleOrigin(*r)}
-		entry := entryOf(in, p.RefOf(in), engine.AllLevels, false, names)
+		entry := entryOf(in, p.RefOf(in), instanceReach{known: levelsThrough(in, engine.AllLevels)}, names)
 		entry.Via = "claim"
 		out.Dynamic = append(out.Dynamic, entry)
 		dynamicRules = append(dynamicRules, r)
@@ -205,18 +207,61 @@ func (a *App) lookupNames(ctx context.Context, rules []model.AssignmentRule) (lo
 	return n, read(`SELECT id, name FROM role WHERE id = ANY($1)`, roleIDs, n.roles)
 }
 
-// entryOf describes a rule that covers (or may cover) a resource, with the levels that reach it.
-func entryOf(in *engine.Instance, ref model.RuleRef, mask engine.LevelSet, assumed bool, names lookedUpNames) model.AccessEntry {
+// instanceReach is how an instance reaches the resource: the levels its covers carry for real (known), and those a
+// denial carries only through a parent that is not in the cache yet (assumed).
+type instanceReach struct {
+	inst           int
+	known, assumed []string
+	assumedCover   bool
+}
+
+// reachesOf merges the covers of each instance, in the order of their first cover. CoversOf gives a denial twice when it
+// reaches the resource through a known ancestor and may also reach it, with more levels, through a missing parent: it is
+// one rule on one resource, so it makes one entry.
+func reachesOf(insts []engine.Instance, covers []engine.Cover) []instanceReach {
+	var out []instanceReach
+	at := map[int]int{}
+	for _, c := range covers {
+		i, ok := at[c.Inst]
+		if !ok {
+			i = len(out)
+			at[c.Inst] = i
+			out = append(out, instanceReach{inst: c.Inst})
+		}
+		levels := levelsThrough(&insts[c.Inst], c.Mask)
+		if r := &out[i]; c.Assumed {
+			r.assumed, r.assumedCover = append(r.assumed, levels...), true
+		} else {
+			r.known = append(r.known, levels...)
+		}
+	}
+	return out
+}
+
+// levelsThrough lists the levels of an instance that flow along a mask: the levels of the rule the mask lets through. A
+// denial of every level (*) denies what flows (denyMatches): along a mask of some levels, it lists those levels.
+func levelsThrough(in *engine.Instance, mask engine.LevelSet) []string {
+	if !mask.All && slices.Contains(in.Levels, model.AllLevels) {
+		return mask.Sorted()
+	}
+	return engine.LevelsOf(in.Levels...).Intersect(mask).Sorted()
+}
+
+// entryOf describes a rule that covers (or may cover) a resource, with the levels that reach it: those that reach for
+// real and those only assumed, which are also listed apart. The entry is assumed when no level it lists reaches for real.
+func entryOf(in *engine.Instance, ref model.RuleRef, reach instanceReach, names lookedUpNames) model.AccessEntry {
 	rule := in.Rule
+	levels := engine.LevelsOf(slices.Concat(reach.known, reach.assumed)...).Sorted()
 	entry := model.AccessEntry{
-		Rule: ref, Name: rule.Name, ExpiresAt: rule.ExpiresAt, ValidFrom: rule.ValidFrom, Assumed: assumed,
-		Levels: []string{}, People: []model.KnownPerson{}, Who: whoOf(rule, names),
+		Rule: ref, Name: rule.Name, ExpiresAt: rule.ExpiresAt, ValidFrom: rule.ValidFrom, Levels: levels,
+		AssumedLevels: []string{}, People: []model.KnownPerson{}, Who: whoOf(rule, names),
 	}
-	if levels := engine.LevelsOf(in.Levels...).Intersect(mask); levels.All {
-		entry.Levels = slices.Clone(in.Levels)
-	} else {
-		entry.Levels = levels.Sorted()
+	for _, l := range engine.LevelsOf(reach.assumed...).Sorted() {
+		if !slices.Contains(reach.known, l) {
+			entry.AssumedLevels = append(entry.AssumedLevels, l)
+		}
 	}
+	entry.Assumed = reach.assumedCover && len(entry.AssumedLevels) == len(entry.Levels)
 	if rule.RoleID != nil {
 		entry.Role = &model.NamedID{ID: *rule.RoleID, Name: names.roles[*rule.RoleID]}
 	}
@@ -258,28 +303,56 @@ func whoOf(rule *model.AssignmentRule, names lookedUpNames) model.AccessWho {
 	return who
 }
 
-// peopleReached tries every rule on the known subjects and says, per rule, how many it applies to and who the first
-// few are. A subject is tried with the claims the registry kept for it; a condition on the request context cannot hold
-// without a request, so it reaches nobody here. The registry figures say how far to trust the answer.
+// peopleReached tries every rule on the people of the subject directories of the services its types belong to (ADR 0001, 8.8)
+// and says, per rule, how many it applies to and who the first few are. A person is tried with the properties stored for
+// them as their claims; a condition on the request context cannot hold without a request, so it reaches nobody here. The
+// service of a rule is the service of the type it targets (of the types of the items of the role it grants, and of the type
+// its claim is looked up in): the directory of another service is not counted, and a service with an empty directory has no
+// people. A person who is in the directories of two of a rule's services is counted once. The figures say how far to trust
+// the answer.
 func (a *App) peopleReached(ctx context.Context, rules []*model.AssignmentRule) ([]peopleResult, model.AccessPeople, error) {
 	results := make([]peopleResult, len(rules))
-	info := model.AccessPeople{Enabled: a.Cfg.Subjects.Enabled}
+	info := model.AccessPeople{}
 	for i := range results {
 		results[i].sample = []model.KnownPerson{}
 	}
-	// With the registry off nothing is said about people, whatever it still holds.
-	if !info.Enabled {
+	if len(rules) == 0 {
 		return results, info, nil
 	}
-	subjects, err := a.loadKnownSubjects(ctx, engine.EvaluationLimit+1)
+	ruleServices, err := a.servicesOfRules(ctx, rules)
 	if err != nil {
 		return nil, info, err
 	}
-	if len(subjects) > engine.EvaluationLimit {
-		subjects, info.Limited = subjects[:engine.EvaluationLimit], true
+	serviceSet := map[uuid.UUID]bool{}
+	for _, services := range ruleServices {
+		for _, id := range services {
+			serviceSet[id] = true
+		}
 	}
-	info.Registry = len(subjects)
-	if len(subjects) == 0 || len(rules) == 0 {
+	// The directories, at most EvaluationLimit people in all.
+	type person struct {
+		service uuid.UUID
+		entry   db.DirectoryEntry
+	}
+	var people []person
+	for _, service := range slices.SortedFunc(maps.Keys(serviceSet), func(x, y uuid.UUID) int { return strings.Compare(x.String(), y.String()) }) {
+		room := engine.EvaluationLimit + 1 - len(people)
+		if room <= 0 {
+			break
+		}
+		entries, err := db.DirectoryAfter(ctx, a.DB, service, "", nil, room)
+		if err != nil {
+			return nil, info, err
+		}
+		for _, e := range entries {
+			people = append(people, person{service, e})
+		}
+	}
+	if len(people) > engine.EvaluationLimit {
+		people, info.Limited = people[:engine.EvaluationLimit], true
+	}
+	info.Registry = len(people)
+	if len(people) == 0 {
 		return results, info, nil
 	}
 	members, err := a.LiveMemberships(ctx)
@@ -287,29 +360,116 @@ func (a *App) peopleReached(ctx context.Context, rules []*model.AssignmentRule) 
 		return nil, info, err
 	}
 	now := time.Now()
-	for _, s := range subjects {
-		env := engine.Env{Claims: s.Claims, Now: now}
-		identity, _ := engine.IdentityOf(members, s.Subject, env)
+	counted := make([]map[string]bool, len(rules))
+	for _, p := range people {
+		env := engine.Env{Claims: engine.Claims(p.entry.Properties), Now: now}
+		identity, _ := engine.IdentityOf(members, p.entry.ID, env)
 		for i, rule := range rules {
+			if !slices.Contains(ruleServices[i], p.service) {
+				continue
+			}
 			if applies, _ := engine.RuleApplies(*rule, identity, env); !applies {
 				continue
 			}
+			if len(ruleServices[i]) > 1 {
+				if counted[i] == nil {
+					counted[i] = map[string]bool{}
+				}
+				if counted[i][p.entry.ID] {
+					continue
+				}
+				counted[i][p.entry.ID] = true
+			}
 			results[i].total++
 			if len(results[i].sample) < accessPeopleSample {
-				results[i].sample = append(results[i].sample, model.KnownPerson{Subject: s.Subject, Name: s.Name})
+				var name *string
+				if p.entry.DisplayName != "" {
+					name = &p.entry.DisplayName
+				}
+				results[i].sample = append(results[i].sample, model.KnownPerson{Subject: p.entry.ID, Name: name})
 			}
 		}
 	}
 	return results, info, nil
 }
 
-// peopleResult is how many known subjects a rule applies to, with the first few.
+// servicesOfRules says, for each rule, the services whose people it can reach: the service of the type it targets, of the
+// type its claim is looked up in, and of the types of the items of the role it grants.
+func (a *App) servicesOfRules(ctx context.Context, rules []*model.AssignmentRule) ([][]uuid.UUID, error) {
+	typesOf := make([][]uuid.UUID, len(rules))
+	var roleIDs []uuid.UUID
+	for i, r := range rules {
+		if r.TypeResourceID != nil {
+			typesOf[i] = append(typesOf[i], *r.TypeResourceID)
+		}
+		if r.ResourceFromClaim != nil {
+			typesOf[i] = append(typesOf[i], r.ResourceFromClaim.LookupTypeResourceID)
+		}
+		if r.RoleID != nil {
+			roleIDs = append(roleIDs, *r.RoleID)
+		}
+	}
+	roleTypes := map[uuid.UUID][]uuid.UUID{}
+	if len(roleIDs) > 0 {
+		rows, err := a.DB.Query(ctx, `SELECT role_id, type_resource_id FROM role_permission WHERE role_id = ANY($1)`, roleIDs)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var role, typ uuid.UUID
+			if err := rows.Scan(&role, &typ); err != nil {
+				return nil, err
+			}
+			roleTypes[role] = append(roleTypes[role], typ)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	var typeIDs []uuid.UUID
+	for i, r := range rules {
+		if r.RoleID != nil {
+			typesOf[i] = append(typesOf[i], roleTypes[*r.RoleID]...)
+		}
+		typeIDs = append(typeIDs, typesOf[i]...)
+	}
+	serviceOf := map[uuid.UUID]uuid.UUID{}
+	if len(typeIDs) > 0 {
+		rows, err := a.DB.Query(ctx, `SELECT id, service_id FROM type_resource WHERE id = ANY($1) AND deleted_at IS NULL`, typeIDs)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var typ, service uuid.UUID
+			if err := rows.Scan(&typ, &service); err != nil {
+				return nil, err
+			}
+			serviceOf[typ] = service
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	out := make([][]uuid.UUID, len(rules))
+	for i, types := range typesOf {
+		for _, t := range types {
+			if service, ok := serviceOf[t]; ok && !slices.Contains(out[i], service) {
+				out[i] = append(out[i], service)
+			}
+		}
+	}
+	return out, nil
+}
+
+// peopleResult is how many people of the directories a rule applies to, with the first few.
 type peopleResult struct {
 	total  int
 	sample []model.KnownPerson
 }
 
-// attachPeople adds, to every entry, the known subjects the rule applies to (entryRules[i] is the rule of
+// attachPeople adds, to every entry, the people of the directories the rule applies to (entryRules[i] is the rule of
 // out.Entries[i] before the entries are ordered, dynamicRules[i] that of out.Dynamic[i]).
 func (a *App) attachPeople(ctx context.Context, out *model.AccessLookup, entryRules, dynamicRules []*model.AssignmentRule) error {
 	results, info, err := a.peopleReached(ctx, slices.Concat(entryRules, dynamicRules))

@@ -1,0 +1,252 @@
+# DEC10: resource_from_claim anchors a rule at the resources found from a claim: the claim's value (rendered like
+# Python's str()) is looked up among the resources of the lookup type by name (the default), by id or by an attribute
+# (meta.<name>: equal to the value, or a list holding it); the anchors are the matched resources themselves when the lookup
+# type is the rule's type (the owner pattern), else their ancestors of the rule's type, possibly in another service. Every
+# match gives an anchor. A claim that is missing or empty, or a value nothing matches, gives none: the rule has no effect,
+# whatever its effect, which is not the unknown outcome of a condition.
+#
+# A lookup by meta.<name> reads that attribute alone: dave is among the owners of P3, not its owner. Several matches that
+# climb to the same resource of the rule's type give it once (carol owns P4 and P5, both under B1), and the permission
+# list names that resource once.
+contracts: [DEC10]
+description: Lookups by name, id and meta attribute, the owner pattern, anchors above the match and across services, several matches, no match.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+  - {name: project, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, name: Branch 4, parents: [{type: rrs, id: R3}]}
+  # Two branches share a name; one has an id that reads as a number.
+  - {type: branch, id: B5, name: Central, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B6, name: Central, parents: [{type: rrs, id: R3}]}
+  - {type: branch, id: "7", name: Branch 7, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, name: Item 1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, name: Item 4, parents: [{type: branch, id: B4}]}
+  # The projects of TestIntegrationResourceAttributes: an owner and a list of owners.
+  - {type: project, id: P1, name: Project 1, parents: [{type: branch, id: B1}], meta: {owner: alice, owners: [alice]}}
+  - {type: project, id: P2, name: Project 2, parents: [{type: branch, id: B1}], meta: {owner: bob, owners: [bob]}}
+  - {type: project, id: P3, name: Project 3, parents: [{type: branch, id: B3}], meta: {owner: alice, owners: [alice, dave]}}
+  # Two projects of one owner under one branch: in the test, bob owns P1 and P2 under B1 once the source gives him P1.
+  - {type: project, id: P4, name: Project 4, parents: [{type: branch, id: B1}], meta: {owner: carol}}
+  - {type: project, id: P5, name: Project 5, parents: [{type: branch, id: B1}], meta: {owner: carol}}
+rules:
+  # The rules of TestIntegrationResourceAttributes, one subject per step of the test.
+  - {name: projects-of-owner, subject: owner-user, type: project, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owner}}
+  - {name: projects-of-owners, subject: owners-user, type: project, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owners}}
+  - {name: projects-of-owners-again, subject: user-1, type: project, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owners}}
+  - {name: branches-of-owned-projects, subject: user-1, type: branch, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owner}}
+  # The rule of TestIntegrationHierarchyResourceFromClaim: the rrs above the branch the department claim names.
+  - {name: rrs-of-department, subject: dept-user, type: rrs, access: [read], from_claim: {claim: department, lookup_type: branch, match_by: name}}
+  # By id, by the default (name), by a number rendered as text, from a type above the rule's type.
+  - {name: branch-by-id, subject: id-user, type: branch, access: [read], from_claim: {claim: branch_id, lookup_type: branch, match_by: id}}
+  - {name: branch-by-name, subject: name-user, type: branch, access: [read], from_claim: {claim: branch_name, lookup_type: branch}}
+  - {name: branch-by-number, subject: number-user, type: branch, access: [read], from_claim: {claim: branch_no, lookup_type: branch, match_by: id}}
+  - {name: branch-by-division-name, subject: up-user, type: branch, access: [read], from_claim: {claim: division_name, lookup_type: division, match_by: name}}
+  # A denial anchored by a claim.
+  - {name: read-all-branches, subject: deny-user, type: branch, access: [read]}
+  - {name: deny-blocked-branch, subject: deny-user, type: branch, access: [read], deny: true, from_claim: {claim: blocked, lookup_type: branch, match_by: id}}
+cases:
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
+  - name: the owner pattern gives alice her projects
+    subject: owner-user
+    service: app
+    claims: {username: alice}
+    questions:
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [projects-of-owner]}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P3, action: read, allowed: true, decision: allowed, granted_by: [projects-of-owner]}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
+  - name: the owner pattern gives bob his project
+    subject: owner-user
+    service: app
+    claims: {username: bob}
+    questions:
+      - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P2, action: read, allowed: true, decision: allowed, granted_by: [projects-of-owner]}
+      - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
+  - name: an owner nobody names gets nothing
+    subject: owner-user
+    service: app
+    claims: {username: nobody}
+    questions:
+      - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes (once the source gives P1 to bob,
+  # its owners still name alice, and alice reads P3 alone: a lookup by meta.owner does not match the owners)
+  - name: the owner pattern reads its own attribute, not another one that holds the claim
+    subject: owner-user
+    service: app
+    claims: {username: dave}
+    questions:
+      - {type: project, resource: P3, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
+  - name: a list attribute holds the claim as one of its items
+    subject: owners-user
+    service: app
+    claims: {username: dave}
+    questions:
+      - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P3, action: read, allowed: true, decision: allowed, granted_by: [projects-of-owners]}
+  - name: every resource whose list holds the claim is an anchor
+    subject: owners-user
+    service: app
+    claims: {username: alice}
+    questions:
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P3, action: read, allowed: true, decision: allowed}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
+  - name: the anchor may lie above the matched resource, in another service
+    subject: user-1
+    claims: {username: bob}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
+  - name: the branch anchor cascades down to the items and projects below it
+    subject: user-1
+    service: app
+    claims: {username: bob}
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: project, resource: P2, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects, projects-of-owners-again]}
+      - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes (once the source gives P1 to bob,
+  # his two projects P1 and P2 lie under B1, and the permission list names exactly B1)
+  - name: two matches under one branch anchor the rule at that branch once
+    subject: user-1
+    claims: {username: carol}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
+  - name: the branch both matches climb to cascades into the other service
+    subject: user-1
+    service: app
+    claims: {username: carol}
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P4, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: project, resource: P5, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
+  - name: the owner of projects under two branches gets both branches
+    subject: user-1
+    claims: {username: alice}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationHierarchyResourceFromClaim
+  - name: the rrs above the branch named by the claim, and everything under it
+    subject: dept-user
+    claims: {department: Branch 3}
+    questions:
+      - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, granted_by: [rrs-of-department]}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [rrs-of-department]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationHierarchyResourceFromClaim
+  - name: a value no resource has gives no anchor
+    subject: dept-user
+    claims: {department: no such branch}
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R2, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+  - name: a name two resources share gives an anchor for each
+    subject: dept-user
+    claims: {department: Central}
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [rrs-of-department]}
+      - {type: rrs, resource: R2, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R3, action: read, allowed: true, decision: allowed, granted_by: [rrs-of-department]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B6, action: read, allowed: true, decision: allowed}
+  - name: a claim the request does not carry gives no anchor
+    subject: dept-user
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R2, action: read, allowed: false, decision: no_access}
+  - name: by id the claim names the resource itself
+    subject: id-user
+    claims: {branch_id: B2}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [branch-by-id]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+  - name: by id a name does not match
+    subject: id-user
+    claims: {branch_id: Branch 2}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+  - name: without match_by the claim is looked up by name
+    subject: name-user
+    claims: {branch_name: Branch 4}
+    questions:
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [branch-by-name]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+  - name: by name an id does not match
+    subject: name-user
+    claims: {branch_name: B4}
+    questions:
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: an empty claim gives no anchor
+    subject: name-user
+    claims: {branch_name: ""}
+    questions:
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: a number claim is looked up as its text
+    subject: number-user
+    claims: {branch_no: 7}
+    questions:
+      - {type: branch, resource: "7", action: read, allowed: true, decision: allowed, granted_by: [branch-by-number]}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: a number given as a string is the same text
+    subject: number-user
+    claims: {branch_no: "7"}
+    questions:
+      - {type: branch, resource: "7", action: read, allowed: true, decision: allowed}
+  - name: a lookup type above the rule's type has no ancestor of that type to anchor at
+    subject: up-user
+    claims: {division_name: Div 1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+  - name: a denial anchored by a claim takes the level from the resource it names
+    subject: deny-user
+    claims: {blocked: B2}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [read-all-branches], denials: [{rule: deny-blocked-branch}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, denials: []}
+  - name: a denial without its claim has no anchor and denies nothing, whatever on_missing_attribute says
+    subject: deny-user
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, denials: []}

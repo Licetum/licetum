@@ -2,7 +2,9 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -36,11 +38,7 @@ type SynchronizerConfig struct {
 	ParentsListQuery string            `json:"parents_list_query,omitempty" doc:"kind=sql, optional: query of the parents of all resources returning the columns id, parent_type, parent_id (one row per link)" example:"SELECT document_id AS id, 'folder' AS parent_type, folder_id AS parent_id FROM document_folder"`
 	URL              string            `json:"url,omitempty" format:"uri" doc:"kind=http: base URL — {url}/{id} returns one resource, {url} returns them all" example:"https://filials.local/api/branch"`
 	Headers          map[string]string `json:"headers,omitempty" doc:"kind=http: headers of the requests to the source (e.g. Authorization). The values are secrets: responses mask them (********) and they are never logged" example:"{\"Authorization\":\"Bearer <token>\"}"`
-	CacheTTL         *int              `json:"cache_ttl,omitempty" doc:"Seconds to keep the list of the source's resources in Redis, so that requests in this window do not go to the source (0 — no cache; omitted — the default SYNC__FETCH_TTL). The resource cache may lag the source by this much" example:"30"`
 }
-
-// MaxCacheTTL bounds cache_ttl (a day).
-const MaxCacheTTL = 86_400
 
 // SecretMask replaces the source secrets (the password in a DSN, header values) in API responses. In
 // an update request the mask means "keep the stored value" — see RestoreSecrets.
@@ -142,9 +140,6 @@ func (c SynchronizerConfig) StoredConfig() map[string]any {
 			stored["headers"] = c.Headers
 		}
 	}
-	if c.CacheTTL != nil {
-		stored["cache_ttl"] = *c.CacheTTL
-	}
 	return stored
 }
 
@@ -165,13 +160,7 @@ func ConfigFromDB(kind string, raw []byte) (SynchronizerConfig, error) {
 			headers[name], _ = value.(string)
 		}
 	}
-	var cacheTTL *int
-	if v, ok := stored["cache_ttl"].(float64); ok {
-		n := int(v)
-		cacheTTL = &n
-	}
 	return SynchronizerConfig{
-		CacheTTL:  cacheTTL,
 		Kind:      KindFromDB(kind),
 		DSN:       get("dsn"),
 		Query:     get("query"),
@@ -188,6 +177,31 @@ type SynchronizerInput struct {
 	_               struct{}           `additionalProperties:"true"`
 	Config          SynchronizerConfig `json:"config" doc:"Source configuration"`
 	ProbeResourceID string             `json:"probe_resource_id" doc:"Id of an existing resource used to check the source before saving" example:"b1"`
+	// Regions: absent keeps the regions a synchronizer has (empty on creation), an empty list clears them.
+	Regions []string `json:"regions,omitempty" required:"false" doc:"Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. The list is stored and validated but selects no executor yet: any worker may ask the source. Absent on an update keeps them" example:"eu"`
+}
+
+// NormalizeRegions validates the regions of an input and returns them sorted and without repeats (nil stays nil: absent).
+func NormalizeRegions(regions []string) ([]string, error) {
+	if regions == nil {
+		return nil, nil
+	}
+	if len(regions) > 16 {
+		return nil, fmt.Errorf("regions: at most 16, got %d", len(regions))
+	}
+	out := make([]string, 0, len(regions))
+	seen := map[string]bool{}
+	for _, r := range regions {
+		if !ValidRegion(r) {
+			return nil, fmt.Errorf("regions: %q is not a region name (lowercase letters, digits and hyphens, at most 32)", r)
+		}
+		if !seen[r] {
+			seen[r] = true
+			out = append(out, r)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 func (s *SynchronizerInput) Validate() error {
@@ -209,7 +223,7 @@ func (s *SynchronizerInput) Validate() error {
 		}
 		*c = SynchronizerConfig{
 			Kind: KindSQL, DSN: dsn, Query: c.Query, ListQuery: c.ListQuery,
-			ParentsQuery: c.ParentsQuery, ParentsListQuery: c.ParentsListQuery, CacheTTL: c.CacheTTL,
+			ParentsQuery: c.ParentsQuery, ParentsListQuery: c.ParentsListQuery,
 		}
 	case KindHTTP:
 		if c.URL == "" {
@@ -228,13 +242,15 @@ func (s *SynchronizerInput) Validate() error {
 		if len(headers) == 0 {
 			headers = nil
 		}
-		*c = SynchronizerConfig{Kind: KindHTTP, URL: u, Headers: headers, CacheTTL: c.CacheTTL}
+		*c = SynchronizerConfig{Kind: KindHTTP, URL: u, Headers: headers}
 	default:
 		return apperr.Unprocessable(i18n.SynchronizerKindInvalid)
 	}
-	if c.CacheTTL != nil && (*c.CacheTTL < 0 || *c.CacheTTL > MaxCacheTTL) {
-		return apperr.Unprocessable(i18n.CacheTTLInvalid, MaxCacheTTL)
+	regions, err := NormalizeRegions(s.Regions)
+	if err != nil {
+		return apperr.Unprocessable(i18n.SynchronizerRegionsInvalid, err.Error())
 	}
+	s.Regions = regions
 	return nil
 }
 
@@ -284,6 +300,23 @@ type Synchronizer struct {
 	ID             uuid.UUID          `json:"id" format:"uuid" doc:"Synchronizer id"`
 	TypeResourceID uuid.UUID          `json:"type_resource_id" format:"uuid" doc:"Resource type id"`
 	Config         SynchronizerConfig `json:"config" doc:"Source configuration"`
+	Regions        []string           `json:"regions" doc:"Regions the source can be reached from; empty means from anywhere. The list is stored but selects no executor yet: any worker may ask the source" example:"eu"`
+}
+
+// ValidRegion reports a region name: lowercase Latin letters, digits and hyphens, starting with a letter or a digit, at most 32.
+func ValidRegion(name string) bool {
+	if name == "" || len(name) > 32 {
+		return false
+	}
+	for i, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '-' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validHeaderName reports an RFC 9110 token: letters, digits and !#$%&'*+-.^_`|~.

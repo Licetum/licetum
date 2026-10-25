@@ -63,5 +63,5 @@ type RolePermissionWithContext struct {
 	ServiceID        uuid.UUID `json:"service_id" format:"uuid" doc:"Id of the service that owns the resource type"`
 	ServiceName      string    `json:"service_name" doc:"Name of the service that owns the resource type"`
 	TypeResourceName string    `json:"type_resource_name" doc:"Resource type name"`
-	TargetValid      bool      `json:"target_valid" doc:"Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer (see AssignmentRule.target_valid)"`
+	TargetValid      bool      `json:"target_valid" doc:"Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer, or that looks a resource up in, or climbs through, such a type (see AssignmentRule.target_valid)"`
 }

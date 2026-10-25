@@ -27,22 +27,22 @@ Start the complete development stack:
 task dev
 ```
 
-This starts PostgreSQL, Redis, Dex, the Go services (`core/`, `admin-api/`) and the Next.js interface (`web/`). Open
+This starts PostgreSQL, Dex, the Go services (`core/`, `admin-api/`) and the Next.js interface (`web/`). Open
 <http://localhost:3000> and sign in with the development account:
 
 - Email: `admin@example.com`
 - Password: `password`
 
 The Dex client, credentials, and signing configuration are for local development only. Configure a
-real identity provider through `PLATFORM__*` variables before using Licetum outside the local
-Compose stack.
+real identity provider (`ADMIN_AUTH__*` of the admin API and `OIDC_*` of the web interface) before using Licetum outside the
+local Compose stack.
 
 ## Repository layout
 
-- `core/` — the MIT module: the engine, the check API, migrations, synchronizers and the check schema
+- `core/` — the MIT module: the engine, the PDP (the AuthZEN API), migrations, synchronizers and the PDP schema
 - `admin-api/` — the AGPL module: the admin API and the commands that go with it (depends on `core/`)
 - `web/` — the Next.js + Ant Design interface (see `web/README.md`)
-- `infra/` — Compose fragments for PostgreSQL, Redis, and Dex
+- `infra/` — Compose fragments for PostgreSQL and Dex
 - `core/schema/` and `admin-api/schema/` — committed OpenAPI schemas used to generate the API client of `web/`
 - `.github/workflows/ci.yml` — checks and tests run by GitHub Actions
 
@@ -80,9 +80,10 @@ after changing an API contract; the generated schemas in `core/schema/` and `adm
 ## Testing
 
 `task check` is the local equivalent of the CI quality job. It checks Go formatting and linting,
-module tidiness, OpenAPI schema drift, web formatting, TypeScript, and translations.
+that the code behind the build tags (`integration`, `chaos`, `multiregion`) compiles, module tidiness,
+OpenAPI schema drift, web formatting, TypeScript, and translations.
 
-Backend integration tests use disposable PostgreSQL and Redis containers:
+Backend integration tests use disposable PostgreSQL containers:
 
 ```bash
 task go:test:unit
@@ -91,7 +92,7 @@ task go:coverage
 ```
 
 Docker is required for integration and coverage runs. The suite creates disposable containers and
-its own database schema, so no shared PostgreSQL or Redis instance is needed. The integration and
+its own database schema, so no shared PostgreSQL instance is needed (a server named by `LICETUM_TEST_POSTGRES_URI` is used instead of a container when Docker is not available). The integration and
 coverage tasks resolve the active Docker context automatically; direct `go test` runs should set
 `DOCKER_HOST` when Docker Desktop or another non-default context is active.
 
@@ -99,8 +100,8 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 
 ### Backend and API changes
 
-- Keep the dependency direction: `api` → `service` → `db`/`redisx`/`synchronizer` → `model`/`config`/`i18n`/`apperr`.
-- Keep HTTP concerns in `admin-api/api/` and `core/server/`; business logic belongs in `admin-api/service/` (admin) or `core/engine/` (check).
+- Keep the dependency direction: `admin-api/api` → `admin-api/service` → `core/engine`, and in the core `server` → `engine` → `db`/`synchronizer` → `model`/`config`/`i18n`/`apperr` (depguard enforces it). No package imports a Redis client: there is no Redis, and `task go:deps:check` (part of `task check`) fails on `github.com/redis/go-redis`.
+- Keep HTTP concerns in `admin-api/api/` and `core/server/`; business logic belongs in `admin-api/service/` (admin) or `core/engine/` (decisions, synchronization).
 - Register new Huma operations with an `OperationID`, summary, description, tags, documented errors,
   and model field documentation.
 - Write API descriptions and user-facing API messages in English first.
@@ -108,6 +109,29 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
   change. Add error messages to all supported locales.
 - Add a new numbered Goose migration for schema changes. Do not rewrite an already-applied migration.
 - Run `task generate` after changing an API schema and verify that `task check` passes.
+
+### Migrations must work with the previous release
+
+During a rolling update the new schema is applied (`licetum migrate`, which runs first) while pods of the **previous**
+release are still serving requests, and a rollback puts those pods back for good. So a migration must leave the schema
+usable by the release that came before it. Make every change in two steps, **expand** and **contract**, in two releases:
+
+1. **Expand** (release N): add what the new code needs, and change nothing the old code reads or writes. Add a column
+   as nullable or with a default, add a table or an index, add an enum value. The new code reads and writes both the old
+   and the new shape.
+2. **Contract** (release N+1 or later, once release N-1 can no longer run): drop the column, the table or the constraint
+   nothing uses any more, make a column `NOT NULL`, tighten a check.
+
+In particular, in one release do not: drop or rename a column, a table or an enum value; add a `NOT NULL` column without
+a default; narrow a column type; add a constraint that rows written by the old code can violate; change the meaning of
+an existing value. A rename is a new column, a copy, a switch of the readers, and a drop two releases later. Long
+statements (a table rewrite, an index on a large table) need `CREATE INDEX CONCURRENTLY` or batches, because they hold
+locks that the pods of the previous release wait on.
+
+The PDP reports ready (`/readyz` on its ops port, `PDP__OPS_ADDR`, `:9090` by default) when the schema is **at least** the
+version it was built for, so pods of the previous release stay in service while the new schema is applied. `licetum migrate` takes an advisory lock, so several
+runs started together (one per pod) apply each migration once; it needs a connection that lasts for the whole run, which
+behind PgBouncer in transaction mode means `DB__MIGRATE_URI` pointing at PostgreSQL itself.
 
 ### Interface changes
 

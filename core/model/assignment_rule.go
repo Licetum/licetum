@@ -65,13 +65,13 @@ func (v *PredicateValue) UnmarshalJSON(data []byte) error {
 }
 
 // PredicateCondition is a single condition. Conditions in a list are ANDed. Source says where the attribute is read
-// from: a claim of the token (the default), an attribute the request carries (context), or the time of the decision
+// from: a claim of the subject (the default), an attribute the request carries (context), or the time of the decision
 // (now: hour and weekday, in UTC).
 type PredicateCondition struct {
 	Attr   string         `json:"attr" doc:"The attribute: a claim name (source claim), a key of the request context (source context), or hour or weekday (source now)" example:"department"`
 	Op     string         `json:"op" enum:"eq,ne,in,not_in,regex,gt,ge,lt,le,in_cidr" doc:"Operator: eq — equality, ne — inequality, in — membership in a list, not_in — absence from a list, regex — regular expression search (RE2), gt, ge, lt, le — numeric comparison, in_cidr — the address lies in one of the networks. An attribute the request does not carry never satisfies a condition of an allow rule; ne and not_in included"`
 	Value  PredicateValue `json:"value" doc:"The value to compare with: a string, or a list for in, not_in and in_cidr"`
-	Source string         `json:"source,omitempty" enum:"claim,context,now" doc:"Where the attribute comes from: claim (a token claim, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"`
+	Source string         `json:"source,omitempty" enum:"claim,context,now" doc:"Where the attribute comes from: claim (a claim of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"`
 }
 
 const (
@@ -198,7 +198,7 @@ func validateCondition(c PredicateCondition) error {
 // the hierarchy up to the rule's own type (the number of levels is derived from the type tree).
 type ResourceFromClaim struct {
 	_                    struct{}  `nullable:"true" additionalProperties:"true"`
-	Claim                string    `json:"claim" doc:"Name of the token claim whose value is looked up in the source" example:"branch_name"`
+	Claim                string    `json:"claim" doc:"Name of the claim of the subject whose value is looked up in the source" example:"branch_name"`
 	LookupTypeResourceID uuid.UUID `json:"lookup_type_resource_id" format:"uuid" doc:"Resource type in which the claim value is looked up (may belong to any service)"`
 	MatchBy              string    `json:"match_by" required:"false" default:"name" doc:"Which resource field the claim value is matched against: name, id, or meta.<attribute> — an attribute the source reported (equal to the claim value, or containing it if the attribute is a list)" example:"meta.owner"`
 }
@@ -272,7 +272,7 @@ type AssignmentRuleInput struct {
 	ResourceFromClaim  *ResourceFromClaim   `json:"resource_from_claim" required:"false" doc:"Compute resource_id dynamically from a claim of the subject; mutually exclusive with resource_id"`
 	Access             []string             `json:"access" minItems:"1" required:"false" doc:"Access levels of the inline permission (read, write, ...); required without role_id" example:"[\"read\",\"write\"]"`
 	Subject            *string              `json:"subject" required:"false" doc:"A specific subject or group (group:{uuid}); mutually exclusive with predicate and member_of_group_id" example:"alice"`
-	Predicate          []PredicateCondition `json:"predicate" required:"false" doc:"AND conditions over token attributes; mutually exclusive with subject and member_of_group_id"`
+	Predicate          []PredicateCondition `json:"predicate" required:"false" doc:"AND conditions over the claims and the request; mutually exclusive with subject and member_of_group_id"`
 	MemberOfGroupID    *uuid.UUID           `json:"member_of_group_id" format:"uuid" required:"false" doc:"The rule applies to everyone who is a member of this group; mutually exclusive with subject and predicate"`
 	Enabled            *bool                `json:"enabled" required:"false" default:"true" doc:"Whether the rule is active"`
 	Effect             string               `json:"effect" required:"false" enum:"allow,deny" default:"allow" doc:"allow grants the access levels; deny takes them away from everything the rule covers, whatever the allow rules say, unless an exception below the denial lifts it"`
@@ -380,7 +380,7 @@ type AssignmentRule struct {
 	ResourceFromClaim  *ResourceFromClaim   `json:"resource_from_claim" doc:"Dynamic resource_id computed from a claim"`
 	Access             []string             `json:"access" doc:"Access levels of the inline permission; null for a role rule"`
 	Subject            *string              `json:"subject" doc:"A specific subject or group (group:{uuid})"`
-	Predicate          []PredicateCondition `json:"predicate" doc:"AND conditions over token attributes"`
+	Predicate          []PredicateCondition `json:"predicate" doc:"AND conditions over the claims and the request"`
 	MemberOfGroupID    *uuid.UUID           `json:"member_of_group_id" format:"uuid" doc:"Group whose members are granted access"`
 	Enabled            bool                 `json:"enabled" doc:"Whether the rule is active"`
 	Effect             string               `json:"effect" enum:"allow,deny" doc:"allow or deny"`
@@ -446,5 +446,5 @@ type AssignmentRuleWithContext struct {
 	ServiceName      *string    `json:"service_name" doc:"Name of the service that owns the resource type; null for a role rule"`
 	TypeResourceName *string    `json:"type_resource_name" doc:"Resource type name; null for a role rule"`
 	RoleName         *string    `json:"role_name" doc:"Name of the granted role; null for an inline rule"`
-	TargetValid      bool       `json:"target_valid" doc:"Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted"`
+	TargetValid      bool       `json:"target_valid" doc:"Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted — and for a resource_from_claim that looks a resource up in, or climbs through, such a type. A denial of that kind still applies below the links to the resources the type left"`
 }

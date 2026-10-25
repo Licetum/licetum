@@ -13,7 +13,7 @@ under the GNU Affero General Public License v3.0 only (see [`LICENSE`](LICENSE))
 |---|---|
 | `licetum-admin admin` | the admin API (default `:8000`) |
 | `licetum-admin restore-admin [-user name]...` | puts the access of the platform administrators back (see [Locked out](#locked-out)) |
-| `licetum-admin openapi admin [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server, database or Redis |
+| `licetum-admin openapi admin [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server or a database |
 
 The database schema is migrated by the core binary: run `licetum migrate` from [`../core`](../core/README.md) first.
 
@@ -23,13 +23,13 @@ The database schema is migrated by the core binary: run `licetum migrate` from [
 cd core && go run ./cmd/licetum migrate        # the schema and the platform self-service
 cd ../admin-api
 export DB__URI=postgresql://authz:authz@localhost:5432/authz_db
-export REDIS__URI=redis://localhost:6379/0
-export CORS__ALLOW_ORIGINS=http://localhost:3000   # the origin of the web interface
+export ADMIN_AUTH__ISSUER=http://localhost:5556/dex ADMIN_AUTH__AUDIENCE=licetum-local ADMIN_AUTH__JWKS_URL=http://localhost:5556/dex/keys
 go run ./cmd/licetum-admin admin
 ```
 
-The variables are the same as for the core (see [`../core/README.md`](../core/README.md#configuration)). The web
-interface must be in `CORS__ALLOW_ORIGINS`: its sign-in redirect is checked against that list.
+The variables are the same as for the core (see [`../core/README.md`](../core/README.md#configuration)). Administrators
+sign in at the OpenID Connect provider of `ADMIN_AUTH__*`; the browser reaches the admin API only through the web
+interface's server, so the API has no CORS setting.
 
 The API documents itself like FastAPI: Swagger UI at `/docs` (`/docs?lang=ru` or `zh` for the translations) and the
 OpenAPI 3.1 spec at `/openapi.json` and `/openapi.yaml`. `schema/admin.yaml` is the exported spec; the web interface
@@ -38,8 +38,12 @@ fails when it is out of date.
 
 ## Access control: the platform policies
 
-The admin API is protected by the same permission mechanism as any client service. `licetum migrate` registers Licetum
-as a service within itself (`PLATFORM__*`) and seeds its access policies: resource types of that service
+The admin API is protected by the same permission mechanism as any client service. Administrators sign in at the OpenID
+Connect provider of `ADMIN_AUTH__*` (`ADMIN_AUTH__ISSUER`, `ADMIN_AUTH__AUDIENCE`, `ADMIN_AUTH__JWKS_URL`, `ADMIN_AUTH__SUBJECT_CLAIM`):
+the admin API verifies the bearer token against its keys (`iss` exact, `aud` must contain the audience, `exp` and `nbf`, an
+asymmetric algorithm) and a missing or bad token is a 401 with `WWW-Authenticate`; what the administrator may do then comes
+from the policies below. The web interface is the OIDC client of the same provider. `licetum migrate` registers Licetum
+as a service within itself (`PLATFORM__*`, once `ADMIN_AUTH__*` is set) and seeds its access policies: resource types of that service
 (`core/model/platform.go`):
 
 | Policy | Covers |
@@ -54,7 +58,7 @@ as a service within itself (`PLATFORM__*`) and seeds its access policies: resour
 Each policy has a synchronizer (kind `sql`) that reads its own table of this instance. Without it a type has no resources
 and therefore no whole-type access. The seed also creates the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, default
 `Platform administrator`; the former `PLATFORM__ADMIN_ROLE_NAME` is still read when the new name is not set). Its members
-are everyone whose `PLATFORM__ADMIN_CLAIM` claim (default `preferred_username`) takes one of
+are everyone whose `PLATFORM__ADMIN_CLAIM` claim (default `ADMIN_AUTH__SUBJECT_CLAIM`, itself `preferred_username`) takes one of
 `PLATFORM__ADMIN_CLAIM_VALUES` (a JSON list or a comma-separated string), and it has rules granting read and write on every
 policy as a whole. Without values the group is empty and nobody can manage the platform.
 
@@ -82,17 +86,20 @@ A denial rule, or an edit made directly in the database, can still lock everyone
 admin group, its memberships and the admin rules back, and switches off the denials that cover a policy:
 
 ```bash
-go run ./cmd/licetum-admin restore-admin -user alice    # alice becomes an administrator too; PLATFORM__ADMIN_CLAIM_VALUES are restored
+go run ./cmd/licetum-admin restore-admin -user alice    # alice becomes an administrator too (matched by ADMIN_AUTH__SUBJECT_CLAIM); PLATFORM__ADMIN_CLAIM_VALUES are restored
 ```
 
 It needs the database variables. The seed never does this on purpose.
 
-## Known subjects
+## The subject directory
 
-The subjects of verified tokens can be remembered (the name, and only the claims the policies read), so the interface can
-tell which groups a person is in and whom a rule reaches. It is off by default: `SUBJECTS__ENABLED=true` turns it on (the
-development stack does). `SUBJECTS__RETENTION_DAYS` (default `90`; `0` keeps them forever) removes the subjects that are not
-seen again. `GET /subject` lists them and `DELETE /subject/{subject}` forgets one.
+The people of a service, as its application sends them: `PUT /service/{id}/subjects` takes up to 1000 people per call (`type`,
+`id`, `name`, `properties`), an unchanged entry is left untouched and a write takes no revision. The directory lets the
+interface tell which groups a person is in and whom a rule reaches (the people of the directories of the services of the rule's
+types), and answers the AuthZEN subject search. `GET /service/{id}/subjects` lists it (`type`, `search`, `limit`, `offset`),
+`GET` and `DELETE /service/{id}/subjects/{type}/{id}` read and remove one person, and `GET`/`PUT /service/{id}/subjects/settings`
+read and set `retention_days` (none by default: an entry is kept until it is deleted; the worker removes the entries not sent
+again within it). Until the roles of the service arrive the routes need read or write on the whole `group_member` policy.
 
 ## Policy tools
 
@@ -125,8 +132,8 @@ here too.
 
 ## Load test
 
-`loadtest/` measures the check API (`licetum check`) at a policy size. The harness seeds a service through this module's
-service layer, starts the check binary as its own process, and ramps the traffic up with [k6](https://grafana.com/docs/k6/)
+`loadtest/` measures the PDP (`licetum pdp`) at a policy size. The harness seeds a service through this module's
+service layer, starts the PDP binary as its own process, and ramps the traffic up with [k6](https://grafana.com/docs/k6/)
 until a step misses its objective. The admin API takes no load: it writes the policy once.
 
 ```bash
@@ -138,19 +145,26 @@ k6 must be on the `PATH` (or pass `-k6-bin`); CI installs the version the workfl
 
 What a step measures:
 
-- **k6** sends the requests of the mix (`permission`, `check`, AuthZEN `evaluation` and `evaluations`, `on_behalf`) at the
-  rate of the step. The arrivals are an open model: a slow server does not lower the rate, it shows as late answers and
-  as `dropped` arrivals, which are the sign that a step is saturated.
+- **k6** sends the requests of the mix at the rate of the step. They are the AuthZEN API: `search_resource` (a page of
+  the documents a person may read), and `evaluation`, `evaluations10` and `evaluations100` (one, ten and a hundred questions
+  about a person). The mix is set with `-mix name=weight,...`. Every request is asked as one PEP client of the service, the way
+  a service's own backend asks: the seeding makes the client (kind `api_key`, every operation) and issues its one API key, which
+  is the bearer of every request; the person a question is about is the `subject` of the body, and the claims the rules read
+  (the `department` that picks the groups) are its `properties`. No token of a person is involved, and no identity provider. The
+  PDPs read the client and its key from the database; the rate limit of a client (`PEP__RATE_LIMIT`) is switched off for them.
+  The arrivals are an open model: a slow server does not lower the rate, it shows as late answers and as `dropped` arrivals,
+  which are the sign that a step is saturated.
 - **The server** is read at the edges of each step: its CPU (from `/proc`), its cache hits and the time it spent per
   request (from `/metrics`), and the database: its blocks read, and when the server preloads `pg_stat_statements`, the
   time of its statements and the most expensive ones during the ramp.
 
 The results go to `reports/loadtest/`: `summary.md` (the table of the steps and where the time went), `result.json`,
-the k6 summaries and logs, and `check.log`. The tokens of the run are written to a temporary directory and removed.
+the k6 summaries and logs, and `check.log`. The API key of the run is written, with the script, to a temporary directory and
+removed when the run ends.
 
-Docker runs PostgreSQL and Redis; a server named by `LICETUM_TEST_POSTGRES_URI` and `LICETUM_TEST_REDIS_URI` is used
+Docker runs PostgreSQL; a server named by `LICETUM_TEST_POSTGRES_URI` is used
 instead. The containers preload `pg_stat_statements`; an external server needs it in `shared_preload_libraries` for the
-statement figures. The check server's pool is `-db-pool` connections (30 by default, with no overflow, so the pool is
+statement figures. The PDP's pool is `-db-pool` connections (30 by default, with no overflow, so the pool is
 the setting under test); a pool smaller than the traffic makes the requests wait for a connection, which shows as a tail of slow answers.
 
 Two switches for reading a run: `LICETUM_LOADTEST_K6_RAW=1` keeps the point of every request (`*.points.json.gz`), and
@@ -162,7 +176,7 @@ The nightly run is `.github/workflows/loadtest.yml`; the smoke volume runs on pu
 
 ```
 cmd/licetum-admin/     entry point: admin / restore-admin / openapi subcommands
-cmd/licetum-loadtest/  load test of the check API (see Load test)
+cmd/licetum-loadtest/  load test of the PDP (see Load test)
 loadtest/           the seeding, the traffic and the report of the load test
 api/                HTTP operations on Huma v2: documented routes, the policy checks (auth.go, admin_targets.go), batches
 service/            business logic of the admin: services, types, synchronizers, groups, roles, rules, changes, policy tools;

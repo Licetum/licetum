@@ -1,0 +1,13 @@
+{
+  "name": "a request to the evaluations endpoint without evaluations is one evaluation, answered by its decision",
+  "source": "AuthZEN 1.0, Access Evaluations API: the top-level fields are one evaluation when evaluations is absent",
+  "checked_against_text": false,
+  "endpoint": "evaluations",
+  "grants": [["alice@acmecorp.com", "can_read", "todo", "2"]],
+  "request": {
+    "subject": {"type": "user", "id": "alice@acmecorp.com"},
+    "resource": {"type": "todo", "id": "2"},
+    "action": {"name": "can_read"}
+  },
+  "decision": true
+}

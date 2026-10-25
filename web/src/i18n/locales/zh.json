@@ -103,8 +103,12 @@
     "copied": "已复制",
     "copyDetails": "复制详情给管理员",
     "error": {
-      "api_unreachable": "管理 API 没有响应。请检查它是否在运行，以及 ADMIN_API_URL 是否正确。",
-      "not_seeded": "Licetum 尚未设置：自助服务尚未创建。请运行迁移（licetum migrate）后重试。",
+      "denied": "身份提供方拒绝了此次登录。",
+      "idp_error": "身份提供方报告了错误。请重试。",
+      "idp_unreachable": "身份提供方没有响应令牌请求。请检查 OIDC_TOKEN_URL 后重试。",
+      "invalid_response": "身份提供方的响应本应用无法使用：访问令牌必须是 JWT，且 nonce 必须一致。请检查客户端设置。",
+      "not_configured": "登录尚未配置：此应用需要身份提供方的设置（OIDC_AUTHORIZATION_URL、OIDC_TOKEN_URL、OIDC_CLIENT_ID）。",
+      "state": "登录已过期，或并非在此浏览器中发起。请重新开始。",
       "unknown": "登录请求已过期或被拒绝。请重试。"
     },
     "errorHint": "如果错误反复出现，请把时间和错误代码告诉您的管理员。",
@@ -125,7 +129,7 @@
     "addQuestion": "添加问题",
     "allTypes": "所有类型",
     "attrs": "属性",
-    "attrsHint": "此人的令牌会携带的声明。规则会读取它们。",
+    "attrsHint": "此人的属性：其令牌会携带的声明。规则会读取它们。",
     "context": "请求上下文",
     "contextHint": "请求本身携带的内容（地址、渠道）。由调用方服务设置；切勿从用户输入复制。",
     "denied": "是什么拒绝了它",
@@ -138,9 +142,18 @@
     "lifted": "被例外解除",
     "linkCopied": "链接已复制",
     "list": {
+      "more": "加载更多",
+      "noResources": "此人看不到该类型的任何资源。",
+      "noTypes": "该服务没有资源类型。",
+      "noTypesHint": "请先在“资源类型”标签页中描述它们。",
       "none": "{{subject}} 在此服务中看不到任何内容。",
       "noneHint": "没有规则授予其访问权限。请向其所在的组或直接向此人授予访问权限。",
+      "noneYet": "目前读取的这部分资源中没有找到。请加载更多以继续。",
+      "note": "有资源的类型按需读取：展开某个类型，可分页查看此人拥有任一级别的资源。",
+      "openHint": "展开此行以列出",
       "resources": "资源",
+      "shown_other": "显示 {{count}} 个资源",
+      "wholeLevels": "对整个类型",
       "wholeType": "整个类型"
     },
     "missingAttr": "请求缺少某个条件所读取的属性：按规则所述，拒绝生效。",
@@ -230,34 +243,6 @@
     "value": "值",
     "valueList": "a, b, c"
   },
-  "delegation": {
-    "calls": {
-      "at": "时间",
-      "checked": "检查：允许 {{allowed}} / {{total}}",
-      "client": "客户端",
-      "empty": "还没有调用",
-      "emptyHint": "受信任客户端的每次调用都会记录在这里：哪个客户端、询问了谁、结果如何。",
-      "older": "更早的调用",
-      "permission": "权限",
-      "subject": "对象",
-      "title": "代表个人发起的调用",
-      "what": "内容"
-    },
-    "claims": {
-      "contextHint": "这是请求的属性，不是令牌的属性：由调用方放入 context。",
-      "none": "规则尚未读取任何声明：仅凭名称识别此人。",
-      "title": "此服务的策略读取的内容",
-      "usage": "规则中 {{rules}} 处，基于声明的目标中 {{targets}} 处，组成员资格中 {{memberships}} 处",
-      "warn": "受信任的客户端必须发送这些声明——如果它转发的是个人的令牌，则该令牌必须携带它们。否则答案会与真实情况不同：读取缺失声明的规则不会生效，此人也不会进入由该声明定义的组。"
-    },
-    "clients": "受信任的客户端",
-    "clientsHelp": "客户端令牌的 azp（或 client_id）。请信任后端客户端，而不是用户用来登录的那个客户端：受信任客户端的令牌可以询问任何人。",
-    "clientsPlaceholder": "客户端令牌的 azp，然后按 Enter",
-    "example": "可复制的调用",
-    "intro": "您信任的客户端应用可以在没有个人令牌的情况下询问此人能做什么：它使用自己的令牌登录，并给出此人及其令牌本应携带的声明。",
-    "saved": "已保存受信任的客户端",
-    "title": "代表个人"
-  },
   "grant": {
     "addedMore_other": "已授予：{{count}}。表单已清空，可继续下一个。",
     "advanced": {
@@ -293,11 +278,10 @@
       "conflicts_other": "有 {{count}} 条拒绝或例外与此访问权限相交",
       "dynamic": "资源由提问者的声明找到，因此有多少取决于具体的人。",
       "failed": "无法计算影响。您仍然可以授予该访问权限。",
-      "noPeople_other": "已知的 {{count}} 个人中没有人符合",
+      "noPeople_other": "目录中的 {{count}} 个人中没有人符合",
       "partial_other": "（另有 {{count}} 条访问权限未计入）",
-      "people_other": "涉及 {{count}} 个已知的人",
-      "registryEmpty": "尚未见到任何人，因此无法说明会涉及谁。人员在登录服务后才会出现。",
-      "registryOff": "人员注册表已关闭，因此无法说明会涉及谁。可通过 SUBJECTS__ENABLED 开启。",
+      "people_other": "涉及目录中的 {{count}} 个人",
+      "registryEmpty": "服务的目录为空，因此无法说明会涉及谁。应用会把其人员发送到主体目录。",
       "resources_other": "涵盖 {{count}} 个资源",
       "title": "这将产生的效果"
     },
@@ -594,40 +578,101 @@
   },
   "integration": {
     "about": {
-      "authzen": "同样的问题，使用 OpenID AuthZEN 1.0 格式，供已支持它的客户端使用。",
-      "check": "回答最多 100 个“此人能否对该对象执行此操作”的问题，可附带解释。",
-      "permission": "按类型返回此人可使用的资源及其级别。用于过滤列表。"
+      "evaluation": "OpenID AuthZEN 1.0 格式的单个问题：此人能否对该对象执行此操作。添加 context.licetum.explain 可获得原因。",
+      "evaluations": "一次请求最多 100 个这样的问题，并带有默认主体。options 中的语义可在第一个拒绝或允许处终止批处理。",
+      "search_resource": "此人可对其执行该操作的该类型资源，分页返回。用于过滤列表。",
+      "search_action": "此人对资源的访问级别；未指定资源时为对整个类型的级别。",
+      "search_subject": "服务目录中可对资源执行该操作的人员。需要先把人员发送到目录。"
     },
-    "api": "检查 API",
+    "api": "PDP 地址",
     "codes": {
       "200": "答案",
-      "401": "没有令牌，或令牌无效或已过期",
-      "403": "请求有效，但不允许此调用方",
-      "404": "服务不存在",
-      "424": "服务的登录提供方没有响应",
+      "400": "请求无效",
+      "401": "没有凭据，或 API 密钥/令牌无效或已过期",
+      "403": "凭据有效，但在此服务上没有任何权限：它属于其他服务、已被停用或不具备该操作",
+      "424": "无法读取令牌签发方的密钥",
+      "429": "来自该客户端的请求过多；请在 Retry-After 指定的时间后重试",
       "meaning": "含义",
       "status": "代码",
       "title": "响应代码"
     },
     "fresh": {
-      "body": "答案最多缓存 60 秒。修改权限后，请把写入响应中的 X-Authz-Revision 头作为 at_least_as_fresh 传入，或使用 consistency=higher。",
+      "body": "答案最多缓存 60 秒。修改权限后，请把写入响应中的 X-Authz-Revision 头放入 context.licetum.min_revision，答案就会反映该修改。",
       "title": "答案的新鲜度"
     },
-    "hint": "此服务的代码如何询问 Licetum 某人能做什么。下面的调用已带有该服务自己的名称和类型。",
+    "hint": "此服务的代码如何以 OpenID AuthZEN 1.0 格式询问 Licetum 某人能做什么。下面的调用已带有该服务自己的名称和类型；凭据是该服务 PEP 客户端的 API 密钥。",
     "lang": "语言",
-    "mode": {
-      "check": "X 能否对 Z 执行 Y（单个问题）",
-      "permission": "某人能做什么（列表）"
-    },
     "modeLabel": "询问什么",
+    "op": {
+      "evaluation": "X 能否对 Z 执行 Y",
+      "evaluations": "多个问题",
+      "search_resource": "哪些资源",
+      "search_action": "哪些操作",
+      "search_subject": "哪些人员"
+    },
+    "sample": {
+      "action": "操作",
+      "person": "人员",
+      "resource": "资源 ID",
+      "type": "类型"
+    },
     "try": {
-      "401": "令牌被拒绝：已过期，或由与此服务所连接的提供方不同的提供方签发。",
-      "424": "服务的登录提供方没有响应，因此无法验证令牌。",
-      "hint": "令牌仅用于这一次请求，不会被保存。请粘贴您的服务从其身份提供方获得的令牌。",
+      "401": "凭据被拒绝：密钥错误或已被撤销，或令牌已过期或来自未注册的签发方。",
+      "403": "凭据在此服务上没有任何权限：请检查其客户端是否属于该服务、已启用并可执行该操作。",
+      "424": "无法读取令牌签发方的密钥，因此无法验证令牌。",
+      "hint": "凭据仅用于这一次请求，不会被保存。请粘贴该服务 PEP 客户端的 API 密钥，或已注册签发方的令牌。",
       "run": "试用",
-      "title": "用您的令牌试一试",
-      "token": "访问令牌"
+      "title": "用凭据试一试",
+      "token": "API 密钥或访问令牌"
     }
+  },
+  "issuers": {
+    "add": "注册签发方",
+    "algsDefault": "默认（RS256、ES256、EdDSA）",
+    "audienceDefault": "PDP 的受众",
+    "clientsNote": "出示某个签发方令牌的客户端在其服务的“PEP 客户端”标签页中注册。",
+    "col": {
+      "algs": "算法",
+      "audiences": "受众",
+      "issuer": "签发方与密钥",
+      "typ": "令牌类型"
+    },
+    "delete": {
+      "body": "只有没有任何客户端使用的签发方才能删除。",
+      "failed": "无法删除签发方",
+      "title": "删除签发方“{{issuer}}”？"
+    },
+    "detect": {
+      "fail": "无法检测——请手动输入密钥地址。",
+      "ok": "已找到其密钥地址。"
+    },
+    "detectBtn": "自动检测",
+    "drawer": {
+      "add": "注册签发方",
+      "edit": "修改签发方"
+    },
+    "empty": {
+      "hint": "注册后，PEP 客户端即可出示您的身份提供方的访问令牌。使用 API 密钥的客户端不需要。",
+      "title": "没有已注册的签发方"
+    },
+    "field": {
+      "algs": "签名算法",
+      "algsHelp": "仅限非对称算法。留空：RS256、ES256 和 EdDSA。",
+      "audiences": "受众",
+      "audiencesHelp": "令牌的 aud 必须包含其中之一。留空：使用 PDP 的受众。",
+      "audiencesPlaceholder": "令牌的 aud，然后回车",
+      "issuer": "签发方（iss）",
+      "issuerHelp": "与令牌的 iss 严格比较。Keycloak realm 的形式：https://host/realms/名称。",
+      "jwks": "密钥（JWKS 地址）",
+      "jwksHelp": "读取签发方公钥的地址。",
+      "requireTyp": "仅接受头部 typ 为 at+jwt 的令牌（RFC 9068）"
+    },
+    "hint": "其访问令牌可由各服务的 PEP 出示的身份提供方。它们由所有服务共用：服务的 PEP 客户端指定其中之一以及其令牌携带的 client ID。令牌只有在 aud 包含某个受众、签名使用允许的算法且未过期时才会被接受。",
+    "problem": {
+      "issuer": "请输入签发方。",
+      "jwks": "请输入密钥地址（http 或 https）。"
+    },
+    "replaces": "已有同名签发方：保存将替换其设置。"
   },
   "logs": {
     "applied": "设置会在约 15 秒内应用到每个副本，无需重启。",
@@ -710,6 +755,8 @@
       "rules": "直接访问权限"
     },
     "create": "创建组",
+    "directoryEmpty": "此服务的目录为空：只列出规则和历史中提到的人。应用通过 PUT /service/{id}/subjects 发送其人员。",
+    "directoryOf": "服务的目录",
     "empty": {
       "hint": "组按某种特征把人员联合起来；授予组的访问权限会被其所有成员获得。",
       "tag": "空",
@@ -722,7 +769,6 @@
     "noMatch": "没有找到",
     "noPeople": "还没有人被提到",
     "noPeopleHint": "请直接打开某个人：/people/用户名。",
-    "registryOff": "人员注册表已关闭：只列出规则和历史中提到的人。用 SUBJECTS__ENABLED 开启它，即可看到所有登录的人及其姓名和组。",
     "search": "按名称或组成搜索…",
     "searchPeople": "按用户名查找人员…",
     "tab": {
@@ -730,25 +776,128 @@
       "people": "人员"
     }
   },
+  "pep": {
+    "col": {
+      "enabled": "启用",
+      "identity": "识别依据",
+      "kind": "类型",
+      "name": "名称",
+      "operations": "操作"
+    },
+    "create": "注册客户端",
+    "delete": {
+      "body": "其 API 密钥将被撤销，其令牌将不再被接受。名称可重新使用。",
+      "title": "删除客户端“{{name}}”？"
+    },
+    "disableHint": "停用：其密钥和令牌将被拒绝",
+    "disabled": "已停用",
+    "drawer": {
+      "create": "注册 PEP 客户端",
+      "edit": "客户端“{{name}}”"
+    },
+    "empty": {
+      "hint": "在注册客户端之前，没有任何应用可以询问此服务的 PDP。请注册一个并为其签发 API 密钥。",
+      "title": "还没有 PEP 客户端"
+    },
+    "enableHint": "启用",
+    "enabled": "已启用",
+    "field": {
+      "clientId": "Client ID",
+      "clientIdHelp": "客户端令牌中的 azp（或 client_id）声明。",
+      "enabled": "启用该客户端",
+      "issuer": "签发方",
+      "issuerHelp": "客户端令牌的 iss：必须是已注册的签发方之一。",
+      "issuerPlaceholder": "选择已注册的签发方",
+      "kind": "识别方式",
+      "kindFixed": "客户端的类型不可更改；请改为注册另一个客户端。",
+      "name": "名称",
+      "nameHelp": "在服务内唯一。",
+      "noIssuers": "还没有已注册的签发方。请在设置中注册。",
+      "operations": "操作"
+    },
+    "hint": "PEP 客户端是向此服务的 PDP 询问某人能做什么的应用。每个客户端由 Licetum 签发的 API 密钥识别，或由在设置中注册的身份提供方的访问令牌识别。客户端只能调用授予它的操作。",
+    "integrationNote": "供服务代码使用的现成调用示例：",
+    "issued": {
+      "done": "我已保存密钥",
+      "title": "API 密钥已签发",
+      "use": "把它作为 AuthZEN API 的 bearer 令牌发送：Authorization: Bearer <密钥>。",
+      "warning": "请立即复制密钥。它只显示一次，之后无法再次读取：Licetum 只保存其哈希。"
+    },
+    "issuersNote": "客户端可出示其令牌的签发方在设置中注册：",
+    "keyIdentity": "其 API 密钥",
+    "keys": {
+      "col": {
+        "created": "签发时间",
+        "id": "密钥",
+        "state": "状态",
+        "until": "有效期至"
+      },
+      "empty": "还没有密钥",
+      "emptyHint": "签发一个密钥并交给应用：应用把它作为 bearer 令牌发送。",
+      "full": "该客户端已有两个有效密钥；请先撤销一个。",
+      "hint": "Licetum 只保存密钥的哈希，因此丢失的密钥应被撤销并重新签发。每个客户端最多可有两个有效密钥：轮换时先签发新密钥，把应用切换过去，再撤销旧密钥。",
+      "issue": "签发密钥",
+      "never": "不过期",
+      "open": "密钥",
+      "revoke": {
+        "action": "撤销",
+        "body": "所有 PDP 会在几秒内拒绝它。此操作无法撤销。",
+        "title": "撤销密钥 lct_{{id}}？"
+      },
+      "revokedAt": "撤销于 {{at}}",
+      "state": {
+        "active": "有效",
+        "expired": "已过期",
+        "revoked": "已撤销"
+      },
+      "title": "“{{name}}”的 API 密钥"
+    },
+    "kind": {
+      "api_key": "API 密钥",
+      "jwt": "签发方令牌"
+    },
+    "kindHelp": {
+      "api_key": "密钥由 Licetum 签发；应用把密钥作为 bearer 令牌发送。",
+      "jwt": "应用出示已注册签发方的访问令牌；其 client ID 标识该客户端。"
+    },
+    "op": {
+      "evaluate": "判定“X 能否对 Z 执行 Y”这类问题",
+      "explain": "返回判定的原因",
+      "search_action": "列出某人对资源的访问级别",
+      "search_resource": "列出某人可用的资源",
+      "search_subject": "列出可使用某资源的人员"
+    },
+    "problem": {
+      "clientId": "请输入其令牌的 client ID。",
+      "issuer": "请选择客户端令牌的签发方。",
+      "name": "请为客户端命名。",
+      "operations": "至少选择一项操作。"
+    },
+    "properties": {
+      "contextHint": "这是请求的属性，不是此人的属性：由 PEP 放入 context。",
+      "none": "规则尚未读取任何属性：仅凭名称识别此人。",
+      "title": "此服务的 PEP 必须发送的内容",
+      "usage": "规则中 {{rules}} 处，基于声明的目标中 {{targets}} 处，组成员资格中 {{memberships}} 处",
+      "warn": "PEP 必须在 subject.properties 中发送这些属性，并在 context 中发送请求属性。否则答案会与真实情况不同：读取缺失属性的规则不会生效，此人也不会进入由该属性定义的组。"
+    }
+  },
   "person": {
-    "attrsHint": "此人令牌的声明，用于计算他们能看到什么。不会被保存。",
+    "attrsHint": "规则会读取的此人属性，用于计算其可见内容。不会被保存。",
     "attrs_other": "属性（{{count}}）",
     "check": "检查访问…",
-    "groupsNote": "按条件定义的组不在此列出：它们取决于令牌的属性。",
+    "groupsNote": "按条件定义的组不在此列出：它们取决于应用发送的属性。",
     "how": "原因",
     "howNamed": "在组成中被点名",
     "inGroups": "组：",
-    "lastSeen": "最近一次出现：{{at}}",
+    "lastSent": "应用最近一次发送：{{at}}",
     "noDirect": "没有直接访问权限。",
     "noGroups": "没有任何成员资格点名此人。",
-    "noGroupsHint": "按条件定义的组（department = sales）取决于令牌，而不是关于此人的记录。",
+    "noGroupsHint": "按条件定义的组（department = sales）取决于应用发送的属性，而不是关于此人的记录。",
     "noServices": "还没有连接任何服务。",
-    "nothing": "在服务“{{service}}”中不允许任何操作。",
-    "nothingHint": "请向组或此人授予访问权限。",
     "revokeAll": "撤销直接访问权限和成员资格…",
     "revokeBody": "这将删除 {{direct}} 条直接访问权限和 {{groups}} 条点名此人的成员资格。",
     "revokeConfirm": "撤销",
-    "revokeHelp": "访问权限来自令牌中的属性：要全部撤销，请在身份提供方修改它们，或把此人从成员资格中移除。令牌最多被信任 5 分钟；答案最多缓存 60 秒。",
+    "revokeHelp": "访问权限来自应用为此人发送的属性：要全部撤销，请在应用中修改它们，或把此人从成员资格中移除。答案最多缓存 60 秒。",
     "revokeHelpTitle": "如何全部撤销",
     "revokeTitle": "撤销所有按名称授予的权限？",
     "revoked_other": "已撤销：{{count}}",
@@ -970,7 +1119,6 @@
   "service": {
     "allHistory": "完整历史 →",
     "appUrl": "应用地址",
-    "authUrl": "授权地址",
     "danger": "危险区域",
     "delete": {
       "action": "删除服务",
@@ -982,37 +1130,31 @@
       "title": "删除服务“{{name}}”？",
       "type": "输入 slug“{{slug}}”"
     },
-    "edit": "编辑连接",
+    "details": "服务",
+    "edit": "编辑",
     "iconUrl": "图标地址",
     "incomplete": {
       "cta": "添加类型",
       "hint": "服务还没有资源类型。请先描述它们，然后连接数据源。",
       "title": "设置尚未完成"
     },
-    "makePublic": "使客户端成为公共客户端（移除密钥，使用 PKCE 登录）",
     "name": "名称",
-    "newSecret": "新的客户端密钥",
     "notFound": {
       "back": "返回服务列表",
       "hint": "它可能已被删除，或地址有误。",
       "title": "该服务不存在"
     },
     "recent": "服务的最近更改",
-    "secretHelp": "当前密钥永远不会显示。",
-    "secretKeep": "留空以保留当前密钥",
-    "secretNone": "无 — 公共客户端（PKCE）",
-    "secretSet": "已保存",
-    "secretStatus": "客户端密钥",
-    "signin": "登录（提供方）",
+    "slug": "Slug",
     "state": "状态",
     "tab": {
       "integration": "集成",
       "overview": "概览",
+      "pep": "PEP 客户端",
       "policy": "策略",
       "sources": "数据源",
       "types": "资源类型"
-    },
-    "tokenUrl": "令牌地址"
+    }
   },
   "services": {
     "col": {
@@ -1025,7 +1167,7 @@
     "counts": "类型 {{types}} · 访问权限 {{rules}}",
     "countsFailed": "无法加载计数；列表可能不完整。",
     "empty": {
-      "hint": "三个步骤：登录提供方、资源类型、资源的数据源。",
+      "hint": "四个简短步骤：命名服务、描述资源类型、连接数据源、检查。",
       "title": "连接您的第一个服务"
     },
     "filter": {
@@ -1056,6 +1198,7 @@
   "settings": {
     "tab": {
       "admins": "管理员",
+      "issuers": "PEP 签发方",
       "logs": "日志"
     },
     "title": "设置"
@@ -1072,9 +1215,6 @@
   "sources": {
     "addHeader": "添加请求头",
     "attrsNote": "资源的任何其他字段都会成为它的属性；访问权限随后可以按它选择资源（例如 owner = anna）。",
-    "cache": "列表保留 {{seconds}} 秒",
-    "cacheTtl": "列表保留时间",
-    "cacheTtlHelp": "此时间窗口内的请求不会访问数据源，因此数据最多可能滞后这么久。留空 — 默认（10 秒），0 — 不缓存。",
     "col": {
       "source": "数据源"
     },
@@ -1109,7 +1249,6 @@
     "query": "按 :id 查询单个资源",
     "queryHelp": "相同的列；参数写作 :id。",
     "rawNote": "服务的代码如何询问 Licetum：",
-    "seconds": "秒",
     "test": {
       "attrs": "资源的属性",
       "duplicates_other": "有 {{count}} 个 id 出现多次；以最后一行为准。",
@@ -1180,6 +1319,7 @@
   },
   "whohas": {
     "assumed": "父级未知",
+    "assumedLevels": "{{levels}}：父级未知",
     "col": {
       "people": "已知人员",
       "via": "来源",
@@ -1199,9 +1339,8 @@
     "none": "没有规则授予对此的访问权限。除了通过声明查找资源的规则，没有人拥有它。",
     "note": "这是规则列表；拒绝可能被例外解除。要知道某个人实际得到什么，请使用检查。",
     "open": "打开",
-    "registryEmpty": "尚未见到任何人，因此不显示人员；只显示规则。",
-    "registryOff": "人员注册表已关闭，因此不显示人员；只显示规则。可通过 SUBJECTS__ENABLED 开启。",
-    "registry_other": "人员取自 {{count}} 个已知主体。",
+    "registryEmpty": "规则所属服务的目录为空，因此不显示人员；只显示规则。应用会把其人员发送到所属服务的主体目录。",
+    "registry_other": "人员取自目录中的 {{count}} 个人。",
     "role": "角色“{{name}}”",
     "title": "谁能访问",
     "via": {
@@ -1219,33 +1358,20 @@
       "failed": "数据源没有响应",
       "hint": "Licetum 已向每个数据源请求其资源。",
       "next": {
-        "body": "向某个组授予访问权限，然后让您的服务询问 Licetum：",
+        "body": "为服务注册 PEP 客户端并向某个组授予访问权限，然后让您的服务询问 Licetum：",
         "title": "下一步"
       },
       "noSource": "无数据源",
       "zero": "没有资源"
     },
-    "discover": {
-      "fail": "无法自动检测——请手动输入地址。",
-      "ok": "已找到地址：授权、令牌、JWKS。"
-    },
-    "discoverBtn": "自动检测",
     "done": "完成：打开服务",
-    "hideUrls": "隐藏地址",
     "icon": {
       "help": "可选。图片地址，显示在服务旁边；Licetum 不会请求它。"
     },
-    "issuer": "提供方地址（issuer）",
-    "issuerHelp": "您服务的身份提供方地址，例如 Keycloak realm。",
     "leave": "离开向导",
     "next": "下一步",
     "noRight": "您无法连接服务：需要修改服务的权限。",
-    "secret": {
-      "help": "可选：留空表示公共客户端（使用 PKCE 登录）。"
-    },
-    "secretLabel": "客户端密钥",
-    "showUrls": "显示地址",
-    "signin": {
+    "service": {
       "done": "服务“{{slug}}”已创建。请继续设置它的资源类型。"
     },
     "slug": {
@@ -1258,7 +1384,7 @@
     },
     "step": {
       "check": "检查",
-      "signin": "登录",
+      "service": "服务",
       "source": "数据源",
       "types": "资源类型"
     },

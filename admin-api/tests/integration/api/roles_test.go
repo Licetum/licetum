@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/licetum/licetum/core/engine"
@@ -122,7 +121,7 @@ func TestRoleValidationAndBlocking(t *testing.T) {
 	}
 }
 
-// The service slug is the second identifier of a service in the check API.
+// The service slug is the identifier of a service in the AuthZEN API.
 func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	e := setup(t)
 	orders := e.must("POST", "/service", servicePayload(e, "orders"))["id"].(string)
@@ -143,65 +142,16 @@ func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	if status, raw := e.permission("orders", alice); status != http.StatusOK {
 		t.Fatalf("the slug addresses the service: %d %v", status, raw)
 	}
-	if status, _ := e.permission(orders, alice); status != http.StatusOK {
-		t.Fatalf("the id still addresses the service: %d", status)
-	}
+	// The path of the PDP names the service by its slug only (ADR 0001, 7.2): the id is a reference nobody has.
+	status, header, body := e.permissionRaw(orders, alice)
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 
 	e.must("PATCH", "/service/"+orders, map[string]any{"slug": "orders-v2"})
-	if status, _ := e.permission("orders", alice); status != http.StatusNotFound {
-		t.Fatalf("the old slug after a rename: want 404, got %d", status)
-	}
+	// The old slug names no service now: the client that asked with it still has its key, and gets the one refusal.
+	status, header, body = e.permissionRaw("orders", alice)
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 	if status, _ := e.permission("orders-v2", alice); status != http.StatusOK {
 		t.Fatalf("the new slug: %d", status)
-	}
-}
-
-// cache_ttl keeps the list of a source in Redis: a synchronization that runs again (an admin write ends the
-// throttle) reads the cached list, while consistency=higher asks the source every time.
-func TestSynchronizerCacheTTLKeepsTheSourceListInRedis(t *testing.T) {
-	e := setup(t)
-	var listCalls atomic.Int32
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /src/branch", func(w http.ResponseWriter, _ *http.Request) {
-		listCalls.Add(1)
-		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "b1", "name": "Branch1"}, {"id": "b2", "name": "Branch2"}})
-	})
-	mux.HandleFunc("GET /src/branch/{id}", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": r.PathValue("id"), "name": "Branch"})
-	})
-	source := newTestServer(t, mux)
-
-	org := e.must("POST", "/service", servicePayload(e, "cache-org"))["id"].(string)
-	branch := e.must("POST", "/service/"+org+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
-	e.must("POST", "/service/"+org+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
-		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch", "cache_ttl": 300},
-		"probe_resource_id": "b1",
-	})
-	e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": branch, "access": []string{"read"}, "subject": "alice"})
-
-	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub"})
-	ask := func(path string) {
-		t.Helper()
-		status, raw := e.do(http.MethodGet, e.check.URL+path, nil, "Authorization", "Bearer "+alice)
-		if status != http.StatusOK || !strings.Contains(string(raw), `"b2"`) {
-			t.Fatalf("permission %s: %d %s", path, status, raw)
-		}
-	}
-
-	ask("/service/" + org + "/permission")
-	if got := listCalls.Load(); got != 1 {
-		t.Fatalf("the first synchronization asks the source %d times, want 1", got)
-	}
-	// Another admin write ends the throttle of the synchronization: it runs again, but the list is in Redis.
-	e.must("POST", "/service", servicePayload(e, "unrelated"))
-	ask("/service/" + org + "/permission")
-	if got := listCalls.Load(); got != 1 {
-		t.Fatalf("a synchronization within cache_ttl asked the source again: %d calls", got)
-	}
-	// consistency=higher never answers from the cached list.
-	ask("/service/" + org + "/permission?consistency=higher")
-	if got := listCalls.Load(); got != 2 {
-		t.Fatalf("consistency=higher must ask the source: %d calls, want 2", got)
 	}
 }
 

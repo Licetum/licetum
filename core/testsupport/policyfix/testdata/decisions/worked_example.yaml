@@ -1,0 +1,76 @@
+# The worked example of the decision semantics (CLAUDE.md, "Decision semantics"): division → rrs → branch → item,
+# D1 ⊃ R1, R2; R1 ⊃ B1, B2; R2 ⊃ B3; B1 ⊃ I1. Each row of the table is the rules of one subject (row1 … row5).
+contracts: [DEC01, DEC02, DEC03]
+description: The five rows of the worked example, one subject each.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+rules:
+  # row 1: allow read on D1
+  - {name: r1-allow-D1, subject: row1, type: division, resource: D1, access: [read]}
+  # row 2: + deny read on R1
+  - {name: r2-allow-D1, subject: row2, type: division, resource: D1, access: [read]}
+  - {name: r2-deny-R1, subject: row2, type: rrs, resource: R1, access: [read], deny: true}
+  # row 3: + exception read on B2
+  - {name: r3-allow-D1, subject: row3, type: division, resource: D1, access: [read]}
+  - {name: r3-deny-R1, subject: row3, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: r3-except-B2, subject: row3, type: branch, resource: B2, access: [read], exception: true}
+  # row 4: + exception on B1 and deny on I1
+  - {name: r4-allow-D1, subject: row4, type: division, resource: D1, access: [read]}
+  - {name: r4-deny-R1, subject: row4, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: r4-except-B2, subject: row4, type: branch, resource: B2, access: [read], exception: true}
+  - {name: r4-except-B1, subject: row4, type: branch, resource: B1, access: [read], exception: true}
+  - {name: r4-deny-I1, subject: row4, type: item, resource: I1, access: [read], deny: true}
+  # row 5: allow read on the whole type branch + deny * on B2
+  - {name: r5-allow-branch, subject: row5, type: branch, access: [read]}
+  - {name: r5-deny-B2, subject: row5, type: branch, resource: B2, access: ["*"], deny: true}
+cases:
+  - name: row 1 — allow read on D1 reaches every branch below it
+    subject: row1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [r1-allow-D1]}
+      - {type: branch, resource: B2, action: read, allowed: true}
+      - {type: branch, resource: B3, action: read, allowed: true}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: no_access}
+  - name: row 2 — a denial on R1 takes its subtree away
+    subject: row2
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: r2-deny-R1}]}
+      - {type: branch, resource: B2, action: read, allowed: false}
+      - {type: branch, resource: B3, action: read, allowed: true}
+      - {type: rrs, resource: R1, action: read, allowed: false}
+      - {type: division, resource: D1, action: read, allowed: true}
+  - name: row 3 — an exception on B2 lifts the denial above it, for B2 only
+    subject: row3
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, denials: [{rule: r3-deny-R1, lifted_by: [r3-except-B2]}]}
+      - {type: branch, resource: B3, action: read, allowed: true}
+  - name: row 4 — the exceptions lift the denial on R1 for B1 and B2
+    subject: row4
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true}
+      - {type: branch, resource: B2, action: read, allowed: true}
+      - {type: branch, resource: B3, action: read, allowed: true}
+  - name: row 4 — a denial below an exception stands
+    subject: row4
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied}
+  - name: row 5 — a whole-type grant with a wildcard denial on one resource
+    subject: row5
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied}
+      - {type: branch, resource: B3, action: read, allowed: true}

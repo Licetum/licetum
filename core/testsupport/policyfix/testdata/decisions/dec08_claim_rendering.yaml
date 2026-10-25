@@ -1,0 +1,84 @@
+# DEC08: a claim value is compared as Python's str() renders it, so the conditions written for the first implementation
+# keep matching: a boolean is True or False, an integer has no decimal point, a list is ['a', 'b'] with its items quoted.
+# A claim is compared as a whole: a list claim is one string, not a set of values (unlike a resource attribute, see
+# dec10_resource_where). A false claim is a value, not a missing attribute.
+contracts: [DEC08]
+description: Booleans, integers, fractions and lists in claims, rendered like Python's str() before they are compared.
+services: [org]
+types:
+  - {name: flag, service: org, sync: false}
+rules:
+  - {name: admin-is-True, type: flag, access: [bool_true], predicate: [{attr: admin, op: eq, value: "True"}]}
+  - {name: admin-is-False, type: flag, access: [bool_false], predicate: [{attr: admin, op: eq, value: "False"}]}
+  - {name: level-is-5, type: flag, access: [int], predicate: [{attr: level, op: eq, value: "5"}]}
+  - {name: score-is-2.5, type: flag, access: [float], predicate: [{attr: score, op: eq, value: "2.5"}]}
+  - {name: roles-are-a-b, type: flag, access: [list], predicate: [{attr: roles, op: eq, value: "['a', 'b']"}]}
+  - {name: roles-in-a, type: flag, access: [list_in], predicate: [{attr: roles, op: in, value: [a]}]}
+  - {name: roles-ne-a, type: flag, access: [list_ne], predicate: [{attr: roles, op: ne, value: a}]}
+  - {name: roles-mention-b, type: flag, access: [list_regex], predicate: [{attr: roles, op: regex, value: "'b'"}]}
+  - {name: tags-mixed, type: flag, access: [mixed_list], predicate: [{attr: tags, op: eq, value: "[1, 'x', True]"}]}
+cases:
+  - name: a boolean, an integer, a fraction and lists rendered as str() renders them
+    subject: alice
+    claims: {admin: true, level: 5, score: 2.5, roles: [a, b], tags: [1, x, true]}
+    questions:
+      - {type: flag, action: bool_true, allowed: true, decision: allowed, granted_by: [admin-is-True]}
+      - {type: flag, action: bool_false, allowed: false, decision: no_access}
+      - {type: flag, action: int, allowed: true, decision: allowed, granted_by: [level-is-5]}
+      - {type: flag, action: float, allowed: true, decision: allowed, granted_by: [score-is-2.5]}
+      - {type: flag, action: list, allowed: true, decision: allowed, granted_by: [roles-are-a-b]}
+      - {type: flag, action: list_regex, allowed: true, decision: allowed, granted_by: [roles-mention-b]}
+      - {type: flag, action: mixed_list, allowed: true, decision: allowed, granted_by: [tags-mixed]}
+  - name: a list claim is one value, in and ne do not look at its items
+    subject: alice
+    claims: {roles: [a, b]}
+    questions:
+      - {type: flag, action: list_in, allowed: false, decision: no_access}
+      - {type: flag, action: list_ne, allowed: true, decision: allowed, granted_by: [roles-ne-a]}
+  - name: a list in another order renders differently
+    subject: alice
+    claims: {roles: [b, a]}
+    questions:
+      - {type: flag, action: list, allowed: false, decision: no_access}
+      - {type: flag, action: list_regex, allowed: true, decision: allowed}
+  - name: a string claim is itself
+    subject: alice
+    claims: {roles: a}
+    questions:
+      - {type: flag, action: list, allowed: false, decision: no_access}
+      - {type: flag, action: list_in, allowed: true, decision: allowed, granted_by: [roles-in-a]}
+      - {type: flag, action: list_ne, allowed: false, decision: no_access}
+      - {type: flag, action: list_regex, allowed: false, decision: no_access}
+  - name: false is a value and renders as False
+    subject: alice
+    claims: {admin: false}
+    questions:
+      - {type: flag, action: bool_true, allowed: false, decision: no_access}
+      - {type: flag, action: bool_false, allowed: true, decision: allowed, granted_by: [admin-is-False]}
+  - name: the string true is not the boolean
+    subject: alice
+    claims: {admin: "true"}
+    questions:
+      - {type: flag, action: bool_true, allowed: false, decision: no_access}
+      - {type: flag, action: bool_false, allowed: false, decision: no_access}
+  - name: the string True is equal to the rendered boolean
+    subject: alice
+    claims: {admin: "True"}
+    questions:
+      - {type: flag, action: bool_true, allowed: true, decision: allowed}
+  - name: an integer given as a string is the same text
+    subject: alice
+    claims: {level: "5"}
+    questions:
+      - {type: flag, action: int, allowed: true, decision: allowed}
+  - name: other numbers render as other text
+    subject: alice
+    claims: {level: 50, score: 2.25}
+    questions:
+      - {type: flag, action: int, allowed: false, decision: no_access}
+      - {type: flag, action: float, allowed: false, decision: no_access}
+  - name: a fraction is not equal to its integer part
+    subject: alice
+    claims: {level: 5.5}
+    questions:
+      - {type: flag, action: int, allowed: false, decision: no_access}

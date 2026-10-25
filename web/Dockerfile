@@ -28,7 +28,7 @@ FROM build-deps AS prod-builder
 RUN pnpm build
 
 # A small server: Next.js traces what it needs into .next/standalone. Everything is configured at run time by the
-# environment (ADMIN_API_URL, ADMIN_API_PUBLIC_URL, CHECK_API_URL, APP_BASE_URL, SESSION_SECRET), nothing is baked in.
+# environment (ADMIN_API_URL, CHECK_API_URL, APP_BASE_URL, OIDC_*, SESSION_SECRET), nothing is baked in.
 FROM node:24-bookworm-slim AS prod
 
 ENV NODE_ENV=production \

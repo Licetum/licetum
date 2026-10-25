@@ -27,14 +27,16 @@ type RestoreReport struct {
 // a command somebody with access to the database runs deliberately (`licetum restore-admin`).
 //
 // It makes sure the platform service, its policy types and their sources exist and are not deleted, that the admin
-// group exists with a membership for PLATFORM__ADMIN_CLAIM_VALUES and for each of users (matched by preferred_username),
+// group exists with a membership for PLATFORM__ADMIN_CLAIM_VALUES and for each of users (matched by the claim of
+// ADMIN_AUTH__SUBJECT_CLAIM, preferred_username by default),
 // that each policy has its admin rule in force (allow, read and write, the whole type, no guard), and it switches off the
 // deny rules that cover a policy. Everything else is left as it is. Safe to re-run.
 func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, users []string) (RestoreReport, error) {
 	p := cfg.Platform
 	var report RestoreReport
-	if !p.IsConfigured() {
-		return report, errors.New("PLATFORM__* OAuth2 is not configured: the self-service cannot be restored without it")
+	if !cfg.AdminAuth.IsConfigured() {
+		return report, errors.New("ADMIN_AUTH__* is not configured: the self-service cannot be restored without it " +
+			"(ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE, ADMIN_AUTH__JWKS_URL)")
 	}
 	if len(p.AdminClaimValues) == 0 && len(users) == 0 {
 		return report, errors.New("nobody to make administrator: set PLATFORM__ADMIN_CLAIM_VALUES or pass -user")
@@ -100,9 +102,13 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 				return err
 			}
 		}
+		subjectClaim := cfg.AdminAuth.SubjectClaim
+		if subjectClaim == "" {
+			subjectClaim = config.DefaultSubjectClaim
+		}
 		for _, user := range users {
 			if err := upsertMember(model.PlatformRestoredMemberID(user), []model.PredicateCondition{
-				{Attr: "preferred_username", Op: model.OpEq, Value: model.PredicateValue{Str: user}},
+				{Attr: subjectClaim, Op: model.OpEq, Value: model.PredicateValue{Str: user}},
 			}); err != nil {
 				return err
 			}
@@ -132,7 +138,9 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 			return err
 		}
 		report.DisabledDenials = int(tag.RowsAffected())
-		return nil
+		// The rules changed: every replica must read them again.
+		_, bumpErr := BumpRevision(ctx, tx, ScopeRules)
+		return bumpErr
 	})
 	return report, err
 }

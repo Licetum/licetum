@@ -1,0 +1,90 @@
+# DEC10, resource_where over a list attribute (admin-api/tests/integration/api/gaps_test.go,
+# TestIntegrationResourceWhereMatchesListAttributes): the source of the type tagged reports tags as a list, and a condition
+# matches a resource when one element of the list does — eq and in, as the test asserts: read where a tag is gold gives T1
+# and T3, write where a tag is silver or new gives T1 and T2.
+#
+# Around the test: a scalar attribute is matched as itself (T5), a resource that does not report the attribute is covered
+# by no condition (T4), regex matches through the elements as eq does, two conditions on one list attribute may each be met
+# by another element, and the negative operators (ne, not_in) hold only when every element does — so one matching element
+# fails them, and an empty list (T6) meets them. A rule on the resources that match says nothing about the type as a whole.
+#
+# tagged (service org), no parents: T1 [gold, new], T2 [silver], T3 [gold] (the test); T4 without tags, T5 the scalar gold,
+# T6 an empty list.
+contracts: [DEC10]
+description: resource_where matches a list attribute through its elements and a scalar one as itself.
+services: [org]
+types:
+  - {name: tagged, service: org, sync: true}
+resources:
+  - {type: tagged, id: T1, name: Tagged 1, meta: {tags: [gold, new]}}
+  - {type: tagged, id: T2, name: Tagged 2, meta: {tags: [silver]}}
+  - {type: tagged, id: T3, name: Tagged 3, meta: {tags: [gold]}}
+  - {type: tagged, id: T4, name: Tagged 4}
+  - {type: tagged, id: T5, name: Tagged 5, meta: {tags: gold}}
+  - {type: tagged, id: T6, name: Tagged 6, meta: {tags: []}}
+rules:
+  # The test: read where a tag is gold, write where a tag is silver or new.
+  - {name: read-gold, subject: user-1, type: tagged, where: [{attr: tags, op: eq, value: gold}], access: [read]}
+  - {name: write-silver-or-new, subject: user-1, type: tagged, where: [{attr: tags, op: in, value: [silver, new]}], access: [write]}
+  # The negative operators.
+  - {name: read-not-gold, subject: negative, type: tagged, where: [{attr: tags, op: ne, value: gold}], access: [read]}
+  - {name: write-neither-gold-nor-new, subject: negative, type: tagged, where: [{attr: tags, op: not_in, value: [gold, new]}], access: [write]}
+  # A regular expression, and two conditions on one attribute.
+  - {name: read-sil-prefix, subject: pattern, type: tagged, where: [{attr: tags, op: regex, value: "^sil"}], access: [read]}
+  - {name: read-gold-and-new, subject: both, type: tagged, where: [{attr: tags, op: eq, value: gold}, {attr: tags, op: eq, value: new}], access: [read]}
+cases:
+  # from admin-api/tests/integration/api/gaps_test.go:TestIntegrationResourceWhereMatchesListAttributes
+  - name: eq and in match a list attribute through its elements
+    subject: user-1
+    questions:
+      - {type: tagged, resource: T1, action: read, allowed: true, decision: allowed, granted_by: [read-gold]}
+      - {type: tagged, resource: T1, action: write, allowed: true, decision: allowed, granted_by: [write-silver-or-new]}
+      - {type: tagged, resource: T2, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: tagged, resource: T2, action: write, allowed: true, decision: allowed, granted_by: [write-silver-or-new]}
+      - {type: tagged, resource: T3, action: read, allowed: true, decision: allowed, granted_by: [read-gold]}
+      - {type: tagged, resource: T3, action: write, allowed: false, decision: no_access, granted_by: []}
+  - name: a scalar attribute is matched as itself, a missing one by nothing, an empty list by no element
+    subject: user-1
+    questions:
+      - {type: tagged, resource: T5, action: read, allowed: true, decision: allowed, granted_by: [read-gold]}
+      - {type: tagged, resource: T5, action: write, allowed: false, decision: no_access}
+      - {type: tagged, resource: T4, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T4, action: write, allowed: false, decision: no_access}
+      - {type: tagged, resource: T6, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T6, action: write, allowed: false, decision: no_access}
+  - name: rules on matching resources say nothing about the type as a whole
+    subject: user-1
+    questions:
+      - {type: tagged, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: tagged, action: write, allowed: false, decision: no_access, granted_by: []}
+  - name: ne and not_in hold only when every element does
+    subject: negative
+    questions:
+      - {type: tagged, resource: T1, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T1, action: write, allowed: false, decision: no_access}
+      - {type: tagged, resource: T2, action: read, allowed: true, decision: allowed, granted_by: [read-not-gold]}
+      - {type: tagged, resource: T2, action: write, allowed: true, decision: allowed, granted_by: [write-neither-gold-nor-new]}
+      - {type: tagged, resource: T3, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T3, action: write, allowed: false, decision: no_access}
+  - name: ne and not_in hold on an empty list, fail on the matching scalar, and cover no resource without the attribute
+    subject: negative
+    questions:
+      - {type: tagged, resource: T6, action: read, allowed: true, decision: allowed, granted_by: [read-not-gold]}
+      - {type: tagged, resource: T6, action: write, allowed: true, decision: allowed, granted_by: [write-neither-gold-nor-new]}
+      - {type: tagged, resource: T5, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T5, action: write, allowed: false, decision: no_access}
+      - {type: tagged, resource: T4, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T4, action: write, allowed: false, decision: no_access}
+  - name: regex matches a list attribute through its elements
+    subject: pattern
+    questions:
+      - {type: tagged, resource: T2, action: read, allowed: true, decision: allowed, granted_by: [read-sil-prefix]}
+      - {type: tagged, resource: T1, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T5, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T6, action: read, allowed: false, decision: no_access}
+  - name: two conditions on one list attribute are met by different elements
+    subject: both
+    questions:
+      - {type: tagged, resource: T1, action: read, allowed: true, decision: allowed, granted_by: [read-gold-and-new]}
+      - {type: tagged, resource: T3, action: read, allowed: false, decision: no_access}
+      - {type: tagged, resource: T5, action: read, allowed: false, decision: no_access}

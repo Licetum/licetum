@@ -1,0 +1,15 @@
+{
+  "name": "a single evaluation with licetum.explain in its top-level context carries the explanation",
+  "source": "Licetum extension context.licetum.explain (ADR 0001, 7.7)",
+  "checked_against_text": false,
+  "endpoint": "evaluation",
+  "grants": [["alice@acmecorp.com", "can_read", "todo", "1"]],
+  "request": {
+    "subject": {"type": "user", "id": "alice@acmecorp.com"},
+    "resource": {"type": "todo", "id": "1"},
+    "action": {"name": "can_read"},
+    "context": {"licetum": {"explain": true}}
+  },
+  "decision": true,
+  "reason": true
+}

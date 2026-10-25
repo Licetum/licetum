@@ -14,7 +14,7 @@ notebook shows the machine each run came from. To get the same charts for your o
 | `licetum-loadtest.ipynb` | the charts; reads the directory named by `LICETUM_RESULTS` |
 | `requirements.txt` | the Python packages the notebook needs |
 | `results/` | the runs the notebook is built from: `result.json` and `environment.json` per run (see below) |
-| [`../compose.yml`](../compose.yml) | PostgreSQL 16 and Redis 7 for the runs, on the loopback interface |
+| [`../compose.yml`](../compose.yml) | PostgreSQL 16 for the runs, on the loopback interface |
 | [`../scripts/baseline.sh`](../scripts/baseline.sh) | the campaign: five runs per mode, a ramp, and the aggregate report |
 
 ## Published results (preliminary)
@@ -29,7 +29,17 @@ notebook shows the machine each run came from. To get the same charts for your o
   use. All five are valid by the rules, but they are here to show how far the state of the host moves the same code, not
   as a result.
 
-Not measured yet: the 100k profile, the mixed, cold and ramp modes, writes during load, faults, and a second machine. Two
+- `baseline-b7859306/` and `baseline-5abcc757/`: the baseline of block F0 of the production-load plan (#32), the medium
+  profile (100k resources) on a GitHub-hosted `ubuntu-latest` runner (4 vCPUs shared by the load generator, the server,
+  PostgreSQL and Redis, which the product used then), before any block changes the engine. Per run (`medium-<mode>-<added latency>/`): `warm`, `cold` and
+  `mix`, each with no added latency and with 100 ms added to every round trip to PostgreSQL and Redis; a ramp from 2 to 1024
+  or from 10 to 640 requests/s with 90-second windows, going on after a failed step (`-ramp-through`). The table of the
+  steps of any run is `licetum-loadtest budget -steps DIR`; the issue #32 has the summary. `budgets.yaml` is made from the
+  lowest sustained rate of the two runs. A p99 is not in the budgets: the steps the runner sustains have under 10,000
+  samples. In every window of both runs the oracle found 0 wrong answers; under overload some questions get no answer
+  (`unanswered`), which is a failure of availability, not a wrong answer.
+
+Not measured yet: writes during load, faults, replicas, a larger runner, and a second machine. Two
 valid windows on one laptop are not enough for an article's numbers.
 
 ## 1. Requirements
@@ -37,7 +47,7 @@ valid windows on one laptop are not enough for an article's numbers.
 - **Linux** with `taskset`, to pin the load generator and the check server to their own CPUs. Without it, set
   `K6_CPUS=` and `CHECK_CPUS=` to empty; the runs are then not pinned, and `environment.json` says so.
 - **Go** as in `admin-api/go.mod` (1.26).
-- **Docker** with Compose v2, for the PostgreSQL and Redis containers.
+- **Docker** with Compose v2, for the PostgreSQL container.
 - **k6** v2 (the version is recorded in `environment.json`). See
   [the k6 installation guide](https://grafana.com/docs/k6/latest/set-up/install-k6/).
 - **Python 3.11** or newer, for the notebook.
@@ -45,12 +55,11 @@ valid windows on one laptop are not enough for an article's numbers.
 Give the machine nothing else to do while a campaign runs. A browser, an IDE that indexes, or a virtual machine on the
 same cores moves the numbers, and the harness does not see them (see [Limitations](#limitations)).
 
-## 2. Start PostgreSQL and Redis
+## 2. Start PostgreSQL
 
 ```sh
 docker compose -f admin-api/loadtest/compose.yml up -d
 export LICETUM_TEST_POSTGRES_URI="postgres://licetum:licetum@127.0.0.1:55432/postgres?sslmode=disable"
-export LICETUM_TEST_REDIS_URI="redis://127.0.0.1:56379/0"
 ```
 
 The compose file sets the PostgreSQL password to `licetum` unless `LT_PG_PASSWORD` is set; if you set it, put the same
@@ -71,7 +80,7 @@ go build -o ../core/bin/licetum-loadtest ./cmd/licetum-loadtest
 
 `-profile` picks the size of the policy: `smoke` is 10,000 resources, `medium` 100,000, `500k` 500,000 and `large`
 1,000,000. `-users`, `-groups`, `-rules` and `-resources` override one value of the profile. `-mode` is `warm` (the
-caches answer), `cold` (every request is computed) or `mix` (skewed traffic). `-k6-cpus` and `-check-cpus` take the
+caches answer), `cold` (the evaluations ask questions that no earlier request of the run asked; a search repeats per subject, so its permission cache can answer it) or `mix` (skewed traffic). `-k6-cpus` and `-check-cpus` take the
 CPU lists of your machine (`nproc`, `lscpu -e`): the check server, the load generator and the stack must not share a
 CPU. The stack runs on CPUs 8-9 (`cpuset` in `compose.yml`); `environment.json` records its CPU sets.
 
@@ -94,11 +103,27 @@ The campaign runs, for the `smoke` profile at its default settings:
 - one ramp from 50 requests/s, doubling each two-minute step, until a step misses its objectives;
 - the aggregate report (`reports/mine/smoke-report.md`).
 
-Every run starts on a fresh stack: the script restarts the `lt-pg` and `lt-redis` containers, so the buffer cache and
-Redis are empty, and then seeds the policy again. On the test host the campaign takes about three hours. Set
+Every run starts on a fresh stack: the script restarts the `lt-pg` container, so the buffer cache
+is empty, and then seeds the policy again. On the test host the campaign takes about three hours. Set
 `MEASURE=120s` for a first pass: it takes about an hour, the ramp included.
 
 Use the same CPU lists, the same profile and the same settings for every run you compare.
+
+## 4a. Added latency, per-request counts and budgets
+
+- `-added-latency 100ms` puts Toxiproxy in front of PostgreSQL for the check servers and adds 100 ms to every
+  round trip (50 ms in each direction) from the end of the warm-up. The seeding and the warm-up run on the plain link.
+  The setting is in `result.json` (`settings.added_latency_ms`).
+- Each window reports what the server did per API request it served: database queries, counted by
+  the server itself (`licetum_db_queries_total`), background work included.
+- `budgets.yaml` holds, per profile, mode and added latency, the sustained rate (a floor), the p50 and p99 and the queries
+  per request (ceilings), taken at the step the baseline sustained. `licetum-loadtest budget DIR...`
+  compares runs with it and fails when a figure is more than 15 % on the wrong side; a figure better by more than 15 % does
+  not fail, it asks for the budget to be set again. `budget -calibrate -out loadtest/budgets.yaml DIR...` writes budgets from
+  runs. The budgets are those of the runner they were made on: the nightly workflow `loadtest.yml` runs on
+  `ubuntu-latest` (or the label in the repository variable `LOADTEST_RUNNER`), and so must the numbers.
+- The nightly workflow runs the medium profile in warm, cold and mix mode, with and without 100 ms, a ramp each, and
+  compares every run with its budget. Start it by hand with `baseline: true` to print the budgets the runs would make.
 
 ## 5. Get the charts
 
@@ -140,7 +165,8 @@ profiles, modes and ramps. It prints only relative paths.
 - The policy is generated: its shape (owner rules, group and department grants, denials with exceptions) is the shape
   the harness builds. The oracle checks the answers against that shape only.
 - Warm-up is 60 seconds. The first synchronization of a service happens before the measured window. The cold mode
-  computes every request; it does not measure the first request after a restart.
+  asks each evaluation question once, so no cached answer is reused for it (a search repeats per subject); it does not
+  measure the first request after a restart.
 - The harness samples the server, PostgreSQL and its own process. It does not sample the host: other load on the
   machine, CPU frequency or the steal time of a virtual machine show up only as a change of latency, not as an
   explanation of it.

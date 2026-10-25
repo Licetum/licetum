@@ -65,8 +65,8 @@ func replaceTypeParents(ctx context.Context, q db.Querier, typeID uuid.UUID, par
 	return nil
 }
 
-// checkNameUnique: a resource type name is unique within its service — /permission returns types by
-// name, and two types with the same name would merge in the response.
+// checkNameUnique: a resource type name is unique within its service — the permission result keys types by
+// name, and two types with the same name would merge in it.
 func (a *App) checkNameUnique(ctx context.Context, q db.Querier, serviceID uuid.UUID, name string, selfID *uuid.UUID) error {
 	taken, err := engine.Exists(ctx, q, `
 		SELECT 1 FROM type_resource

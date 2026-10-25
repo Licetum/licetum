@@ -21,9 +21,9 @@ export const useService = (): ServiceContextValue => {
   return value;
 };
 
-const TABS = ['', 'types', 'sources', 'integration', 'policy'] as const;
+const TABS = ['', 'types', 'sources', 'pep', 'integration', 'policy'] as const;
 
-/** The page of one service: the header with its status and the tabs Overview / Types / Sources / Integration / Policy. */
+/** The page of one service: the header with its status and the tabs Overview / Types / Sources / PEP clients / Integration / Policy. */
 export function ServiceFrame({ slug, children }: { slug: string; children: ReactNode }) {
   const { t } = useTranslation();
   const router = useRouter();

@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/search/action",
+  "body": {
+    "context": {
+      "licetum": {
+        "min_revision": "9"
+      }
+    },
+    "resource": {
+      "id": "*",
+      "type": "flag"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

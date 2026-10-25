@@ -10,14 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/licetum/licetum/core/db"
+	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
 )
 
 const (
 	serviceSlug = "loadtest"
-	// backendClient is the client application that asks on behalf of people (POST .../on_behalf/check). Its token
-	// carries azp=backendClient, and the service trusts it.
-	backendClient = "loadtest-backend"
+	// pepClientName is the name of the PEP client the traffic asks as.
+	pepClientName = "loadtest"
 	// probe ids are the resources the synchronizers check their source with before they are saved.
 	folderProbe   = "f-0"
 	documentProbe = "d-0"
@@ -25,6 +26,7 @@ const (
 
 // fixture is what the seeding made, and what the traffic draws its requests from.
 type fixture struct {
+	serviceID    uuid.UUID
 	folderType   uuid.UUID
 	documentType uuid.UUID
 	folders      int
@@ -32,6 +34,8 @@ type fixture struct {
 	groups       []uuid.UUID
 	rules        int
 	phases       []phase
+	// apiKey is the key of the PEP client of the service: the credential of every request of the run.
+	apiKey string
 }
 
 // phase is the time one stage of a run took.
@@ -51,6 +55,7 @@ func seed(ctx context.Context, e *env, p Profile) (*fixture, error) {
 	}{
 		{"source tables", createSource},
 		{"service and types", createServiceAndTypes},
+		{"PEP client and key", createPEPClient},
 		{"groups", createGroups},
 		{"rules", createRules},
 	}
@@ -84,18 +89,12 @@ func createSource(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	})
 }
 
-// createServiceAndTypes registers the service with the identity provider of the run, its two resource types (a
-// document belongs to a folder) and their synchronizers, which read the tables above.
+// createServiceAndTypes registers the service, its two resource types (a document belongs to a folder) and their
+// synchronizers, which read the tables above.
 func createServiceAndTypes(ctx context.Context, e *env, _ Profile, fx *fixture) error {
 	svcIn := &model.ServiceInput{
-		Name:             "Load test",
-		Slug:             serviceSlug,
-		AuthorizationURL: loadtestIssuer + "/authorize",
-		TokenURL:         loadtestIssuer + "/token",
-		JwksURL:          e.idp.jwksURL,
-		Issuer:           loadtestIssuer,
-		ClientID:         "licetum-loadtest",
-		TrustedClients:   []string{backendClient},
+		Name: "Load test",
+		Slug: serviceSlug,
 	}
 	if err := svcIn.Validate(); err != nil {
 		return fmt.Errorf("the service: %w", err)
@@ -104,6 +103,7 @@ func createServiceAndTypes(ctx context.Context, e *env, _ Profile, fx *fixture) 
 	if err != nil {
 		return fmt.Errorf("create the service: %w", err)
 	}
+	fx.serviceID = svc.ID
 	implies := map[string][]string{"write": {"read"}}
 
 	folderIn := &model.TypeResourceInput{Name: "folder", AccessImplies: implies}
@@ -161,6 +161,27 @@ func createServiceAndTypes(ctx context.Context, e *env, _ Profile, fx *fixture) 
 	return nil
 }
 
+// loadtestOperations are what the PEP client of the run may do: every operation of the PDP.
+var loadtestOperations = []string{engine.PEPEvaluate, engine.PEPSearchResource, engine.PEPSearchAction, engine.PEPSearchSubject, engine.PEPExplain}
+
+// createPEPClient makes the one PEP client of the service and issues its API key, the credential of every request of the run:
+// the traffic names the person a question is about in the body, and brings the claims the rules read as the properties of the
+// subject. The check servers read the PEP directory from the database when they start, after the seeding; AfterPEPWrite makes
+// the engine of this process read it too.
+func createPEPClient(ctx context.Context, e *env, _ Profile, fx *fixture) error {
+	client, err := db.CreatePEPClient(ctx, e.pool, db.PEPClient{
+		ServiceID: fx.serviceID, Name: pepClientName, Kind: db.PEPKindAPIKey, Operations: loadtestOperations, Enabled: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create the PEP client: %w", err)
+	}
+	if fx.apiKey, _, err = db.IssueAPIKey(ctx, e.pool, client.ID); err != nil {
+		return fmt.Errorf("issue the API key: %w", err)
+	}
+	e.app.AfterPEPWrite()
+	return nil
+}
+
 // createGroups makes one group per department. A member is whoever carries the department claim: the membership is a
 // predicate over the claims, so a group has no list of people to keep.
 func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
@@ -184,7 +205,7 @@ func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 
 // createRules writes the assignment rules straight into the table with COPY. The check API reads the table and nothing
 // else of a rule, so each row needs the constraints of the table and the defaults of a new rule, and no more: the
-// change log and the cache versions belong to the admin API's writes, which the measured path does not make. The table
+// change log and the revisions belong to the admin API's writes, which the measured path does not make. The table
 // is analyzed afterwards, so the planner sees its real size, as it would after a few writes.
 func createRules(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	columns := []string{"id", "type_resource_id", "resource_id", "resource_from_claim", "access", "subject", "predicate",

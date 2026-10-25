@@ -1,0 +1,11 @@
+Licetum {{ .Chart.AppVersion }} is installed{{ with .Values.region }} in the region {{ . }}{{ end }}.
+
+  PDP:         {{ include "licetum.fullname" . }}-pdp:{{ .Values.pdp.port }}{{ with .Values.publicUrl }} ({{ . }}){{ end }}
+{{- if .Values.admin.enabled }}
+  admin API:   {{ include "licetum.fullname" . }}-admin:{{ .Values.admin.port }}
+{{- end }}
+{{- if .Values.worker.enabled }}
+  worker:      {{ .Values.worker.replicas }} replica(s)
+{{- end }}
+
+The ConfigMap and the Secret of the release are Helm hooks (the migration Job needs them first): `helm uninstall` leaves them behind.

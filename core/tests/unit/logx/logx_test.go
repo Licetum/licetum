@@ -67,6 +67,44 @@ func TestSubjectIsHashedUnderTheSalt(t *testing.T) {
 	}
 }
 
+// The person a PEP client asked about is written as on_behalf_of in the access log: it follows the setting like subject.
+func TestOnBehalfOfFollowsTheSubjectSetting(t *testing.T) {
+	sw, buf := newSwitch(t, options("json"))
+	logger := slog.New(sw)
+	logger.Info("request", "user", "pep:orders", "on_behalf_of", "alice@example.com")
+	rec := lastJSON(t, buf)
+	if s, ok := rec["on_behalf_of"].(string); !ok || s == "" || strings.Contains(s, "alice") {
+		t.Fatalf("on_behalf_of must be a hash, not the person: %v", rec)
+	}
+	subject := rec["on_behalf_of"]
+	buf.Reset()
+	logger.Info("decision", "subject", "alice@example.com")
+	if got := lastJSON(t, buf)["subject"]; got != subject {
+		t.Fatalf("the same person must hash to the same value in subject and on_behalf_of: %v and %v", got, subject)
+	}
+
+	o := options("json")
+	o.Subject = "omit"
+	if err := sw.Apply(o); err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	logger.Info("request", "user", "pep:orders", "on_behalf_of", "alice@example.com")
+	if strings.Contains(buf.String(), "alice") || strings.Contains(buf.String(), "on_behalf_of") {
+		t.Fatalf("omit must drop on_behalf_of: %s", buf.String())
+	}
+
+	o.Subject = "plain"
+	if err := sw.Apply(o); err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	logger.Info("request", "on_behalf_of", "alice@example.com")
+	if lastJSON(t, buf)["on_behalf_of"] != "alice@example.com" {
+		t.Fatalf("plain keeps on_behalf_of: %s", buf.String())
+	}
+}
+
 func TestAnonymousSubjectStaysEmpty(t *testing.T) {
 	sw, buf := newSwitch(t, options("json"))
 	slog.New(sw).Info("request", "user", "", "status", 401)

@@ -114,33 +114,14 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 	})
 
 	server.Register(api, withPolicy(huma.Operation{
-		OperationID: "policy_claims",
+		OperationID: "policy_properties",
 		Method:      http.MethodGet,
-		Path:        "/service/{service_id}/policy/claims",
-		Summary:     "The claims the policy of a service reads",
-		Description: "The claims and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in claim-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. It is what the tokens the service's users get, and the claims a trusted client sends when it asks on behalf of a person, have to carry for the answers to be the real ones.",
+		Path:        "/service/{service_id}/policy/properties",
+		Summary:     "The properties of the subject and the context attributes the policy of a service reads",
+		Description: "The claims and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in claim-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. The claims are the keys of subject.properties, the attributes the keys of context, that a PEP of the service has to send for the answers to be the real ones.",
 		Tags:        []string{"Policy"},
 	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *ServicePath) (*server.Out[[]model.PolicyClaim], error) {
 		out, err := h.app.PolicyClaims(ctx, in.ServiceID)
-		if err != nil {
-			return nil, err
-		}
-		return server.OK(out)
-	})
-
-	server.Register(api, withPolicy(huma.Operation{
-		OperationID: "list_delegated_calls",
-		Method:      http.MethodGet,
-		Path:        "/service/{service_id}/delegated_calls",
-		Summary:     "Calls made on behalf of a person",
-		Description: "The audit of the calls the service's trusted clients made on behalf of a person (POST /service/{id}/on_behalf/…): which client, for whom, when, and how many questions were allowed. The latest first; DELEGATION__AUDIT_RETENTION_DAYS (default 365) removes the old ones.",
-		Tags:        []string{"Policy"},
-	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *struct {
-		ServicePath
-		Limit  int   `query:"limit" required:"false" default:"50" minimum:"1" maximum:"200" doc:"Page size"`
-		Before int64 `query:"before" required:"false" minimum:"0" doc:"The next_before of the previous page"`
-	}) (*server.Out[*model.DelegatedCallList], error) {
-		out, err := h.app.ListDelegatedCalls(ctx, in.ServiceID, in.Limit, in.Before)
 		if err != nil {
 			return nil, err
 		}

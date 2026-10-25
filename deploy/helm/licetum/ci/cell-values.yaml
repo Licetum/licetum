@@ -1,0 +1,14 @@
+# A cell (values-cell.yaml on top of the defaults): its own PostgreSQL, and a policy that lets the pods reach only that.
+region: cn
+publicUrl: https://licetum.example.com
+secrets:
+  dbUri: postgres://licetum:licetum@10.30.0.5:5432/licetum
+platform:
+  url: https://admin.cn.example.com
+  icon: https://admin.cn.example.com/favicon.ico
+adminAuth:
+  issuer: https://idp.cn.example.com
+  audience: licetum-admin
+  jwksUrl: https://idp.cn.example.com/keys
+networkPolicy:
+  dbCidrs: [10.30.0.0/24]

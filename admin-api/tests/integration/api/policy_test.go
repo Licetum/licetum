@@ -177,7 +177,7 @@ func TestIntegrationPolicyExportImportsBackToTheSamePolicy(t *testing.T) {
 	expectIDs(t, w.permission(w.org, nil), "branch", "B1", "B2", "B3")
 
 	// Without prune, a rule the document leaves out stays; with prune, it goes.
-	var kept model.PolicyDocument = w.exportPolicy()
+	kept := w.exportPolicy()
 	kept.Rules = slices.DeleteFunc(kept.Rules, func(r model.PolicyRule) bool { return r.Name == "reader-grant" })
 	if plan := w.importPolicy(kept, true, false); plan.Counts.Deleted != 0 {
 		t.Fatalf("without prune nothing is deleted: %+v", plan.Counts)

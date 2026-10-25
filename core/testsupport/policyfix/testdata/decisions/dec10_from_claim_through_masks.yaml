@@ -1,0 +1,40 @@
+# DEC10: the anchors of a resource_from_claim are the ancestors of the matched resource through the resource links,
+# whatever the inherit masks of the type links along the way: the masks say which levels flow down, not which resource
+# lies above which. Here no level flows from a division down to a folder (division -> area passes write, area -> folder
+# passes read), yet the division above the folder is its ancestor; the levels of the rule then flow down from that
+# anchor as the masks say. A denial found that way stands on its anchor too (dropping it would fail open).
+# D1 ⊃ A1 ⊃ F1 (owner dave); D2 ⊃ A2 ⊃ F2.
+# Found by DECP seed 138 (case-02: admin on division D1 by dave, through folder F6 -> area A1 -> division D1).
+contracts: [DEC10]
+description: A claim lookup finds the ancestor of the rule's type even when no level flows from it down to the matched resource.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: area, service: org, sync: true, parents: [{type: division, inherit: [write]}]}
+  - {name: folder, service: org, sync: true, parents: [{type: area, inherit: [read]}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: area, id: A1, name: Area 1, parents: [{type: division, id: D1}]}
+  - {type: area, id: A2, name: Area 2, parents: [{type: division, id: D2}]}
+  - {type: folder, id: F1, name: Folder 1, parents: [{type: area, id: A1}], meta: {owner: dave}}
+  - {type: folder, id: F2, name: Folder 2, parents: [{type: area, id: A2}], meta: {owner: erin}}
+rules:
+  - {name: divisions-above-owned-folders, subject: dave, type: division, access: [write], from_claim: {claim: username, lookup_type: folder, match_by: meta.owner}}
+  - {name: read-all-divisions, subject: erin, type: division, access: [read]}
+  - {name: deny-division-above-blocked-folder, subject: erin, type: division, access: [read], deny: true, from_claim: {claim: blocked, lookup_type: folder, match_by: id}}
+cases:
+  - name: the division above the owned folder is an anchor although no level flows from it to the folder
+    subject: dave
+    claims: {username: dave}
+    questions:
+      - {type: division, resource: D1, action: write, allowed: true, decision: allowed, granted_by: [divisions-above-owned-folders]}
+      - {type: area, resource: A1, action: write, allowed: true, decision: allowed, granted_by: [divisions-above-owned-folders]}
+      - {type: folder, resource: F1, action: write, allowed: false, decision: no_access}
+      - {type: division, resource: D2, action: write, allowed: false, decision: no_access}
+  - name: a denial anchored above the blocked folder stands on its division
+    subject: erin
+    claims: {blocked: F2}
+    questions:
+      - {type: division, resource: D2, action: read, allowed: false, decision: denied, granted_by: [read-all-divisions], denials: [{rule: deny-division-above-blocked-folder}]}
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [read-all-divisions], denials: []}

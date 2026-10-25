@@ -1,0 +1,12 @@
+# The values the chart tests render with (helm lint, helm template golden files, kubeconform, the install into kind).
+region: eu
+publicUrl: https://licetum.example.com
+secrets:
+  dbUri: postgres://licetum:licetum@db-primary.example.internal:5432/licetum
+platform:
+  url: https://admin.example.com
+  icon: https://admin.example.com/favicon.ico
+adminAuth:
+  issuer: https://idp.example.com
+  audience: licetum-admin
+  jwksUrl: https://idp.example.com/keys

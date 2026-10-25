@@ -1,0 +1,1080 @@
+components:
+  schemas:
+    AuthzenAction:
+      additionalProperties: true
+      properties:
+        name:
+          description: Access level
+          examples:
+            - write
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+      required:
+        - name
+      type: object
+    AuthzenActionSearchRequest:
+      additionalProperties: true
+      properties:
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The resource (resource.type is required; an empty resource.id, or *, is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenActionSearchResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The access levels the subject has on the resource
+          items:
+            $ref: "#/components/schemas/AuthzenAction"
+          type: array
+      required:
+        - results
+      type: object
+    AuthzenEvaluationRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level asked for (action.name is required)
+        context:
+          additionalProperties: {}
+          description: "The attributes of the request that the rules may read (conditions with source context). context.licetum holds the settings of Licetum: {\"explain\": true} adds the explanation of the decision to the response context"
+          type: object
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: What is accessed (resource.type and resource.id are required; * is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenEvaluationResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: "With explain: reason_admin holds the explanation. In a batch, error holds the status and the message of an evaluation that could not be decided (the decision is then false); a short-circuited batch names the semantic in reason"
+          type: object
+        decision:
+          description: Whether the access is granted
+          type: boolean
+      required:
+        - decision
+      type: object
+    AuthzenEvaluationsRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: Default action
+        context:
+          additionalProperties: {}
+          description: Default context
+          type: object
+        evaluations:
+          description: "The evaluations, up to 100. Absent or empty: the top-level subject, resource, action and context are one evaluation, and the answer is a single decision"
+          items:
+            $ref: "#/components/schemas/AuthzenEvaluationRequest"
+          maxItems: 100
+          type:
+            - array
+            - "null"
+        options:
+          $ref: "#/components/schemas/AuthzenOptions"
+          description: How the evaluations are executed
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: Default resource
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: Default subject
+      type: object
+    AuthzenEvaluationsResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: "With explain: reason_admin holds the explanation of the decision of a request without evaluations"
+          type: object
+        decision:
+          description: The decision of a request without evaluations; absent when evaluations were given
+          type: boolean
+        evaluations:
+          description: Decisions in the order asked (fewer when the semantic stopped the batch)
+          items:
+            $ref: "#/components/schemas/AuthzenEvaluationResponse"
+          type:
+            - array
+            - "null"
+      type: object
+    AuthzenMetadata:
+      additionalProperties: false
+      properties:
+        access_evaluation_endpoint:
+          description: URL of the Access Evaluation API
+          type: string
+        access_evaluations_endpoint:
+          description: URL of the Access Evaluations API
+          type: string
+        capabilities:
+          description: "The extensions of Licetum this PDP supports, as URNs that are not registered with IANA: a resource id of * for the type as a whole, context.licetum.min_revision for reading your writes, and context.licetum.explain for an explanation of a decision. A PEP that does not know them is not affected"
+          examples:
+            - - urn:licetum:whole-type-resource-id
+          items:
+            type: string
+          type: array
+        policy_decision_point:
+          description: "The identifier of the Policy Decision Point: the base URL of the service, which is also where the default paths of the API are appended"
+          examples:
+            - https://licetum.example.com/service/orders
+          type: string
+        search_action_endpoint:
+          description: URL of the Action Search API
+          type: string
+        search_resource_endpoint:
+          description: URL of the Resource Search API
+          type: string
+        search_subject_endpoint:
+          description: URL of the Subject Search API
+          type: string
+      required:
+        - policy_decision_point
+        - access_evaluation_endpoint
+        - access_evaluations_endpoint
+        - search_subject_endpoint
+        - search_action_endpoint
+        - search_resource_endpoint
+        - capabilities
+      type: object
+    AuthzenOptions:
+      additionalProperties: true
+      properties:
+        evaluations_semantic:
+          description: execute_all (the default) answers every evaluation; deny_on_first_deny stops after the first denial or error; permit_on_first_permit stops after the first permit. The evaluations after the one that stops the batch are not answered
+          enum:
+            - execute_all
+            - deny_on_first_deny
+            - permit_on_first_permit
+          type: string
+      type: object
+    AuthzenPageRequest:
+      additionalProperties: true
+      properties:
+        limit:
+          description: At most this many results; absent or 0 — the most the service gives in one page (1000)
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+        token:
+          description: The next_token of the previous page. The subject, resource, action, context and limit must be the same as in the request that gave it
+          type: string
+      type: object
+    AuthzenPageResponse:
+      additionalProperties: false
+      properties:
+        count:
+          description: The number of results on this page
+          format: int64
+          type: integer
+        next_token:
+          description: Pass it as page.token to read the next page; empty on the last page
+          type: string
+        total:
+          description: The number of results of the whole search at the time of the request; absent when the search does not know it (the resource and the subject searches)
+          format: int64
+          type: integer
+      required:
+        - next_token
+        - count
+      type: object
+    AuthzenResource:
+      additionalProperties: true
+      properties:
+        id:
+          description: Resource id in the external system. An evaluation requires it, and * names the type as a whole; the action search reads an empty id or * as the type as a whole; the resource search ignores it
+          examples:
+            - b1
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Ignored in a request; the resource search returns the name of the resource here
+          type: object
+        type:
+          description: Name of the resource type in the service
+          examples:
+            - branch
+          type: string
+      required:
+        - type
+      type: object
+    AuthzenResourceSearchRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level (action.name is required)
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The type of the resources searched for (resource.type is required; resource.id is ignored)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenResourceSearchResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The resources the subject may do the action on; properties.name is the name of the resource
+          items:
+            $ref: "#/components/schemas/AuthzenResource"
+          type: array
+      required:
+        - results
+      type: object
+    AuthzenSubject:
+      additionalProperties: true
+      properties:
+        id:
+          description: "Subject id: 1 to 256 characters, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it"
+          examples:
+            - alice
+          type: string
+        properties:
+          additionalProperties: {}
+          description: "The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"
+          type: object
+        type:
+          description: "Subject type (not interpreted): 1 to 64 characters, and not group"
+          examples:
+            - user
+          type: string
+      required:
+        - type
+      type: object
+    AuthzenSubjectSearchRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level (action.name is required)
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The resource (resource.type is required; an empty resource.id, or *, is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: "The subject: only its type is used (subject.type is required; subject.id is ignored)"
+      type: object
+    AuthzenSubjectSearchResponse:
+      additionalProperties: false
+      properties:
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The subjects that may do the action on the resource
+          items:
+            $ref: "#/components/schemas/AuthzenSubject"
+          type: array
+      required:
+        - results
+      type: object
+  securitySchemes:
+    bearer:
+      bearerFormat: JWT
+      description: The API key of a PEP client of the service, or the access token of an issuer registered for PEPs.
+      scheme: bearer
+      type: http
+info:
+  description: |
+    **Licetum** is a centralized authorization service for all of your company's services.
+    Access rights are stored in one place: instead of a separate role model in every application,
+    rules are defined and checked centrally.
+
+    ### Why
+
+    - **Single point of control.** User permissions for every system are granted, revoked and checked in one place.
+    - **Cross-service access.** Any entity of any service (a project, report, gallery, branch, etc.) can be
+    shared, and the same users and groups can be granted access to it across all systems.
+    - **Simpler maintenance.** Services don't implement authorization themselves; they ask Licetum:
+    "may user X perform action Y on object Z?"
+    - **Transparency and audit.** You can see who has which permissions and where they come from.
+
+    ### Errors
+
+    Every error is `{"detail": "text", "extra": {"type": "generic" | "missing" | "blocked_by", "code": "..."}}`.
+    `detail` is localized according to the `Accept-Language` header (en, ru, zh); `extra.code` is a stable
+    machine-readable code.
+  license:
+    identifier: MIT
+    name: MIT
+  title: Licetum PDP
+  version: 0.1.0
+openapi: 3.1.0
+paths:
+  /.well-known/authzen-configuration/service/{ref}:
+    get:
+      description: The discovery document of the AuthZEN API of one service (OpenID AuthZEN 1.0, "Policy Decision Point Metadata"). The Policy Decision Point of a service is <PDP__PUBLIC_URL>/service/<slug>, so the document is served at the well-known path inserted between the host and that path. It needs no token. It is built from PDP__PUBLIC_URL, and is not served (404) without it.
+      operationId: authzen_metadata
+      parameters:
+        - description: Service slug
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Service slug
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenMetadata"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "422":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+      summary: AuthZEN Policy Decision Point metadata
+      tags:
+        - AuthZEN
+  /service/{ref}/access/v1/evaluation:
+    post:
+      description: |-
+        Decides whether the subject may perform the action on the resource.
+
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
+
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
+      operationId: authzen_evaluation
+      parameters:
+        - description: Service slug
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Service slug
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenEvaluationRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenEvaluationResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "422":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "424":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+      security:
+        - bearer: []
+      summary: AuthZEN access evaluation
+      tags:
+        - AuthZEN
+  /service/{ref}/access/v1/evaluations:
+    post:
+      description: |-
+        Decides up to 100 evaluations in one request; subject, resource, action and context given at the top level are defaults for the evaluations that omit them. options.evaluations_semantic chooses between answering all of them (execute_all, the default), stopping at the first denial (deny_on_first_deny) and stopping at the first permit (permit_on_first_permit). An evaluation that cannot be decided is a denial with context.error holding its status and message. Without evaluations the top-level fields are one evaluation, and the answer is its decision.
+
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
+
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
+      operationId: authzen_evaluations
+      parameters:
+        - description: Service slug
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Service slug
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenEvaluationsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenEvaluationsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "422":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "424":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+      security:
+        - bearer: []
+      summary: AuthZEN access evaluations (batch)
+      tags:
+        - AuthZEN
+  /service/{ref}/access/v1/search/action:
+    post:
+      description: |-
+        Lists the actions (access levels) the subject may perform on the resource; without resource.id the resource is the type as a whole. The request has no action.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
+        there are more results; send it back as page.token with the same request. The results are sorted.
+
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
+
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
+      operationId: authzen_search_action
+      parameters:
+        - description: Service slug
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Service slug
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenActionSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenActionSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "422":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "424":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+      security:
+        - bearer: []
+      summary: AuthZEN action search
+      tags:
+        - AuthZEN
+  /service/{ref}/access/v1/search/resource:
+    post:
+      description: |-
+        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. A type without resources has none to list. A page can be shorter than page.limit, even empty, and still carry page.next_token, because one request reads a bounded number of resources: keep asking until page.next_token is empty.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
+        there are more results; send it back as page.token with the same request. The results are sorted.
+
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
+
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
+      operationId: authzen_search_resource
+      parameters:
+        - description: Service slug
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Service slug
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenResourceSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenResourceSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "422":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "424":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+      security:
+        - bearer: []
+      summary: AuthZEN resource search
+      tags:
+        - AuthZEN
+  /service/{ref}/access/v1/search/subject:
+    post:
+      description: |-
+        Lists the subjects of the type subject.type that may perform the action on the resource; subject.id is ignored. Only a PEP client with the search_subject operation may ask. The subjects are the people in the subject directory of the service — what its application sent — decided with their stored properties, so a person who is not in the directory is never listed and an empty directory gives an empty result; a request goes through at most 1000 of them, in the order of their identifiers, and page.next_token continues from where it stopped (page.total is not given).
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while
+        there are more results; send it back as page.token with the same request. The results are sorted.
+
+        This is the Authorization API 1.0 of OpenID AuthZEN, scoped to one service: the service is in the path, by its slug.
+        resource.type is the name of a resource type of the service, and resource.id the resource id in the external system; the id
+        "*" names the type as a whole, not a resource. action.name is an access level.
+
+        The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
+        it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
+        subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+        operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
+        Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
+
+        The context holds the attributes of the request that the rules may read. Its key licetum holds the settings of Licetum, and
+        is read from the top-level context only: min_revision (the answer reflects every write up to that revision) and explain (the
+        explanation goes into context.reason_admin).
+
+        A request that is not valid is a 400, a missing or invalid credential a 401, an operation the caller may not ask for a 403,
+        a client over its rate limit a 429. An error has its message as a JSON string, and its code in the Licetum-Error-Code header.
+      operationId: authzen_search_subject
+      parameters:
+        - description: Service slug
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Service slug
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenSubjectSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenSubjectSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Bad Request
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unauthorized
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Forbidden
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "422":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Unprocessable Entity
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "424":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Failed Dependency
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "429":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Too Many Requests
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+        "500":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Internal Server Error
+          headers:
+            Licetum-Error-Code:
+              schema:
+                type: string
+      security:
+        - bearer: []
+      summary: AuthZEN subject search
+      tags:
+        - AuthZEN
+tags:
+  - description: "The OpenID AuthZEN Authorization API 1.0 of a service: access evaluation and evaluations, the subject, resource and action searches, and the discovery document."
+    name: AuthZEN
+  - description: Service endpoints.
+    name: System
+

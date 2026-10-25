@@ -1,0 +1,146 @@
+# DEC06: a type without a synchronizer (not_sync, a capability) has no resources and is decided by the whole-type rules
+# anchored on it only — no grant and no denial cascades into it from an ancestor type or resource. A whole-type rule on
+# a not_sync type still cascades to the resources of its sync descendant types.
+#
+# The world of the integration tests (hierarchy_test.go:newWorld): division → rrs → branch (service org), item (service
+# app) under branch; D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3; R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4. Capabilities of app:
+# advanced_mode (no parent, as in hierarchy_test.go:TestIntegrationTypeModes) and branch_reports (under branch).
+# Service retail: region (not_sync) with the sync children store (every level flows) and kiosk (read flows), and the
+# not_sync child zone. store S1, S2 and kiosk K1 have no parents: a not_sync type has no resources to hang under.
+#
+# A question about a type as a whole (no resource) counts only the rules anchored on that type, for a sync type too.
+contracts: [DEC06]
+description: not_sync types are decided by their own whole-type rules; a whole-type rule on one cascades to sync descendants.
+services: [org, app, retail]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+  - {name: advanced_mode, service: app, sync: false}
+  - {name: branch_reports, service: app, sync: false, parents: [{type: branch}]}
+  - {name: region, service: retail, sync: false}
+  - {name: store, service: retail, sync: true, parents: [{type: region}]}
+  - {name: kiosk, service: retail, sync: true, parents: [{type: region, inherit: [read]}]}
+  - {name: zone, service: retail, sync: false, parents: [{type: region}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, name: Branch 4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, name: Item 1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, name: Item 4, parents: [{type: branch, id: B4}]}
+  - {type: store, id: S1}
+  - {type: store, id: S2}
+  - {type: kiosk, id: K1}
+groups:
+  - name: advanced-users
+    members:
+      - predicate: [{attr: position, op: in, value: [manager]}]
+rules:
+  # hierarchy_test.go:TestIntegrationTypeModes
+  - {name: modes-advanced, member_of: advanced-users, type: advanced_mode, access: [write, read]}
+  - {name: modes-D1, subject: user-1, type: division, resource: D1, access: [read]}
+  # no-cascade: everything above branch_reports, nothing on it
+  - {name: nc-branch, subject: no-cascade, type: branch, access: [read]}
+  - {name: nc-B1, subject: no-cascade, type: branch, resource: B1, access: [read]}
+  - {name: nc-division, subject: no-cascade, type: division, access: [read]}
+  - {name: nc-D1, subject: no-cascade, type: division, resource: D1, access: [read]}
+  # region-whole: a whole-type grant on a not_sync type
+  - {name: rw-region, subject: region-whole, type: region, access: [read, write]}
+  # region-deny: a whole-type denial on a not_sync type
+  - {name: rd-S1, subject: region-deny, type: store, resource: S1, access: [read]}
+  - {name: rd-zone, subject: region-deny, type: zone, access: [read]}
+  - {name: rd-deny-region, subject: region-deny, type: region, access: [read], deny: true}
+  # region-exception: the denial on region is lifted below it by an exception on the whole type store
+  - {name: rx-region, subject: region-exception, type: region, access: [read]}
+  - {name: rx-deny-region, subject: region-exception, type: region, access: [read], deny: true}
+  - {name: rx-except-store, subject: region-exception, type: store, access: [read], exception: true}
+  # cap-denied: a denial on the capability itself
+  - {name: cd-grant, subject: cap-denied, type: advanced_mode, access: [read, write]}
+  - {name: cd-deny, subject: cap-denied, type: advanced_mode, access: ["*"], deny: true}
+  # cap-tie: an exception on the not_sync type itself does not lie strictly below a denial on it
+  - {name: ct-grant, subject: cap-tie, type: advanced_mode, access: [read]}
+  - {name: ct-deny, subject: cap-tie, type: advanced_mode, access: [read], deny: true}
+  - {name: ct-except, subject: cap-tie, type: advanced_mode, access: [read], exception: true}
+cases:
+  # from hierarchy_test.go:TestIntegrationTypeModes
+  - name: a manager gets the capability through the group, and the items below D1
+    subject: user-1
+    claims: {position: manager}
+    service: app
+    questions:
+      - {type: advanced_mode, action: read, allowed: true, decision: allowed, granted_by: [modes-advanced]}
+      - {type: advanced_mode, action: write, allowed: true, decision: allowed, granted_by: [modes-advanced]}
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [modes-D1]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+  # from hierarchy_test.go:TestIntegrationTypeModes
+  - name: without an applicable rule a not_sync type gives nothing
+    subject: user-1
+    claims: {position: cashier}
+    service: app
+    questions:
+      - {type: advanced_mode, action: read, allowed: false, decision: no_access}
+      - {type: advanced_mode, action: write, allowed: false, decision: no_access}
+      - {type: item, resource: I1, action: read, allowed: true}
+  - name: a not_sync type has no resources
+    subject: user-1
+    claims: {position: manager}
+    service: app
+    questions:
+      - {type: advanced_mode, resource: X1, action: read, allowed: false, decision: resource_not_found}
+  - name: no grant cascades into a not_sync type from its ancestors, a sync type below them gets the cascade
+    subject: no-cascade
+    service: app
+    questions:
+      - {type: branch_reports, action: read, allowed: false, decision: no_access}
+      - {type: advanced_mode, action: read, allowed: false, decision: no_access}
+      - {type: item, resource: I1, action: read, allowed: true}
+      - {type: item, resource: I4, action: read, allowed: true}
+  - name: a whole-type grant decides the not_sync type and cascades to the resources of its sync descendants
+    subject: region-whole
+    service: retail
+    questions:
+      - {type: region, action: read, allowed: true, decision: allowed, granted_by: [rw-region]}
+      - {type: region, action: write, allowed: true, decision: allowed, granted_by: [rw-region]}
+      - {type: store, resource: S1, action: read, allowed: true, decision: allowed, granted_by: [rw-region]}
+      - {type: store, resource: S1, action: write, allowed: true}
+      - {type: store, resource: S2, action: read, allowed: true}
+      - {type: kiosk, resource: K1, action: read, allowed: true, decision: allowed, granted_by: [rw-region]}
+      - {type: kiosk, resource: K1, action: write, allowed: false, decision: no_access}
+  - name: the whole-type grant on region does not reach a not_sync child, nor a sync child taken as a whole
+    subject: region-whole
+    service: retail
+    questions:
+      - {type: zone, action: read, allowed: false, decision: no_access}
+      - {type: store, action: read, allowed: false, decision: no_access}
+  - name: a whole-type denial on a not_sync type cascades to the resources of its sync descendants, not to a not_sync child
+    subject: region-deny
+    service: retail
+    questions:
+      - {type: store, resource: S1, action: read, allowed: false, decision: denied, granted_by: [rd-S1], denials: [{rule: rd-deny-region}]}
+      - {type: zone, action: read, allowed: true, decision: allowed, granted_by: [rd-zone]}
+      - {type: region, action: read, allowed: false, decision: no_access}
+  - name: an exception on a lower sync type lifts the denial of a not_sync type for that type only
+    subject: region-exception
+    service: retail
+    questions:
+      - {type: store, resource: S1, action: read, allowed: true, decision: allowed, granted_by: [rx-region, rx-except-store], denials: [{rule: rx-deny-region, lifted_by: [rx-except-store]}]}
+      - {type: kiosk, resource: K1, action: read, allowed: false, decision: denied, granted_by: [rx-region], denials: [{rule: rx-deny-region}]}
+      - {type: region, action: read, allowed: false, decision: denied, granted_by: [rx-region], denials: [{rule: rx-deny-region}]}
+  - name: a denial on the capability itself decides it
+    subject: cap-denied
+    service: app
+    questions:
+      - {type: advanced_mode, action: read, allowed: false, decision: denied, granted_by: [cd-grant], denials: [{rule: cd-deny}]}
+      - {type: advanced_mode, action: write, allowed: false, decision: denied, granted_by: [cd-grant], denials: [{rule: cd-deny}]}
+  - name: on the not_sync type itself an exception ties with the denial, and the denial wins
+    subject: cap-tie
+    service: app
+    questions:
+      - {type: advanced_mode, action: read, allowed: false, decision: denied, granted_by: [ct-grant, ct-except], denials: [{rule: ct-deny}]}

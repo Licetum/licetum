@@ -1,0 +1,6 @@
+GET /.well-known/authzen-configuration/service/{ref}
+POST /service/{ref}/access/v1/evaluation
+POST /service/{ref}/access/v1/evaluations
+POST /service/{ref}/access/v1/search/action
+POST /service/{ref}/access/v1/search/resource
+POST /service/{ref}/access/v1/search/subject

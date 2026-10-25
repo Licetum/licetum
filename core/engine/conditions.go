@@ -35,10 +35,12 @@ func untilNextMinute(now time.Time) time.Duration {
 
 // ResourcesMatching returns, for every rule with a resource_where, the resources of its type that its conditions cover.
 // The attributes are the ones the synchronizers reported for the resources (resource_cache.meta), read from the local copy.
-func (a *App) ResourcesMatching(ctx context.Context, rules []model.AssignmentRule) (map[int][]graphNode, error) {
+// sourced says which types have resources (TypeGraph.IsSync): a rule on a type without a live synchronizer matches nothing,
+// whatever rows its deleted synchronizer left in the local copy.
+func (a *App) ResourcesMatching(ctx context.Context, rules []model.AssignmentRule, sourced func(uuid.UUID) bool) (map[int][]graphNode, error) {
 	out := map[int][]graphNode{}
 	for i, rule := range rules {
-		if len(rule.ResourceWhere) == 0 {
+		if len(rule.ResourceWhere) == 0 || !sourced(*rule.TypeResourceID) {
 			continue
 		}
 		nodes, err := a.resourcesWhere(ctx, *rule.TypeResourceID, rule.ResourceWhere)

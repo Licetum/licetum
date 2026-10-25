@@ -1,12 +1,11 @@
 // Package synchronizer holds the resource source adapters (an SQL query or an HTTP endpoint of the
-// service owning the resource type). Every call is wrapped in a circuit breaker (Redis) and
-// singleflight, which collapses concurrent identical requests into one.
+// service owning the resource type). Concurrent identical calls are collapsed into one by singleflight; a source that
+// does not answer is not held off here: the backoff of the type lives in sync_state (core/engine), which every replica
+// reads.
 package synchronizer
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,12 +22,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 const (
@@ -38,8 +35,7 @@ const (
 )
 
 // ErrSourceUnavailable is a transport failure of the source (network/DNS/syntax/response format).
-// It differs from a legitimate "not found" so that the circuit breaker does not open on ordinary
-// point misses.
+// It differs from a legitimate "not found": a point miss is not a failure of the source.
 var ErrSourceUnavailable = errors.New("synchronizer source unavailable")
 
 func unavailable(format string, args ...any) error {
@@ -47,25 +43,15 @@ func unavailable(format string, args ...any) error {
 }
 
 type Adapter struct {
-	rdb  *redis.Client
 	http *http.Client
 	sf   singleflight.Group
-
-	// DefaultFetchTTL is how long a fetched list of resources is kept in Redis when the synchronizer has
-	// no cache_ttl of its own (config.Sync.FetchTTL). Zero — no cache.
-	DefaultFetchTTL time.Duration
-
-	// OnBreakerOpen, if set, is called whenever a call is skipped because the circuit breaker of a
-	// source is open (a metrics hook).
-	OnBreakerOpen func()
 
 	mu    sync.Mutex
 	pools map[string]*pgxpool.Pool
 }
 
-func NewAdapter(rdb *redis.Client) *Adapter {
+func NewAdapter() *Adapter {
 	return &Adapter{
-		rdb:   rdb,
 		http:  &http.Client{},
 		pools: map[string]*pgxpool.Pool{},
 	}
@@ -73,8 +59,8 @@ func NewAdapter(rdb *redis.Client) *Adapter {
 
 // NewAdapterWithHTTPClient configures the adapter with a caller-owned HTTP client. It is useful
 // when a caller needs custom transport or timeout settings and keeps HTTP source tests in-process.
-func NewAdapterWithHTTPClient(rdb *redis.Client, client *http.Client) *Adapter {
-	adapter := NewAdapter(rdb)
+func NewAdapterWithHTTPClient(client *http.Client) *Adapter {
+	adapter := NewAdapter()
 	if client != nil {
 		adapter.http = client
 	}
@@ -92,8 +78,9 @@ func (a *Adapter) Close() {
 }
 
 // FetchOne returns a resource by external id, or nil if it does not exist or the source is unavailable.
-// breakerKey == "" disables the circuit breaker and singleflight (checking a source before saving).
-func (a *Adapter) FetchOne(ctx context.Context, cfg model.SynchronizerConfig, externalID, breakerKey string) *model.Resource {
+// key names the synchronizer: concurrent calls for the same key and resource share one request. key == ""
+// disables singleflight (checking a source before saving).
+func (a *Adapter) FetchOne(ctx context.Context, cfg model.SynchronizerConfig, externalID, key string) *model.Resource {
 	do := func(ctx context.Context) (*model.Resource, error) {
 		ctx, cancel := context.WithTimeout(ctx, fetchOneTimeout)
 		defer cancel()
@@ -103,7 +90,7 @@ func (a *Adapter) FetchOne(ctx context.Context, cfg model.SynchronizerConfig, ex
 		return a.fetchOneHTTP(ctx, cfg, externalID)
 	}
 
-	if breakerKey == "" {
+	if key == "" {
 		row, err := do(ctx)
 		if err != nil {
 			slog.WarnContext(ctx, "synchronizer fetch_one failed", "error", err)
@@ -112,37 +99,23 @@ func (a *Adapter) FetchOne(ctx context.Context, cfg model.SynchronizerConfig, ex
 		return row
 	}
 
-	if a.breakerOpen(ctx, breakerKey) {
-		return nil
-	}
-
-	v, err, _ := a.sf.Do("fetch_one:"+breakerKey+":"+externalID, func() (any, error) {
+	v, err, _ := a.sf.Do("fetch_one:"+key+":"+externalID, func() (any, error) {
 		// Detach from the first caller's cancellation — every waiter needs the result.
 		return do(context.WithoutCancel(ctx))
 	})
 	if err != nil {
-		slog.WarnContext(ctx, "synchronizer fetch_one failed", "breaker", breakerKey, "error", err)
-		redisx.RecordFailure(ctx, a.rdb, breakerKey)
+		slog.WarnContext(ctx, "synchronizer fetch_one failed", "synchronizer", key, "error", err)
 		return nil
 	}
-	redisx.RecordSuccess(ctx, a.rdb, breakerKey)
 	return v.(*model.Resource)
 }
 
-func (a *Adapter) breakerOpen(ctx context.Context, key string) bool {
-	open := redisx.BreakerOpen(ctx, a.rdb, key)
-	if open && a.OnBreakerOpen != nil {
-		a.OnBreakerOpen()
-	}
-	return open
-}
-
 // FetchAll returns the full resource list of the source. An error means the source did not answer: a transport
-// failure, a bad status, a malformed answer, or an open circuit breaker. An answer that lists no resource is an
-// answer like any other — an empty list with no error — and the caller takes it as the source's truth. The list is
-// kept in Redis for the synchronizer's cache_ttl (or DefaultFetchTTL), an empty one included. fresh (consistency=higher)
-// asks the source anyway and refreshes the cached list. Checks before saving (breakerKey == "") always go to the source.
-func (a *Adapter) FetchAll(ctx context.Context, cfg model.SynchronizerConfig, breakerKey string, fresh bool) ([]model.Resource, error) {
+// failure, a bad status or a malformed answer. An answer that lists no resource is an answer like any other — an empty
+// list with no error — and the caller takes it as the source's truth. key names the synchronizer: concurrent calls for
+// the same key share one request, except that a fresh call (a request that needs the state of the source as of now)
+// never joins a fetch that is not fresh, which may have started before it (it may join another fresh call). key == "" disables singleflight (checking a source before saving).
+func (a *Adapter) FetchAll(ctx context.Context, cfg model.SynchronizerConfig, key string, fresh bool) ([]model.Resource, error) {
 	do := func(ctx context.Context) ([]model.Resource, error) {
 		ctx, cancel := context.WithTimeout(ctx, fetchAllTimeout)
 		defer cancel()
@@ -152,7 +125,7 @@ func (a *Adapter) FetchAll(ctx context.Context, cfg model.SynchronizerConfig, br
 		return a.fetchAllHTTP(ctx, cfg)
 	}
 
-	if breakerKey == "" {
+	if key == "" {
 		rows, err := do(ctx)
 		if err != nil {
 			slog.WarnContext(ctx, "synchronizer fetch_all failed", "error", err)
@@ -160,90 +133,19 @@ func (a *Adapter) FetchAll(ctx context.Context, cfg model.SynchronizerConfig, br
 		return rows, err
 	}
 
-	ttl := a.fetchTTL(cfg)
-	key := fetchCacheKey(cfg, breakerKey)
-	if ttl > 0 && !fresh {
-		if rows, ok := a.cachedRows(ctx, key); ok {
-			return rows, nil
-		}
-	}
-
-	if a.breakerOpen(ctx, breakerKey) {
-		return nil, unavailable("the circuit breaker of the source is open")
-	}
-
-	flight := "fetch_all:" + breakerKey
+	flight := "fetch_all:" + key
 	if fresh {
-		flight = "fetch_all:fresh:" + breakerKey
+		flight = "fetch_all:fresh:" + key
 	}
 	v, err, _ := a.sf.Do(flight, func() (any, error) {
-		rows, err := do(context.WithoutCancel(ctx))
-		if err != nil {
-			return nil, err
-		}
-		a.storeRows(context.WithoutCancel(ctx), key, rows, ttl)
-		return rows, nil
+		return do(context.WithoutCancel(ctx))
 	})
 	if err != nil {
-		slog.WarnContext(ctx, "synchronizer fetch_all failed", "breaker", breakerKey, "error", err)
-		redisx.RecordFailure(ctx, a.rdb, breakerKey)
+		slog.WarnContext(ctx, "synchronizer fetch_all failed", "synchronizer", key, "error", err)
 		return nil, err
 	}
-	redisx.RecordSuccess(ctx, a.rdb, breakerKey)
 	rows, _ := v.([]model.Resource)
 	return rows, nil
-}
-
-// fetchTTL is how long a fetched list is kept: the synchronizer's own cache_ttl, or the default.
-func (a *Adapter) fetchTTL(cfg model.SynchronizerConfig) time.Duration {
-	if cfg.CacheTTL != nil {
-		return time.Duration(*cfg.CacheTTL) * time.Second
-	}
-	return a.DefaultFetchTTL
-}
-
-// fetchCacheKey names a cached list of a source. The fingerprint covers the configuration with its secrets
-// masked (the DSN password and the header values): a plain hash of the secrets would let whoever can read
-// Redis guess them offline. Editing the synchronizer's queries or URL still cuts off a list fetched with the
-// old configuration; changing only a secret keeps the cached list for at most its TTL.
-func fetchCacheKey(cfg model.SynchronizerConfig, breakerKey string) string {
-	raw, _ := json.Marshal(cfg.Masked())
-	sum := sha256.Sum256(raw)
-	return "authz:fetch_all:" + breakerKey + ":" + hex.EncodeToString(sum[:])
-}
-
-// cachedRows reads a list kept in Redis. The cache is best-effort: a miss, an error or a broken value
-// is a miss.
-func (a *Adapter) cachedRows(ctx context.Context, key string) ([]model.Resource, bool) {
-	if a.rdb == nil {
-		return nil, false
-	}
-	raw, err := a.rdb.Get(ctx, key).Bytes()
-	if err != nil {
-		return nil, false
-	}
-	var rows []model.Resource
-	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, false
-	}
-	return rows, true
-}
-
-// storeRows keeps a fetched list for ttl. An empty list is kept too: the source answered with it.
-func (a *Adapter) storeRows(ctx context.Context, key string, rows []model.Resource, ttl time.Duration) {
-	if a.rdb == nil || ttl <= 0 {
-		return
-	}
-	if rows == nil {
-		rows = []model.Resource{}
-	}
-	raw, err := json.Marshal(rows)
-	if err != nil {
-		return
-	}
-	if err := a.rdb.Set(ctx, key, raw, ttl).Err(); err != nil {
-		slog.WarnContext(ctx, "failed to cache the resources of a synchronizer", "error", err)
-	}
 }
 
 // ---------- SQL ----------

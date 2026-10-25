@@ -6,17 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"slices"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/db"
@@ -38,20 +34,6 @@ import (
 // The permission computation works on this copy only and never asks a source per resource.
 
 const (
-	// syncHashSalt: changing it drops every stored hash (e.g. when the way the closure is built
-	// changes) — the next access rebuilds every type.
-	syncHashSalt   = "v4"
-	syncHashPrefix = "authz:resource_sync:hash:"
-	syncLastPrefix = "authz:resource_sync:last:"
-	// syncEpochKey grows on every write that changes what a synchronization produces (types,
-	// synchronizers): it is part of the throttle key, so such a write ends the throttle at once.
-	syncEpochKey = "authz:sync_epoch"
-	// syncTTL is how long a type's source is not asked again after a synchronization, unless the
-	// caller asks for higher consistency.
-	syncTTL = 30 * time.Second
-	// syncWriteLockKey is the advisory lock key: writers of the graph (also on different replicas)
-	// go strictly one after another, otherwise two transactions rebuilding the closure could deadlock.
-	syncWriteLockKey = 7_303_001
 	// insertChunkSize is the number of rows per INSERT built from unnest arrays.
 	insertChunkSize = 5000
 )
@@ -153,19 +135,6 @@ func writeString(w io.Writer, s string) {
 	_, _ = io.WriteString(w, s)
 }
 
-// syncDigest is what is stored in Redis for a type: the hash of the data and the signature of the
-// type graph above it. A changed graph part means every resource of the type must be recomputed even
-// though the data did not change; a changed data part is diffed against the cache.
-func syncDigest(data, graph string) string { return syncHashSalt + ":" + data + ":" + graph }
-
-func splitDigest(digest string) (data, graph string) {
-	parts := strings.Split(digest, ":")
-	if len(parts) != 3 || parts[0] != syncHashSalt {
-		return "", ""
-	}
-	return parts[1], parts[2]
-}
-
 // liveSynchronizers returns the synchronizer of each given type that has a live (not deleted) one.
 // The order is fixed: if a type has several synchronizers (nothing forbids it), the same one is
 // always taken — otherwise its resources would flicker.
@@ -218,313 +187,13 @@ type changedType struct {
 	touchAll bool
 }
 
-// syncPlan is what a synchronization knows before it fetches anything: the live synchronizers of the types,
-// which of them are within their throttle, and the hash each type was last synchronized with.
-type syncPlan struct {
-	epoch     string
-	synced    map[uuid.UUID]bool   // the types with a live synchronizer
-	syncs     []model.Synchronizer // their live synchronizers
-	throttled map[uuid.UUID]bool   // fetched again within syncTTL: not due
-	stored    map[uuid.UUID]string // the hash of the last synchronization ("" if never synchronized)
-}
-
-// throttleKey names the throttle of a type in the current sync epoch.
-func (p *syncPlan) throttleKey(typeID uuid.UUID) string {
-	return syncLastPrefix + p.epoch + ":" + typeID.String()
-}
-
-// planSync reads the state of the synchronization of the given types: their synchronizers, the throttle keys
-// and the stored hashes, the Redis part in two round trips. It fetches nothing and writes nothing, so it runs
-// without the synchronization lock.
-func (a *App) planSync(ctx context.Context, typeIDs []uuid.UUID) (*syncPlan, error) {
-	p := &syncPlan{synced: map[uuid.UUID]bool{}, throttled: map[uuid.UUID]bool{}, stored: map[uuid.UUID]string{}}
-	syncs, err := a.liveSynchronizers(ctx, typeIDs)
-	if err != nil {
-		return nil, err
-	}
-	p.syncs = syncs
-	for _, s := range syncs {
-		p.synced[s.TypeResourceID] = true
-	}
-	if len(syncs) == 0 {
-		return p, nil
-	}
-
-	epoch, err := a.Redis.Get(ctx, syncEpochKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		slog.WarnContext(ctx, "failed to read the sync epoch", "error", err)
-	}
-	p.epoch = epoch
-
-	pipe := a.Redis.Pipeline()
-	throttle := make([]*redis.IntCmd, len(syncs))
-	hashes := make([]*redis.StringCmd, len(syncs))
-	for i, s := range syncs {
-		throttle[i] = pipe.Exists(ctx, p.throttleKey(s.TypeResourceID))
-		hashes[i] = pipe.Get(ctx, syncHashPrefix+s.TypeResourceID.String())
-	}
-	_, _ = pipe.Exec(ctx) // every reply is read below: a missing key is a reply, not a failure of the pipeline
-	for i, s := range syncs {
-		typeID := s.TypeResourceID
-		if n, err := throttle[i].Result(); err == nil && n > 0 {
-			p.throttled[typeID] = true
-		}
-		hash, err := hashes[i].Result()
-		switch {
-		case err == nil:
-			p.stored[typeID] = hash
-		case !errors.Is(err, redis.Nil):
-			slog.WarnContext(ctx, "failed to read the resource sync hash", "error", err)
-		}
-	}
-	return p, nil
-}
-
-// syncOutcome is what a synchronization run found out: the types that have a live synchronizer, and those whose source
-// was asked and did not answer (their data stays as it was).
-type syncOutcome struct {
-	synced     map[uuid.UUID]bool
-	unanswered map[uuid.UUID]bool
-}
-
-// EnsureSynced runs syncTypes and returns the types that have a live synchronizer.
-func (a *App) EnsureSynced(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, fresh bool) (map[uuid.UUID]bool, error) {
-	out, err := a.syncTypes(ctx, g, typeIDs, fresh)
-	return out.synced, err
-}
-
-// syncTypes brings the local copy of the given types up to the state of their sources. The types not
-// synchronized within syncTTL are fetched (all of them with fresh), in parallel (the circuit breaker and
-// singleflight live in the adapter), but the DB is written only if something changed: the hash of the answer
-// is compared with the one stored in Redis. A source that did not answer is skipped; an answer with no resources is
-// the source's truth and switches off every resource of the type. The planning state is
-// read again here, under the synchronization lock: another replica may have synchronized meanwhile. The permission
-// path runs it through syncTypesOnce; the admin paths (IsCovered, ListResources) run it directly, and the writes
-// of the rows are serialized by the advisory lock.
-//
-// Returns the types that have a live synchronizer: only their data is current.
-func (a *App) syncTypes(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, fresh bool) (syncOutcome, error) {
-	plan, err := a.planSync(ctx, typeIDs)
-	if err != nil {
-		return syncOutcome{}, err
-	}
-	var due []model.Synchronizer
-	for _, s := range plan.syncs {
-		if fresh || !plan.throttled[s.TypeResourceID] {
-			due = append(due, s)
-		}
-	}
-	if len(due) == 0 {
-		return syncOutcome{synced: plan.synced}, nil
-	}
-
-	started := time.Now()
-	fetched := make([][]model.Resource, len(due))
-	unanswered := make([]bool, len(due))
-	var wg sync.WaitGroup
-	for i, s := range due {
-		wg.Go(func() {
-			rows, err := a.Sync.FetchAll(ctx, s.Config, s.ID.String(), fresh)
-			fetched[i], unanswered[i] = rows, err != nil
-		})
-	}
-	wg.Wait()
-	fetchDuration := time.Since(started)
-	a.metrics.syncFetch.Observe(fetchDuration.Seconds())
-
-	dueIDs := make([]uuid.UUID, len(due))
-	for i, s := range due {
-		dueIDs[i] = s.TypeResourceID
-	}
-	counts, err := a.ActiveCounts(ctx, dueIDs)
-	if err != nil {
-		return syncOutcome{}, err
-	}
-
-	unansweredTypes := map[uuid.UUID]bool{}
-	var changed []changedType
-	var settled []uuid.UUID
-	for i, s := range due {
-		typeID := s.TypeResourceID
-		if unanswered[i] {
-			unansweredTypes[typeID] = true
-			slog.WarnContext(ctx, "the source of a resource type did not answer, sync skipped",
-				"type_resource_id", typeID)
-			a.metrics.syncResults.WithLabelValues("unanswered").Inc()
-			continue
-		}
-
-		normalized, dropped := NormalizeResources(g, typeID, fetched[i])
-		if dropped > 0 {
-			slog.WarnContext(ctx, "the source reports parents that cannot be resolved to a parent type of the resource type: "+
-				"the parent type is unknown or ambiguous (use parents[].type, service/name if needed)",
-				"type_resource_id", typeID, "links", dropped)
-		}
-		unique := make(map[string]IncomingResource, len(normalized))
-		for _, r := range normalized {
-			unique[r.ExternalID] = r
-		}
-		digest := syncDigest(dataDigest(unique), structureOf(g, typeID, s.Config))
-
-		stored := plan.stored[typeID]
-		if stored == digest && counts[typeID] == len(unique) {
-			settled = append(settled, typeID)
-			a.metrics.syncResults.WithLabelValues("unchanged").Inc()
-			continue
-		}
-
-		_, storedGraph := splitDigest(stored)
-		_, newGraph := splitDigest(digest)
-		rows := make([]IncomingResource, 0, len(unique))
-		for _, r := range unique {
-			rows = append(rows, r)
-		}
-		changed = append(changed, changedType{typeID: typeID, rows: rows, digest: digest, touchAll: storedGraph != newGraph})
-	}
-
-	if len(changed) > 0 {
-		writeStarted := time.Now()
-		err = db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, syncWriteLockKey); err != nil {
-				return err
-			}
-			touched := map[uuid.UUID]struct{}{}
-			for _, c := range changed {
-				if err := applyType(ctx, tx, c.typeID, c.rows, c.touchAll, false, touched, nil); err != nil {
-					return fmt.Errorf("sync type %s: %w", c.typeID, err)
-				}
-			}
-			return rebuildClosure(ctx, tx, touched)
-		})
-		if err != nil {
-			return syncOutcome{}, err
-		}
-		slog.InfoContext(ctx, "resource graph synchronized", "changed", len(changed), "types", len(due),
-			"fetch_ms", fetchDuration.Milliseconds(), "write_ms", time.Since(writeStarted).Milliseconds())
-	}
-
-	// The changed types are settled too; the metrics count them once, here.
-	changedIDs := make([]uuid.UUID, 0, len(changed))
-	for _, c := range changed {
-		changedIDs = append(changedIDs, c.typeID)
-		settled = append(settled, c.typeID)
-		a.metrics.syncResults.WithLabelValues("changed").Inc()
-	}
-	if len(settled) == 0 {
-		return syncOutcome{synced: plan.synced, unanswered: unansweredTypes}, nil
-	}
-
-	// One round trip records the data change of the changed types — the answers that read their services are stale
-	// from now on — then stores their hashes, and starts the throttle of every settled type. The data change goes
-	// first: if the hash is lost, the next sync sees a difference and records the change again.
-	pipe := a.Redis.Pipeline()
-	recordDataChange(ctx, pipe, g, changedIDs)
-	for _, c := range changed {
-		pipe.Set(ctx, syncHashPrefix+c.typeID.String(), c.digest, 0)
-	}
-	for _, id := range settled {
-		pipe.Set(ctx, plan.throttleKey(id), "1", syncTTL)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		slog.ErrorContext(ctx, "failed to store the resource sync state", "error", err)
-	}
-	return syncOutcome{synced: plan.synced, unanswered: unansweredTypes}, nil
-}
-
 // structureOf fingerprints what the stored data of a type depends on besides its source: the type graph above it
 // (the closure is built from it) and the synchronizer configuration. A state stored under another structure is not
-// current, so the next synchronization runs in the request (see syncWhileServing).
+// current, so the type has no usable data until the worker has synchronized it again (see ensure).
 func structureOf(g *TypeGraph, typeID uuid.UUID, cfg model.SynchronizerConfig) string {
-	// cache_ttl only sets how long the list of the source stays in Redis: it does not change the data.
-	cfg = cfg.Masked()
-	cfg.CacheTTL = nil
-	raw, _ := json.Marshal(cfg)
+	raw, _ := json.Marshal(cfg.Masked())
 	sum := sha256.Sum256(raw)
 	return g.signature(typeID) + "-" + hex.EncodeToString(sum[:8])
-}
-
-// syncWhileServing is the synchronization of a minimize_latency answer. A type that was synchronized before, under
-// the structure it has now, is answered from its data as of the last synchronization, and refreshed in the
-// background once its throttle has run out: the request does not wait for the source. Any other type — never
-// synchronized, synchronized under another structure, or with no active rows and not emptied by the source — is synchronized in the request.
-// The types of the platform itself are synchronized in the request too: their rows are written by the admin API, and a
-// write must show at once. The planning reads Redis and the count of rows, not the source, so a request with nothing to
-// wait for takes no lock.
-func (a *App) syncWhileServing(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
-	plan, err := a.planSync(ctx, typeIDs)
-	if err != nil {
-		return nil, err
-	}
-	var stale, due []uuid.UUID
-	structures := map[uuid.UUID]string{}
-	for _, s := range plan.syncs {
-		id := s.TypeResourceID
-		_, storedStructure := splitDigest(plan.stored[id])
-		structure := structureOf(g, id, s.Config)
-		structures[id] = structure
-		node, ok := g.Node(id)
-		// The self-service types are written by the admin API itself: a write must be visible to the next request.
-		platform := ok && node.ServiceID == model.PlatformServiceID
-		switch {
-		case plan.throttled[id]:
-		case plan.stored[id] == "" || platform || storedStructure != structure:
-			due = append(due, id)
-		default:
-			stale = append(stale, id)
-		}
-	}
-	if len(stale) > 0 {
-		counts, err := a.ActiveCounts(ctx, stale)
-		if err != nil {
-			return nil, err
-		}
-		kept := stale[:0]
-		for _, id := range stale {
-			// A state synchronized to an answer with no resources has no active rows, and it is current: the source said so.
-			emptied := plan.stored[id] == syncDigest(dataDigest(nil), structures[id])
-			if counts[id] > 0 || emptied {
-				kept = append(kept, id)
-			} else {
-				due = append(due, id)
-			}
-		}
-		stale = kept
-	}
-	if len(stale) > 0 {
-		a.refreshInBackground(stale)
-	}
-	if len(due) > 0 {
-		if _, err := a.syncTypesOnce(ctx, due, false, func(ctx context.Context) (map[uuid.UUID]bool, error) {
-			return a.EnsureSynced(ctx, g, due, false)
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return plan.synced, nil
-}
-
-// refreshInBackground synchronizes the given types in the background, so that the requests that found their data
-// stale are answered without waiting for the source. The type graph is read again here: the one of the request
-// that started the refresh may predate an admin write. One refresh per set of types runs at a time in this process;
-// across replicas the synchronization lock of the set decides, as for any synchronization.
-func (a *App) refreshInBackground(typeIDs []uuid.UUID) {
-	name := typesLockName(typeIDs)
-	if _, running := a.refreshing.LoadOrStore(name, struct{}{}); running {
-		return
-	}
-	a.Background(func(ctx context.Context) {
-		defer a.refreshing.Delete(name)
-		g, err := a.LoadTypeGraph(ctx)
-		if err != nil {
-			slog.WarnContext(ctx, "background refresh of the resource types failed", "error", err)
-			return
-		}
-		if _, err := a.syncWithRedisLock(ctx, name, func(ctx context.Context) (map[uuid.UUID]bool, error) {
-			return a.EnsureSynced(ctx, g, typeIDs, false)
-		}); err != nil {
-			slog.WarnContext(ctx, "background refresh of the resource types failed", "error", err)
-		}
-	})
 }
 
 // metaJSON is the JSON text of an attribute map ({} for none).
@@ -831,6 +500,11 @@ func syncEdges(ctx context.Context, tx pgx.Tx, typeID uuid.UUID, incoming []Inco
 // several routes gets the union of the routes' levels, NULL (all levels) if any route passes all.
 // Only live resources and live type links count. Routes are deduplicated by UNION, which also makes
 // a cycle in the data terminate.
+//
+// A route does not lead through a resource of a type without a live synchronizer (parameter 2,
+// typesWithoutResources): such a type has no resources, so the link to the row its deleted
+// synchronizer left is a link to a parent that is not there (UnresolvedParents reports it). The rows
+// of such a type keep their own ancestors, ready for the day the type has a synchronizer again.
 const rebuildClosureSQL = `
 	WITH RECURSIVE up(d, a, mask) AS (
 		SELECT x.id, x.id, NULL::varchar[]
@@ -842,7 +516,7 @@ const rebuildClosureSQL = `
 		FROM up
 		JOIN resource_cache cur ON cur.id = up.a
 		JOIN resource_edge e ON e.child_id = cur.id AND e.parent_id IS NOT NULL
-		JOIN resource_cache par ON par.id = e.parent_id AND par.active
+		JOIN resource_cache par ON par.id = e.parent_id AND par.active AND par.type_resource_id <> ALL ($2::uuid[])
 		JOIN type_resource pt ON pt.id = par.type_resource_id AND pt.deleted_at IS NULL
 		JOIN type_resource_parent trp
 		    ON trp.type_resource_id = cur.type_resource_id AND trp.parent_id = e.parent_type_id
@@ -870,10 +544,34 @@ const rebuildClosureSQL = `
 	FROM closure c JOIN resource_cache x ON x.id = c.d
 	ORDER BY c.a, c.d`
 
+// typesWithoutResources returns the live types that have no live synchronizer, sorted, as tx sees them: no resource of such
+// a type leads anywhere in the closure (rebuildClosureSQL). It is read in the transaction that writes the closure, under
+// the lock of the component of the types it writes, and not taken from a type graph loaded before: a synchronizer deleted
+// or created since would otherwise be undone by the rows this transaction writes. It is never nil: the list is a
+// parameter of a query (x <> ALL), and a nil slice would be sent as NULL, which nothing is unequal to.
+func typesWithoutResources(ctx context.Context, tx db.Querier) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `SELECT t.id FROM type_resource t WHERE t.deleted_at IS NULL AND NOT `+
+		LiveSynchronizerExists("t.id")+` ORDER BY t.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // rebuildClosure recomputes the ancestors of the touched resources and of everything below them.
 // The rows of the affected descendants are replaced as a whole; rows ordered by ancestor keep the
-// descendants of one anchor next to each other on disk.
-func rebuildClosure(ctx context.Context, tx pgx.Tx, touched map[uuid.UUID]struct{}) error {
+// descendants of one anchor next to each other on disk. The types that have resources are the ones tx sees
+// (typesWithoutResources).
+func rebuildClosure(ctx context.Context, tx db.Querier, touched map[uuid.UUID]struct{}) error {
 	if len(touched) == 0 {
 		return nil
 	}
@@ -911,7 +609,11 @@ func rebuildClosure(ctx context.Context, tx pgx.Tx, touched map[uuid.UUID]struct
 	if _, err := tx.Exec(ctx, `DELETE FROM resource_ancestor WHERE descendant_id = ANY($1)`, ids); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, rebuildClosureSQL, ids)
+	without, err := typesWithoutResources(ctx, tx)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, rebuildClosureSQL, ids, without)
 	return err
 }
 
@@ -923,7 +625,8 @@ type anchorRef struct {
 	Ext  string
 }
 
-// anchorRowIDs resolves resources (type, external id) to their active cache rows.
+// anchorRowIDs resolves resources (type, external id) to their active cache rows. The callers ask only for resources of
+// types that have resources (TypeGraph.IsSync): the rows a deleted synchronizer left are not resources to decide.
 func (a *App) anchorRowIDs(ctx context.Context, refs []anchorRef) (map[anchorRef]uuid.UUID, error) {
 	out := map[anchorRef]uuid.UUID{}
 	if len(refs) == 0 {
@@ -954,14 +657,64 @@ func (a *App) anchorRowIDs(ctx context.Context, refs []anchorRef) (map[anchorRef
 }
 
 // ancestorLookup asks for the resources of type Lookup that match Value (by name, by id, or by an attribute,
-// see model.MatchBy*), and for their ancestors of type Target — the resource itself when the types are the
-// same. Index is the rule the lookup is for.
+// see model.MatchBy*), and for their ancestors of type Target through the resource links, whatever the inherit
+// masks along the way — the resource itself when the types are the same. Index is the rule the lookup is for.
+// Between is TypeGraph.TypesBetween(Lookup, Target): a climb that leaves these types cannot come back to the target.
 type ancestorLookup struct {
 	Index   int
 	Lookup  uuid.UUID
 	Target  uuid.UUID
 	Value   string
 	MatchBy string
+	Between []uuid.UUID
+}
+
+// ancestorWalkSQL finds the anchors of the lookups of one kind of match (match is the condition on the matched resource
+// n and the lookup q). The ancestors are found by walking the resolved edges up, not through resource_ancestor: the
+// closure keeps only the pairs some level flows between (rebuildClosureSQL drops a route whose masks intersect to
+// nothing), while the masks say what flows down a link, not which resource lies above which. Dropping such an ancestor
+// would drop the anchor of a denial (fail open). The walk takes the edges the closure takes: resolved, to a live
+// resource of a live type, along a live type link; UNION makes a cycle in the data terminate.
+//
+// The walk climbs no further than an anchor can be:
+//   - It stops at a resource of the target type. The type graph has no cycle (checkParents refuses a type as its own
+//     parent, as ck_type_resource_parent_no_self does, and a link that closes a cycle), so no resource above one of the
+//     target type is of the target type. With the lookup type as the target (the owner pattern) nothing is climbed: the
+//     matched resources are the anchors.
+//   - It follows a link only to a parent whose type lies on a route of type links up to the target (q.allowed, the live
+//     types of Between): above any other type the target cannot be. A resolved edge points at a resource of its parent
+//     type (syncEdges and the resolution of the edges waiting for a parent match on it), so the type of the link is the
+//     type of the parent, and only q.allowed has to be live.
+//
+// q is made once per lookup: the live types of Between, and the objects the attribute match looks for in meta (the value,
+// or a list holding it), which cost more than the match itself when they are built for every resource. A row of the walk
+// carries the type, the external id and the name of its resource, so the answer needs no join.
+func ancestorWalkSQL(match string) string {
+	return `
+		WITH RECURSIVE q AS MATERIALIZED (
+			SELECT u.idx, u.lookup_type, u.target_type, u.value,
+			       jsonb_build_object(u.attr, u.value) AS meta_value,
+			       jsonb_build_object(u.attr, jsonb_build_array(u.value)) AS meta_list,
+			       ARRAY(SELECT t.id FROM type_resource t WHERE t.id = ANY (u.allowed::uuid[]) AND t.deleted_at IS NULL) AS allowed
+			FROM unnest($1::bigint[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[])
+			    AS u(idx, lookup_type, target_type, value, attr, allowed)
+		),
+		up(idx, target_type, allowed, id, type_id, ext, name) AS (
+			SELECT q.idx, q.target_type, q.allowed, n.id, n.type_resource_id, n.external_id, n.name
+			FROM q
+			JOIN resource_cache n ON n.type_resource_id = q.lookup_type AND n.active AND ` + match + `
+			JOIN type_resource nt ON nt.id = n.type_resource_id AND nt.deleted_at IS NULL
+			UNION
+			SELECT up.idx, up.target_type, up.allowed, par.id, par.type_resource_id, par.external_id, par.name
+			FROM up
+			JOIN type_resource_parent trp ON trp.type_resource_id = up.type_id AND trp.parent_id = ANY (up.allowed)
+			JOIN resource_edge e ON e.child_id = up.id AND e.parent_type_id = trp.parent_id AND e.parent_id IS NOT NULL
+			JOIN resource_cache par ON par.id = e.parent_id AND par.active
+			WHERE up.type_id <> up.target_type
+		)
+		SELECT idx, id, type_id, ext, name FROM up
+		WHERE type_id = target_type
+		ORDER BY idx, ext`
 }
 
 // findAncestorsBatch answers all lookups of one request: one query per kind of match (by name, by external id,
@@ -993,19 +746,15 @@ func (a *App) findAncestorsBatch(ctx context.Context, lookups []ancestorLookup) 
 		lookup := make([]uuid.UUID, len(batch))
 		target := make([]uuid.UUID, len(batch))
 		value := make([]string, len(batch))
+		allowed := make([]string, len(batch))
 		for i, l := range batch {
 			idx[i], lookup[i], target[i], value[i] = int64(l.Index), l.Lookup, l.Target, l.Value
+			allowed[i] = uuidArrayLiteral(l.Between)
 		}
 		if attr == nil {
 			attr = make([]string, len(batch))
 		}
-		rows, err := a.DB.Query(ctx, `
-			SELECT DISTINCT q.idx, anc.id, anc.type_resource_id, anc.external_id, anc.name
-			FROM unnest($1::bigint[], $2::uuid[], $3::uuid[], $4::text[], $5::text[]) AS q(idx, lookup_type, target_type, value, attr)
-			JOIN resource_cache n ON n.type_resource_id = q.lookup_type AND n.active AND `+match+`
-			JOIN resource_ancestor ra ON ra.descendant_id = n.id
-			JOIN resource_cache anc ON anc.id = ra.ancestor_id AND anc.type_resource_id = q.target_type AND anc.active
-			ORDER BY q.idx, anc.external_id`, idx, lookup, target, value, attr)
+		rows, err := a.DB.Query(ctx, ancestorWalkSQL(match), idx, lookup, target, value, attr, allowed)
 		if err != nil {
 			return err
 		}
@@ -1027,11 +776,25 @@ func (a *App) findAncestorsBatch(ctx context.Context, lookups []ancestorLookup) 
 		return nil, err
 	}
 	// An attribute equal to the value or a list containing it (both forms use the GIN index).
-	if err := run(`(n.meta @> jsonb_build_object(q.attr, q.value)
-		OR n.meta @> jsonb_build_object(q.attr, jsonb_build_array(q.value)))`, byAttr, attrs); err != nil {
+	if err := run(`(n.meta @> q.meta_value OR n.meta @> q.meta_list)`, byAttr, attrs); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// uuidArrayLiteral writes ids as a PostgreSQL array literal ({a,b}): an element of a text[] parameter that the query
+// casts to uuid[], which gives each row of an unnest an array of its own.
+func uuidArrayLiteral(ids []uuid.UUID) string {
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(id.String())
+	}
+	b.WriteByte('}')
+	return b.String()
 }
 
 // graphNode is a resource with the data the response needs.
@@ -1159,28 +922,75 @@ func (a *App) AncestorMasks(ctx context.Context, nodes []uuid.UUID) (map[uuid.UU
 	return out, rows.Err()
 }
 
-// UnresolvedParents lists, for the resources of the given types that have declared parents missing
-// from the cache, the parent types of those unresolved links. Such resources are "incomplete": the
-// hierarchy above them is not fully known, so denials fail closed for them.
-func (a *App) UnresolvedParents(ctx context.Context, typeIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
-	out := map[uuid.UUID][]uuid.UUID{}
+// UnresolvedLink is a parent link that is not resolved at or above a resource: the resource itself, or one of its
+// ancestors (FromType is the type of the one that declares it), names a parent of type ParentType that is not in the cache.
+// Route is the set of levels that flow from the one that declares it down to the resource (all levels for the resource
+// itself): a denial above the missing parent could reach the resource only with those levels.
+type UnresolvedLink struct {
+	FromType   uuid.UUID
+	ParentType uuid.UUID
+	Route      LevelSet
+}
+
+// UnresolvedParents lists, for the active resources of the given types, the unresolved parent links at or above them:
+// their own and those of every ancestor. Such resources are "incomplete": the hierarchy above them is not fully known,
+// so denials fail closed for them — a resource below an ancestor whose parent is missing may lie under any denial that
+// could cover that parent, as much as one whose own parent is missing. The query starts from the unresolved edges
+// (a partial index) and walks down the closure, whose row of a resource for itself carries the link of its own edges.
+//
+// A link to a row of a type above that lost its synchronizer (g says which) is unresolved too, though the edge points at
+// the row: that type has no resources, so the parent is not there (the closure does not lead through it either, see
+// rebuildClosureSQL). Those links are read apart, from the rows of such types, so that the usual query keeps its plan.
+func (a *App) UnresolvedParents(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID) (map[uuid.UUID][]UnresolvedLink, error) {
+	out := map[uuid.UUID][]UnresolvedLink{}
 	if len(typeIDs) == 0 {
 		return out, nil
 	}
+	links, args := `SELECT child_id, parent_type_id FROM resource_edge WHERE parent_id IS NULL`, []any{typeIDs}
+	// A type that never had a synchronizer has no rows: the links to it are never resolved in the first place.
+	var left []uuid.UUID
+	if len(g.sourceLost) > 0 {
+		above := g.AncestorTypes(typeIDs...)
+		for _, id := range g.sourceLost {
+			if above[id] {
+				left = append(left, id)
+			}
+		}
+	}
+	if len(left) > 0 {
+		links += ` UNION ALL SELECT e.child_id, e.parent_type_id FROM resource_edge e JOIN resource_cache p ON p.id = e.parent_id
+			WHERE p.type_resource_id = ANY($2)`
+		args = append(args, left)
+	}
 	rows, err := a.DB.Query(ctx, `
-		SELECT e.child_id, e.parent_type_id
-		FROM resource_edge e JOIN resource_cache c ON c.id = e.child_id AND c.active
-		WHERE e.parent_id IS NULL AND c.type_resource_id = ANY($1)`, typeIDs)
+		SELECT anc.descendant_id, x.type_resource_id, e.parent_type_id, anc.inherit
+		FROM (`+links+`) e
+		JOIN resource_cache x ON x.id = e.child_id AND x.active
+		JOIN resource_ancestor anc ON anc.ancestor_id = e.child_id
+		JOIN resource_cache d ON d.id = anc.descendant_id AND d.active
+		WHERE anc.descendant_type_id = ANY($1)`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	seen := map[uuid.UUID]map[string]bool{}
 	for rows.Next() {
-		var child, parentType uuid.UUID
-		if err := rows.Scan(&child, &parentType); err != nil {
+		var node, fromType, parentType uuid.UUID
+		var route []string
+		if err := rows.Scan(&node, &fromType, &parentType, &route); err != nil {
 			return nil, err
 		}
-		out[child] = append(out[child], parentType)
+		link := UnresolvedLink{FromType: fromType, ParentType: parentType, Route: levelsFromDB(route)}
+		// Several missing parents of one type, at one place, are one link.
+		key := fromType.String() + parentType.String() + link.Route.key()
+		if seen[node] == nil {
+			seen[node] = map[string]bool{}
+		}
+		if seen[node][key] {
+			continue
+		}
+		seen[node][key] = true
+		out[node] = append(out[node], link)
 	}
 	return out, rows.Err()
 }
@@ -1220,7 +1030,9 @@ func parentLabels(g *TypeGraph, typeID uuid.UUID) map[uuid.UUID]string {
 	return out
 }
 
-// resourceParents reads the declared parents of the given resource rows.
+// resourceParents reads the declared parents of the given resource rows. A link to a parent of a type without a live
+// synchronizer is not resolved, though the edge points at the row its deleted synchronizer left: that type has no
+// resources (TypeGraph.IsSync), as the decisions read it (UnresolvedParents).
 func (a *App) resourceParents(ctx context.Context, g *TypeGraph, typeID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]model.ResourceParent, error) {
 	out := map[uuid.UUID][]model.ResourceParent{}
 	if len(ids) == 0 {
@@ -1241,6 +1053,7 @@ func (a *App) resourceParents(ctx context.Context, g *TypeGraph, typeID uuid.UUI
 		if err := rows.Scan(&child, &parentType, &ext, &resolved); err != nil {
 			return nil, err
 		}
+		resolved = resolved && g.IsSync(parentType)
 		label, ok := labels[parentType]
 		if !ok {
 			if n, found := g.Node(parentType); found {
@@ -1254,7 +1067,12 @@ func (a *App) resourceParents(ctx context.Context, g *TypeGraph, typeID uuid.UUI
 	return out, rows.Err()
 }
 
+// CacheLookup reads one resource of a type from the local copy: nil when the type has no such active resource, and nil
+// for any resource of a type without a live synchronizer, which has none (see TypeGraph.IsSync).
 func (a *App) CacheLookup(ctx context.Context, g *TypeGraph, typeResourceID uuid.UUID, externalID string) (*cachedResource, error) {
+	if !g.IsSync(typeResourceID) {
+		return nil, nil
+	}
 	var r cachedResource
 	err := a.DB.QueryRow(ctx,
 		`SELECT id, external_id, name, meta FROM resource_cache
@@ -1294,39 +1112,53 @@ func (r *cachedResource) resource() *model.Resource {
 
 // resolve returns a resource by its external id: a live request to the source (refreshing the cache), then a
 // cache read. If the source is unavailable, the last cached value is returned; a resource switched off by the
-// synchronization is not returned.
+// synchronization is not returned. A source that did not answer the synchronization lately (the type is in backoff in
+// sync_state, for every replica) is not asked: the cached value is returned at once.
 func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID string) (*cachedResource, error) {
 	g, err := a.LoadTypeGraph(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if a.Role == RolePDP {
+		return nil, errors.New("the pdp role does not write the resource graph")
 	}
 	sync, err := a.ActiveSynchronizer(ctx, typeResourceID)
 	if err != nil {
 		return nil, err
 	}
 	if sync != nil {
+		// The backoff only spares a failing source: when the state cannot be read the source is asked, as it was before the
+		// state was consulted, instead of failing a read that the cache could answer.
+		states, err := loadSyncStates(ctx, a.DB, []uuid.UUID{typeResourceID})
+		if err != nil {
+			logDependency(ctx, slog.LevelWarn, "failed to read the synchronization state, asking the source", err)
+		}
+		if states[typeResourceID].Backoff {
+			return a.CacheLookup(ctx, g, typeResourceID, externalID)
+		}
 		if row := a.Sync.FetchOne(ctx, sync.Config, externalID, sync.ID.String()); row != nil {
 			normalized, _ := NormalizeResources(g, typeResourceID, []model.Resource{*row})
 			changed := false
-			err := db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
-				if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, syncWriteLockKey); err != nil {
-					return err
-				}
+			// The inline write takes the lock of the component of the type, like a synchronization does, and has the same
+			// timeouts.
+			err := a.syncTx(ctx, ComponentKeys(g, []uuid.UUID{typeResourceID}), func(tx pgx.Tx) error {
 				touched := map[uuid.UUID]struct{}{}
 				if err := applyType(ctx, tx, typeResourceID, normalized, false, true, touched, &changed); err != nil {
 					return err
 				}
-				return rebuildClosure(ctx, tx, touched)
+				if err := rebuildClosure(ctx, tx, touched); err != nil {
+					return err
+				}
+				if changed {
+					return bumpDataRevisions(ctx, tx, g, []uuid.UUID{typeResourceID})
+				}
+				return nil
 			})
 			if err != nil {
 				return nil, err
 			}
 			if changed {
-				pipe := a.Redis.Pipeline()
-				recordDataChange(ctx, pipe, g, []uuid.UUID{typeResourceID})
-				if _, err := pipe.Exec(ctx); err != nil {
-					slog.ErrorContext(ctx, "failed to record the resource data change", "error", err)
-				}
+				a.invalidateView()
 			}
 		}
 	}
@@ -1343,11 +1175,14 @@ func (a *App) GetResource(ctx context.Context, typeResourceID uuid.UUID, externa
 }
 
 // IsCovered: a grant on grantedID covers the resource if it is that resource or one of its
-// ancestors (of any type) in the hierarchy.
+// ancestors (of any type) in the hierarchy. Neither is there when its type has no live synchronizer.
 func (a *App) IsCovered(ctx context.Context, typeResourceID uuid.UUID, resourceID, grantedID string) (bool, error) {
 	g, err := a.LoadTypeGraph(ctx)
 	if err != nil {
 		return false, err
+	}
+	if !g.IsSync(typeResourceID) {
+		return false, nil
 	}
 	if _, err := a.EnsureSynced(ctx, g, []uuid.UUID{typeResourceID}, false); err != nil {
 		return false, err
@@ -1356,9 +1191,9 @@ func (a *App) IsCovered(ctx context.Context, typeResourceID uuid.UUID, resourceI
 		SELECT 1
 		FROM resource_cache d
 		JOIN resource_ancestor ra ON ra.descendant_id = d.id
-		JOIN resource_cache anc ON anc.id = ra.ancestor_id AND anc.active
+		JOIN resource_cache anc ON anc.id = ra.ancestor_id AND anc.active AND anc.type_resource_id <> ALL ($4::uuid[])
 		WHERE d.type_resource_id = $1 AND d.external_id = $2 AND d.active AND anc.external_id = $3`,
-		typeResourceID, resourceID, grantedID)
+		typeResourceID, resourceID, grantedID, g.withoutResources())
 }
 
 // ListResources returns every resource of a type, synchronized from its active synchronizer and
@@ -1416,8 +1251,8 @@ func (a *App) ListResources(ctx context.Context, typeResourceID uuid.UUID, inclu
 	return out, nil
 }
 
-// RefreshResources asks the source of a type now and brings the local copy up to date: the cached source list, the
-// throttle and the background refresh are skipped (consistency "higher"). A type without a source cannot be refreshed;
+// RefreshResources asks the source of a type now and brings the local copy up to date: the throttle and the background
+// refresh are skipped (consistency "higher"). A type without a source cannot be refreshed;
 // a source that does not answer is an error and the data stays as it was.
 func (a *App) RefreshResources(ctx context.Context, typeResourceID uuid.UUID) (*model.ResourceRefresh, error) {
 	g, err := a.LoadTypeGraph(ctx)
@@ -1427,14 +1262,14 @@ func (a *App) RefreshResources(ctx context.Context, typeResourceID uuid.UUID) (*
 	if _, ok := g.Node(typeResourceID); !ok {
 		return nil, apperr.NotFound(i18n.TypeResourceNotFound, typeResourceID)
 	}
-	out, err := a.syncTypes(ctx, g, []uuid.UUID{typeResourceID}, true)
+	out, err := a.ensure(ctx, g, []uuid.UUID{typeResourceID}, SyncOptions{Fresh: true, Wait: a.adminWait()}, "admin")
 	if err != nil {
 		return nil, err
 	}
-	if !out.synced[typeResourceID] {
+	if !out.Synced[typeResourceID] {
 		return nil, apperr.Unprocessable(i18n.SynchronizerNoSource, typeResourceID)
 	}
-	if out.unanswered[typeResourceID] {
+	if out.Unanswered[typeResourceID] || out.Pending {
 		return nil, apperr.FailedDependency(i18n.SynchronizerNoAnswer, typeResourceID)
 	}
 	var res model.ResourceRefresh

@@ -55,14 +55,20 @@ export function SettingsTabs() {
   const { t } = useTranslation();
   const router = useRouter();
   const pathname = usePathname();
+  const access = useAccess();
+  const tabs = [
+    { key: '/settings/admins', label: t('settings.tab.admins') },
+    // The issuers are shared by all services: they are for those who may see all of them.
+    ...(access.whole('service', 'read')
+      ? [{ key: '/settings/issuers', label: t('settings.tab.issuers') }]
+      : []),
+    { key: '/settings/logs', label: t('settings.tab.logs') },
+  ];
   return (
     <Tabs
-      activeKey={pathname.startsWith('/settings/logs') ? '/settings/logs' : '/settings/admins'}
+      activeKey={tabs.find((tab) => pathname.startsWith(tab.key))?.key ?? '/settings/admins'}
       onChange={(k) => router.push(k)}
-      items={[
-        { key: '/settings/admins', label: t('settings.tab.admins') },
-        { key: '/settings/logs', label: t('settings.tab.logs') },
-      ]}
+      items={tabs}
     />
   );
 }

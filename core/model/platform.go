@@ -3,7 +3,7 @@ package model
 import "github.com/google/uuid"
 
 // PlatformType is a resource type of the self-service — an access policy for Licetum itself.
-// The type name is also the key in the /permission response and the resource name in the admin UI.
+// The type name is also the key in the permission result of the self-service and the resource name in the admin UI.
 type PlatformType string
 
 const (

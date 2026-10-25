@@ -2,9 +2,7 @@
 
 package api_test
 
-// Integration test against real PostgreSQL and Redis. Run it with:
-//
-// The integration package owns disposable PostgreSQL and Redis containers. Run it with
+// Integration test against a real PostgreSQL. The integration package owns a disposable PostgreSQL container. Run it with
 // `go test -tags integration ./tests/integration/api` while Docker is available.
 
 import (
@@ -18,27 +16,29 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	neturl "net/url"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/licetum/licetum/admin-api/api"
 	"github.com/licetum/licetum/admin-api/service"
+	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
 	support "github.com/licetum/licetum/core/testsupport"
 )
 
@@ -63,6 +63,7 @@ type env struct {
 	t     *testing.T
 	admin *httptest.Server
 	check *httptest.Server
+	ops   *httptest.Server // the operations listener of the same PDP: probes and metrics (server.NewOpsHandler)
 	mock  *httptest.Server
 	key   *rsa.PrivateKey
 	app   *service.App
@@ -70,39 +71,43 @@ type env struct {
 	cfg   *config.Config
 	// adminToken is sent to the admin API by default (see do).
 	adminToken string
+	// callers makes the questions of the tests the questions of a PEP client (see doWithHeader); extra are the other apps of
+	// the test (replicas, a worker), which are told when a client is made.
+	callers  *support.PEPCallers
+	extraMu  sync.Mutex
+	extraApp []*engine.App
+	// stopWorker stops the worker the test process runs (a test that needs the jobs to wait calls it).
+	stopWorker func()
+}
+
+// startWorker runs a synchronization worker on app until the returned function is called or the test ends.
+func startWorker(t *testing.T, app *engine.App) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = app.RunWorker(ctx)
+	}()
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			cancel()
+			<-done
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func setup(t *testing.T) *env {
-	dbURI, redisURI := testInfrastructure.DBURI, testInfrastructure.RedisURI
 	ctx := context.Background()
 
-	// An isolated schema per run.
-	schema := fmt.Sprintf("it_%d", time.Now().UnixNano())
-	adminConn, err := pgx.Connect(ctx, db.NormalizeDSN(dbURI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminConn.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS ltree SCHEMA public"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminConn.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = adminConn.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-		_ = adminConn.Close(context.Background())
-	})
-
-	u, err := url.Parse(db.NormalizeDSN(dbURI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := u.Query()
-	// public stays on the path: extensions (ltree) may already be installed there.
-	q.Set("search_path", schema+",public")
-	u.RawQuery = q.Encode()
+	// An isolated schema per run (a database of its own behind PgBouncer).
+	iso := testInfrastructure.Isolate(ctx, t)
 
 	e := &env{t: t}
+	var err error
 	e.key, err = rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -114,48 +119,61 @@ func setup(t *testing.T) *env {
 	// platform admin.
 	m := e.mock.URL
 	cfg := &config.Config{
-		DB:   config.Database{URI: u.String(), PoolSize: 5},
-		Auth: config.Auth{StateSecret: "test-secret", StateTTL: time.Minute},
-		Cors: config.Cors{AllowOrigins: []string{"http://localhost:5173"}},
-		// The registry of known subjects is on, as by default.
-		Subjects: config.Subjects{Enabled: true, RetentionDays: 90},
+		DB: config.Database{URI: iso.URI, PoolSize: 5, PgBouncer: iso.PgBouncer, MigrateURI: iso.MigrateURI},
+		// Tests that ask for higher consistency in a loop must not be spaced out to one source call per second.
+		Sync: config.Sync{FreshMinInterval: time.Millisecond, DBOSSchema: "dbos_" + iso.Name},
 		Platform: config.Platform{
 			Name: "Licetum", URL: m + "/app", Icon: m + "/icon.png",
-			AuthorizationURL: m + "/realm/auth", TokenURL: m + "/realm/token", JwksURL: m + "/jwks",
-			Issuer: m + "/realm", ClientID: "licetum", ClientSecret: "s",
 			AdminGroupName: "Platform administrator", AdminClaim: "preferred_username",
 			AdminClaimValues: []string{"admin"},
 		},
+		// Administrators sign in at the mock identity provider: its tokens for the admin API carry testAdminAudience.
+		AdminAuth: config.AdminAuth{Issuer: m + "/realm", Audience: testAdminAudience, JWKSURL: m + "/jwks",
+			SubjectClaim: "preferred_username"},
+	}
+	if err := db.RunMigrate(ctx, cfg); err != nil {
+		t.Fatal(err)
 	}
 	pool, err := db.Connect(ctx, cfg.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if err := db.Migrate(ctx, pool, cfg); err != nil {
-		t.Fatal(err)
-	}
 
-	rdb, err := redisx.Connect(ctx, redisURI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rdb.FlushDB(ctx).Err(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = rdb.Close() })
-
-	app := service.New(engine.New(pool, rdb, cfg))
+	app := service.New(engine.New(pool, cfg))
 	t.Cleanup(app.Close)
+	// The synchronization jobs are executed by a worker; the test process runs one next to the APIs it serves.
+	e.stopWorker = startWorker(t, app.App)
 	e.app = app
 	e.pool = pool
 	e.cfg = cfg
 	e.admin = newTestServer(t, api.NewAdminHandler(app))
-	e.check = newTestServer(t, server.NewCheckHandler(app.App))
+	e.check = newTestServer(t, harness.Levers(server.NewPDPHandler(app.App)))
+	e.ops = newTestServer(t, server.NewOpsHandler(app.App))
 	t.Cleanup(e.admin.Close)
 	t.Cleanup(e.check.Close)
+	t.Cleanup(e.ops.Close)
 	e.adminToken = e.token(jwt.MapClaims{"preferred_username": "admin", "sub": "admin-sub"})
+	e.callers = support.NewPEPCallers(t, pool, func() {
+		app.AfterPEPWrite()
+		e.extraMu.Lock()
+		defer e.extraMu.Unlock()
+		for _, other := range e.extraApp {
+			other.AfterPEPWrite()
+		}
+	})
 	return e
+}
+
+// externalChange tells the app about a change made to the policy by other means than the admin API (SQL in a test, or
+// restore-admin in another process): the revision is bumped as every write does, and the app reads it again at once.
+func (e *env) externalChange(ctx context.Context) {
+	e.t.Helper()
+	revision, err := db.BumpRevision(ctx, e.pool, db.ScopeRules)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.app.AfterWrite(ctx, revision)
 }
 
 func newTestServer(t *testing.T, handler http.Handler) *httptest.Server {
@@ -240,9 +258,17 @@ func (e *env) mockHandler() http.Handler {
 	return mux
 }
 
+// testAdminAudience is the audience (ADMIN_AUTH__AUDIENCE) the admin API of the tests requires.
+const testAdminAudience = "licetum-admin"
+
+// token signs claims as the mock identity provider. A token that names no audience gets the one of the admin API, so the same
+// token works there and (where the audience is not looked at) at a service; a test of the audience sets "aud" itself.
 func (e *env) token(claims jwt.MapClaims) string {
 	claims["iss"] = e.mock.URL + "/realm"
 	claims["exp"] = time.Now().Add(time.Hour).Unix()
+	if _, ok := claims["aud"]; !ok {
+		claims["aud"] = testAdminAudience
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = "k1"
 	s, err := tok.SignedString(e.key)
@@ -254,6 +280,14 @@ func (e *env) token(claims jwt.MapClaims) string {
 
 func (e *env) do(method, url string, body any, headers ...string) (int, []byte) {
 	e.t.Helper()
+	status, _, raw := e.doWithHeader(method, url, body, headers...)
+	return status, raw
+}
+
+// doWithHeader is do with the headers of the answer too: the code of an AuthZEN error is in its Licetum-Error-Code header.
+func (e *env) doWithHeader(method, url string, body any, headers ...string) (int, http.Header, []byte) {
+	e.t.Helper()
+	headers, body = e.asPEP(url, headers, body)
 	var reader *bytes.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -291,8 +325,53 @@ func (e *env) do(method, url string, body any, headers ...string) (int, []byte) 
 	if _, err := io.Copy(&buf, resp.Body); err != nil {
 		e.t.Fatalf("read response: %v", err)
 	}
-	return resp.StatusCode, buf.Bytes()
+	return resp.StatusCode, resp.Header, buf.Bytes()
 }
+
+// track registers another app of the test, so that it learns of the PEP clients the test makes.
+func (e *env) track(app *engine.App) *engine.App {
+	e.extraMu.Lock()
+	defer e.extraMu.Unlock()
+	e.extraApp = append(e.extraApp, app)
+	return app
+}
+
+// asPEP turns a question to the AuthZEN API that names who asks by a person's token into the question of a PEP client: the API key of
+// the client of the service, and the claims of the token as the properties of the subject (support.PEPCallers). The PDP takes
+// no person's token on these routes; a test of that gives the header legacyToken, which this does not touch.
+func (e *env) asPEP(target string, headers []string, body any) ([]string, any) {
+	if e.callers == nil || e.admin == nil || strings.HasPrefix(target, e.admin.URL) {
+		return headers, body
+	}
+	u, err := neturl.Parse(target)
+	if err != nil {
+		return headers, body
+	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		if http.CanonicalHeaderKey(headers[i]) == legacyToken {
+			out := append(slices.Clone(headers[:i]), headers[i+2:]...)
+			return out, body
+		}
+	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		if http.CanonicalHeaderKey(headers[i]) != "Authorization" {
+			continue
+		}
+		token, ok := strings.CutPrefix(headers[i+1], "Bearer ")
+		if !ok {
+			break
+		}
+		credential, prepared := e.callers.Prepare(u.Path, token, body)
+		out := slices.Clone(headers)
+		out[i+1] = "Bearer " + credential
+		return out, prepared
+	}
+	return headers, body
+}
+
+// legacyToken, among the headers of a request, says that the token of the request is sent as it is, to the routes that still take
+// a person's token. Its pair is dropped before the request is sent.
+const legacyToken = "X-Test-Legacy-Token"
 
 // must performs an admin API request that must return 200 and returns the decoded JSON.
 func (e *env) must(method, path string, body any) map[string]any {
@@ -313,17 +392,6 @@ func (e *env) must(method, path string, body any) map[string]any {
 		e.t.Fatalf("decode %s %s response: %v (%s)", method, path, err, raw)
 	}
 	return out
-}
-
-func (e *env) permission(serviceID, token string) (int, map[string]any) {
-	e.t.Helper()
-	status, raw := e.do(http.MethodGet, e.check.URL+"/service/"+serviceID+"/permission", nil,
-		"Authorization", "Bearer "+token)
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		e.t.Fatalf("decode permission response: %v (%s)", err, raw)
-	}
-	return status, out
 }
 
 func expectJSON(t *testing.T, name string, got any, wantJSON string) {
@@ -351,8 +419,7 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	svc := func(name string) map[string]any {
 		return map[string]any{
 			"name": name, "url": m + "/app", "icon": m + "/icon.png",
-			"authorization_url": m + "/realm/auth", "token_url": m + "/realm/token",
-			"jwks_url": m + "/jwks", "issuer": m + "/realm", "slug": name, "client_id": name, "client_secret": "s",
+			"slug": name,
 		}
 	}
 
@@ -390,36 +457,41 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "u1", "department": "sales", "branch_name": "Branch3"})
 	bob := e.token(jwt.MapClaims{"sub": "bob", "level": 5})
 
-	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a claim.
-	status, perm := e.permission(filials, alice)
-	if status != http.StatusOK {
-		t.Fatalf("permission: %d %v", status, perm)
+	// permissions is what a person may do in a service: for each type that has resources they have a level on, those
+	// resources with their levels (the searches of the AuthZEN API, one per level the test grants).
+	permissions := func(ref, token string, types ...string) map[string][]listedResource {
+		out := map[string][]listedResource{}
+		for _, typ := range types {
+			if list := e.listedLevels(ref, token, typ, "read", "write", "audit"); len(list) > 0 {
+				out[typ] = list
+			}
+		}
+		return out
 	}
-	expectJSON(t, "alice@filials", perm, `{
-		"division": {"type":"sync","resources":[{"id":"d1","name":"North","access":["read"]}]},
-		"branch": {"type":"sync","resources":[
+
+	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a claim.
+	expectJSON(t, "alice@filials", permissions("filials", alice, "division", "branch"), `{
+		"division": [{"id":"d1","name":"North","access":["read"]}],
+		"branch": [
 			{"id":"b1","name":"Branch1","access":["read"]},
 			{"id":"b2","name":"Branch2","access":["read"]},
 			{"id":"b3","name":"Branch3","access":["audit"]}
-		]}}`)
+		]}`)
 	// The cascade crosses service boundaries: division(filials) -> branch -> planogram(replan).
-	_, perm = e.permission(replan, alice)
-	expectJSON(t, "alice@replan", perm, `{"planogram": {"type":"sync","resources":[
+	expectJSON(t, "alice@replan", permissions("replan", alice, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["read"]},
-		{"id":"p3","name":"Plano3","access":["audit"]}]}}`)
+		{"id":"p3","name":"Plano3","access":["audit"]}]}`)
 	// bob: predicate level in [5,6] (an int claim is compared as a string) — the whole planogram type.
-	_, perm = e.permission(replan, bob)
-	expectJSON(t, "bob@replan", perm, `{"planogram": {"type":"sync","resources":[
+	expectJSON(t, "bob@replan", permissions("replan", bob, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["write"]},
-		{"id":"p3","name":"Plano3","access":["write"]}]}}`)
+		{"id":"p3","name":"Plano3","access":["write"]}]}`)
 
-	// Changing a rule invalidates the permission cache immediately (version in Redis).
+	// Changing a rule invalidates the permission cache immediately (the revision in PostgreSQL).
 	e.must("PATCH", "/assignment_rule/"+directRule,
 		map[string]any{"type_resource_id": division, "resource_id": "d2", "access": []string{"read", "write"}, "subject": "alice"})
-	_, perm = e.permission(filials, alice)
-	expectJSON(t, "alice@filials after patch", perm, `{
-		"division": {"type":"sync","resources":[{"id":"d2","name":"South","access":["read","write"]}]},
-		"branch": {"type":"sync","resources":[{"id":"b3","name":"Branch3","access":["audit","read","write"]}]}}`)
+	expectJSON(t, "alice@filials after patch", permissions("filials", alice, "division", "branch"), `{
+		"division": [{"id":"d2","name":"South","access":["read","write"]}],
+		"branch": [{"id":"b3","name":"Branch3","access":["audit","read","write"]}]}`)
 
 	// Deleting a referenced type is blocked, with the list of reasons.
 	status, raw := e.do("DELETE", e.admin.URL+"/service/"+filials+"/type_resource/"+branch, nil)
@@ -433,13 +505,13 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 		t.Fatalf("cycle in the type tree: want 400, got %d", status)
 	}
 
-	// Garbage tokens get 401 and do not open the circuit breaker for valid users.
+	// Garbage tokens get 401 and do not stop valid users from being answered.
 	for i := range 6 {
-		if status, _ := e.permission(filials, fmt.Sprintf("garbage.%d.x", i)); status != http.StatusUnauthorized {
+		if status, _ := e.permission("filials", fmt.Sprintf("garbage.%d.x", i)); status != http.StatusUnauthorized {
 			t.Fatalf("garbage token: want 401, got %d", status)
 		}
 	}
-	if status, _ := e.permission(filials, alice); status != http.StatusOK {
+	if status, _ := e.permission("filials", alice); status != http.StatusOK {
 		t.Fatalf("a valid token must still pass after garbage tokens, got %d", status)
 	}
 
@@ -454,68 +526,11 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	}
 }
 
-func TestIntegrationOAuthLogin(t *testing.T) {
-	e := setup(t)
-	m := e.mock.URL
-	public := e.must("POST", "/service/", map[string]any{
-		"name": "public", "url": m + "/app", "icon": m + "/icon.png",
-		"authorization_url": m + "/realm/auth?kc_idp_hint=x", "token_url": m + "/realm/token",
-		"jwks_url": m + "/jwks", "issuer": m + "/realm", "slug": "pub", "client_id": "pub",
-	})["id"].(string)
-
-	status, _ := e.do("GET", e.admin.URL+"/service/"+public+"/oauth/login?redirect_to="+
-		url.QueryEscape("http://localhost:5173.evil.com/"), nil)
-	if status != http.StatusBadRequest {
-		t.Fatalf("redirect_to to a foreign origin: want 400, got %d", status)
-	}
-
-	req, _ := http.NewRequest(http.MethodGet, e.admin.URL+"/service/"+public+"/oauth/login?redirect_to="+
-		url.QueryEscape("http://localhost:5173/cb"), nil)
-	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	loc, _ := url.Parse(resp.Header.Get("Location"))
-	params := loc.Query()
-	if resp.StatusCode != http.StatusTemporaryRedirect || params.Get("kc_idp_hint") != "x" ||
-		params.Get("code_challenge_method") != "S256" || params.Get("client_id") != "pub" ||
-		!strings.HasSuffix(params.Get("redirect_uri"), "/service/"+public+"/oauth/callback") {
-		t.Fatalf("login redirect: %d %s", resp.StatusCode, loc)
-	}
-
-	// A confidential client does not use PKCE; client_secret: null turns it back into a public one.
-	loginChallenge := func() string {
-		req, _ := http.NewRequest(http.MethodGet, e.admin.URL+"/service/"+public+"/oauth/login", nil)
-		resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		loc, _ := url.Parse(resp.Header.Get("Location"))
-		return loc.Query().Get("code_challenge_method")
-	}
-	e.must("PATCH", "/service/"+public, map[string]any{"client_secret": "now-confidential"})
-	if got := loginChallenge(); got != "" {
-		t.Fatalf("a confidential client must not use PKCE, got %q", got)
-	}
-	e.must("PATCH", "/service/"+public, map[string]any{"client_secret": nil})
-	if got := loginChallenge(); got != "S256" {
-		t.Fatalf("client_secret: null must make the client public (PKCE), got %q", got)
-	}
-
-	status, raw := e.do("GET", e.admin.URL+"/service/"+public+"/oauth/callback?code=c&state=forged", nil)
-	if status != http.StatusBadRequest {
-		t.Fatalf("callback with a forged state: %d %s", status, raw)
-	}
-}
-
 func TestIntegrationSchemaValidation(t *testing.T) {
 	e := setup(t)
 	svcID := e.must("POST", "/service/", map[string]any{
 		"name": "svc", "url": e.mock.URL + "/app", "icon": e.mock.URL + "/icon.png",
-		"authorization_url": e.mock.URL + "/a", "token_url": e.mock.URL + "/t", "jwks_url": e.mock.URL + "/jwks",
-		"issuer": e.mock.URL + "/realm", "slug": "c", "client_id": "c", "client_secret": "s",
+		"slug": "c",
 	})["id"].(string)
 	typeID := e.must("POST", "/service/"+svcID+"/type_resource/", map[string]any{"name": "t", "type_resource_parent_id": nil})["id"].(string)
 
@@ -529,7 +544,7 @@ func TestIntegrationSchemaValidation(t *testing.T) {
 		"subject": nil, "member_of_group_id": nil, "predicate": []any{}, "subjectValue": "extra-field",
 	})
 	e.must("POST", "/group/"+group["id"].(string)+"/member/", map[string]any{"member_group_id": nil, "predicate": []any{}, "enabled": true})
-	e.must("PATCH", "/service/"+svcID, map[string]any{"name": "svc2", "client_secret": nil})
+	e.must("PATCH", "/service/"+svcID, map[string]any{"name": "svc2"})
 
 	for _, tc := range []struct {
 		name, method, path string
@@ -560,23 +575,31 @@ func TestIntegrationSchemaValidation(t *testing.T) {
 		}
 	}
 
-	// Docs and spec.
-	for _, srv := range []*httptest.Server{e.admin, e.check} {
-		status, raw := e.do("GET", srv.URL+"/openapi.json", nil)
-		var spec struct {
-			OpenAPI string         `json:"openapi"`
-			Paths   map[string]any `json:"paths"`
-		}
-		if status != http.StatusOK || json.Unmarshal(raw, &spec) != nil || spec.OpenAPI != "3.1.0" || len(spec.Paths) == 0 {
-			t.Fatalf("openapi.json: %d %.200s", status, raw)
-		}
-		if status, _ := e.do("GET", srv.URL+"/docs", nil); status != http.StatusOK {
-			t.Fatalf("/docs: %d", status)
+	// Docs and spec: the admin API serves them. The PDP's public port serves neither (its document is what `licetum openapi pdp`
+	// prints, checked below), and its probes and metrics are on the operations listener.
+	status, raw := e.do("GET", e.admin.URL+"/openapi.json", nil)
+	var spec struct {
+		OpenAPI string         `json:"openapi"`
+		Paths   map[string]any `json:"paths"`
+	}
+	if status != http.StatusOK || json.Unmarshal(raw, &spec) != nil || spec.OpenAPI != "3.1.0" || len(spec.Paths) == 0 {
+		t.Fatalf("openapi.json: %d %.200s", status, raw)
+	}
+	if status, _ := e.do("GET", e.admin.URL+"/docs", nil); status != http.StatusOK {
+		t.Fatalf("/docs: %d", status)
+	}
+	for _, path := range []string{"/openapi.json", "/docs", "/healthz", "/readyz", "/metrics"} {
+		if status, _ := e.do("GET", e.check.URL+path, nil); status != http.StatusNotFound {
+			t.Fatalf("the PDP's public port answers %s with %d, want 404", path, status)
 		}
 	}
-	_, raw := e.do("GET", e.check.URL+"/openapi.json", nil)
-	if !strings.Contains(string(raw), `"get_permission"`) || !strings.Contains(string(raw), `"bearer"`) {
-		t.Fatal("the check API spec lacks get_permission or the bearer security scheme")
+	_, pdp := server.NewPDPAPI(e.app.App)
+	doc, err := server.LocalizedSpec(pdp, i18n.Default, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), `"authzen_evaluation"`) || !strings.Contains(string(doc), `"bearer"`) {
+		t.Fatal("the PDP spec lacks authzen_evaluation or the bearer security scheme")
 	}
 }
 
@@ -587,8 +610,7 @@ func TestIntegrationPlatformPolicies(t *testing.T) {
 	svc := func(name string) map[string]any {
 		return map[string]any{
 			"name": name, "url": m + "/app", "icon": m + "/icon.png",
-			"authorization_url": m + "/realm/auth", "token_url": m + "/realm/token",
-			"jwks_url": m + "/jwks", "issuer": m + "/realm", "slug": name, "client_id": name, "client_secret": "s",
+			"slug": name,
 		}
 	}
 	asUser := func(token string) []string { return []string{"Authorization", "Bearer " + token} }

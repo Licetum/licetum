@@ -65,7 +65,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: How Licetum runs (Docker Compose, your own images, from sources), the database and Redis versions, the browser if it is the interface.
+      description: How Licetum runs (Docker Compose, your own images, from sources), the PostgreSQL version, the browser if it is the interface.
     validations:
       required: false
 

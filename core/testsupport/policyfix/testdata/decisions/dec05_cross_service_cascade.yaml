@@ -1,0 +1,90 @@
+# DEC05 on the world of the integration tests (hierarchy_test.go:newWorld): division → rrs → branch (service org) and
+# item (service app) under branch, every link letting every level through. D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4.
+#
+# Levels flow down the type links, across services, and never up: a grant on a resource reaches what lies below it, a
+# whole-type grant reaches every resource of the type and of the lower types, and neither reaches an ancestor. The
+# levels granted to a resource by different rules add up.
+contracts: [DEC05]
+description: Cascade along links that let every level through, across services, from resources and whole types.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, name: Branch 4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, name: Item 1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, name: Item 4, parents: [{type: branch, id: B4}]}
+rules:
+  # hierarchy_test.go:TestIntegrationHierarchyCascade
+  - {name: cascade-D1, subject: cascade, type: division, resource: D1, access: [read]}
+  # hierarchy_test.go:TestIntegrationHierarchyWholeTypeAndMerge
+  - {name: merge-rrs, subject: merge, type: rrs, access: [read, write]}
+  - {name: merge-audit-B1, subject: merge, type: branch, resource: B1, access: [audit]}
+cases:
+  # from hierarchy_test.go:TestIntegrationHierarchyCascade
+  - name: a grant on D1 reaches every rrs and branch below it
+    subject: cascade
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [cascade-D1]}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [cascade-D1]}
+      - {type: rrs, resource: R2, action: read, allowed: true}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [cascade-D1]}
+      - {type: branch, resource: B2, action: read, allowed: true}
+      - {type: branch, resource: B3, action: read, allowed: true}
+  - name: a grant on D1 reaches nothing outside its subtree
+    subject: cascade
+    questions:
+      - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  # from hierarchy_test.go:TestIntegrationHierarchyCascade
+  - name: the cascade crosses services, with exactly the granted level
+    subject: cascade
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [cascade-D1]}
+      - {type: item, resource: I1, action: write, allowed: false, decision: no_access}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+  # from hierarchy_test.go:TestIntegrationHierarchyWholeTypeAndMerge
+  - name: a whole-type grant on rrs reaches every rrs and every branch, and the levels add up on B1
+    subject: merge
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [merge-rrs]}
+      - {type: rrs, resource: R2, action: write, allowed: true}
+      - {type: rrs, resource: R3, action: read, allowed: true}
+      - {type: rrs, resource: R3, action: write, allowed: true}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [merge-rrs]}
+      - {type: branch, resource: B1, action: write, allowed: true}
+      - {type: branch, resource: B1, action: audit, allowed: true, decision: allowed, granted_by: [merge-audit-B1]}
+      - {type: branch, resource: B2, action: read, allowed: true}
+      - {type: branch, resource: B2, action: write, allowed: true}
+      - {type: branch, resource: B2, action: audit, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: write, allowed: true}
+      - {type: branch, resource: B4, action: read, allowed: true}
+      - {type: branch, resource: B4, action: write, allowed: true}
+  # from hierarchy_test.go:TestIntegrationHierarchyWholeTypeAndMerge
+  - name: a grant on rrs does not reach its ancestor division
+    subject: merge
+    questions:
+      - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
+      - {type: division, resource: D2, action: write, allowed: false, decision: no_access}
+  - name: the whole-type grant and the grant on B1 cross into the other service
+    subject: merge
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [merge-rrs]}
+      - {type: item, resource: I1, action: write, allowed: true}
+      - {type: item, resource: I1, action: audit, allowed: true, decision: allowed, granted_by: [merge-audit-B1]}
+      - {type: item, resource: I4, action: write, allowed: true}
+      - {type: item, resource: I4, action: audit, allowed: false, decision: no_access}

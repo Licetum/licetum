@@ -1,0 +1,216 @@
+# Licetum: one release is one region (or one cell) with its own PostgreSQL. The pods that write (admin, worker, migrate) belong in
+# the region of the database that holds the policy. docs/deployment.md describes the topology.
+
+# The image of the PDP, the worker and the migrations (the core module), of the admin API, and of the web interface.
+image:
+  core:
+    repository: ghcr.io/licetum/licetum
+    tag: ""            # empty: the appVersion of the chart
+  admin:
+    repository: ghcr.io/licetum/licetum-admin
+    tag: ""
+  web:
+    repository: ghcr.io/licetum/licetum-web
+    tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The name of the region (or the cell) this release runs in: a label on every object.
+region: ""
+
+# The identifier the PEPs use for the PDP (PDP__PUBLIC_URL, https except on a loopback host): the AuthZEN discovery document is built from it.
+publicUrl: ""
+
+# The secrets. Either name a Secret that holds the keys below (existingSecret, the way to go in production) or give the values and
+# the chart creates one. DB__URI is required; DB__MIGRATE_URI and, for the web interface, SESSION_SECRET and OIDC_CLIENT_SECRET
+# (absent for a public client) are optional.
+existingSecret: ""
+secrets:
+  dbUri: ""
+  dbMigrateUri: ""
+  sessionSecret: ""
+  oidcClientSecret: ""
+
+db:
+  # PgBouncer in transaction mode in front of PostgreSQL (DB__PGBOUNCER): the simple protocol, nothing prepared. Give the migrations
+  # a direct address then (secrets.dbMigrateUri).
+  pgbouncer: false
+  poolSize: 10
+  maxOverflow: 20
+  syncPoolSize: 4
+
+# The self-service: Licetum registered within itself, and the platform administrators (PLATFORM__*). It has no OAuth client of
+# its own: administrators sign in at the identity provider of adminAuth.
+platform:
+  name: Licetum
+  url: ""
+  icon: ""
+  adminGroupName: Platform administrator
+  adminClaim: preferred_username
+  adminClaimValues: '["admin"]'
+
+# How administrators authenticate to the admin API (ADMIN_AUTH__*): one OpenID Connect provider. The admin API verifies their
+# bearer tokens against its keys (iss compared exactly, aud must contain the audience); the web interface is the OIDC client
+# (web.oidc). Required where the admin API runs (admin.enabled); the migration seeds the self-service only when they are set.
+adminAuth:
+  issuer: ""
+  audience: ""
+  jwksUrl: ""
+  # The claim that names the administrator; a token without it is named by its sub.
+  subjectClaim: preferred_username
+
+# How long a pod that is going away is not ready but serves (SHUTDOWN__DRAIN), and how long it waits for the requests in
+# progress (SHUTDOWN__TIMEOUT). The pods get preStop sleep = drain and terminationGracePeriodSeconds = drain + timeout + 10.
+shutdown:
+  drain: 10
+  timeout: 30
+
+# POLICY__MAX_STALENESS: how long a pod answers from a policy it could not confirm. Empty: no limit.
+policyMaxStaleness: ""
+
+# Extra environment variables for every pod (name: value).
+env: {}
+
+# The PDP (the AuthZEN decision point): the only thing clients call at request time. It reads the policy from PostgreSQL and
+# writes nothing to the graph.
+pdp:
+  replicas: 2
+  port: 8001
+  # The ops port (PDP__OPS_ADDR): /healthz, /readyz and /metrics only. The probes and the scrape use it; clients never do.
+  opsPort: 9090
+  resources:
+    requests: {cpu: 500m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  # Requests in flight one pod admits (HTTP__MAX_INFLIGHT); empty: GOMAXPROCS x 256.
+  maxInflight: ""
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 60
+    # The pods in flight per pod (licetum_http_inflight) that adds replicas; needs a custom metrics adapter (prometheus-adapter).
+    # 0 leaves the CPU as the only metric.
+    targetInflight: 0
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  service:
+    type: ClusterIP
+    annotations: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+
+# The admin API (and the web interface behind it): writes the policy, so it runs in the region of the primary only.
+admin:
+  enabled: true
+  replicas: 1
+  port: 8000
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  service:
+    type: ClusterIP
+    annotations: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+
+# The synchronization worker: fetches the sources into the local copy. Run it next to the database, where the sources can be
+# reached.
+worker:
+  enabled: true
+  replicas: 1
+  port: 8002
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 2Gi}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+
+# `licetum migrate` before an install and an upgrade, one Job (a hook): the migrations take an advisory lock, so a second run waits.
+# Set it to false where another release runs the migrations.
+migrate:
+  enabled: true
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 256Mi}
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+
+# The web interface (optional).
+web:
+  enabled: false
+  replicas: 1
+  port: 3000
+  appBaseUrl: ""
+  checkApiPublicUrl: ""
+  # The web interface is the OpenID Connect client of the administrator sign-in (code flow with PKCE). Register
+  # {appBaseUrl}/auth/callback as the redirect URI of the client at the provider of adminAuth. authorizationUrl is where the
+  # browser is sent, tokenUrl where the web interface calls; the client secret is secrets.oidcClientSecret (none: a public client).
+  oidc:
+    authorizationUrl: ""
+    tokenUrl: ""
+    clientId: ""
+    scope: ""
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    annotations: {}
+    tls: []
+
+ingress:
+  # An Ingress for the PDP.
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls: []
+
+# Spread the pods over zones, and keep two pods of a deployment off one node.
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: ScheduleAnyway
+podAntiAffinity:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+
+# NetworkPolicy: the PDP pods may talk to PostgreSQL, the identity provider and the sources, and to nothing else;
+# ingress only on their ports. Give the CIDRs and ports (a policy cannot name a managed database by its host name).
+networkPolicy:
+  enabled: false
+  # Where clients and the probes come from (empty: from anywhere in the cluster). The ops port takes the same peers.
+  ingressFrom: []
+  # The namespace of Prometheus: it scrapes /metrics on the ops port, and that is all it reaches there.
+  monitoringNamespace: monitoring
+  dbCidrs: []
+  dbPort: 5432
+  # The identity provider and the sources: egress on these ports to anywhere that is not a private range.
+  httpsPorts: [443]
+  # Allow DNS to the cluster resolver.
+  dns: true
+
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  labels: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile: {type: RuntimeDefault}
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}

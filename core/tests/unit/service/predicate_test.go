@@ -69,24 +69,3 @@ func TestPyStrMatchesClaimFormattingContract(t *testing.T) {
 		})
 	}
 }
-
-func TestSubjectFromClaimsPrefersUsernameAndRequiresIdentity(t *testing.T) {
-	tests := []struct {
-		name, want string
-		claims     engine.Claims
-		failed     bool
-	}{
-		{"preferred username", "alice", engine.Claims{"preferred_username": "alice", "sub": "u1"}, false},
-		{"falls back to subject", "u1", engine.Claims{"preferred_username": "", "sub": "u1"}, false},
-		{"subject only", "u1", engine.Claims{"sub": "u1"}, false},
-		{"missing identity", "", engine.Claims{}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := engine.SubjectFromClaims(tt.claims)
-			if (err != nil) != tt.failed || got != tt.want {
-				t.Fatalf("SubjectFromClaims = %q, %v; want %q, failed=%v", got, err, tt.want, tt.failed)
-			}
-		})
-	}
-}

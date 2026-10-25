@@ -22,7 +22,7 @@ type PolicyTestCheck struct {
 type PolicyTestCase struct {
 	Name    string            `json:"name" minLength:"1" maxLength:"200" doc:"What the scenario is about" example:"sales read the branches"`
 	Subject string            `json:"subject" minLength:"1" doc:"The subject, named as the rules name it (preferred_username, or sub)" example:"alice"`
-	Claims  map[string]any    `json:"claims,omitempty" doc:"The claims of its token"`
+	Claims  map[string]any    `json:"claims,omitempty" doc:"The claims of the subject (subject.properties of an AuthZEN request)"`
 	Context RequestContext    `json:"context,omitempty" doc:"The attributes of the request"`
 	Checks  []PolicyTestCheck `json:"checks" minItems:"1" maxItems:"100" nullable:"false" doc:"The answers the scenario must get"`
 }

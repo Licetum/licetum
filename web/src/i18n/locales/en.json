@@ -112,8 +112,12 @@
     "copied": "Copied",
     "copyDetails": "Copy details for the administrator",
     "error": {
-      "api_unreachable": "The admin API doesn’t answer. Check that it is running and that ADMIN_API_URL is right.",
-      "not_seeded": "Licetum isn’t set up yet: the self-service is not created. Run the migration (licetum migrate) and try again.",
+      "denied": "The identity provider refused the sign-in.",
+      "idp_error": "The identity provider reported an error. Try again.",
+      "idp_unreachable": "The identity provider didn’t answer the request for the tokens. Check OIDC_TOKEN_URL and try again.",
+      "invalid_response": "The identity provider answered with something this application can’t use: the access token must be a JWT, and the nonce must match. Check the settings of the client.",
+      "not_configured": "Sign-in isn’t configured: this application needs the settings of the identity provider (OIDC_AUTHORIZATION_URL, OIDC_TOKEN_URL, OIDC_CLIENT_ID).",
+      "state": "The sign-in expired, or it didn’t start in this browser. Start it again.",
       "unknown": "The sign-in request expired or was rejected. Try again."
     },
     "errorHint": "If the error repeats, tell your administrator the time and the error code.",
@@ -134,7 +138,7 @@
     "addQuestion": "Add a question",
     "allTypes": "All types",
     "attrs": "Attributes",
-    "attrsHint": "The claims the person’s token would carry. The rules look at them.",
+    "attrsHint": "The properties of the person: the claims their token would carry. The rules look at them.",
     "context": "Request context",
     "contextHint": "What the request itself carries (address, channel). The calling service sets it; never copy it from user input.",
     "denied": "What took it away",
@@ -147,9 +151,21 @@
     "lifted": "lifted by an exception",
     "linkCopied": "The link is copied",
     "list": {
+      "more": "Load more",
+      "noResources": "The person sees no resources of this type.",
+      "noTypes": "The service has no resource types.",
+      "noTypesHint": "Describe its types on the “Resource types” tab first.",
       "none": "{{subject}} sees nothing in this service.",
       "noneHint": "No rule gives them access. Give access to a group they are in, or to them directly.",
+      "noneYet": "Nothing found in the part of the resources read so far. Load more to go on.",
+      "note": "Types with resources are read on demand: open a type to see the resources the person has any level on, a page at a time.",
+      "openHint": "open the row to list them",
       "resources": "Resources",
+      "shown_few": "Showing {{count}} resources",
+      "shown_many": "Showing {{count}} resources",
+      "shown_one": "Showing {{count}} resource",
+      "shown_other": "Showing {{count}} resources",
+      "wholeLevels": "On the type as a whole",
       "wholeType": "the type as a whole"
     },
     "missingAttr": "The request lacks an attribute a condition reads: the denial applies, as the rule says.",
@@ -239,34 +255,6 @@
     "value": "Value",
     "valueList": "a, b, c"
   },
-  "delegation": {
-    "calls": {
-      "at": "When",
-      "checked": "Check: {{allowed}} of {{total}} allowed",
-      "client": "Client",
-      "empty": "No calls yet",
-      "emptyHint": "Every call of a trusted client is recorded here: which client, for whom and with what outcome.",
-      "older": "Older calls",
-      "permission": "Permissions",
-      "subject": "For",
-      "title": "Calls made on behalf of a person",
-      "what": "What"
-    },
-    "claims": {
-      "contextHint": "An attribute of the request, not of the token: the caller puts it into context.",
-      "none": "The rules read no claims yet: a person is known by their name alone.",
-      "title": "What the policy of this service reads",
-      "usage": "{{rules}} in rules, {{targets}} in claim-based targets, {{memberships}} in group memberships",
-      "warn": "A trusted client has to send these claims — or, if it forwards a person’s token, that token has to carry them. Otherwise the answers differ from the real ones: a rule that reads a missing claim does not apply, and a person is no longer in the group the claim defines."
-    },
-    "clients": "Trusted clients",
-    "clientsHelp": "The azp (or client_id) of the client’s token. Trust a backend client, not the one your users sign in with: a token of a trusted client may ask about anybody.",
-    "clientsPlaceholder": "The azp of the client’s token, then Enter",
-    "example": "A call to copy",
-    "intro": "A client application you trust can ask what a person may do without holding their token: it signs in with its own token and names the person and the claims their token would carry.",
-    "saved": "Trusted clients saved",
-    "title": "On behalf of a person"
-  },
   "grant": {
     "addedMore_few": "Given so far: {{count}}. The form is cleared for the next one.",
     "addedMore_many": "Given so far: {{count}}. The form is cleared for the next one.",
@@ -314,20 +302,15 @@
       "conflicts_other": "{{count}} denials or exceptions meet this access",
       "dynamic": "The resource is found from the claim of whoever asks, so how many there are depends on the person.",
       "failed": "The effect could not be worked out. You can still give the access.",
-      "noPeople_few": "None of the {{count}} known people matches",
-      "noPeople_many": "None of the {{count}} known people matches",
-      "noPeople_one": "None of the {{count}} known person matches",
-      "noPeople_other": "None of the {{count}} known people matches",
+      "noPeople_one": "None of the {{count}} person of the directory matches",
+      "noPeople_other": "None of the {{count}} people of the directory match",
       "partial_few": "(and {{count}} more accesses not counted)",
       "partial_many": "(and {{count}} more accesses not counted)",
       "partial_one": "(and {{count}} more accesses not counted)",
       "partial_other": "(and {{count}} more accesses not counted)",
-      "people_few": "Reaches {{count}} known people",
-      "people_many": "Reaches {{count}} known people",
-      "people_one": "Reaches 1 known person",
-      "people_other": "Reaches {{count}} known people",
-      "registryEmpty": "Nobody has been seen yet, so who it reaches cannot be told. People appear after they sign in to a service.",
-      "registryOff": "The registry of people is off, so who this reaches cannot be told. It is turned on with SUBJECTS__ENABLED.",
+      "people_one": "Reaches 1 person of the directory",
+      "people_other": "Reaches {{count}} people of the directory",
+      "registryEmpty": "The directories of the services are empty, so who it reaches cannot be told. The applications send their people to the subject directory.",
       "resources_few": "Covers {{count}} resources",
       "resources_many": "Covers {{count}} resources",
       "resources_one": "Covers 1 resource",
@@ -642,40 +625,101 @@
   },
   "integration": {
     "about": {
-      "authzen": "The same question in the OpenID AuthZEN 1.0 format, for clients that already speak it.",
-      "check": "Answers up to 100 questions “may the person do this on that”, optionally with an explanation.",
-      "permission": "Returns, for each type, the resources the person may use and their levels. Use it to filter a list."
+      "evaluation": "One question in the OpenID AuthZEN 1.0 format: may the person do this on that. Add context.licetum.explain to get the reasons.",
+      "evaluations": "Up to 100 such questions in one request, with a default subject. The semantic in the options can stop the batch at the first denial or permit.",
+      "search_resource": "The resources of the type the person may do the action with, a page at a time. Use it to filter a list.",
+      "search_action": "The access levels the person has on the resource, or on the type as a whole when no resource is named.",
+      "search_subject": "The people of the service’s directory who may do the action on the resource. Needs the people to have been sent to the directory."
     },
-    "api": "Check API",
+    "api": "PDP address",
     "codes": {
       "200": "The answer",
-      "401": "No token, or the token is invalid or expired",
-      "403": "The request is valid but not allowed for this caller",
-      "404": "The service doesn’t exist",
-      "424": "The sign-in provider of the service doesn’t answer",
+      "400": "The request is not valid",
+      "401": "No credential, or the API key or the token is invalid or expired",
+      "403": "The credential is valid but gives nothing on this service: it belongs to another service, is disabled or lacks the operation",
+      "424": "The keys of the token’s issuer can’t be read",
+      "429": "Too many requests from this client; try again after the time in Retry-After",
       "meaning": "Meaning",
       "status": "Code",
       "title": "Response codes"
     },
     "fresh": {
-      "body": "Answers are cached for up to 60 seconds. After changing permissions pass the X-Authz-Revision header of the write response as at_least_as_fresh, or use consistency=higher.",
+      "body": "Answers are cached for up to 60 seconds. After changing permissions put the X-Authz-Revision header of the write response into context.licetum.min_revision, and the answer reflects the change.",
       "title": "Freshness of the answers"
     },
-    "hint": "How the code of this service asks Licetum what a person may do. The calls below carry the service’s own name and types.",
+    "hint": "How the code of this service asks Licetum what a person may do, in the OpenID AuthZEN 1.0 format. The calls below carry the service’s own name and types; the credential is the API key of a PEP client of the service.",
     "lang": "Language",
-    "mode": {
-      "check": "Can X do Y on Z (one question)",
-      "permission": "What a person can do (list)"
-    },
     "modeLabel": "What to ask",
+    "op": {
+      "evaluation": "May X do Y on Z",
+      "evaluations": "Many questions",
+      "search_resource": "Which resources",
+      "search_action": "Which actions",
+      "search_subject": "Which people"
+    },
+    "sample": {
+      "action": "Action",
+      "person": "Person",
+      "resource": "Resource id",
+      "type": "Type"
+    },
     "try": {
-      "401": "The token was rejected: it is expired, or issued by another provider than the one this service is connected to.",
-      "424": "The sign-in provider of the service doesn’t answer, so tokens can’t be verified.",
-      "hint": "The token is used for this one request and is not stored. Paste the token your service gets from its identity provider.",
+      "401": "The credential was rejected: the key is wrong or revoked, or the token is expired or of an issuer that is not registered.",
+      "403": "The credential gives nothing on this service: check that its client belongs to it, is enabled and may do this operation.",
+      "424": "The keys of the issuer of the token can’t be read, so the token can’t be verified.",
+      "hint": "The credential is used for this one request and is not stored. Paste the API key of a PEP client of the service, or a token of a registered issuer.",
       "run": "Try",
-      "title": "Try it with your token",
-      "token": "Access token"
+      "title": "Try it with a credential",
+      "token": "API key or access token"
     }
+  },
+  "issuers": {
+    "add": "Register an issuer",
+    "algsDefault": "default (RS256, ES256, EdDSA)",
+    "audienceDefault": "the audience of the PDP",
+    "clientsNote": "A client that presents the tokens of an issuer is registered on the “PEP clients” tab of its service.",
+    "col": {
+      "algs": "Algorithms",
+      "audiences": "Audiences",
+      "issuer": "Issuer and keys",
+      "typ": "Token type"
+    },
+    "delete": {
+      "body": "Only an issuer that no client uses can be deleted.",
+      "failed": "Can’t delete the issuer",
+      "title": "Delete the issuer “{{issuer}}”?"
+    },
+    "detect": {
+      "fail": "Couldn’t detect it — enter the address of the keys by hand.",
+      "ok": "Found where its keys are."
+    },
+    "detectBtn": "Detect automatically",
+    "drawer": {
+      "add": "Register an issuer",
+      "edit": "Change the issuer"
+    },
+    "empty": {
+      "hint": "Register one to let a PEP client present the access tokens of your identity provider. Clients with an API key do not need it.",
+      "title": "No issuers registered"
+    },
+    "field": {
+      "algs": "Signature algorithms",
+      "algsHelp": "Asymmetric algorithms only. Empty: RS256, ES256 and EdDSA.",
+      "audiences": "Audiences",
+      "audiencesHelp": "One of them must be in the aud of a token. Empty: the audience of the PDP.",
+      "audiencesPlaceholder": "The aud of the tokens, then Enter",
+      "issuer": "Issuer (iss)",
+      "issuerHelp": "Compared exactly with the iss of a token. For a Keycloak realm: https://host/realms/name.",
+      "jwks": "Keys (JWKS URL)",
+      "jwksHelp": "Where the public keys of the issuer are read.",
+      "requireTyp": "Accept only tokens with the header typ at+jwt (RFC 9068)"
+    },
+    "hint": "Identity providers whose access tokens the PEPs of the services may present. They are shared by all services: a PEP client of a service names one of them and the client id its tokens carry. A token is accepted only with an aud that contains one of the audiences, a signature of an allowed algorithm and a valid expiry.",
+    "problem": {
+      "issuer": "Enter the issuer.",
+      "jwks": "Enter the address of the keys (http or https)."
+    },
+    "replaces": "An issuer with this name is registered: saving replaces its settings."
   },
   "logs": {
     "applied": "Settings apply to every replica within about 15 seconds, without a restart.",
@@ -758,6 +802,8 @@
       "rules": "Direct accesses"
     },
     "create": "Create a group",
+    "directoryEmpty": "The directory of this service is empty: only the people the rules and the history name are listed. The application sends its people with PUT /service/{id}/subjects.",
+    "directoryOf": "Directory of the service",
     "empty": {
       "hint": "A group unites people by a sign; an access given to a group is received by all its members.",
       "tag": "empty",
@@ -770,7 +816,6 @@
     "noMatch": "Nothing found",
     "noPeople": "Nobody is named yet",
     "noPeopleHint": "Open a person directly: /people/username.",
-    "registryOff": "The registry of people is off: only the people the rules and the history name are listed. Turn it on with SUBJECTS__ENABLED to see everyone who signs in, with their name and groups.",
     "search": "Search by name or composition…",
     "searchPeople": "Find a person by username…",
     "tab": {
@@ -778,28 +823,131 @@
       "people": "People"
     }
   },
+  "pep": {
+    "col": {
+      "enabled": "Enabled",
+      "identity": "Known by",
+      "kind": "Kind",
+      "name": "Name",
+      "operations": "Operations"
+    },
+    "create": "Register a client",
+    "delete": {
+      "body": "Its API keys are revoked and its tokens are no longer accepted. Its name is free again.",
+      "title": "Delete the client “{{name}}”?"
+    },
+    "disableHint": "Disable: its keys and tokens are refused",
+    "disabled": "Disabled",
+    "drawer": {
+      "create": "Register a PEP client",
+      "edit": "Client “{{name}}”"
+    },
+    "empty": {
+      "hint": "Until a client is registered nothing can ask the PDP of this service. Register one and issue it an API key.",
+      "title": "No PEP clients yet"
+    },
+    "enableHint": "Enable",
+    "enabled": "Enabled",
+    "field": {
+      "clientId": "Client id",
+      "clientIdHelp": "The azp (or client_id) claim of the client’s tokens.",
+      "enabled": "The client is enabled",
+      "issuer": "Issuer",
+      "issuerHelp": "The iss of the client’s tokens: one of the registered issuers.",
+      "issuerPlaceholder": "Choose a registered issuer",
+      "kind": "How it is known",
+      "kindFixed": "The kind of a client does not change; register another client instead.",
+      "name": "Name",
+      "nameHelp": "Unique within the service.",
+      "noIssuers": "No issuers are registered yet. Register one in the settings.",
+      "operations": "Operations"
+    },
+    "hint": "PEP clients are the applications that ask the PDP of this service what a person may do. Each is known by an API key that Licetum issues, or by the access tokens of an identity provider registered in the settings. A client may call only the operations it was given.",
+    "integrationNote": "Ready-made calls for the code of the service:",
+    "issued": {
+      "done": "I have saved the key",
+      "title": "API key issued",
+      "use": "Send it as the bearer token of the AuthZEN API: Authorization: Bearer <key>.",
+      "warning": "Copy the key now. It is shown only once and cannot be read again: Licetum keeps only its hash."
+    },
+    "issuersNote": "The issuers whose tokens a client may present are registered in the settings:",
+    "keyIdentity": "its API keys",
+    "keys": {
+      "col": {
+        "created": "Issued",
+        "id": "Key",
+        "state": "State",
+        "until": "Valid until"
+      },
+      "empty": "No keys yet",
+      "emptyHint": "Issue a key and give it to the application: it sends it as its bearer token.",
+      "full": "The client already has two active keys; revoke one first.",
+      "hint": "Licetum keeps only a hash of a key, so a lost key is revoked and a new one issued. A client can hold two active keys: to rotate, issue the new key, move the application to it, then revoke the old one.",
+      "issue": "Issue a key",
+      "never": "no end",
+      "open": "Keys",
+      "revoke": {
+        "action": "Revoke",
+        "body": "Every PDP refuses it within a few seconds. This cannot be undone.",
+        "title": "Revoke the key lct_{{id}}?"
+      },
+      "revokedAt": "revoked {{at}}",
+      "state": {
+        "active": "active",
+        "expired": "expired",
+        "revoked": "revoked"
+      },
+      "title": "API keys of “{{name}}”"
+    },
+    "kind": {
+      "api_key": "API key",
+      "jwt": "Issuer token"
+    },
+    "kindHelp": {
+      "api_key": "Licetum issues the keys; the application sends one as its bearer token.",
+      "jwt": "The application presents access tokens of a registered issuer; its client id names it."
+    },
+    "op": {
+      "evaluate": "Decide the questions “may X do Y on Z”",
+      "explain": "Return the reasons of a decision",
+      "search_action": "List a person’s levels on a resource",
+      "search_resource": "List the resources a person may use",
+      "search_subject": "List the people who may use a resource"
+    },
+    "problem": {
+      "clientId": "Enter the client id of its tokens.",
+      "issuer": "Choose the issuer of the client’s tokens.",
+      "name": "Give the client a name.",
+      "operations": "Pick at least one operation."
+    },
+    "properties": {
+      "contextHint": "An attribute of the request, not of the person: the PEP puts it into context.",
+      "none": "The rules read no properties yet: a person is known by their name alone.",
+      "title": "What the PEPs of this service have to send",
+      "usage": "{{rules}} in rules, {{targets}} in claim-based targets, {{memberships}} in group memberships",
+      "warn": "A PEP has to send these properties in subject.properties and the attributes in context. Otherwise the answers differ from the real ones: a rule that reads a missing property does not apply, and a person is no longer in the group the property defines."
+    }
+  },
   "person": {
-    "attrsHint": "The claims of the person’s token, used to compute what they see. They are not stored.",
+    "attrsHint": "The properties of the person that the rules read, used to compute what they see. They are not stored.",
     "attrs_few": "Attributes ({{count}})",
     "attrs_many": "Attributes ({{count}})",
     "attrs_one": "Attributes ({{count}})",
     "attrs_other": "Attributes ({{count}})",
     "check": "Check access…",
-    "groupsNote": "Groups defined by a condition are not listed here: they follow the attributes of the token.",
+    "groupsNote": "Groups defined by a condition are not listed here: they follow the properties the application sends.",
     "how": "Why",
     "howNamed": "named in the composition",
     "inGroups": "Groups:",
-    "lastSeen": "Last seen: {{at}}",
+    "lastSent": "Last sent by the application: {{at}}",
     "noDirect": "No direct accesses.",
     "noGroups": "No membership names this person.",
-    "noGroupsHint": "Groups defined by a condition (department = sales) depend on the token, not on a record about the person.",
+    "noGroupsHint": "Groups defined by a condition (department = sales) depend on the properties the application sends, not on a record about the person.",
     "noServices": "No services connected yet.",
-    "nothing": "Nothing is allowed in the service “{{service}}”.",
-    "nothingHint": "Give access to a group or to the person.",
     "revokeAll": "Revoke direct accesses and memberships…",
     "revokeBody": "This deletes {{direct}} direct accesses and {{groups}} membership entries that name the person.",
     "revokeConfirm": "Revoke",
-    "revokeHelp": "Access comes from the attributes in the token: to revoke everything, change them at the identity provider or remove the person from the memberships. A token is trusted for up to 5 minutes; an answer is cached for up to 60 seconds.",
+    "revokeHelp": "Access comes from the properties the application sends for the person: to revoke everything, change them in the application or remove the person from the memberships. An answer is cached for up to 60 seconds.",
     "revokeHelpTitle": "How to revoke everything",
     "revokeTitle": "Revoke everything given by name?",
     "revoked_few": "Revoked: {{count}}",
@@ -1072,7 +1220,6 @@
   "service": {
     "allHistory": "Whole history →",
     "appUrl": "Application URL",
-    "authUrl": "Authorization URL",
     "danger": "Danger zone",
     "delete": {
       "action": "Delete the service",
@@ -1084,37 +1231,31 @@
       "title": "Delete the service “{{name}}”?",
       "type": "Type the slug “{{slug}}”"
     },
-    "edit": "Edit the connection",
+    "details": "Service",
+    "edit": "Edit",
     "iconUrl": "Icon URL",
     "incomplete": {
       "cta": "Add types",
       "hint": "The service has no resource types yet. Describe them, then connect a source.",
       "title": "Setup is not finished"
     },
-    "makePublic": "Make the client public (remove the secret, sign in with PKCE)",
     "name": "Name",
-    "newSecret": "New client secret",
     "notFound": {
       "back": "To the services",
       "hint": "It may have been deleted, or the address is wrong.",
       "title": "The service doesn’t exist"
     },
     "recent": "Recent changes of the service",
-    "secretHelp": "The current secret is never shown.",
-    "secretKeep": "Leave empty to keep the current one",
-    "secretNone": "none — a public client (PKCE)",
-    "secretSet": "stored",
-    "secretStatus": "Client secret",
-    "signin": "Sign-in (provider)",
+    "slug": "Slug",
     "state": "State",
     "tab": {
       "integration": "Integration",
       "overview": "Overview",
+      "pep": "PEP clients",
       "policy": "Policy",
       "sources": "Sources",
       "types": "Resource types"
-    },
-    "tokenUrl": "Token URL"
+    }
   },
   "services": {
     "col": {
@@ -1127,7 +1268,7 @@
     "counts": "Types {{types}} · Accesses {{rules}}",
     "countsFailed": "Couldn’t load the counts; the list may be incomplete.",
     "empty": {
-      "hint": "Three steps: the sign-in provider, the resource types, the source of the resources.",
+      "hint": "Four short steps: name the service, describe its resource types, connect their source, check.",
       "title": "Connect your first service"
     },
     "filter": {
@@ -1158,6 +1299,7 @@
   "settings": {
     "tab": {
       "admins": "Administrators",
+      "issuers": "PEP issuers",
       "logs": "Logs"
     },
     "title": "Settings"
@@ -1174,9 +1316,6 @@
   "sources": {
     "addHeader": "Add a header",
     "attrsNote": "Any other field of a resource becomes its attribute; accesses can then pick resources by it (for example owner = anna).",
-    "cache": "The list is kept for {{seconds}} s",
-    "cacheTtl": "Keep the list for",
-    "cacheTtlHelp": "Requests in this window don’t go to the source, so the data may lag it by as much. Empty — the default (10 s), 0 — no caching.",
     "col": {
       "source": "Source"
     },
@@ -1211,7 +1350,6 @@
     "query": "Query of one resource by :id",
     "queryHelp": "The same columns; the parameter is written :id.",
     "rawNote": "How a service’s code asks Licetum:",
-    "seconds": "seconds",
     "test": {
       "attrs": "Attributes of the resources",
       "duplicates_few": "{{count}} ids come more than once; the last row wins.",
@@ -1294,6 +1432,7 @@
   },
   "whohas": {
     "assumed": "parent not known",
+    "assumedLevels": "{{levels}}: parent not known",
     "col": {
       "people": "Known people",
       "via": "Where it comes from",
@@ -1319,12 +1458,9 @@
     "none": "No rule gives access to this. Nobody has it, except through a rule that finds its resource by a claim.",
     "note": "This is the list of rules; a denial may be lifted by an exception. To know what one person gets, use the check.",
     "open": "Open",
-    "registryEmpty": "Nobody has been seen yet, so people are not listed; the rules are.",
-    "registryOff": "The registry of people is off, so people are not listed; the rules are. It is turned on with SUBJECTS__ENABLED.",
-    "registry_few": "People are taken from {{count}} known subjects.",
-    "registry_many": "People are taken from {{count}} known subjects.",
-    "registry_one": "People are taken from 1 known subject.",
-    "registry_other": "People are taken from {{count}} known subjects.",
+    "registryEmpty": "The directories of the rules’ services are empty, so people are not listed; the rules are. The applications send their people to the subject directory of their service.",
+    "registry_one": "People are taken from 1 person of the directories.",
+    "registry_other": "People are taken from {{count}} people of the directories.",
     "role": "role “{{name}}”",
     "title": "Who has access",
     "via": {
@@ -1345,33 +1481,20 @@
       "failed": "the source doesn’t answer",
       "hint": "Licetum asked each source for its resources.",
       "next": {
-        "body": "Give access to a group, then let your service ask Licetum:",
+        "body": "Register a PEP client for the service and give access to a group, then let your service ask Licetum:",
         "title": "What next"
       },
       "noSource": "no source",
       "zero": "no resources"
     },
-    "discover": {
-      "fail": "Couldn’t detect them — enter the addresses by hand.",
-      "ok": "Found the addresses: authorization, token, JWKS."
-    },
-    "discoverBtn": "Detect automatically",
     "done": "Done: open the service",
-    "hideUrls": "Hide the addresses",
     "icon": {
       "help": "Optional. An image address, shown next to the service; Licetum does not request it."
     },
-    "issuer": "Provider address (issuer)",
-    "issuerHelp": "The address of the identity provider of your service, for example a Keycloak realm.",
     "leave": "Leave the wizard",
     "next": "Next",
     "noRight": "You can’t connect services: it needs the right to change services.",
-    "secret": {
-      "help": "Optional: leave empty for a public client (sign-in with PKCE)."
-    },
-    "secretLabel": "Client secret",
-    "showUrls": "Show the addresses",
-    "signin": {
+    "service": {
       "done": "The service “{{slug}}” is created. Continue with its resource types."
     },
     "slug": {
@@ -1384,7 +1507,7 @@
     },
     "step": {
       "check": "Check",
-      "signin": "Sign-in",
+      "service": "Service",
       "source": "Source",
       "types": "Resource types"
     },

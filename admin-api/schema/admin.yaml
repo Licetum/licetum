@@ -4,8 +4,13 @@ components:
       additionalProperties: false
       properties:
         assumed:
-          description: A denial that applies because the resource has a parent that is not in the cache yet
+          description: "A denial that applies only because the resource has a parent that is not in the cache yet: none of its levels reaches the resource for real"
           type: boolean
+        assumed_levels:
+          description: The levels of a denial that reach the resource only because it has a parent that is not in the cache yet (fail closed); the other levels reach it for real
+          items:
+            type: string
+          type: array
         expires_at:
           description: When the rule stops; null — never
           format: date-time
@@ -23,12 +28,12 @@ components:
             - string
             - "null"
         people:
-          description: Known subjects the rule applies to (up to 20)
+          description: People of the directory the rule applies to (up to 20)
           items:
             $ref: "#/components/schemas/KnownPerson"
           type: array
         people_total:
-          description: How many known subjects the rule applies to
+          description: How many people of the directory the rule applies to
           format: int64
           type: integer
         role:
@@ -65,6 +70,7 @@ components:
         - expires_at
         - valid_from
         - assumed
+        - assumed_levels
         - people
         - people_total
       type: object
@@ -122,7 +128,7 @@ components:
       additionalProperties: false
       properties:
         dynamic:
-          description: "Rules that find their resource from a claim of whoever asks: whether they reach this one depends on that person's token"
+          description: "Rules that find their resource from a claim of whoever asks: whether they reach this one depends on that person's claims"
           items:
             $ref: "#/components/schemas/AccessEntry"
           type: array
@@ -158,18 +164,14 @@ components:
     AccessPeople:
       additionalProperties: false
       properties:
-        enabled:
-          description: Whether the registry of known subjects is on (SUBJECTS__ENABLED); when it is off nothing is said about people
-          type: boolean
         limited:
-          description: The registry is larger than what was tried
+          description: The directories are larger than what was tried
           type: boolean
         registry:
-          description: Known subjects the rules were tried on (SUBJECTS__ENABLED); 0 — the registry is empty or off, nothing is said about people
+          description: People of the directories of the rules' services that the rules were tried on; 0 — those directories are empty, nothing is said about people
           format: int64
           type: integer
       required:
-        - enabled
         - registry
         - limited
       type: object
@@ -275,7 +277,7 @@ components:
             - apply
           type: string
         predicate:
-          description: AND conditions over token attributes
+          description: AND conditions over the claims and the request
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -417,7 +419,7 @@ components:
             - string
             - "null"
         predicate:
-          description: AND conditions over token attributes; mutually exclusive with subject and member_of_group_id
+          description: AND conditions over the claims and the request; mutually exclusive with subject and member_of_group_id
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -534,7 +536,7 @@ components:
             - apply
           type: string
         predicate:
-          description: AND conditions over token attributes
+          description: AND conditions over the claims and the request
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -595,7 +597,7 @@ components:
             - string
             - "null"
         target_valid:
-          description: "Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted"
+          description: "Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted — and for a resource_from_claim that looks a resource up in, or climbs through, such a type. A denial of that kind still applies below the links to the resources the type left"
           type: boolean
         type_resource_id:
           description: Resource type id of the inline permission; null for a role rule
@@ -639,6 +641,291 @@ components:
         - requires_group_id
         - resource_where
         - subject_kind
+      type: object
+    AuthzenAction:
+      additionalProperties: true
+      properties:
+        name:
+          description: Access level
+          examples:
+            - write
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+      required:
+        - name
+      type: object
+    AuthzenActionSearchRequest:
+      additionalProperties: true
+      properties:
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The resource (resource.type is required; an empty resource.id, or *, is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenActionSearchResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The access levels the subject has on the resource
+          items:
+            $ref: "#/components/schemas/AuthzenAction"
+          type: array
+      required:
+        - results
+      type: object
+    AuthzenEvaluationRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level asked for (action.name is required)
+        context:
+          additionalProperties: {}
+          description: "The attributes of the request that the rules may read (conditions with source context). context.licetum holds the settings of Licetum: {\"explain\": true} adds the explanation of the decision to the response context"
+          type: object
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: What is accessed (resource.type and resource.id are required; * is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenEvaluationResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: "With explain: reason_admin holds the explanation. In a batch, error holds the status and the message of an evaluation that could not be decided (the decision is then false); a short-circuited batch names the semantic in reason"
+          type: object
+        decision:
+          description: Whether the access is granted
+          type: boolean
+      required:
+        - decision
+      type: object
+    AuthzenEvaluationsRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: Default action
+        context:
+          additionalProperties: {}
+          description: Default context
+          type: object
+        evaluations:
+          description: "The evaluations, up to 100. Absent or empty: the top-level subject, resource, action and context are one evaluation, and the answer is a single decision"
+          items:
+            $ref: "#/components/schemas/AuthzenEvaluationRequest"
+          maxItems: 100
+          type:
+            - array
+            - "null"
+        options:
+          $ref: "#/components/schemas/AuthzenOptions"
+          description: How the evaluations are executed
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: Default resource
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: Default subject
+      type: object
+    AuthzenEvaluationsResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: "With explain: reason_admin holds the explanation of the decision of a request without evaluations"
+          type: object
+        decision:
+          description: The decision of a request without evaluations; absent when evaluations were given
+          type: boolean
+        evaluations:
+          description: Decisions in the order asked (fewer when the semantic stopped the batch)
+          items:
+            $ref: "#/components/schemas/AuthzenEvaluationResponse"
+          type:
+            - array
+            - "null"
+      type: object
+    AuthzenOptions:
+      additionalProperties: true
+      properties:
+        evaluations_semantic:
+          description: execute_all (the default) answers every evaluation; deny_on_first_deny stops after the first denial or error; permit_on_first_permit stops after the first permit. The evaluations after the one that stops the batch are not answered
+          enum:
+            - execute_all
+            - deny_on_first_deny
+            - permit_on_first_permit
+          type: string
+      type: object
+    AuthzenPageRequest:
+      additionalProperties: true
+      properties:
+        limit:
+          description: At most this many results; absent or 0 — the most the service gives in one page (1000)
+          format: int64
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        properties:
+          additionalProperties: {}
+          description: Ignored
+          type: object
+        token:
+          description: The next_token of the previous page. The subject, resource, action, context and limit must be the same as in the request that gave it
+          type: string
+      type: object
+    AuthzenPageResponse:
+      additionalProperties: false
+      properties:
+        count:
+          description: The number of results on this page
+          format: int64
+          type: integer
+        next_token:
+          description: Pass it as page.token to read the next page; empty on the last page
+          type: string
+        total:
+          description: The number of results of the whole search at the time of the request; absent when the search does not know it (the resource and the subject searches)
+          format: int64
+          type: integer
+      required:
+        - next_token
+        - count
+      type: object
+    AuthzenResource:
+      additionalProperties: true
+      properties:
+        id:
+          description: Resource id in the external system. An evaluation requires it, and * names the type as a whole; the action search reads an empty id or * as the type as a whole; the resource search ignores it
+          examples:
+            - b1
+          type: string
+        properties:
+          additionalProperties: {}
+          description: Ignored in a request; the resource search returns the name of the resource here
+          type: object
+        type:
+          description: Name of the resource type in the service
+          examples:
+            - branch
+          type: string
+      required:
+        - type
+      type: object
+    AuthzenResourceSearchRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level (action.name is required)
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The type of the resources searched for (resource.type is required; resource.id is ignored)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: The person asked about (subject.type and subject.id are required)
+      type: object
+    AuthzenResourceSearchResponse:
+      additionalProperties: false
+      properties:
+        context:
+          additionalProperties: {}
+          description: Extra information
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The resources the subject may do the action on; properties.name is the name of the resource
+          items:
+            $ref: "#/components/schemas/AuthzenResource"
+          type: array
+      required:
+        - results
+      type: object
+    AuthzenSubject:
+      additionalProperties: true
+      properties:
+        id:
+          description: "Subject id: 1 to 256 characters, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it"
+          examples:
+            - alice
+          type: string
+        properties:
+          additionalProperties: {}
+          description: "The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"
+          type: object
+        type:
+          description: "Subject type (not interpreted): 1 to 64 characters, and not group"
+          examples:
+            - user
+          type: string
+      required:
+        - type
+      type: object
+    AuthzenSubjectSearchRequest:
+      additionalProperties: true
+      properties:
+        action:
+          $ref: "#/components/schemas/AuthzenAction"
+          description: The access level (action.name is required)
+        context:
+          additionalProperties: {}
+          description: The attributes of the request that the rules may read (conditions with source context)
+          type: object
+        page:
+          $ref: "#/components/schemas/AuthzenPageRequest"
+          description: Which page of the results is asked for
+        resource:
+          $ref: "#/components/schemas/AuthzenResource"
+          description: The resource (resource.type is required; an empty resource.id, or *, is the type as a whole)
+        subject:
+          $ref: "#/components/schemas/AuthzenSubject"
+          description: "The subject: only its type is used (subject.type is required; subject.id is ignored)"
+      type: object
+    AuthzenSubjectSearchResponse:
+      additionalProperties: false
+      properties:
+        page:
+          $ref: "#/components/schemas/AuthzenPageResponse"
+          description: Paging of the results
+        results:
+          description: The subjects that may do the action on the resource
+          items:
+            $ref: "#/components/schemas/AuthzenSubject"
+          type: array
+      required:
+        - results
       type: object
     BatchInput:
       additionalProperties: true
@@ -784,149 +1071,169 @@ components:
         - before
         - after
       type: object
-    CheckRequest:
+    DirectoryEntry:
       additionalProperties: false
       properties:
-        action:
-          description: Access level asked for
-          examples:
-            - write
+        id:
+          description: The id of the subject
           type: string
-        resource_id:
-          description: Resource id in the external system. Omit it to ask about the type as a whole — creating new resources, or a permission without resources (a not_sync type)
-          examples:
-            - b1
-          type:
-            - string
-            - "null"
+        name:
+          description: The name to show; empty when none was sent
+          type: string
+        properties:
+          additionalProperties: {}
+          description: The properties of the subject, as they were sent
+          type: object
+        sent_at:
+          description: "When the entry was last sent (refreshed at most hourly): what the retention counts from"
+          format: date-time
+          type: string
         type:
-          description: Name of the resource type in this service
-          examples:
-            - branch
+          description: The type of the subject
+          type: string
+        updated_at:
+          description: When the name or the properties last changed
+          format: date-time
           type: string
       required:
         - type
-        - action
+        - id
+        - name
+        - properties
+        - updated_at
+        - sent_at
       type: object
-    CheckResponse:
+    DirectoryEntryDetail:
       additionalProperties: false
       properties:
-        results:
-          description: One answer per question, in the order asked
+        groups:
+          description: The groups the person is in now, nested groups included, decided with the stored properties
           items:
-            $ref: "#/components/schemas/CheckResult"
+            $ref: "#/components/schemas/SubjectGroup"
           type: array
-      required:
-        - results
-      type: object
-    CheckResult:
-      additionalProperties: false
-      properties:
-        allowed:
-          description: Whether the caller may do it
-          type: boolean
-        explanation:
-          $ref: "#/components/schemas/Explanation"
-          description: Present when explain was asked for
-      required:
-        - allowed
-      type: object
-    DelegatedCall:
-      additionalProperties: false
-      properties:
-        allowed:
-          description: How many of them were allowed
-          format: int64
-          type: integer
-        at:
-          description: When the call was made
+        id:
+          description: The id of the subject
+          type: string
+        name:
+          description: The name to show; empty when none was sent
+          type: string
+        properties:
+          additionalProperties: {}
+          description: The properties of the subject, as they were sent
+          type: object
+        sent_at:
+          description: "When the entry was last sent (refreshed at most hourly): what the retention counts from"
           format: date-time
           type: string
-        caller_client:
-          description: "The client the caller's token was issued to (azp or client_id): the trusted client that asked"
+        type:
+          description: The type of the subject
           type: string
-        caller_subject:
-          description: The subject of the caller's token (for a client-credentials token, its service account); null when the token had none
-          type:
-            - string
-            - "null"
+        updated_at:
+          description: When the name or the properties last changed
+          format: date-time
+          type: string
+      required:
+        - groups
+        - type
+        - id
+        - name
+        - properties
+        - updated_at
+        - sent_at
+      type: object
+    DirectoryEntryInput:
+      additionalProperties: true
+      properties:
         id:
-          description: Record id; a later call has a higher one
-          format: int64
-          type: integer
-        operation:
-          description: check or permission
-          enum:
-            - check
-            - permission
+          description: The id of the subject as the rules name it and the PEPs send it (subject.id)
+          examples:
+            - alice
+          maxLength: 512
+          minLength: 1
           type: string
-        questions:
-          description: How many questions a check asked; 0 for a permission
-          format: int64
-          type: integer
-        request_id:
-          description: The id of the request, as the logs carry it
-          type:
-            - string
-            - "null"
-        subject:
-          description: The person the call was made for
+        name:
+          description: The name to show for the subject; it is what a subject search returns as properties.name
+          examples:
+            - Alice Liddell
+          maxLength: 256
+          type: string
+        properties:
+          additionalProperties: {}
+          description: "The properties of the subject (subject.properties): the claims the rules read, stored as sent, at most 100 of them and 16 KiB in all"
+          type: object
+        type:
+          description: "The type of the subject (the subject.type of AuthZEN); absent: user"
+          examples:
+            - user
+          maxLength: 64
           type: string
       required:
         - id
-        - at
-        - caller_client
-        - caller_subject
-        - subject
-        - operation
-        - questions
-        - allowed
-        - request_id
       type: object
-    DelegatedCallList:
+    DirectoryList:
       additionalProperties: false
       properties:
         items:
-          description: The calls, the latest first
+          description: The page, by type and then by id
           items:
-            $ref: "#/components/schemas/DelegatedCall"
+            $ref: "#/components/schemas/DirectoryEntry"
           type: array
-        next_before:
-          description: Pass it as before to read the next page; null on the last page
+        total:
+          description: How many entries match
           format: int64
+          type: integer
+      required:
+        - total
+        - items
+      type: object
+    DirectoryPut:
+      additionalProperties: true
+      properties:
+        subjects:
+          description: The people to write, at most 1000 per call, each once. An entry that is already as sent is left untouched; the others are created or replaced as a whole
+          items:
+            $ref: "#/components/schemas/DirectoryEntryInput"
+          maxItems: 1000
+          minItems: 1
+          type:
+            - array
+            - "null"
+      required:
+        - subjects
+      type: object
+    DirectorySettings:
+      additionalProperties: true
+      properties:
+        retention_days:
+          description: "Days an entry that is not sent again is kept; null: until it is deleted"
+          format: int64
+          maximum: 36500
+          minimum: 1
           type:
             - integer
             - "null"
       required:
-        - items
-        - next_before
+        - retention_days
       type: object
-    DenialRef:
+    DirectoryWriteResult:
       additionalProperties: false
       properties:
-        level:
-          description: "The denied level that matched: the asked level, a level it includes, or the wildcard"
-          type: string
-        lifted_by:
-          description: Exceptions below the denial that lift it; a denial with none stands
-          items:
-            $ref: "#/components/schemas/RuleRef"
-          type: array
-        missing_attribute:
-          description: The denial applies because a condition reads an attribute the request does not carry, and the rule says to apply it then (on_missing_attribute = apply)
-          type: boolean
-        rule:
-          $ref: "#/components/schemas/RuleRef"
-          description: The denying rule
-        unresolved_parent:
-          description: The denial applies because the resource has a parent that is not in the cache, so the hierarchy above it is not fully known
-          type: boolean
+        created:
+          description: Entries that were new
+          format: int64
+          type: integer
+        unchanged:
+          description: "Entries that were already as sent: nothing was written to them, and the time they were last sent moved"
+          format: int64
+          type: integer
+        updated:
+          description: Entries whose name or properties changed
+          format: int64
+          type: integer
       required:
-        - rule
-        - level
-        - lifted_by
-        - unresolved_parent
-        - missing_attribute
+        - created
+        - updated
+        - unchanged
       type: object
     Error:
       additionalProperties: false
@@ -940,33 +1247,6 @@ components:
       required:
         - detail
         - extra
-      type: object
-    Explanation:
-      additionalProperties: false
-      properties:
-        decision:
-          description: allowed; denied — a denial removes a granted level; no_access — no rule grants the level; resource_not_found and type_not_found — there is nothing to check
-          enum:
-            - allowed
-            - denied
-            - no_access
-            - resource_not_found
-            - type_not_found
-          type: string
-        denials:
-          description: Denials that apply to the level, lifted or not
-          items:
-            $ref: "#/components/schemas/DenialRef"
-          type: array
-        granted_by:
-          description: Rules that grant the level, including through the level hierarchy of the type
-          items:
-            $ref: "#/components/schemas/RuleRef"
-          type: array
-      required:
-        - decision
-        - granted_by
-        - denials
       type: object
     Extra:
       additionalProperties: false
@@ -1047,14 +1327,11 @@ components:
     GrantPeople:
       additionalProperties: false
       properties:
-        enabled:
-          description: Whether the registry of known subjects is on (SUBJECTS__ENABLED); when it is off nothing is said about people
-          type: boolean
         limited:
-          description: The registry is larger than what was tried
+          description: The directories are larger than what was tried
           type: boolean
         registry:
-          description: Known subjects the rule was tried on; 0 — the registry is empty or off, nothing is said about people
+          description: People of the directories of the rule's services that the rule was tried on; 0 — those directories are empty, nothing is said about people
           format: int64
           type: integer
         sample:
@@ -1063,11 +1340,10 @@ components:
             $ref: "#/components/schemas/KnownPerson"
           type: array
         total:
-          description: How many known subjects
+          description: How many people of the directory
           format: int64
           type: integer
       required:
-        - enabled
         - total
         - sample
         - registry
@@ -1260,7 +1536,7 @@ components:
       additionalProperties: false
       properties:
         name:
-          description: The display name, when the token had one
+          description: The display name, when the application sent one
           type:
             - string
             - "null"
@@ -1270,106 +1546,6 @@ components:
       required:
         - subject
         - name
-      type: object
-    KnownSubject:
-      additionalProperties: false
-      properties:
-        first_seen:
-          description: When a token of the subject was first verified
-          format: date-time
-          type: string
-        last_seen:
-          description: When a token of the subject was last verified (noted at most every ten minutes)
-          format: date-time
-          type: string
-        name:
-          description: The display name from the token (name, or given and family name); null when the token had none
-          type:
-            - string
-            - "null"
-        seen_count:
-          description: How many times it was noted
-          format: int64
-          type: integer
-        subject:
-          description: The subject as the rules name it (preferred_username, or sub)
-          examples:
-            - alice
-          type: string
-      required:
-        - subject
-        - name
-        - first_seen
-        - last_seen
-        - seen_count
-      type: object
-    KnownSubjectDetail:
-      additionalProperties: false
-      properties:
-        claims:
-          additionalProperties: {}
-          description: "The claims kept for the subject: only those the policy reads (strings or lists of strings)"
-          type: object
-        first_seen:
-          description: When a token of the subject was first verified
-          format: date-time
-          type: string
-        groups:
-          description: The groups the subject is in now, nested groups included, as of the claims above
-          items:
-            $ref: "#/components/schemas/SubjectGroup"
-          type: array
-        last_seen:
-          description: When a token of the subject was last verified (noted at most every ten minutes)
-          format: date-time
-          type: string
-        name:
-          description: The display name from the token (name, or given and family name); null when the token had none
-          type:
-            - string
-            - "null"
-        seen_count:
-          description: How many times it was noted
-          format: int64
-          type: integer
-        subject:
-          description: The subject as the rules name it (preferred_username, or sub)
-          examples:
-            - alice
-          type: string
-      required:
-        - claims
-        - groups
-        - subject
-        - name
-        - first_seen
-        - last_seen
-        - seen_count
-      type: object
-    KnownSubjectList:
-      additionalProperties: false
-      properties:
-        enabled:
-          description: Whether the registry is on (SUBJECTS__ENABLED); when it is off the list stays as it was and does not grow
-          type: boolean
-        items:
-          description: The page, the most recently seen first
-          items:
-            $ref: "#/components/schemas/KnownSubject"
-          type: array
-        retention_days:
-          description: Days a subject that is not seen again is kept (SUBJECTS__RETENTION_DAYS); 0 — for good
-          format: int64
-          type: integer
-        total:
-          description: How many subjects match
-          format: int64
-          type: integer
-      required:
-        - enabled
-        - retention_days
-        - total
-        - items
       type: object
     LintFinding:
       additionalProperties: false
@@ -1514,25 +1690,252 @@ components:
         - id
         - name
       type: object
-    NotSyncTypePermission:
+    PEPClient:
       additionalProperties: false
       properties:
-        access:
-          description: Access levels of the subject on the type
-          examples:
-            - - read
-              - write
+        client_id:
+          description: "jwt only: the client of the issuer"
+          type:
+            - string
+            - "null"
+        created_at:
+          description: When the client was created
+          format: date-time
+          type: string
+        enabled:
+          description: Whether the client is accepted
+          type: boolean
+        id:
+          description: Client id
+          format: uuid
+          type: string
+        issuer:
+          description: "jwt only: the issuer of the client's tokens"
+          type:
+            - string
+            - "null"
+        kind:
+          description: jwt or api_key
+          enum:
+            - jwt
+            - api_key
+          type: string
+        name:
+          description: Name of the client, unique within the service
+          type: string
+        operations:
+          description: What the client may call
           items:
             type: string
           type: array
-        type:
-          description: "Type mode: the type has no synchronizer (no resources), access is granted to the type as a whole"
-          enum:
-            - not_sync
+        service_id:
+          description: The service the client belongs to
+          format: uuid
           type: string
       required:
-        - type
-        - access
+        - id
+        - service_id
+        - name
+        - kind
+        - issuer
+        - client_id
+        - operations
+        - enabled
+        - created_at
+      type: object
+    PEPClientInput:
+      additionalProperties: true
+      properties:
+        client_id:
+          description: "jwt only: the client of the issuer (the azp, or client_id, of its tokens)"
+          examples:
+            - checkout-backend
+          type: string
+        enabled:
+          description: "Whether the client is accepted; absent: true"
+          type: boolean
+        issuer:
+          description: "jwt only: the registered issuer (its iss) the tokens of the client come from"
+          examples:
+            - https://idp.example.com/realms/main
+          type: string
+        kind:
+          description: "jwt: a client application of a registered issuer, which presents its access tokens; api_key: the client holds API keys that Licetum issues"
+          enum:
+            - jwt
+            - api_key
+          type: string
+        name:
+          description: Name of the client, unique within the service
+          examples:
+            - checkout
+          maxLength: 100
+          minLength: 1
+          type: string
+        operations:
+          description: "What the client may call. Absent: evaluate only; explain and the three searches are off by default"
+          items:
+            enum:
+              - evaluate
+              - search_resource
+              - search_action
+              - search_subject
+              - explain
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - name
+        - kind
+      type: object
+    PEPClientPatch:
+      additionalProperties: true
+      properties:
+        client_id:
+          description: "jwt only: the client of the issuer"
+          type: string
+        enabled:
+          description: Whether the client is accepted. A disabled client's API keys are refused (401) and its tokens get the same 403 as an unregistered client
+          type: boolean
+        issuer:
+          description: "jwt only: the registered issuer the tokens of the client come from"
+          type: string
+        name:
+          description: New name of the client
+          maxLength: 100
+          minLength: 1
+          type: string
+        operations:
+          description: What the client may call; replaces the list
+          items:
+            enum:
+              - evaluate
+              - search_resource
+              - search_action
+              - search_subject
+              - explain
+            type: string
+          type: array
+      type: object
+    PEPIssuer:
+      additionalProperties: true
+      properties:
+        algs:
+          description: "The signature algorithms accepted. Absent: RS256, ES256 and EdDSA. Asymmetric algorithms only"
+          items:
+            enum:
+              - RS256
+              - RS384
+              - RS512
+              - PS256
+              - PS384
+              - PS512
+              - ES256
+              - ES384
+              - ES512
+              - EdDSA
+            type: string
+          type:
+            - array
+            - "null"
+        audiences:
+          description: "The values one of which the aud of a token must contain. Absent or empty: the audience of the PDP (PDP__AUDIENCE, else PDP__PUBLIC_URL). A token always needs an aud"
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        issuer:
+          description: The iss of the tokens, compared exactly
+          examples:
+            - https://idp.example.com/realms/main
+          maxLength: 2048
+          minLength: 1
+          type: string
+        jwks_url:
+          description: Where the keys of the issuer are read
+          examples:
+            - https://idp.example.com/realms/main/protocol/openid-connect/certs
+          type: string
+        require_typ:
+          description: Accept only tokens whose typ header is at+jwt (RFC 9068)
+          type: boolean
+      required:
+        - issuer
+        - jwks_url
+      type: object
+    PEPKey:
+      additionalProperties: false
+      properties:
+        active:
+          description: "Whether the key works now: not revoked and not expired. A client has at most two active keys"
+          type: boolean
+        created_at:
+          description: When the key was issued
+          format: date-time
+          type: string
+        expires_at:
+          description: "When the key stops working; null: never"
+          format: date-time
+          type:
+            - string
+            - "null"
+        key_id:
+          description: Identifies the key (it is the part of the key after lct_); the key itself is never stored
+          examples:
+            - 3f9a1c0d5b7e2a64
+          type: string
+        revoked_at:
+          description: "When the key was revoked; null: it is not"
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - key_id
+        - created_at
+        - expires_at
+        - revoked_at
+        - active
+      type: object
+    PEPKeyIssued:
+      additionalProperties: false
+      properties:
+        active:
+          description: "Whether the key works now: not revoked and not expired. A client has at most two active keys"
+          type: boolean
+        created_at:
+          description: When the key was issued
+          format: date-time
+          type: string
+        expires_at:
+          description: "When the key stops working; null: never"
+          format: date-time
+          type:
+            - string
+            - "null"
+        key:
+          description: The API key (lct_<key id>_<secret>). It is shown once and cannot be read again; send it as the bearer token of the AuthZEN API
+          type: string
+        key_id:
+          description: Identifies the key (it is the part of the key after lct_); the key itself is never stored
+          examples:
+            - 3f9a1c0d5b7e2a64
+          type: string
+        revoked_at:
+          description: "When the key was revoked; null: it is not"
+          format: date-time
+          type:
+            - string
+            - "null"
+      required:
+        - key
+        - key_id
+        - created_at
+        - expires_at
+        - revoked_at
+        - active
       type: object
     Platform:
       additionalProperties: false
@@ -1615,14 +2018,14 @@ components:
           format: int64
           type: integer
         name:
-          description: The claim, or the request attribute
+          description: The property of the subject (a claim), or the request attribute
           type: string
         rules:
           description: In how many conditions of rules and their guards that apply to the service
           format: int64
           type: integer
         source:
-          description: claim — read from the token; context — read from the attributes of the request
+          description: claim — read from subject.properties of the request; context — read from the context of the request
           enum:
             - claim
             - context
@@ -1978,7 +2381,7 @@ components:
           type: array
         claims:
           additionalProperties: {}
-          description: The claims of its token
+          description: The claims of the subject (subject.properties of an AuthZEN request)
           type: object
         context:
           additionalProperties: {}
@@ -2148,7 +2551,7 @@ components:
             - in_cidr
           type: string
         source:
-          description: "Where the attribute comes from: claim (a token claim, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"
+          description: "Where the attribute comes from: claim (a claim of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"
           enum:
             - claim
             - context
@@ -2170,15 +2573,16 @@ components:
         - op
         - value
       type: object
-    RefreshTokenInput:
-      additionalProperties: true
+    ReadyOutputBody:
+      additionalProperties: false
       properties:
-        refresh_token:
-          description: Refresh token issued at sign-in
-          minLength: 1
+        status:
+          description: ok when the process may take requests
+          examples:
+            - ok
           type: string
       required:
-        - refresh_token
+        - status
       type: object
     Resource:
       additionalProperties: false
@@ -2249,7 +2653,7 @@ components:
       additionalProperties: true
       properties:
         claim:
-          description: Name of the token claim whose value is looked up in the source
+          description: Name of the claim of the subject whose value is looked up in the source
           examples:
             - branch_name
           type: string
@@ -2479,7 +2883,7 @@ components:
           description: Name of the service that owns the resource type
           type: string
         target_valid:
-          description: "Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer (see AssignmentRule.target_valid)"
+          description: "Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer, or that looks a resource up in, or climbs through, such a type (see AssignmentRule.target_valid)"
           type: boolean
         type_resource_id:
           description: Resource type id
@@ -2555,18 +2959,6 @@ components:
     ServiceInput:
       additionalProperties: true
       properties:
-        authorization_url:
-          description: OAuth2 authorization endpoint of the service
-          format: uri
-          type: string
-        client_id:
-          description: OAuth2 client_id issued to Licetum by this service
-          type: string
-        client_secret:
-          description: OAuth2 client_secret; omit it, send null or an empty string for a public client (PKCE is used then)
-          type:
-            - string
-            - "null"
         icon:
           description: Icon URL; optional, it is only shown in the interface and is not requested
           examples:
@@ -2575,39 +2967,18 @@ components:
           type:
             - string
             - "null"
-        issuer:
-          description: OAuth2 issuer (the iss value in the service tokens)
-          format: uri
-          type: string
-        jwks_url:
-          description: JWKS endpoint used to verify the service token signatures
-          format: uri
-          type: string
         name:
           description: Service name
           examples:
             - filials
           type: string
         slug:
-          description: "Service slug: lowercase Latin letters, digits, '-' and '_', unique among live services. The check API accepts it in place of the id; it is not a UUID"
+          description: "Service slug: lowercase Latin letters, digits, '-' and '_', unique among live services. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID"
           examples:
             - filials
           maxLength: 64
           pattern: ^[a-z0-9][a-z0-9_-]*$
           type: string
-        token_url:
-          description: OAuth2 token endpoint of the service
-          format: uri
-          type: string
-        trusted_clients:
-          description: The client applications (the azp of their tokens) trusted to ask on behalf of a person; see POST /service/{id}/on_behalf/check. Their tokens must carry the claims the rules of the service read
-          examples:
-            - - docs-backend
-          items:
-            type: string
-          type:
-            - array
-            - "null"
         url:
           description: Application URL; optional, it is only shown in the interface and is not requested
           examples:
@@ -2619,28 +2990,10 @@ components:
       required:
         - name
         - slug
-        - authorization_url
-        - token_url
-        - jwks_url
-        - issuer
-        - client_id
       type: object
     ServiceResponse:
       additionalProperties: false
       properties:
-        authorization_url:
-          description: OAuth2 authorization endpoint of the service
-          type:
-            - string
-            - "null"
-        client_id:
-          description: OAuth2 client_id
-          type:
-            - string
-            - "null"
-        has_client_secret:
-          description: Whether a client secret is stored (the secret itself is never returned); false means a public client (PKCE)
-          type: boolean
         icon:
           description: Icon URL
           type:
@@ -2650,32 +3003,12 @@ components:
           description: Service id
           format: uuid
           type: string
-        issuer:
-          description: OAuth2 issuer
-          type:
-            - string
-            - "null"
-        jwks_url:
-          description: JWKS endpoint of the service
-          type:
-            - string
-            - "null"
         name:
           description: Service name
           type: string
         slug:
-          description: Service slug, accepted in the check API paths in place of the id
+          description: "Service slug: the PDP of the service is <PDP__PUBLIC_URL>/service/<slug>"
           type: string
-        token_url:
-          description: OAuth2 token endpoint of the service
-          type:
-            - string
-            - "null"
-        trusted_clients:
-          description: The client applications (the azp of their tokens) trusted to ask on behalf of a person
-          items:
-            type: string
-          type: array
         url:
           description: Application URL
           type:
@@ -2687,47 +3020,12 @@ components:
         - slug
         - url
         - icon
-        - authorization_url
-        - token_url
-        - jwks_url
-        - issuer
-        - client_id
-        - trusted_clients
-        - has_client_secret
       type: object
     ServiceUpdate:
       additionalProperties: true
       properties:
-        authorization_url:
-          description: OAuth2 authorization endpoint of the service
-          format: uri
-          type:
-            - string
-            - "null"
-        client_id:
-          description: OAuth2 client_id
-          type:
-            - string
-            - "null"
-        client_secret:
-          description: "OAuth2 client_secret: omit it to keep the current one; null or an empty string removes it — the client becomes public (PKCE)"
-          type:
-            - string
-            - "null"
         icon:
           description: Icon URL (an http or https address); an empty string removes it
-          type:
-            - string
-            - "null"
-        issuer:
-          description: OAuth2 issuer
-          format: uri
-          type:
-            - string
-            - "null"
-        jwks_url:
-          description: JWKS endpoint of the service
-          format: uri
           type:
             - string
             - "null"
@@ -2743,98 +3041,11 @@ components:
           type:
             - string
             - "null"
-        token_url:
-          description: OAuth2 token endpoint of the service
-          format: uri
-          type:
-            - string
-            - "null"
-        trusted_clients:
-          description: The client applications (the azp of their tokens) trusted to ask on behalf of a person. Omit it to keep the list; send the whole list to replace it
-          items:
-            type: string
-          type:
-            - array
-            - "null"
         url:
           description: Application URL (an http or https address); an empty string removes it
           type:
             - string
             - "null"
-      type: object
-    SimulateCheckInput:
-      additionalProperties: true
-      properties:
-        checks:
-          description: Questions to answer, up to 100 per request
-          items:
-            $ref: "#/components/schemas/CheckRequest"
-          maxItems: 100
-          minItems: 1
-          type:
-            - array
-            - "null"
-        claims:
-          additionalProperties: {}
-          description: The claims the subject would have in its token; the rules look at them
-          type: object
-        context:
-          additionalProperties: {}
-          description: The attributes the request would carry (see CheckInput.context); the rules with source context look at them
-          type:
-            - object
-            - "null"
-        explain:
-          description: Return an explanation with every answer
-          type: boolean
-        subject:
-          description: The subject to answer for, named as the rules name it (preferred_username, or sub)
-          examples:
-            - alice
-          minLength: 1
-          type: string
-      required:
-        - subject
-        - checks
-      type: object
-    SimulatePermissionInput:
-      additionalProperties: true
-      properties:
-        access:
-          description: Only the resources (and types) that have this access level
-          type: string
-        after:
-          description: "The resource id after which the page starts: the next_after of the previous page"
-          type: string
-        claims:
-          additionalProperties: {}
-          description: The claims the subject would have in its token; the rules look at them
-          type: object
-        context:
-          additionalProperties: {}
-          description: The attributes the request would carry (see CheckInput.context); the rules with source context look at them
-          type:
-            - object
-            - "null"
-        limit:
-          description: At most this many resources of the type; needs type
-          format: int64
-          maximum: 1000
-          minimum: 1
-          type:
-            - integer
-            - "null"
-        subject:
-          description: The subject, named as the rules name it (preferred_username, or sub)
-          examples:
-            - alice
-          minLength: 1
-          type: string
-        type:
-          description: Only this resource type
-          type: string
-      required:
-        - subject
       type: object
     SourceAttribute:
       additionalProperties: false
@@ -2935,26 +3146,6 @@ components:
         - id
         - name
       type: object
-    SyncTypePermission:
-      additionalProperties: false
-      properties:
-        next_after:
-          description: "Present when the answer is a page that is not the last: pass it as after to read the next page"
-          type: string
-        resources:
-          description: Resources of the type available to the subject, with access levels
-          items:
-            $ref: "#/components/schemas/ResourceAccess"
-          type: array
-        type:
-          description: "Type mode: the type has a synchronizer, access is granted per resource"
-          enum:
-            - sync
-          type: string
-      required:
-        - type
-        - resources
-      type: object
     Synchronizer:
       additionalProperties: false
       properties:
@@ -2965,6 +3156,15 @@ components:
           description: Synchronizer id
           format: uuid
           type: string
+        regions:
+          description: "Regions the source can be reached from; empty means from anywhere. The list is stored but selects no executor yet: any worker may ask the source"
+          examples:
+            - - eu
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         type_resource_id:
           description: Resource type id
           format: uuid
@@ -2973,16 +3173,11 @@ components:
         - id
         - type_resource_id
         - config
+        - regions
       type: object
     SynchronizerConfig:
       additionalProperties: true
       properties:
-        cache_ttl:
-          description: Seconds to keep the list of the source's resources in Redis, so that requests in this window do not go to the source (0 — no cache; omitted — the default SYNC__FETCH_TTL). The resource cache may lag the source by this much
-          examples:
-            - 30
-          format: int64
-          type: integer
         dsn:
           description: "kind=sql: connection string of the PostgreSQL source"
           examples:
@@ -3041,6 +3236,15 @@ components:
           examples:
             - b1
           type: string
+        regions:
+          description: "Regions the source can be reached from (lowercase letters, digits, hyphens; at most 16); empty means from anywhere. The list is stored and validated but selects no executor yet: any worker may ask the source. Absent on an update keeps them"
+          examples:
+            - - eu
+          items:
+            type: string
+          type:
+            - array
+            - "null"
       required:
         - config
         - probe_resource_id
@@ -3059,42 +3263,6 @@ components:
             - "null"
       required:
         - config
-      type: object
-    TokenResponse:
-      additionalProperties: false
-      properties:
-        access_token:
-          description: Access token
-          type: string
-        expires_in:
-          description: Access token lifetime, seconds
-          examples:
-            - 300
-          format: int64
-          type:
-            - integer
-            - "null"
-        refresh_expires_in:
-          description: Refresh token lifetime, seconds
-          examples:
-            - 1800
-          format: int64
-          type:
-            - integer
-            - "null"
-        refresh_token:
-          description: New refresh token; if the IdP issued one, the old one must be discarded (RFC 6749 §6)
-          type:
-            - string
-            - "null"
-        token_type:
-          description: Token type
-          examples:
-            - Bearer
-          type: string
-      required:
-        - access_token
-        - token_type
       type: object
     TypeAccess:
       additionalProperties: false
@@ -3303,7 +3471,7 @@ openapi: 3.1.0
 paths:
   /assignment_rule:
     get:
-      description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted): such a rule does not take effect."
+      description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted), or a rule that looks a resource up in, or climbs through, such a type: such a rule does not take effect (a denial of that kind still applies below the links to the resources the type left)."
       operationId: list_assignment_rules
       responses:
         "200":
@@ -3376,10 +3544,10 @@ paths:
         on a specific resource (**resource_id**), on a resource computed from a claim at check time (**resource_from_claim**)
         or on the whole type (neither). The grant cascades to all resources of child types, including types of other
         services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
-        has no resources, and a rule on it grants access to the type as a whole (not_sync in /permission).
+        has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
         Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-        **predicate** (AND conditions over token claims) or **member_of_group_id** (all members of a group). If none is set,
+        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
         the rule applies to everyone.
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
@@ -3602,10 +3770,10 @@ paths:
         on a specific resource (**resource_id**), on a resource computed from a claim at check time (**resource_from_claim**)
         or on the whole type (neither). The grant cascades to all resources of child types, including types of other
         services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
-        has no resources, and a rule on it grants access to the type as a whole (not_sync in /permission).
+        has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
         Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-        **predicate** (AND conditions over token claims) or **member_of_group_id** (all members of a group). If none is set,
+        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
         the rule applies to everyone.
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
@@ -4419,7 +4587,7 @@ paths:
       tags:
         - Group member
     post:
-      description: Membership is defined either by a predicate (AND conditions over token claims; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
+      description: Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
       operationId: create_group_member
       parameters:
         - description: Group id
@@ -4577,7 +4745,7 @@ paths:
       tags:
         - Group member
     patch:
-      description: Membership is defined either by a predicate (AND conditions over token claims; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
+      description: Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
       operationId: update_group_member
       parameters:
         - description: Group id
@@ -4701,7 +4869,7 @@ paths:
         - System
   /platform:
     get:
-      description: Id of the service under which Licetum is registered within itself; the admin UI signs in through its OAuth2 client. 404 means the self-service is not seeded (PLATFORM__* is not set or licetum migrate was not run).
+      description: Id of the service under which Licetum is registered within itself; 404 means the self-service is not seeded (licetum migrate was not run).
       operationId: get_platform
       responses:
         "200":
@@ -4801,6 +4969,271 @@ paths:
       summary: My access to the platform
       tags:
         - Platform
+  /platform/pep-issuers:
+    delete:
+      description: Deletes an issuer that no client uses (409 while one does, a deleted client included). The name is a query parameter because it is a URL.
+      operationId: delete_pep_issuer
+      parameters:
+        - description: The issuer to delete (its iss)
+          explode: false
+          in: query
+          name: issuer
+          schema:
+            description: The issuer to delete (its iss)
+            maxLength: 2048
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Delete a PEP issuer
+      tags:
+        - PEP
+    get:
+      description: The identity providers whose tokens a PEP may present, by name. They are shared by all services; a client of a service picks one.
+      operationId: list_pep_issuers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PEPIssuer"
+                type:
+                  - array
+                  - "null"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: PEP issuers
+      tags:
+        - PEP
+    put:
+      description: Creates the issuer, or replaces the settings of the one with this name. The iss of a token is compared exactly with the name. A token is accepted only with an aud that contains one of the audiences (or, with none listed, the audience of the PDP), a signature of an allowed algorithm (asymmetric only) and a valid exp and nbf (60 s of leeway). Needs write on the services as a whole.
+      operationId: put_pep_issuer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PEPIssuer"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPIssuer"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Register or replace a PEP issuer
+      tags:
+        - PEP
+  /readyz:
+    get:
+      description: |-
+        Answers 200 when the process may take requests and 503 when it may not: PostgreSQL does not answer within a second,
+        the schema of the database is older than the release (run `licetum migrate`), the copy of the policy is not loaded yet, or
+        the process is shutting down and waits for the balancer to stop sending it requests. A schema newer than the release is
+        fine.
+        The result is reused for a second. Use it as the readiness probe and `/healthz` as the liveness probe.
+      operationId: readyz
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyOutputBody"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Readiness check
+      tags:
+        - System
   /role:
     get:
       operationId: list_roles
@@ -5427,7 +5860,7 @@ paths:
         - Role permission
   /service:
     get:
-      description: All services that are not deleted. client_secret is never returned.
+      description: All services that are not deleted.
       operationId: list_services
       responses:
         "200":
@@ -5494,7 +5927,7 @@ paths:
       tags:
         - Service
     post:
-      description: "Registers a service with its OAuth2 settings. The url and the icon are optional and are only shown in the interface: Licetum does not request them."
+      description: "Registers a service. Its slug names it in the paths of the PDP (/service/<slug>/access/v1/...). The url and the icon are optional and are only shown in the interface: Licetum does not request them."
       operationId: create_service
       requestBody:
         content:
@@ -5719,305 +6152,10 @@ paths:
       summary: Update a service
       tags:
         - Service
-  /service/{service_id}/delegated_calls:
+  /service/{service_id}/pep-clients:
     get:
-      description: "The audit of the calls the service's trusted clients made on behalf of a person (POST /service/{id}/on_behalf/…): which client, for whom, when, and how many questions were allowed. The latest first; DELEGATION__AUDIT_RETENTION_DAYS (default 365) removes the old ones."
-      operationId: list_delegated_calls
-      parameters:
-        - description: Service id
-          in: path
-          name: service_id
-          required: true
-          schema:
-            description: Service id
-            format: uuid
-            type: string
-        - description: Page size
-          explode: false
-          in: query
-          name: limit
-          schema:
-            default: 50
-            description: Page size
-            format: int64
-            maximum: 200
-            minimum: 1
-            type: integer
-        - description: The next_before of the previous page
-          explode: false
-          in: query
-          name: before
-          schema:
-            description: The next_before of the previous page
-            format: int64
-            minimum: 0
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DelegatedCallList"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Service Unavailable
-      security:
-        - bearer: []
-      summary: Calls made on behalf of a person
-      tags:
-        - Policy
-  /service/{service_id}/oauth/callback:
-    get:
-      description: Exchanges the code for tokens. If redirect_to was given at login, redirects (307) there with the IdP response in the URL fragment (#access_token=...); otherwise the IdP response is returned as JSON.
-      operationId: oauth_callback
-      parameters:
-        - description: Service id
-          in: path
-          name: service_id
-          required: true
-          schema:
-            description: Service id
-            format: uuid
-            type: string
-        - description: Authorization code from the IdP
-          explode: false
-          in: query
-          name: code
-          required: true
-          schema:
-            description: Authorization code from the IdP
-            type: string
-        - description: Signed state issued at login
-          explode: false
-          in: query
-          name: state
-          required: true
-          schema:
-            description: Signed state issued at login
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                additionalProperties: true
-                examples:
-                  - access_token: eyJ...
-                    expires_in: 300
-                    token_type: Bearer
-                type: object
-          description: The IdP token endpoint response as is
-        "307":
-          description: Redirect to redirect_to with the tokens in the URL fragment
-          headers:
-            Location:
-              schema:
-                type: string
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-      summary: IdP callback
-      tags:
-        - OAuth
-  /service/{service_id}/oauth/login:
-    get:
-      description: "Redirects (307) to the service authorization endpoint. For a public client (no client_secret) PKCE is used: the code_verifier is kept in Redis and never reaches the browser."
-      operationId: oauth_login
-      parameters:
-        - description: Service id
-          in: path
-          name: service_id
-          required: true
-          schema:
-            description: Service id
-            format: uuid
-            type: string
-        - description: Where to send the browser after sign-in (the token arrives in the URL fragment). Must start with one of CORS__ALLOW_ORIGINS
-          explode: false
-          in: query
-          name: redirect_to
-          schema:
-            description: Where to send the browser after sign-in (the token arrives in the URL fragment). Must start with one of CORS__ALLOW_ORIGINS
-            examples:
-              - http://localhost:3000/auth/callback
-            type: string
-      responses:
-        "307":
-          description: Temporary Redirect
-          headers:
-            Location:
-              schema:
-                description: Authorization URL of the service IdP
-                type: string
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-      summary: Start sign-in via the service IdP
-      tags:
-        - OAuth
-  /service/{service_id}/oauth/refresh:
-    post:
-      description: "Exchanges a refresh token for new tokens at the service IdP (RFC 6749 §6), so the UI can renew the session without leaving the page. Like login and callback it needs no Bearer: holding the refresh token is the proof. If the IdP issued a new refresh token, the old one must be discarded. 401 — the refresh token is invalid or expired (error=invalid_grant), sign in again; 424 — the IdP rejected the request for another reason or is unavailable."
-      operationId: oauth_refresh
-      parameters:
-        - description: Service id
-          in: path
-          name: service_id
-          required: true
-          schema:
-            description: Service id
-            format: uuid
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RefreshTokenInput"
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TokenResponse"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-      summary: Refresh the access token
-      tags:
-        - OAuth
-  /service/{service_id}/policy/claims:
-    get:
-      description: The claims and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in claim-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. It is what the tokens the service's users get, and the claims a trusted client sends when it asks on behalf of a person, have to carry for the answers to be the real ones.
-      operationId: policy_claims
+      description: The clients of the service that call its AuthZEN API, by name.
+      operationId: list_pep_clients
       parameters:
         - description: Service id
           in: path
@@ -6033,7 +6171,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: "#/components/schemas/PolicyClaim"
+                  $ref: "#/components/schemas/PEPClient"
                 type:
                   - array
                   - "null"
@@ -6088,9 +6226,600 @@ paths:
           description: Service Unavailable
       security:
         - bearer: []
-      summary: The claims the policy of a service reads
+      summary: PEP clients of a service
       tags:
-        - Policy
+        - PEP
+    post:
+      description: "Registers a client of the service's AuthZEN API. A jwt client is a client application of a registered issuer: its access tokens are accepted when the issuer, the audience and the signature are right. An api_key client holds API keys that Licetum issues (POST …/keys). Operations default to evaluate; explain and the three searches have to be listed. The same client of an issuer in two services is two rows. The name, and the issuer with the client id, are unique within the service (422)."
+      operationId: create_pep_client
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PEPClientInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPClient"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Register a PEP client
+      tags:
+        - PEP
+  /service/{service_id}/pep-clients/{client_id}:
+    delete:
+      description: Deletes the client and revokes its keys. Its name and identity are free again.
+      operationId: delete_pep_client
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Delete a PEP client
+      tags:
+        - PEP
+    get:
+      operationId: get_pep_client
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPClient"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: A PEP client
+      tags:
+        - PEP
+    patch:
+      description: Changes the fields that are present. The kind does not change. Disabling a client takes effect on every PDP within the revocation delay, without deleting its keys.
+      operationId: update_pep_client
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PEPClientPatch"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPClient"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Change a PEP client
+      tags:
+        - PEP
+  /service/{service_id}/pep-clients/{client_id}/keys:
+    get:
+      description: The keys of the client, revoked ones too, the newest first. A key's secret is never returned, only its id and dates.
+      operationId: list_pep_keys
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PEPKey"
+                type:
+                  - array
+                  - "null"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: API keys of a PEP client
+      tags:
+        - PEP
+    post:
+      description: "Issues a key to an api_key client. The key is in this answer and nowhere else: Licetum keeps only its hash, so a lost key is revoked and issued again. A client has at most two active keys (409), so a key is rotated by issuing the new one, moving the PEP to it and revoking the old one."
+      operationId: issue_pep_key
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PEPKeyIssued"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Issue an API key
+      tags:
+        - PEP
+  /service/{service_id}/pep-clients/{client_id}/keys/{key_id}:
+    delete:
+      description: Revokes the key. Every PDP refuses it within the revocation delay (the revision poll interval). A key that is revoked already stays so.
+      operationId: revoke_pep_key
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: PEP client id
+          in: path
+          name: client_id
+          required: true
+          schema:
+            description: PEP client id
+            format: uuid
+            type: string
+        - description: Key id, the part of the key after lct_
+          in: path
+          name: key_id
+          required: true
+          schema:
+            description: Key id, the part of the key after lct_
+            examples:
+              - 3f9a1c0d5b7e2a64
+            maxLength: 64
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Revoke an API key
+      tags:
+        - PEP
   /service/{service_id}/policy/export:
     get:
       description: The rules of the service, the groups and roles they use (with the groups nested in them), and the access groups of the resource types involved, with names instead of ids (licetum.policy/v1). The document is what POST /service/{service_id}/policy/import takes back.
@@ -6334,6 +7063,83 @@ paths:
       security:
         - bearer: []
       summary: Lint the policy of a service
+      tags:
+        - Policy
+  /service/{service_id}/policy/properties:
+    get:
+      description: The claims and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in claim-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. The claims are the keys of subject.properties, the attributes the keys of context, that a PEP of the service has to send for the answers to be the real ones.
+      operationId: policy_properties
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PolicyClaim"
+                type:
+                  - array
+                  - "null"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: The properties of the subject and the context attributes the policy of a service reads
       tags:
         - Policy
   /service/{service_id}/policy/scenarios:
@@ -6748,10 +7554,14 @@ paths:
       summary: Run policy tests
       tags:
         - Policy
-  /service/{service_id}/simulate/check:
+  /service/{service_id}/simulate/access/v1/evaluation:
     post:
-      description: Answers checks as a subject with the given claims would get them, without a token. The rules and their results are the real ones; the claims are taken as they are given, so the call is for administrators. Simulated answers are not logged as decisions.
-      operationId: simulate_check
+      description: |-
+        Decides whether the subject may perform the action on the resource, as the PDP would. subject.id is the person simulated and subject.properties are their claims, taken as they are given. The answer always carries its explanation in context.reason_admin.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_evaluation
       parameters:
         - description: Service id
           in: path
@@ -6765,14 +7575,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SimulateCheckInput"
+              $ref: "#/components/schemas/AuthzenEvaluationRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CheckResponse"
+                $ref: "#/components/schemas/AuthzenEvaluationResponse"
           description: OK
         "400":
           content:
@@ -6824,13 +7634,17 @@ paths:
           description: Service Unavailable
       security:
         - bearer: []
-      summary: Simulate checks for a subject
+      summary: Simulate an AuthZEN access evaluation
       tags:
         - Simulation
-  /service/{service_id}/simulate/permission:
+  /service/{service_id}/simulate/access/v1/evaluations:
     post:
-      description: The permissions of a subject with the given claims, filtered and paged like GET /service/{service_id}/permission, without a token. The call is for administrators.
-      operationId: simulate_permission
+      description: |-
+        Decides up to 100 evaluations in one request, with the defaults of the top level and the evaluations_semantic of the options, as the PDP would. subject.id is the person simulated and subject.properties are their claims, taken as they are given. Each answer carries its explanation in context.reason_admin.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_evaluations
       parameters:
         - description: Service id
           in: path
@@ -6844,24 +7658,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SimulatePermissionInput"
+              $ref: "#/components/schemas/AuthzenEvaluationsRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                additionalProperties:
-                  description: Access of the subject on a resource type; the shape depends on the type mode
-                  discriminator:
-                    mapping:
-                      not_sync: "#/components/schemas/NotSyncTypePermission"
-                      sync: "#/components/schemas/SyncTypePermission"
-                    propertyName: type
-                  oneOf:
-                    - $ref: "#/components/schemas/SyncTypePermission"
-                    - $ref: "#/components/schemas/NotSyncTypePermission"
-                type: object
+                $ref: "#/components/schemas/AuthzenEvaluationsResponse"
           description: OK
         "400":
           content:
@@ -6913,9 +7717,794 @@ paths:
           description: Service Unavailable
       security:
         - bearer: []
-      summary: Simulate the permissions of a subject
+      summary: Simulate AuthZEN access evaluations (batch)
       tags:
         - Simulation
+  /service/{service_id}/simulate/access/v1/search/action:
+    post:
+      description: |-
+        Lists the actions (access levels) the subject may perform on the resource; without resource.id the resource is the type as a whole. subject.id is the person simulated and subject.properties are their claims, taken as they are given.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are
+        more results; send it back as page.token with the same request.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_search_action
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenActionSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenActionSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Simulate an AuthZEN action search
+      tags:
+        - Simulation
+  /service/{service_id}/simulate/access/v1/search/resource:
+    post:
+      description: |-
+        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. subject.id is the person simulated and subject.properties are their claims, taken as they are given.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are
+        more results; send it back as page.token with the same request.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_search_resource
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenResourceSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenResourceSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Simulate an AuthZEN resource search
+      tags:
+        - Simulation
+  /service/{service_id}/simulate/access/v1/search/subject:
+    post:
+      description: |-
+        Lists the people of the subject directory of the service, of the type subject.type, who may perform the action on the resource, decided with their stored properties; subject.id is not used.
+
+        Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are
+        more results; send it back as page.token with the same request.
+
+        The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
+        request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
+      operationId: simulate_search_subject
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthzenSubjectSearchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthzenSubjectSearchResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Simulate an AuthZEN subject search
+      tags:
+        - Simulation
+  /service/{service_id}/subjects:
+    get:
+      description: The directory of the service, by type and then by id. search matches the id and the name.
+      operationId: list_directory
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: Only people of this type
+          explode: false
+          in: query
+          name: type
+          schema:
+            description: Only people of this type
+            maxLength: 64
+            type: string
+        - description: Part of the id or of the name
+          explode: false
+          in: query
+          name: search
+          schema:
+            description: Part of the id or of the name
+            maxLength: 200
+            type: string
+        - description: Page size
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            description: Page size
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: How many to skip
+          explode: false
+          in: query
+          name: offset
+          schema:
+            default: 0
+            description: How many to skip
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryList"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: People of a service
+      tags:
+        - Subject
+    put:
+      description: "Writes up to 1000 people of the service, each once: the application sends the people its PEPs ask about. An entry that is already as sent is left untouched (no new version, no new updated_at; only the time it was sent moves, at most hourly); a new one is created and a changed one replaced as a whole. The properties are stored as sent. A write takes no revision."
+      operationId: put_directory
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DirectoryPut"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryWriteResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Send people to the directory
+      tags:
+        - Subject
+  /service/{service_id}/subjects/settings:
+    get:
+      operationId: get_directory_settings
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectorySettings"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Settings of the directory
+      tags:
+        - Subject
+    put:
+      description: retention_days is how long an entry that is not sent again is kept; the worker removes the others, hourly, in chunks. null keeps every entry until it is deleted (the default).
+      operationId: put_directory_settings
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DirectorySettings"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectorySettings"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Change the settings of the directory
+      tags:
+        - Subject
+  /service/{service_id}/subjects/{subject_type}/{subject_id}:
+    delete:
+      description: Removes the entry. The person is in the directory again the next time the application sends them.
+      operationId: delete_directory_entry
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: The type of the subject
+          in: path
+          name: subject_type
+          required: true
+          schema:
+            description: The type of the subject
+            examples:
+              - user
+            maxLength: 64
+            minLength: 1
+            type: string
+        - description: The id of the subject; a character such as / is sent percent-encoded
+          in: path
+          name: subject_id
+          required: true
+          schema:
+            description: The id of the subject; a character such as / is sent percent-encoded
+            examples:
+              - alice
+            maxLength: 512
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: Remove a person from the directory
+      tags:
+        - Subject
+    get:
+      description: The entry with its properties and the groups the person is in now, decided with the stored properties as claims.
+      operationId: get_directory_entry
+      parameters:
+        - description: Service id
+          in: path
+          name: service_id
+          required: true
+          schema:
+            description: Service id
+            format: uuid
+            type: string
+        - description: The type of the subject
+          in: path
+          name: subject_type
+          required: true
+          schema:
+            description: The type of the subject
+            examples:
+              - user
+            maxLength: 64
+            minLength: 1
+            type: string
+        - description: The id of the subject; a character such as / is sent percent-encoded
+          in: path
+          name: subject_id
+          required: true
+          schema:
+            description: The id of the subject; a character such as / is sent percent-encoded
+            examples:
+              - alice
+            maxLength: 512
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryEntryDetail"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Failed Dependency
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      security:
+        - bearer: []
+      summary: A person of the service
+      tags:
+        - Subject
   /service/{service_id}/type_resource:
     get:
       operationId: list_type_resources
@@ -6993,7 +8582,7 @@ paths:
       tags:
         - Type resource
     post:
-      description: "A type may have several parents (a DAG), each of any service; `inherit` on a parent limits the access levels that flow down along that link (grants and denials alike). A grant on a resource of a parent type cascades to the resources of the child type linked to it — set parents only where such inheritance is needed. `access_implies` defines the access level hierarchy of the type. The name is unique within the service (409). A type without a synchronizer has no resources: /permission returns it as not_sync, and rules on it grant access to the type as a whole."
+      description: "A type may have several parents (a DAG), each of any service; `inherit` on a parent limits the access levels that flow down along that link (grants and denials alike). A grant on a resource of a parent type cascades to the resources of the child type linked to it — set parents only where such inheritance is needed. `access_implies` defines the access level hierarchy of the type. The name is unique within the service (409). A type without a synchronizer has no resources (a not_sync type): rules on it grant access to the type as a whole."
       operationId: create_type_resource
       parameters:
         - description: Service id
@@ -7257,7 +8846,7 @@ paths:
         - Type resource
   /service/{service_id}/type_resource/{type_resource_id}/access:
     get:
-      description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the registry of known subjects — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target."
+      description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target."
       operationId: who_has_access
       parameters:
         - description: Service id
@@ -8174,7 +9763,7 @@ paths:
         - Resource
   /service/{service_id}/type_resource/{type_resource_id}/resource/synchronizer/{synchronizer_id}:
     delete:
-      description: "Soft delete. A type left without a synchronizer has no resources any more: /permission returns it as not_sync, and rules on its specific resources stop taking effect (target_valid=false)."
+      description: Soft delete. A type left without a synchronizer has no resources any more (it becomes not_sync), and rules on its specific resources stop taking effect (target_valid=false).
       operationId: delete_synchronizer
       parameters:
         - description: Service id
@@ -8488,249 +10077,6 @@ paths:
       summary: Replace the log settings
       tags:
         - Log settings
-  /subject:
-    get:
-      description: The subjects Licetum has seen in verified tokens (SUBJECTS__ENABLED), the most recently seen first. search matches the subject and the display name.
-      operationId: list_subjects
-      parameters:
-        - description: Part of the subject or of the name
-          explode: false
-          in: query
-          name: search
-          schema:
-            description: Part of the subject or of the name
-            maxLength: 200
-            type: string
-        - description: Page size
-          explode: false
-          in: query
-          name: limit
-          schema:
-            default: 50
-            description: Page size
-            format: int64
-            maximum: 200
-            minimum: 1
-            type: integer
-        - description: How many to skip
-          explode: false
-          in: query
-          name: offset
-          schema:
-            default: 0
-            description: How many to skip
-            format: int64
-            minimum: 0
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/KnownSubjectList"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Service Unavailable
-      security:
-        - bearer: []
-      summary: Known subjects
-      tags:
-        - Subject
-  /subject/{subject}:
-    delete:
-      description: Removes the subject from the registry. It is noted again the next time one of its tokens is verified.
-      operationId: forget_subject
-      parameters:
-        - description: The subject as the rules name it (preferred_username, or sub)
-          in: path
-          name: subject
-          required: true
-          schema:
-            description: The subject as the rules name it (preferred_username, or sub)
-            examples:
-              - alice
-            minLength: 1
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Service Unavailable
-      security:
-        - bearer: []
-      summary: Forget a subject
-      tags:
-        - Subject
-    get:
-      description: The subject with the claims kept for it (only those the policy reads) and the groups it is in as of those claims.
-      operationId: get_subject
-      parameters:
-        - description: The subject as the rules name it (preferred_username, or sub)
-          in: path
-          name: subject
-          required: true
-          schema:
-            description: The subject as the rules name it (preferred_username, or sub)
-            examples:
-              - alice
-            minLength: 1
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/KnownSubjectDetail"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Forbidden
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Internal Server Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Service Unavailable
-      security:
-        - bearer: []
-      summary: A known subject
-      tags:
-        - Subject
   /type_resource:
     get:
       description: "For picking a parent across services: a type's parent may belong to another service."
@@ -8885,7 +10231,7 @@ paths:
         - Resource
   /type_resource/{type_resource_id}/resource/refresh:
     post:
-      description: Asks the source of the type right away, skipping the cached source list, the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).
+      description: Asks the source of the type right away, skipping the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).
       operationId: refresh_resources_of_type
       parameters:
         - description: Resource type id
@@ -8957,7 +10303,7 @@ paths:
       tags:
         - Resource
 tags:
-  - description: Client applications registered in Licetum and their OAuth2 configuration.
+  - description: Client applications registered in Licetum. The slug of a service names it in the paths of the PDP.
     name: Service
   - description: Resource types of a service. The parent (type_resource_parent_id) may belong to another service and defines the permission inheritance chain.
     name: Type resource
@@ -8965,7 +10311,7 @@ tags:
     name: Resource
   - description: "Global groups of people: a group is a subject too (`group:<uuid>`), so it is granted permissions the same way as a user."
     name: Group
-  - description: "Who belongs to a group: by a predicate over token claims or by nesting another group."
+  - description: "Who belongs to a group: by a predicate over claims (the properties of the subject) or by nesting another group."
     name: Group member
   - description: "Global roles: named sets of permissions. A role is not a subject: an assignment rule grants it (role_id)."
     name: Role
@@ -8973,8 +10319,6 @@ tags:
     name: Role permission
   - description: Rules granting access to a resource type or a specific resource.
     name: AssignmentRule
-  - description: Sign-in via the service IdP (authorization code, PKCE for public clients).
-    name: OAuth
   - description: "Self-service: Licetum registered within itself. The admin API is protected by its policies — the resource types service, type_resource (with its synchronizers and resources), group, group_member, role and assignment_rule: listing needs read on the entities (the list is filtered), changing an entity needs write on it, creating needs write on the whole type."
     name: Platform
   - description: Service endpoints.
@@ -8987,8 +10331,8 @@ tags:
     name: Policy
   - description: "The structure of the process logs: format, the fields and their names, the event categories, the treatment of the subject and the sampling of allowed decisions."
     name: Log settings
-  - description: "The registry of known subjects: who has been seen in verified tokens, with the claims the policy reads and the groups they are in."
+  - description: "The subject directory of a service: the people its application sent, with their properties and the groups they are in."
     name: Subject
-  - description: "What a subject with given claims would be allowed to do, without a token: for administrators checking the rules."
+  - description: "What a subject with given properties would be allowed to do, asked as the AuthZEN API of the PDP asks it and without a PEP client: for administrators checking the rules."
     name: Simulation
 

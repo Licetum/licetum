@@ -43,7 +43,7 @@ func TestHTTPAdapterSendsConfiguredHeadersAndBuildsPointURL(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})}
-	adapter := synchronizer.NewAdapterWithHTTPClient(nil, client)
+	adapter := synchronizer.NewAdapterWithHTTPClient(client)
 	config := model.SynchronizerConfig{Kind: model.KindHTTP, URL: "https://source.test/list", Headers: map[string]string{"Authorization": "Bearer t"}}
 
 	rows, err := adapter.FetchAll(context.Background(), config, "", false)
@@ -66,7 +66,7 @@ func TestHTTPAdapterRejectsMalformedResourceResponse(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"p1"}`)), Request: r}, nil
 	})}
-	adapter := synchronizer.NewAdapterWithHTTPClient(nil, client)
+	adapter := synchronizer.NewAdapterWithHTTPClient(client)
 	config := model.SynchronizerConfig{Kind: model.KindHTTP, URL: "https://source.test/resource"}
 	if row := adapter.FetchOne(context.Background(), config, "p1", ""); row != nil {
 		t.Fatalf("malformed resource must be rejected, got %+v", row)

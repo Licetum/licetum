@@ -36,58 +36,62 @@ Licetum не хранит бизнес-записи, не заменяет пр�
 ```mermaid
 flowchart LR
   S["Сервис-владелец<br/>публикует свои ресурсы"]
-  C["Сервис-потребитель<br/>API, поиск, MCP, отчёты"]
-  L["Licetum<br/>правила и каталог ресурсов"]
+  C["Сервис-потребитель (PEP)<br/>API, поиск, MCP, отчёты"]
+  L["Licetum PDP<br/>правила и каталог ресурсов"]
   DB[(PostgreSQL)]
-  R[(Redis)]
   S -- "SQL-представление или HTTP endpoint" --> L
-  C -- "GET /service/{id}/permission" --> L
+  C -- "AuthZEN: POST /service/{slug}/access/v1/..." --> L
   L --- DB
-  L --- R
 ```
 
-Потребитель запрашивает права субъекта в зарегистрированном сервисе:
+PDP говорит на [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html) в границах одного
+сервиса: путь называет сервис его slug. Потребитель — это точка применения политики (PEP). Администратор регистрирует его
+как *PEP-клиент* сервиса, и он аутентифицируется API-ключом, который выдаёт Licetum, или токеном зарегистрированного
+администратором провайдера идентификации. PEP называет человека, о котором спрашивает, и ручается за его claims, передавая
+их как `subject` вопроса:
 
 ```http
-GET /service/{service_id}/permission
-Authorization: Bearer <user-token>
-```
-
-Ответ перечисляет ресурсы, доступные субъекту, с уровнями доступа к каждому:
-
-```json
-{
-  "project": {
-    "type": "sync",
-    "resources": [
-      { "id": "1", "name": "Project 1", "access": ["read"] },
-      { "id": "2", "name": "Project 2", "access": ["read", "write"] }
-    ]
-  }
-}
-```
-
-Тип без конкретных ресурсов, например функция, операция или режим, возвращается как `"type": "not_sync"`
-с уровнями доступа ко всему типу.
-
-Для одного решения задайте вопрос в запросе проверки. Один запрос содержит до 100 вопросов:
-
-```http
-POST /service/{service_id}/check
-Authorization: Bearer <user-token>
+POST /service/orders/access/v1/evaluation
+Authorization: Bearer <api-key>
 Content-Type: application/json
 
 {
-  "checks": [
-    { "type": "project", "resource_id": "2", "action": "write" },
-    { "type": "project", "action": "create" }
-  ],
-  "explain": true
+  "subject": { "type": "user", "id": "alice", "properties": { "department": "sales" } },
+  "resource": { "type": "project", "id": "2" },
+  "action": { "name": "write" },
+  "context": { "licetum": { "explain": true } }
 }
 ```
 
-С параметром `explain` каждый ответ говорит, какие правила дают уровень доступа, какие запреты действуют
-и какие исключения их снимают.
+Ответ — решение. С `explain` (PEP-клиенту нужна для этого операция `explain`) он говорит, какие правила дают уровень
+доступа, какие запреты действуют и какие исключения их снимают:
+
+```json
+{ "decision": true, "context": { "reason_admin": { "decision": "allowed", "granted_by": [ ... ] } } }
+```
+
+Чтобы получить список, а не решение, поиск ресурсов возвращает ресурсы типа, доступные человеку для действия.
+Потребитель может использовать эти ID в фильтре `WHERE` или в политике построчной безопасности:
+
+```http
+POST /service/orders/access/v1/search/resource
+Authorization: Bearer <api-key>
+Content-Type: application/json
+
+{
+  "subject": { "type": "user", "id": "alice", "properties": { "department": "sales" } },
+  "resource": { "type": "project" },
+  "action": { "name": "read" },
+  "page": { "limit": 100 }
+}
+```
+
+```json
+{ "results": [ { "type": "project", "id": "1", "properties": { "name": "Project 1" } }, ... ], "page": { "count": 2 } }
+```
+
+`POST …/access/v1/evaluations` решает пакет вопросов (с параметром `evaluations_semantic`), а поиск действий и субъектов
+перечисляет уровни доступа к ресурсу и людей, которым он доступен.
 
 ## Возможности
 
@@ -128,26 +132,26 @@ Content-Type: application/json
 task dev
 ```
 
-Команда поднимает PostgreSQL, Redis, локальный провайдер Dex OIDC, API проверки, административный API и веб-интерфейс
-с горячей перезагрузкой для Go-сервисов и веб-интерфейса.
+Команда поднимает PostgreSQL, локальный провайдер Dex OIDC, PDP, воркер синхронизации, административный API и
+веб-интерфейс с горячей перезагрузкой для Go-сервисов и веб-интерфейса.
 
 | Компонент | Адрес |
 |---|---|
 | Веб-интерфейс | http://localhost:3000 |
 | Административный API | http://localhost:8002 |
-| API проверки | http://localhost:8001 |
+| PDP | http://localhost:8001 |
 
 Войдите на http://localhost:3000 как `admin@example.com` с паролем `password`. Эти данные предназначены
 только для разработки.
 
 Чтобы запускать Go-бинарники без Docker, см. руководства для [core](../core/README.md) и
 [admin API](../admin-api/README.md). Каждый из них может вывести свою спецификацию OpenAPI без сервера:
-`licetum openapi check` — для API проверки, `licetum-admin openapi admin` — для административного API.
+`licetum openapi pdp` — для PDP, `licetum-admin openapi admin` — для административного API.
 
 ## Чем Licetum не является
 
-- Это не провайдер идентификации. Licetum использует токены OAuth2/OIDC, которые выдаёт ваш провайдер,
-  и их claims.
+- Это не провайдер идентификации. Спрашивающий сервис называет человека и ручается за его claims; администраторы
+  входят через ваш провайдер OIDC.
 - Это не бизнес-база данных. Исходные сервисы хранят свои записи и отвечают за CRUD.
 - Это не расширение RLS базы данных. Licetum возвращает разрешённые ID или решения, а потребляющий сервис
   применяет их к своим запросам и слою хранения.
@@ -155,7 +159,7 @@ task dev
 
 ## Документация
 
-- [core/](../core/README.md): движок, API проверки, схема базы данных и миграции (MIT).
+- [core/](../core/README.md): движок, PDP, схема базы данных и миграции (MIT).
 - [admin-api/](../admin-api/README.md): административный API, инструменты политики и бинарник `licetum-admin`
   (AGPL-3.0).
 - [web/](../web/README.md): административный интерфейс (AGPL-3.0).
@@ -166,7 +170,7 @@ task dev
 
 - [licetum](https://github.com/Licetum/licetum): этот репозиторий, с движком, API и веб-интерфейсом.
 - [licetum-go-sdk](https://github.com/Licetum/licetum-go-sdk), [licetum-ts-sdk](https://github.com/Licetum/licetum-ts-sdk),
-  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk): клиентские библиотеки для API проверки
+  [licetum-python-sdk](https://github.com/Licetum/licetum-python-sdk): клиентские библиотеки для PDP
   (будут опубликованы; у каждой будет свой файл лицензии).
 - [licetum-helm](https://github.com/Licetum/licetum-helm): Helm-чарт.
 - [licetum-docs](https://github.com/Licetum/licetum-docs): документация.
@@ -180,7 +184,7 @@ task dev
 
 Licetum состоит из трёх частей, у каждой своя лицензия (см. [LICENSE](../LICENSE)):
 
-- [`core/`](../core/LICENSE): движок, API проверки, схема базы данных и среда выполнения. Лицензия MIT.
+- [`core/`](../core/LICENSE): движок, PDP, схема базы данных и среда выполнения. Лицензия MIT.
 - [`admin-api/`](../admin-api/LICENSE): административный API. GNU Affero General Public License v3.0 only.
 - [`web/`](../web/LICENSE): административный интерфейс. GNU Affero General Public License v3.0 only.
 

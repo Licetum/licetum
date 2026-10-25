@@ -2,11 +2,9 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"strings"
 
-	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -19,21 +17,20 @@ import (
 )
 
 var adminTags = []*huma.Tag{
-	{Name: "Service", Description: "Client applications registered in Licetum and their OAuth2 configuration."},
+	{Name: "Service", Description: "Client applications registered in Licetum. The slug of a service names it in the paths of the PDP."},
 	{Name: "Type resource", Description: "Resource types of a service. The parent (type_resource_parent_id) may belong to another service and defines the permission inheritance chain."},
 	{Name: "Resource", Description: "Concrete resources of a type and the synchronizers that fetch them from the owning service (SQL query or HTTP)."},
 	{Name: "Group", Description: "Global groups of people: a group is a subject too (`group:<uuid>`), so it is granted permissions the same way as a user."},
-	{Name: "Group member", Description: "Who belongs to a group: by a predicate over token claims or by nesting another group."},
+	{Name: "Group member", Description: "Who belongs to a group: by a predicate over claims (the properties of the subject) or by nesting another group."},
 	{Name: "Role", Description: "Global roles: named sets of permissions. A role is not a subject: an assignment rule grants it (role_id)."},
 	{Name: "Role permission", Description: "The items of a role: access levels on a target of a resource type."},
 	{Name: "AssignmentRule", Description: "Rules granting access to a resource type or a specific resource."},
-	{Name: "OAuth", Description: "Sign-in via the service IdP (authorization code, PKCE for public clients)."},
 	{Name: "Platform", Description: "Self-service: Licetum registered within itself. The admin API is protected by its policies — the resource types service, type_resource (with its synchronizers and resources), group, group_member, role and assignment_rule: listing needs read on the entities (the list is filtered), changing an entity needs write on it, creating needs write on the whole type."},
 	{Name: "System", Description: "Service endpoints."},
 }
 
 // NewAdminHandler — admin API (services, type_resources, resources, groups, group_members, roles,
-// assignment_rules, oauth, platform). Port 8000 by default.
+// assignment_rules, platform). Port 8000 by default.
 func NewAdminHandler(app *service.App) http.Handler {
 	h, _ := NewAdminAPI(app)
 	return h
@@ -44,7 +41,7 @@ func NewAdminAPI(app *service.App) (http.Handler, huma.API) {
 	h := &adminHandlers{app: app}
 	tags := append(append([]*huma.Tag{}, adminTags...), adminOpsTags...)
 	return server.NewServer(app.App, "Licetum — admin", tags, func(api huma.API) {
-		server.AddBearerScheme(api, "Access token issued by the IdP of the Licetum self-service (PLATFORM__*). "+
+		httpx.AddBearerScheme(api, "Access token issued by the IdP of the Licetum self-service (PLATFORM__*). "+
 			"Permissions come from the platform policies: service, type_resource, group, group_member, role, assignment_rule.")
 		api.UseMiddleware(platformAuth(app))
 		h.registerServices(api)
@@ -54,12 +51,13 @@ func NewAdminAPI(app *service.App) (http.Handler, huma.API) {
 		h.registerGroups(api)
 		h.registerRoles(api)
 		h.registerAssignmentRules(api)
-		h.registerOAuth(api)
 		h.registerPlatform(api)
 		h.registerOperations(api)
 		h.registerBatch(api)
 		h.registerPolicy(api)
-		h.registerSubjects(api)
+		h.registerPEP(api)
+		h.registerDirectory(api)
+		h.registerSimulation(api)
 	})
 }
 
@@ -115,7 +113,7 @@ func (h *adminHandlers) registerServices(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/service",
 		Summary:     "Register a service",
-		Description: "Registers a service with its OAuth2 settings. The url and the icon are optional and are only shown in the interface: Licetum does not request them.",
+		Description: "Registers a service. Its slug names it in the paths of the PDP (/service/<slug>/access/v1/...). The url and the icon are optional and are only shown in the interface: Licetum does not request them.",
 		Tags:        []string{"Service"},
 	}, requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct {
 		Body model.ServiceInput
@@ -135,7 +133,7 @@ func (h *adminHandlers) registerServices(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service",
 		Summary:     "List services",
-		Description: "All services that are not deleted. client_secret is never returned.",
+		Description: "All services that are not deleted.",
 		Tags:        []string{"Service"},
 	}, requireAny(model.PlatformService, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.ServiceResponse], error) {
 		out, err := h.app.ListServices(ctx)
@@ -192,7 +190,7 @@ func (h *adminHandlers) registerTypeResources(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/type_resource",
 		Summary:     "Create a resource type",
-		Description: "A type may have several parents (a DAG), each of any service; `inherit` on a parent limits the access levels that flow down along that link (grants and denials alike). A grant on a resource of a parent type cascades to the resources of the child type linked to it — set parents only where such inheritance is needed. `access_implies` defines the access level hierarchy of the type. The name is unique within the service (409). A type without a synchronizer has no resources: /permission returns it as not_sync, and rules on it grant access to the type as a whole.",
+		Description: "A type may have several parents (a DAG), each of any service; `inherit` on a parent limits the access levels that flow down along that link (grants and denials alike). A grant on a resource of a parent type cascades to the resources of the child type linked to it — set parents only where such inheritance is needed. `access_implies` defines the access level hierarchy of the type. The name is unique within the service (409). A type without a synchronizer has no resources (a not_sync type): rules on it grant access to the type as a whole.",
 		Errors:      []int{http.StatusConflict},
 		Tags:        []string{"Type resource"},
 	}, requireWholeType(model.PlatformTypeResource, model.ActionWrite)), func(ctx context.Context, in *struct {
@@ -313,7 +311,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/type_resource/{type_resource_id}/resource/refresh",
 		Summary:     "Refresh the resources of a type from its source now",
-		Description: "Asks the source of the type right away, skipping the cached source list, the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).",
+		Description: "Asks the source of the type right away, skipping the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).",
 		Tags:        []string{"Resource"},
 		Errors:      []int{http.StatusUnprocessableEntity, http.StatusFailedDependency},
 	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
@@ -364,7 +362,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}/access",
 		Summary:     "Who has access to a resource",
-		Description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the registry of known subjects — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target.",
+		Description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target.",
 		Tags:        []string{"Resource"},
 	}, requireWholeType(model.PlatformAssignmentRule, model.ActionRead)), func(ctx context.Context, in *struct {
 		TypeResourcePath
@@ -469,7 +467,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Method:      http.MethodDelete,
 		Path:        syncPath + "/{synchronizer_id}",
 		Summary:     "Delete a synchronizer",
-		Description: "Soft delete. A type left without a synchronizer has no resources any more: /permission returns it as not_sync, and rules on its specific resources stop taking effect (target_valid=false).",
+		Description: "Soft delete. A type left without a synchronizer has no resources any more (it becomes not_sync), and rules on its specific resources stop taking effect (target_valid=false).",
 		Tags:        []string{"Resource"},
 	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *SynchronizerPath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteSynchronizer(ctx, in.ServiceID, in.TypeResourceID, in.SynchronizerID)
@@ -547,7 +545,7 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	const memberDescription = "Membership is defined either by a predicate (AND conditions over token claims; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively."
+	const memberDescription = "Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively."
 
 	server.Register(api, withPolicy(huma.Operation{
 		OperationID: "create_group_member",
@@ -798,10 +796,10 @@ target and access levels) or an inline permission: **type_resource_id** with **a
 on a specific resource (**resource_id**), on a resource computed from a claim at check time (**resource_from_claim**)
 or on the whole type (neither). The grant cascades to all resources of child types, including types of other
 services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
-has no resources, and a rule on it grants access to the type as a whole (not_sync in /permission).
+has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
 Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-**predicate** (AND conditions over token claims) or **member_of_group_id** (all members of a group). If none is set,
+**predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
 the rule applies to everyone.
 
 **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
@@ -859,7 +857,7 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/assignment_rule",
 		Summary:     "All access rules",
-		Description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted): such a rule does not take effect.",
+		Description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted), or a rule that looks a resource up in, or climbs through, such a type: such a rule does not take effect (a denial of that kind still applies below the links to the resources the type left).",
 		Tags:        []string{"AssignmentRule"},
 	}, requireAny(model.PlatformAssignmentRule, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.AssignmentRuleWithContext], error) {
 		out, err := h.app.ListAssignmentRules(ctx)
@@ -919,140 +917,6 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 	})
 }
 
-// ---------- OAuth ----------
-
-// callbackURL is the absolute callback URL of this instance (like request.url_for in FastAPI).
-// Behind a reverse proxy, X-Forwarded-Proto / X-Forwarded-Host are honoured.
-func callbackURL(ctx huma.Context) string {
-	scheme := "http"
-	if ctx.TLS() != nil {
-		scheme = "https"
-	}
-	if p := ctx.Header("X-Forwarded-Proto"); p != "" {
-		scheme = strings.TrimSpace(strings.Split(p, ",")[0])
-	}
-	host := ctx.Host()
-	if fh := ctx.Header("X-Forwarded-Host"); fh != "" {
-		host = strings.TrimSpace(strings.Split(fh, ",")[0])
-	}
-	return scheme + "://" + host + "/service/" + ctx.Param("service_id") + "/oauth/callback"
-}
-
-type oauthLoginInput struct {
-	ServicePath
-	RedirectTo  string `query:"redirect_to" doc:"Where to send the browser after sign-in (the token arrives in the URL fragment). Must start with one of CORS__ALLOW_ORIGINS" example:"http://localhost:3000/auth/callback"`
-	hasRedirect bool
-	callbackURL string
-}
-
-// Resolve is called by Huma after parsing parameters: we pick up what the operation parameters lack.
-func (in *oauthLoginInput) Resolve(ctx huma.Context) []error {
-	u := ctx.URL()
-	in.hasRedirect = u.Query().Has("redirect_to")
-	in.callbackURL = callbackURL(ctx)
-	return nil
-}
-
-type oauthLoginOutput struct {
-	Location string `header:"Location" doc:"Authorization URL of the service IdP"`
-}
-
-type oauthCallbackInput struct {
-	ServicePath
-	Code        string `query:"code" required:"true" doc:"Authorization code from the IdP"`
-	State       string `query:"state" required:"true" doc:"Signed state issued at login"`
-	callbackURL string
-}
-
-func (in *oauthCallbackInput) Resolve(ctx huma.Context) []error {
-	in.callbackURL = callbackURL(ctx)
-	return nil
-}
-
-type oauthCallbackOutput struct {
-	Body func(huma.Context)
-}
-
-func (h *adminHandlers) registerOAuth(api huma.API) {
-	server.Register(api, huma.Operation{
-		OperationID:   "oauth_login",
-		Method:        http.MethodGet,
-		Path:          "/service/{service_id}/oauth/login",
-		Summary:       "Start sign-in via the service IdP",
-		Description:   "Redirects (307) to the service authorization endpoint. For a public client (no client_secret) PKCE is used: the code_verifier is kept in Redis and never reaches the browser.",
-		Tags:          []string{"OAuth"},
-		DefaultStatus: http.StatusTemporaryRedirect,
-	}, func(ctx context.Context, in *oauthLoginInput) (*oauthLoginOutput, error) {
-		var redirectTo *string
-		if in.hasRedirect {
-			redirectTo = &in.RedirectTo
-		}
-		target, err := h.app.StartLogin(ctx, in.ServiceID, in.callbackURL, redirectTo)
-		if err != nil {
-			return nil, err
-		}
-		return &oauthLoginOutput{Location: target}, nil
-	})
-
-	server.Register(api, huma.Operation{
-		OperationID: "oauth_callback",
-		Method:      http.MethodGet,
-		Path:        "/service/{service_id}/oauth/callback",
-		Summary:     "IdP callback",
-		Description: "Exchanges the code for tokens. If redirect_to was given at login, redirects (307) there with the IdP response in the URL fragment (#access_token=...); otherwise the IdP response is returned as JSON.",
-		Tags:        []string{"OAuth"},
-		Errors:      []int{http.StatusFailedDependency},
-		Responses: map[string]*huma.Response{
-			"200": {
-				Description: "The IdP token endpoint response as is",
-				Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{
-					Type: huma.TypeObject, AdditionalProperties: true,
-					Examples: []any{map[string]any{"access_token": "eyJ...", "token_type": "Bearer", "expires_in": 300}},
-				}}},
-			},
-			"307": {
-				Description: "Redirect to redirect_to with the tokens in the URL fragment",
-				Headers:     map[string]*huma.Param{"Location": {Schema: &huma.Schema{Type: huma.TypeString}}},
-			},
-		},
-	}, func(ctx context.Context, in *oauthCallbackInput) (*oauthCallbackOutput, error) {
-		res, err := h.app.FinishLogin(ctx, in.ServiceID, in.Code, in.State, in.callbackURL)
-		if err != nil {
-			return nil, err
-		}
-		return &oauthCallbackOutput{Body: func(hctx huma.Context) {
-			if res.RedirectTo != nil {
-				// The token goes into the URL fragment (#...) — the browser never sends it to a server when navigating further.
-				hctx.SetHeader("Location", *res.RedirectTo+"#"+engine.TokenFragment(res.Token))
-				hctx.SetStatus(http.StatusTemporaryRedirect)
-				return
-			}
-			hctx.SetHeader("Content-Type", "application/json")
-			hctx.SetStatus(http.StatusOK)
-			_ = json.NewEncoder(hctx.BodyWriter()).Encode(res.Token)
-		}}, nil
-	})
-
-	server.Register(api, huma.Operation{
-		OperationID: "oauth_refresh",
-		Method:      http.MethodPost,
-		Path:        "/service/{service_id}/oauth/refresh",
-		Summary:     "Refresh the access token",
-		Description: "Exchanges a refresh token for new tokens at the service IdP (RFC 6749 §6), so the UI can renew the session without leaving the page. Like login and callback it needs no Bearer: holding the refresh token is the proof. If the IdP issued a new refresh token, the old one must be discarded. 401 — the refresh token is invalid or expired (error=invalid_grant), sign in again; 424 — the IdP rejected the request for another reason or is unavailable.",
-		Tags:        []string{"OAuth"},
-		Errors:      []int{http.StatusUnauthorized, http.StatusFailedDependency},
-	}, func(ctx context.Context, in *struct {
-		ServicePath
-		Body model.RefreshTokenInput
-	}) (*server.Out[*model.TokenResponse], error) {
-		out, err := h.app.RefreshTokens(ctx, in.ServiceID, in.Body.RefreshToken)
-		if err != nil {
-			return nil, err
-		}
-		return server.OK(out)
-	})
-}
-
 // ---------- Platform ----------
 
 func (h *adminHandlers) registerPlatform(api huma.API) {
@@ -1061,7 +925,7 @@ func (h *adminHandlers) registerPlatform(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/platform",
 		Summary:     "Self-service id",
-		Description: "Id of the service under which Licetum is registered within itself; the admin UI signs in through its OAuth2 client. 404 means the self-service is not seeded (PLATFORM__* is not set or licetum migrate was not run).",
+		Description: "Id of the service under which Licetum is registered within itself; 404 means the self-service is not seeded (licetum migrate was not run).",
 		Tags:        []string{"Platform"},
 	}, func(ctx context.Context, _ *struct{}) (*server.Out[*model.Platform], error) {
 		out, err := h.app.GetPlatform(ctx)

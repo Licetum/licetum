@@ -12,10 +12,19 @@ const (
 	InternalError    Key = "internal_error"
 	RouteNotFound    Key = "route_not_found"
 	ValidationFailed Key = "validation_failed"
+	// availability: the 503 answers of a process that is not ready, cannot trust its copy of the policy, is overloaded or ran
+	// out of time for a request
+	NotReady          Key = "not_ready"
+	PolicyUnavailable Key = "policy_unavailable"
+	Overloaded        Key = "overloaded"
+	RequestTimeout    Key = "request_timeout"
+
+	SynchronizerChangeBusy Key = "synchronizer_change_busy"
 
 	// input validation
 	FieldRequired                 Key = "field_required"
 	FieldURLInvalid               Key = "field_url_invalid"
+	FieldInvalid                  Key = "field_invalid"
 	FieldDSNInvalid               Key = "field_dsn_invalid"
 	FieldDSNScheme                Key = "field_dsn_scheme"
 	FieldDSNHost                  Key = "field_dsn_host"
@@ -26,7 +35,6 @@ const (
 	RuleEffectInvalid             Key = "rule_effect_invalid"
 	RuleExceptionNeedsAllow       Key = "rule_exception_needs_allow"
 	ValidityInvalid               Key = "validity_invalid"
-	PermissionPageNeedsType       Key = "permission_page_needs_type"
 	LogSettingInvalid             Key = "log_setting_invalid"
 	PredicateSourceInvalid        Key = "predicate_source_invalid"
 	PredicateNowAttrInvalid       Key = "predicate_now_attr_invalid"
@@ -47,6 +55,7 @@ const (
 	LintRuleDisabled              Key = "lint_rule_disabled"
 	LintRuleNotInForce            Key = "lint_rule_not_in_force"
 	LintRuleTargetDead            Key = "lint_rule_target_dead"
+	LintRuleLookupDead            Key = "lint_rule_lookup_dead"
 	LintRuleEveryone              Key = "lint_rule_everyone"
 	LintDenyMissingClaim          Key = "lint_deny_missing_claim"
 	LintGroupEmpty                Key = "lint_group_empty"
@@ -81,7 +90,7 @@ const (
 	AssignmentRuleTargetRequired  Key = "assignment_rule_target_required"
 	ServiceSlugInvalid            Key = "service_slug_invalid"
 	ServiceSlugTaken              Key = "service_slug_taken"
-	CacheTTLInvalid               Key = "synchronizer_cache_ttl_invalid"
+	SynchronizerRegionsInvalid    Key = "synchronizer_regions_invalid"
 	SynchronizerHeaderInvalid     Key = "synchronizer_header_invalid"
 
 	// service
@@ -99,23 +108,20 @@ const (
 	AccessImpliesCycle        Key = "access_implies_cycle"
 
 	// resources and synchronizers
-	ResourceNotFound             Key = "resource_not_found"
-	SynchronizerNotFound         Key = "synchronizer_not_found"
-	SynchronizerExists           Key = "synchronizer_exists"
-	SourceTestFailed             Key = "source_test_failed"
-	LastAdminAccess              Key = "last_admin_access"
-	ServiceTrustedClientInvalid  Key = "service_trusted_client_invalid"
-	ServiceTrustedClientsTooMany Key = "service_trusted_clients_too_many"
-	DelegationNotTrusted         Key = "delegation_not_trusted"
-	DelegationNoClient           Key = "delegation_no_client"
-	DelegationSubjectInvalid     Key = "delegation_subject_invalid"
-	DelegationClaimsInvalid      Key = "delegation_claims_invalid"
-	SubjectNotFound              Key = "subject_not_found"
-	PolicyScenarioNotFound       Key = "policy_scenario_not_found"
-	PolicyScenarioNameTaken      Key = "policy_scenario_name_taken"
-	SynchronizerNoSource         Key = "synchronizer_no_source"
-	SynchronizerNoAnswer         Key = "synchronizer_no_answer"
-	SynchronizerProbeFailed      Key = "synchronizer_probe_failed"
+	ResourceNotFound         Key = "resource_not_found"
+	SynchronizerNotFound     Key = "synchronizer_not_found"
+	SynchronizerExists       Key = "synchronizer_exists"
+	SourceTestFailed         Key = "source_test_failed"
+	LastAdminAccess          Key = "last_admin_access"
+	DelegationSubjectInvalid Key = "delegation_subject_invalid"
+	DelegationClaimsInvalid  Key = "delegation_claims_invalid"
+	DirectoryEntryNotFound   Key = "directory_entry_not_found"
+	DirectoryEntryRepeated   Key = "directory_entry_repeated"
+	PolicyScenarioNotFound   Key = "policy_scenario_not_found"
+	PolicyScenarioNameTaken  Key = "policy_scenario_name_taken"
+	SynchronizerNoSource     Key = "synchronizer_no_source"
+	SynchronizerNoAnswer     Key = "synchronizer_no_answer"
+	SynchronizerProbeFailed  Key = "synchronizer_probe_failed"
 
 	// groups (people): the legacy role_* codes of the people union
 	GroupNotFound       Key = "role_not_found"
@@ -134,37 +140,32 @@ const (
 
 	// platform
 	PlatformNotSeeded Key = "platform_not_seeded"
-	AccessDenied      Key = "access_denied"
+	// AdminAuthNotConfigured: ADMIN_AUTH__* is not set, so no administrator can authenticate
+	AdminAuthNotConfigured Key = "admin_auth_not_configured"
+	AccessDenied           Key = "access_denied"
 
 	// oauth / tokens
 	AuthHeaderRequired        Key = "auth_header_required"
-	OAuthStateInvalid         Key = "oauth_state_invalid"
-	OAuthStateServiceMismatch Key = "oauth_state_service_mismatch"
-	OAuthRedirectNotAllowed   Key = "oauth_redirect_not_allowed"
-	OAuthNotConfigured        Key = "oauth_not_configured"
-	TokenEndpointBreakerOpen  Key = "token_endpoint_breaker_open"
-	TokenEndpointUnavailable  Key = "token_endpoint_unavailable"
-	TokenExchangeRejected     Key = "token_exchange_rejected"
-	TokenEndpointBadJSON      Key = "token_endpoint_bad_json"
-	TokenRefreshRejected      Key = "token_refresh_rejected"
-	TokenRefreshBadResponse   Key = "token_refresh_bad_response"
-	RefreshTokenInvalid       Key = "refresh_token_invalid"
-	JWKSNotConfigured         Key = "jwks_not_configured"
-	JWKSBreakerOpen           Key = "jwks_breaker_open"
 	JWKSUnavailable           Key = "jwks_unavailable"
 	JWKSRejected              Key = "jwks_rejected"
 	JWKSBadJSON               Key = "jwks_bad_json"
 	JWKSKeyInvalid            Key = "jwks_key_invalid"
-	TokenMalformed            Key = "token_malformed"
-	TokenKidNotFound          Key = "token_kid_not_found" //nolint:gosec // a message key, not a credential
 	TokenInvalid              Key = "token_invalid"
-	TokenIssuerMismatch       Key = "token_issuer_mismatch"
 	TokenNoSubject            Key = "token_no_subject"
 	AuthzenIncomplete         Key = "authzen_incomplete"
-	AuthzenSubjectMismatch    Key = "authzen_subject_mismatch"
+	AuthzenForbidden          Key = "authzen_forbidden"
+	AuthzenRateLimited        Key = "authzen_rate_limited"
 	AuthzenFieldRequired      Key = "authzen_field_required"
 	AuthzenPageInvalid        Key = "authzen_page_invalid"
 	AuthzenMetadataDisabled   Key = "authzen_metadata_disabled"
+	AuthzenSubjectTypeInvalid Key = "authzen_subject_type_invalid"
+	AuthzenLicetumInvalid     Key = "authzen_licetum_invalid"
+
+	// PEP directory: the issuers, the clients of the services and their API keys
+	PEPKeyLimit      Key = "pep_key_limit"
+	PEPClientInvalid Key = "pep_client_invalid"
+	PEPNotFound      Key = "pep_not_found"
+	PEPIssuerInUse   Key = "pep_issuer_in_use"
 )
 
 var catalog = map[Key]Text{
@@ -183,11 +184,41 @@ var catalog = map[Key]Text{
 		RU: "Ошибка валидации",
 		ZH: "验证失败",
 	},
+	NotReady: {
+		EN: "The service is not ready to take requests",
+		RU: "Сервис не готов принимать запросы",
+		ZH: "服务尚未准备好接收请求",
+	},
+	PolicyUnavailable: {
+		EN: "The policy store cannot be reached or confirmed to be current, the request is refused; retry it shortly",
+		RU: "Хранилище политик недоступно или его актуальность не подтверждена, запрос отклонён; повторите его чуть позже",
+		ZH: "无法访问策略存储或无法确认其为最新，请求已被拒绝；请稍后重试",
+	},
+	Overloaded: {
+		EN: "The service is overloaded, retry the request shortly",
+		RU: "Сервис перегружен, повторите запрос чуть позже",
+		ZH: "服务过载，请稍后重试",
+	},
+	RequestTimeout: {
+		EN: "The request took too long and was cancelled, retry it",
+		RU: "Запрос выполнялся слишком долго и был отменён, повторите его",
+		ZH: "请求耗时过长已被取消，请重试",
+	},
+	SynchronizerChangeBusy: {
+		EN: "The part of the resource hierarchy this type belongs to is being synchronized, retry the change shortly",
+		RU: "Часть иерархии ресурсов, к которой относится этот тип, сейчас синхронизируется, повторите изменение чуть позже",
+		ZH: "此类型所属的资源层级部分正在同步，请稍后重试该更改",
+	},
 
 	FieldRequired: {
 		EN: "Field %s is required",
 		RU: "Поле %s обязательно",
 		ZH: "字段 %s 为必填项",
+	},
+	FieldInvalid: {
+		EN: "Field %s is not valid",
+		RU: "Поле %s недопустимо",
+		ZH: "字段 %s 无效",
 	},
 	FieldURLInvalid: {
 		EN: "Field %s: expected a URL with the http or https scheme",
@@ -324,6 +355,11 @@ var catalog = map[Key]Text{
 		RU: "Правило %s указывает ресурс, но у его типа нет синхронизатора: оно ничего не решает",
 		ZH: "规则 %s 指定了资源，但其类型没有同步器：它不做任何决定",
 	},
+	LintRuleLookupDead: {
+		EN: "Rule %s looks its resource up in a type that has no synchronizer, or climbs through one: it finds no resource there (a denial still applies below the links to the resources that type left)",
+		RU: "Правило %s ищет ресурс в типе без синхронизатора или проходит через такой тип: оно не находит там ресурса (запрет по-прежнему действует ниже ссылок на ресурсы, которые тип оставил)",
+		ZH: "规则 %s 在没有同步器的类型中查找资源，或经过这样的类型：它在那里找不到资源（拒绝规则在指向该类型所遗留资源的链接之下仍然适用）",
+	},
 	LintRuleEveryone: {
 		EN: "Rule %s grants its access to everyone who signs in",
 		RU: "Правило %s выдаёт доступ всем, кто входит в систему",
@@ -444,11 +480,6 @@ var catalog = map[Key]Text{
 		RU: "Атрибут %q нельзя использовать в resource_where: допустимы буквы, цифры, _ и - (до 63 символов), но не id, name, parent_id, parents и meta",
 		ZH: "属性 %q 不能用于 resource_where：只能使用字母、数字、_ 和 -（最多 63 个字符），且不能是 id、name、parent_id、parents 或 meta",
 	},
-	PermissionPageNeedsType: {
-		EN: "limit and after page the resources of one type: pass type too",
-		RU: "limit и after постранично выводят ресурсы одного типа: передайте и type",
-		ZH: "limit 和 after 按页返回一种资源类型的资源：请同时传入 type",
-	},
 	LogSettingInvalid: {
 		EN: "Invalid logging setting: %s",
 		RU: "Недопустимая настройка логов: %s",
@@ -499,10 +530,10 @@ var catalog = map[Key]Text{
 		RU: "Недопустимый slug сервиса %q: латиница в нижнем регистре, цифры, «-» и «_», начало с буквы или цифры, до 64 символов; UUID не допускается",
 		ZH: "服务 slug %q 无效：仅允许小写拉丁字母、数字、“-”和“_”，以字母或数字开头，最多 64 个字符，且不能是 UUID",
 	},
-	CacheTTLInvalid: {
-		EN: "config.cache_ttl must be between 0 and %d seconds",
-		RU: "config.cache_ttl должен быть от 0 до %d секунд",
-		ZH: "config.cache_ttl 必须在 0 到 %d 秒之间",
+	SynchronizerRegionsInvalid: {
+		EN: "regions: at most 16 names of lowercase letters, digits and hyphens (up to 32 characters each); %s",
+		RU: "regions: не более 16 имён из строчных латинских букв, цифр и дефисов (до 32 символов каждое); %s",
+		ZH: "regions：最多 16 个名称，由小写字母、数字和连字符组成（每个最长 32 个字符）；%s",
 	},
 	ServiceUpdateEmpty: {
 		EN: "At least one field must be set",
@@ -592,30 +623,15 @@ var catalog = map[Key]Text{
 		RU: "У сервиса уже есть сценарий с названием %q",
 		ZH: "该服务已有名为 %q 的场景",
 	},
-	SubjectNotFound: {
-		EN: "Subject %s is not in the registry",
-		RU: "Субъекта %s нет в реестре",
-		ZH: "注册表中没有主体 %s",
+	DirectoryEntryNotFound: {
+		EN: "%s %s is not in the directory of the service",
+		RU: "%s %s нет в справочнике сервиса",
+		ZH: "服务的目录中没有 %s %s",
 	},
-	ServiceTrustedClientInvalid: {
-		EN: "%q is not a client id: it must be a non-empty string without spaces, up to 256 characters",
-		RU: "%q не похоже на идентификатор клиента: это непустая строка без пробелов, до 256 символов",
-		ZH: "%q 不是有效的客户端 id：必须是不含空格的非空字符串，最多 256 个字符",
-	},
-	ServiceTrustedClientsTooMany: {
-		EN: "A service can trust at most %d clients",
-		RU: "Сервис может доверять не больше %d клиентам",
-		ZH: "一个服务最多可信任 %d 个客户端",
-	},
-	DelegationNotTrusted: {
-		EN: "The client %s is not trusted by this service to ask on behalf of a person",
-		RU: "Этот сервис не доверяет клиенту %s спрашивать от имени человека",
-		ZH: "该服务不信任客户端 %s 代表个人发起询问",
-	},
-	DelegationNoClient: {
-		EN: "The token does not name the client it was issued to (azp or client_id), so the service cannot tell whether it is trusted",
-		RU: "В токене нет клиента, которому он выдан (azp или client_id), поэтому сервис не может понять, доверяет ли ему",
-		ZH: "令牌中没有签发对象客户端（azp 或 client_id），服务无法判断是否信任它",
+	DirectoryEntryRepeated: {
+		EN: "The same subject is sent twice in one request: %s %s",
+		RU: "Один и тот же субъект передан в запросе дважды: %s %s",
+		ZH: "同一请求中重复发送了同一主体：%s %s",
 	},
 	DelegationSubjectInvalid: {
 		EN: "The subject must be a non-empty string without control characters, up to 256 characters, and must not look like a group (group:…)",
@@ -724,6 +740,11 @@ var catalog = map[Key]Text{
 		ZH: "资源类型 %s 没有同步器，因此没有资源：规则或角色权限项只能授予整个类型，不能指定 resource_id 或 resource_from_claim",
 	},
 
+	AdminAuthNotConfigured: {
+		EN: "Administrator sign-in is not configured: set ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL",
+		RU: "Вход администраторов не настроен: задайте ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE и ADMIN_AUTH__JWKS_URL",
+		ZH: "未配置管理员登录：请设置 ADMIN_AUTH__ISSUER、ADMIN_AUTH__AUDIENCE 和 ADMIN_AUTH__JWKS_URL",
+	},
 	PlatformNotSeeded: {
 		EN: "The self-service is not seeded yet — set the PLATFORM__* env vars and run the migration (licetum migrate)",
 		RU: "Self-service ещё не засеян — задайте PLATFORM__* env и выполните миграцию (licetum migrate)",
@@ -740,110 +761,30 @@ var catalog = map[Key]Text{
 		RU: "Ожидается заголовок Authorization: Bearer <token>",
 		ZH: "需要请求头 Authorization: Bearer <token>",
 	},
-	OAuthStateInvalid: {
-		EN: "Invalid or expired state",
-		RU: "Невалидный или истёкший state",
-		ZH: "state 无效或已过期",
-	},
-	OAuthStateServiceMismatch: {
-		EN: "state does not match the service",
-		RU: "state не соответствует сервису",
-		ZH: "state 与服务不匹配",
-	},
-	OAuthRedirectNotAllowed: {
-		EN: "redirect_to is not in the list of allowed origins: %s",
-		RU: "redirect_to не входит в список разрешённых origin: %s",
-		ZH: "redirect_to 不在允许的 origin 列表中：%s",
-	},
-	OAuthNotConfigured: {
-		EN: "OAuth2 is not configured for service %s",
-		RU: "У сервиса %s не настроен OAuth2",
-		ZH: "服务 %s 未配置 OAuth2",
-	},
-	TokenEndpointBreakerOpen: {
-		EN: "The service token endpoint is temporarily unavailable (circuit breaker open)",
-		RU: "Token endpoint сервиса временно недоступен (circuit breaker open)",
-		ZH: "服务的 token 端点暂时不可用（熔断器已打开）",
-	},
-	TokenEndpointUnavailable: {
-		EN: "The service token endpoint is unavailable: %v",
-		RU: "Token endpoint сервиса недоступен: %v",
-		ZH: "服务的 token 端点不可用：%v",
-	},
-	TokenExchangeRejected: {
-		EN: "The token endpoint rejected the code exchange: %d %s",
-		RU: "Token endpoint отклонил обмен кода: %d %s",
-		ZH: "token 端点拒绝了授权码交换：%d %s",
-	},
-	TokenEndpointBadJSON: {
-		EN: "The token endpoint returned invalid JSON: %v",
-		RU: "Token endpoint вернул невалидный JSON: %v",
-		ZH: "token 端点返回了无效的 JSON：%v",
-	},
-	TokenRefreshRejected: {
-		EN: "The token endpoint rejected the token refresh: %d",
-		RU: "Token endpoint отклонил обновление: %d",
-		ZH: "token 端点拒绝了令牌刷新：%d",
-	},
-	TokenRefreshBadResponse: {
-		EN: "The token endpoint returned an unexpected response to the token refresh",
-		RU: "Token endpoint вернул неожиданный ответ на обновление токена",
-		ZH: "token 端点对令牌刷新返回了意外的响应",
-	},
-	RefreshTokenInvalid: {
-		EN: "The refresh token is invalid or expired, sign in again",
-		RU: "Refresh token недействителен или истёк, нужен повторный вход",
-		ZH: "刷新令牌无效或已过期，请重新登录",
-	},
-	JWKSNotConfigured: {
-		EN: "No JWKS endpoint is configured for service %s",
-		RU: "У сервиса %s не настроен JWKS endpoint",
-		ZH: "服务 %s 未配置 JWKS 端点",
-	},
-	JWKSBreakerOpen: {
-		EN: "The service JWKS endpoint is temporarily unavailable (circuit breaker open)",
-		RU: "JWKS endpoint сервиса временно недоступен (circuit breaker open)",
-		ZH: "服务的 JWKS 端点暂时不可用（熔断器已打开）",
-	},
 	JWKSUnavailable: {
-		EN: "The service JWKS endpoint is unavailable: %v",
-		RU: "JWKS endpoint сервиса недоступен: %v",
-		ZH: "服务的 JWKS 端点不可用：%v",
+		EN: "The JWKS endpoint of the issuer is unavailable",
+		RU: "JWKS endpoint издателя токенов недоступен",
+		ZH: "签发方的 JWKS 端点不可用",
 	},
 	JWKSRejected: {
-		EN: "The JWKS endpoint rejected the request: %d",
-		RU: "JWKS endpoint отклонил запрос: %d",
-		ZH: "JWKS 端点拒绝了请求：%d",
+		EN: "The JWKS endpoint of the issuer rejected the request",
+		RU: "JWKS endpoint издателя токенов отклонил запрос",
+		ZH: "签发方的 JWKS 端点拒绝了请求",
 	},
 	JWKSBadJSON: {
-		EN: "The JWKS endpoint returned invalid JSON: %v",
-		RU: "JWKS endpoint вернул невалидный JSON: %v",
-		ZH: "JWKS 端点返回了无效的 JSON：%v",
+		EN: "The JWKS endpoint of the issuer returned invalid JSON",
+		RU: "JWKS endpoint издателя токенов вернул невалидный JSON",
+		ZH: "签发方的 JWKS 端点返回了无效的 JSON",
 	},
 	JWKSKeyInvalid: {
-		EN: "Invalid key in the service JWKS: %v",
-		RU: "Невалидный ключ в JWKS сервиса: %v",
-		ZH: "服务 JWKS 中的密钥无效：%v",
-	},
-	TokenMalformed: {
-		EN: "Malformed token: %v",
-		RU: "Невалидный формат токена: %v",
-		ZH: "令牌格式无效：%v",
-	},
-	TokenKidNotFound: {
-		EN: "No key matching the token kid was found in the service JWKS",
-		RU: "Не найден ключ, соответствующий kid токена, в JWKS сервиса",
-		ZH: "在服务 JWKS 中未找到与令牌 kid 匹配的密钥",
+		EN: "Invalid key in the JWKS of the issuer",
+		RU: "Невалидный ключ в JWKS издателя токенов",
+		ZH: "签发方 JWKS 中的密钥无效",
 	},
 	TokenInvalid: {
-		EN: "Token verification failed: %v",
-		RU: "Токен не прошёл верификацию: %v",
-		ZH: "令牌验证失败：%v",
-	},
-	TokenIssuerMismatch: {
-		EN: "The token was issued by a different issuer than the one configured for the service",
-		RU: "Токен выпущен не тем issuer, что настроен для сервиса",
-		ZH: "令牌的签发者与服务配置的 issuer 不一致",
+		EN: "The credential was not accepted",
+		RU: "Учётные данные не приняты",
+		ZH: "凭证未被接受",
 	},
 	TokenNoSubject: {
 		EN: "The token has neither preferred_username nor sub",
@@ -855,10 +796,15 @@ var catalog = map[Key]Text{
 		RU: "Для проверки нужны субъект, ресурс и действие (в самой проверке или по умолчанию)",
 		ZH: "评估需要主体、资源和操作（在评估中或作为默认值给出）",
 	},
-	AuthzenSubjectMismatch: {
-		EN: "subject.id must be the subject of the bearer token, unless the token belongs to a client application the service trusts",
-		RU: "subject.id должен совпадать с субъектом bearer-токена, если токен не принадлежит клиентскому приложению, которому доверяет сервис",
-		ZH: "subject.id 必须是 Bearer 令牌的主体，除非该令牌属于服务所信任的客户端应用",
+	AuthzenForbidden: {
+		EN: "The client may not do this",
+		RU: "Клиенту это не разрешено",
+		ZH: "该客户端无权执行此操作",
+	},
+	AuthzenRateLimited: {
+		EN: "The client sends requests faster than the limit of this server allows; try again after the time in Retry-After",
+		RU: "Клиент отправляет запросы чаще, чем позволяет лимит этого сервера; повторите после времени из Retry-After",
+		ZH: "客户端的请求速度超过了此服务器的限制；请在 Retry-After 指示的时间后重试",
 	},
 	AuthzenFieldRequired: {
 		EN: "%s is required",
@@ -871,8 +817,38 @@ var catalog = map[Key]Text{
 		ZH: "分页令牌无效，或请求与签发该令牌的请求不一致",
 	},
 	AuthzenMetadataDisabled: {
-		EN: "The AuthZEN discovery document is not available: HTTP__PUBLIC_URL is not set",
-		RU: "Документ обнаружения AuthZEN недоступен: не задан HTTP__PUBLIC_URL",
-		ZH: "AuthZEN 发现文档不可用：未设置 HTTP__PUBLIC_URL",
+		EN: "The AuthZEN discovery document is not available: PDP__PUBLIC_URL is not set",
+		RU: "Документ обнаружения AuthZEN недоступен: не задан PDP__PUBLIC_URL",
+		ZH: "AuthZEN 发现文档不可用：未设置 PDP__PUBLIC_URL",
+	},
+	AuthzenSubjectTypeInvalid: {
+		EN: "subject.type must be 1 to 64 characters, and not group",
+		RU: "subject.type должен содержать от 1 до 64 символов и не быть group",
+		ZH: "subject.type 必须为 1 到 64 个字符，且不能是 group",
+	},
+	AuthzenLicetumInvalid: {
+		EN: "The licetum settings of the context must be an object with min_revision (a revision, as a string of digits) and explain (a boolean), and no other field",
+		RU: "Настройки licetum в контексте должны быть объектом с полями min_revision (версия, строкой из цифр) и explain (логическое значение) и без других полей",
+		ZH: "上下文中的 licetum 设置必须是对象，只能包含 min_revision（由数字组成的字符串形式的版本号）和 explain（布尔值）",
+	},
+	PEPKeyLimit: {
+		EN: "The PEP client has reached its limit of %d active API keys: revoke one first",
+		RU: "Достигнут лимит действующих ключей API клиента PEP (%d): сначала отзовите один ключ",
+		ZH: "PEP 客户端的有效 API 密钥已达上限（%d 个）：请先吊销一个",
+	},
+	PEPClientInvalid: {
+		EN: "The PEP client is not valid: its kind, issuer, client id or operations do not fit, or its service has a client with the same name or identity",
+		RU: "Клиент PEP недействителен: тип, издатель, идентификатор клиента или операции не подходят, либо у сервиса уже есть клиент с тем же именем или идентификатором",
+		ZH: "PEP 客户端无效：其类型、颁发者、客户端 ID 或操作不匹配，或其服务已有同名或同一标识的客户端",
+	},
+	PEPNotFound: {
+		EN: "PEP object %s not found",
+		RU: "Объект PEP %s не найден",
+		ZH: "未找到 PEP 对象 %s",
+	},
+	PEPIssuerInUse: {
+		EN: "The PEP issuer %s is used by a client",
+		RU: "Издатель PEP %s используется клиентом",
+		ZH: "PEP 颁发者 %s 正被某个客户端使用",
 	},
 }

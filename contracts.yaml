@@ -1,0 +1,864 @@
+# The contracts of Licetum: what must hold, how it is checked, and where. The design they belong to is
+# docs/adr/0001-regional-pdp.md (section "Tests as contracts").
+#
+# Each contract is checked by at least one test named TestContract_<ID>_<What> (Go) or a Jest test whose name starts with
+# TestContract_<ID>_ (web). `task check` runs core/internal/tools/contractscheck: an active contract without a test, a test that
+# names an unknown contract, and a planned contract that already has a test all fail it.
+#
+#   status  planned (the phase that makes it active is in `phase`), active, retired
+#   level   unit    pure code, fakes, no database
+#           pg      one PostgreSQL (Testcontainers or LICETUM_TEST_POSTGRES_URI), a database per test
+#           cql     one CQL node (developer mode), a keyspace per package
+#           system  the processes in one test binary over PostgreSQL (and the CQL store)
+#           fault   fault injection (Toxiproxy, kill -9 by re-exec), nightly
+#           multidc two CQL data centers, nightly
+#           load    k6 against a running stack
+#           helm    chart rendering, kubeconform, kind
+#           web     the web interface (Jest)
+#   oracle  what the answer is compared with; it never shares the code under test
+contracts:
+  # ---------- DEC: decision semantics (core/decide; until P5 the engine of core/engine) ----------
+  # Until P5 the engine is checked through the AuthZEN API of the check API on PostgreSQL (admin-api/tests/integration/contracts,
+  # level pg): the evaluations answer every question of a case, and the resource and action searches of the case must list what
+  # the evaluations allow. The reference evaluator core/testsupport/refeval is checked against the same tables by its unit tests.
+  - id: DEC01
+    statement: A denial beats any allow, wherever the allow lies.
+    oracle: tables of expected decisions written from the semantics (core/testsupport/policyfix/testdata/decisions); the same tables check refeval
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC02
+    statement: An exception lifts a denial only strictly below it; the deepest of the denials and exceptions above a resource decides and a tie goes to the denial.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC03
+    statement: "\"Below\" is decided per level: point below point by the lineage, whole type below a higher type, a point below the whole of its own type."
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC04
+    statement: access_implies works both ways (granting write grants read, denying read denies write) and the denial level * denies every level that flows, and with it every level that includes one.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC05
+    statement: The inherit masks of type links limit what flows down; with several parents the levels are the union over routes of the intersection along each route.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC06
+    statement: A not_sync type is decided by whole-type rules only, with no cascade from ancestors; a whole-type rule on it still cascades to the resources of sync descendant types.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC07
+    statement: Validity windows of rules and memberships are honoured at the time of the decision.
+    oracle: decision tables with a manual clock
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC08
+    statement: Condition operators eq ne in not_in regex gt ge lt le in_cidr; a missing attribute never satisfies a condition, ne and not_in included; eq, ne and regex with a list value never hold.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC09
+    statement: on_missing_attribute decides whether a denial applies on an unknown condition; a membership reading a missing attribute is unknown, so a denial on the group applies.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC10
+    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_claim (resource_from_property after P3) matches by name, id and meta attributes and anchors at the matched resource's ancestors of the rule's type through the resource links, whatever the inherit masks.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC11
+    statement: A resource with an unresolved parent link, or below an ancestor that has one, is treated as possibly under every denial that could cover the missing parent, a denial on the missing parent itself included, and a denial whose anchor is already a known ancestor for the levels the known routes do not carry (fail closed, transitively); only an exception provably below the denial lifts it.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC12
+    statement: Role assignments expand to their items with the effect and exception of the rule; nested groups resolve through 16 nestings, whatever the order of the memberships; @name access groups expand to their levels.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC13
+    statement: An explanation names the granting rules, every denial with the exception that lifted it, and the denials assumed for an unresolved parent; a no_access answer names no denial.
+    oracle: decision tables
+    level: pg
+    phase: P1
+    status: active
+  - id: DEC14
+    statement: The time an answer is kept, and the time it stays correct (hold), end exactly at the next validity boundary.
+    oracle: property test against random policies with a manual clock (core/engine/hold_property_test.go)
+    level: unit
+    phase: P1
+    status: active
+  - id: DECP
+    statement: The engine and the reference evaluator give the same decisions and explanations on generated policies and resource graphs (core/testsupport/policygen; seeds 1-20 per pull request, 21-520 nightly; a unit-level run with many more seeds once the decision core is pure, P5).
+    oracle: core/testsupport/refeval (builds reachability from the edges itself, shares no code with the engine)
+    level: pg
+    phase: P1
+    status: active
+
+  # ---------- ST: read model stores (core/readmodel/storetest against every adapter) ----------
+  - id: ST01
+    statement: The lineage of every resource, itself included, with its masks equals the definition of the closure.
+    oracle: recursive walk of the edges in the test, and rebuildClosureSQL
+    level: pg
+    phase: P5
+    status: planned
+  - id: ST02
+    statement: The descendants of an anchor by type, page by page, equal a range scan of PostgreSQL.
+    oracle: PostgreSQL closure without the anchor itself (descendant_v has no self rows, ADR 0002)
+    level: pg
+    phase: P5
+    status: planned
+  - id: ST03
+    statement: Listing a type has no gaps and no repeats while it is written concurrently.
+    oracle: the set written
+    level: pg
+    phase: P5
+    status: planned
+  - id: ST04
+    statement: Lookup by attribute finds scalars and list elements, and lookup by a non-unique name works.
+    oracle: the rows written
+    level: pg
+    phase: P5
+    status: planned
+  - id: ST05
+    statement: A switched-off resource is absent from a read at a position after it and present at a position before it.
+    oracle: the history written
+    level: cql
+    phase: P6
+    status: planned
+  - id: ST06
+    statement: unresolved_up is transitive and equals resource_unresolved of PostgreSQL.
+    oracle: PostgreSQL
+    level: pg
+    phase: P5
+    status: planned
+  - id: ST07
+    statement: Every CQL row is written with the timestamp derived from its position; a statement without an explicit timestamp is refused by the write helper, and the helper never binds NULL (it would write a cell tombstone) but leaves an absent value unset.
+    oracle: WRITETIME of the rows and the values the helper binds
+    level: cql
+    phase: P6
+    status: planned
+  - id: ST08
+    statement: The newest version of a key is never deleted by the MVCC garbage collection; a late re-insert of a collected version with its original timestamp stays invisible while the range tombstone exists, and reads at P >= v1 are unchanged after the tombstone is purged; table options match the schema. The collection is switched on only after APP01 to APP03 and ASOF01 to ASOF03 pass under the kill tests.
+    oracle: the versions written
+    level: cql
+    phase: P6
+    status: planned
+  - id: ST09
+    statement: The CQL schema and the statements of the CQL adapter use no lightweight transaction, materialized view, secondary index or tablets-only option, and the schema and the store tests pass on Apache Cassandra 5 and on ScyllaDB; the default store runs on every pull request, the second one nightly.
+    oracle: the store tests and the schema snapshot of each store
+    level: cql
+    phase: P6
+    status: planned
+  - id: ST10
+    statement: The applier refuses to write a version older than the GC horizon of its key, and the PDP refuses a read position older than the GC horizon.
+    oracle: writes and read positions injected below the horizon the test derives from the applied positions and MVCC__RETENTION
+    level: cql
+    phase: P6
+    status: planned
+
+  # ---------- POL / PUB / APP / ASOF / REC: log, publication, application, reads "as of P", reconciliation ----------
+  - id: POL01
+    statement: fold(checkpoint at a, entries (a, b]) equals the canonical state of PostgreSQL at b, for random histories of admin writes and synchronizations.
+    oracle: the PostgreSQL loader at the exact revision
+    level: pg
+    phase: P5
+    status: planned
+  - id: POL02
+    statement: A broken prev chain is not applied.
+    oracle: injected log
+    level: unit
+    phase: P5
+    status: planned
+  - id: POL03
+    statement: An incomplete checkpoint or a digest mismatch is not applied.
+    oracle: injected log
+    level: unit
+    phase: P5
+    status: planned
+  - id: POL04
+    statement: The codec is deterministic.
+    oracle: bytes
+    level: unit
+    phase: P5
+    status: planned
+  - id: POL05
+    statement: The PDP and the applier read formats N and N-1.
+    oracle: fixtures of both formats
+    level: unit
+    phase: P7
+    status: planned
+  - id: PUB01
+    statement: With kill -9 at every point of a publication and duplicate publishers, the log equals the outbox with the same hash per position.
+    oracle: hashes of the outbox
+    level: fault
+    phase: P6
+    status: planned
+  - id: PUB02
+    statement: Positions are continuous, empty entries included.
+    oracle: the outbox
+    level: pg
+    phase: P3
+    status: planned
+  - id: PUB03
+    statement: "Heartbeat: every commit before pg_time has a revision at most the heartbeat's position."
+    oracle: snapshots of PostgreSQL
+    level: pg
+    phase: P5
+    status: planned
+  - id: PUB04
+    statement: The pg_notify of the writing transaction, delivered on commit, wakes the publisher, which reads outbox WHERE revision > last; its periodic tick catches a lost notification, also when the writes go through PgBouncer in transaction mode.
+    oracle: the log
+    level: pg
+    phase: P6
+    status: planned
+  - id: PUB05
+    statement: Every log_chunk.body is at most 1 MiB of zstd and holds whole records.
+    oracle: the records encoded, decoded again chunk by chunk
+    level: unit
+    phase: P3
+    status: planned
+  - id: APP01
+    statement: The applier never moves past a missing or mismatching entry; late, duplicate or reordered headers and chunks never produce a torn application; a missing chunk is read from another data center.
+    oracle: injected log
+    level: cql
+    phase: P6
+    status: planned
+  - id: APP02
+    statement: Two appliers running at once converge byte for byte and the regional position never goes back.
+    oracle: the regional state
+    level: cql
+    phase: P6
+    status: planned
+  - id: APP03
+    statement: With the garbage collection of versions on, a PDP that confirmed its view within S finds, for every key it reads, the newest version at or below its P, also under kill tests and during catch-up after a partition.
+    oracle: the versions written
+    level: fault
+    phase: P6
+    status: planned
+  - id: ASOF01
+    statement: A decision at position P reads every partition as of P; with the applier stopped in the middle of a write the decisions equal the reference at P, the counter-example of the ADR included.
+    oracle: refeval over PostgreSQL at P
+    level: system
+    phase: P6
+    status: planned
+  - id: ASOF02
+    statement: A change of a type link or of inherit never coexists with lineages of the old structure; a type becomes sync together with its first data, and not_sync when its last live synchronizer is deleted, in one transaction with its outbox entry; the mode is sync when synced_at is set and a live synchronizer exists.
+    oracle: the reference over PostgreSQL
+    level: system
+    phase: P6
+    status: planned
+  - id: ASOF03
+    statement: A generation built from checkpoints and the tail of the log equals the generation applied incrementally.
+    oracle: an incrementally applied region
+    level: cql
+    phase: P6
+    status: planned
+  - id: ASOF04
+    statement: An installation switched from the postgres read model to the CQL store with rebuild --all skips no position, its PDPs answer as the postgres adapter did at equal positions, and it ends with regions equal to those of an installation that used the CQL store from the start.
+    oracle: a region applied from the start, the outbox positions, and the postgres adapter at equal positions (secondary oracle)
+    level: system
+    phase: P6
+    status: planned
+  - id: REC01
+    statement: "Reconcile reports a write that bypassed the outbox check (a trigger disabled by the table owner): the canonical state of PostgreSQL at revision r differs from the fold of the outbox entries up to r."
+    oracle: the canonical loader
+    level: pg
+    phase: P5
+    status: planned
+  - id: REC02
+    statement: The nightly reconcile of a region reports a regional state that differs from PostgreSQL at the same position, and rebuild --stream restores it; the divergence is injected as a newest version lost on a quorum of replicas (a node replaced without repair).
+    oracle: hashes of PostgreSQL at the position
+    level: fault
+    phase: P6
+    status: planned
+
+  # ---------- REF: end-to-end equivalence ----------
+  - id: REF01
+    statement: The answers and explanations of licetum-pdp equal those of the reference evaluator over the PostgreSQL record on random policies and graphs with mutations and passing windows (with guards against degenerate policies).
+    oracle: refeval
+    level: system
+    phase: P5
+    status: planned
+  - id: REF02
+    statement: The PDP on the CQL store and the PDP on PostgreSQL answer the same at equal positions.
+    oracle: the second adapter (secondary oracle only)
+    level: system
+    phase: P6
+    status: planned
+
+  # ---------- WR / HIS: write path and history ----------
+  - id: WR01
+    statement: A commit takes exactly one revision, a rollback none, a batch one; with 20 concurrent writers there are no gaps and every snapshot sees a prefix.
+    oracle: the outbox and revision_state
+    level: pg
+    phase: P3
+    status: planned
+  - id: WR02
+    statement: "A transaction that changed rows of a covered policy table (ADR 0001, 4.7), or truncated one, without an outbox row fails at COMMIT (raw SQL, cascades, the seed and restore-admin included). Only tuples actually changed count, so a statement that changed no row does not; the resource tables get the same check in P5. A bypass is not claimed impossible: REC01 reports it."
+    oracle: the commit result
+    level: pg
+    phase: P3
+    status: planned
+  - id: WR03
+    statement: The outbox images reproduce exactly the rows a write changed.
+    oracle: a diff of the tables around the operation
+    level: pg
+    phase: P3
+    status: planned
+  - id: WR04
+    statement: Concurrent writes cannot together remove the last platform admin, create a cycle of types, or delete an entity in use.
+    oracle: the final state
+    level: pg
+    phase: P3
+    status: planned
+  - id: WR05
+    statement: Each write route produces exactly its streams and affected services (generated from the route table).
+    oracle: the route table
+    level: pg
+    phase: P3
+    status: planned
+  - id: WR06
+    statement: An admin write takes at most a measured budget of round trips to PostgreSQL.
+    oracle: the traced round trips
+    level: pg
+    phase: P3
+    status: planned
+  - id: WR07
+    statement: A synchronization never waits for an admin transaction longer than its commit (lock order).
+    oracle: timings under contention
+    level: pg
+    phase: P5
+    status: planned
+  - id: HIS01
+    statement: A batch is atomic and names the failing operation.
+    oracle: the state after the batch
+    level: pg
+    phase: P3
+    status: planned
+  - id: HIS02
+    statement: "Revert and rollback stay within one service. Records of the service's types, synchronizers and type links are reverted through the batch; one that cannot be restored exactly (a secret changed) is planned as partial, and the plan is applied only with allow_partial: true, otherwise 409 change_not_revertible names the records (ADR 0001, 8.7)."
+    oracle: the change log of the service
+    level: pg
+    phase: P4
+    status: planned
+  - id: HIS03
+    statement: Export then import of a service is the identity; the document is licetum.policy/v2, and importing a v1 document is refused with an error that names the version.
+    oracle: the exported document
+    level: pg
+    phase: P4
+    status: planned
+  - id: HIS04
+    statement: A create given an id another entity has is refused with 409.
+    oracle: status code
+    level: pg
+    phase: P3
+    status: planned
+  - id: HIS05
+    statement: A reader of the change feed ordered by (revision, seq) never skips a record.
+    oracle: the records committed
+    level: pg
+    phase: P3
+    status: planned
+
+  # ---------- SYN: synchronization of sources ----------
+  - id: SYN01
+    statement: A source is asked once per type and period across all executors.
+    oracle: calls counted by the fake source
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN02
+    statement: A source that does not answer keeps the data, and the backoff applies to the whole cluster.
+    oracle: the data and sync_state
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN03
+    statement: An answer with no resources switches off every resource of the type.
+    oracle: the data
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN04
+    statement: A late or duplicate executor never commits a second application.
+    oracle: the commits
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN05
+    statement: kill -9 in the middle of an application applies it exactly once and the closure stays consistent.
+    oracle: the closure definition
+    level: fault
+    phase: P5
+    status: planned
+  - id: SYN06
+    statement: Components of the type graph do not block each other and a busy component lock does not start a backoff.
+    oracle: timings and sync_state
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN07
+    statement: A repeat with the same data writes nothing and takes no revision.
+    oracle: the outbox
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN08
+    statement: A change of a type link rebuilds the closure without asking the source; renaming a service invalidates nothing.
+    oracle: calls counted and the closure
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN09
+    statement: The source of a type limited to region X is asked only by fetchers in region X (licetum-writer fetch --region X).
+    oracle: calls counted per region
+    level: pg
+    phase: P5
+    status: planned
+  - id: SYN10
+    statement: A source that keeps answering without change is polled less and less often, up to a bound, and the polls of each source are counted.
+    oracle: calls counted by the fake source, and the metric
+    level: pg
+    phase: P5
+    status: planned
+
+  # ---------- CONS / REV / FC / FO: consistency, revocation, fail closed, failover ----------
+  - id: CONS01
+    statement: A request carries the min_revision of a write in the top-level context.licetum; any region then answers at or above that revision, or refuses (503 revision_not_reached for /evaluation and the searches, decision false with context.error in /evaluations); a stale 200 never happens. Checked with the postgres adapter on a streaming replica and with the CQL adapter; phase P5 covers the postgres adapter, P6 the CQL adapter.
+    oracle: the revision of each answer
+    level: system
+    phase: P5
+    status: planned
+  - id: CONS02
+    statement: A PDP never goes back to an older position except by an accounted reset.
+    oracle: the positions observed
+    level: unit
+    phase: P5
+    status: planned
+  - id: CONS03
+    statement: "No cached answer outlives a validity boundary or a change of the positions it read: catalog, svc:x for every x in U(S), and data:<type> for every type read, ancestor types of other services included."
+    oracle: manual clock and positions
+    level: unit
+    phase: P5
+    status: planned
+  - id: CONS04
+    statement: A write in service A invalidates only the services whose upstream set contains A.
+    oracle: the invalidated keys
+    level: unit
+    phase: P5
+    status: planned
+  - id: CONS05
+    statement: A warm decision reads nothing from the store; a miss reads at most 1 + the point exception anchors + the attr_v buckets of the lookup type (buckets(type), ADR 0002) and the matches of each property lookup + the ancestors read for resource_where, a bound that does not depend on the size of the policy.
+    oracle: counted reads
+    level: system
+    phase: P6
+    status: planned
+  - id: REV01
+    statement: A revocation is enforced in the home region with p99 at most 1 s over 200 revocations.
+    oracle: wall clock on a runner without -race
+    level: system
+    phase: P7
+    status: planned
+  - id: REV02
+    statement: A revocation is enforced in every other region with p99 at most 5 s over 200 revocations.
+    oracle: wall clock
+    level: multidc
+    phase: P7
+    status: planned
+  - id: REV03
+    statement: For every revocation committed at t no allowing answer is served at t + S + clock skew or later, through link cuts, stopped appliers, publishers, PostgreSQL and epoch changes.
+    oracle: the commit time of each revocation
+    level: fault
+    phase: P7
+    status: planned
+  - id: FC01
+    statement: A region whose store is unreadable for longer than S refuses (503 or decision false) and is not ready.
+    oracle: status codes and /readyz
+    level: system
+    phase: P6
+    status: planned
+  - id: FC02
+    statement: A region cut off from home (its heartbeat does not move) refuses after S and is not ready.
+    oracle: status codes and /readyz
+    level: fault
+    phase: P7
+    status: planned
+  - id: FC03
+    statement: A region recovers by itself and applies the revocations made during the partition before any later grant.
+    oracle: the order of positions
+    level: fault
+    phase: P7
+    status: planned
+  - id: FC04
+    statement: "freeze disables only the staleness gate: the log is still applied and the position keeps moving. The freeze is accounted in licetum_frozen, freeze_log and one log line a minute; unfreeze restores the gate."
+    oracle: metrics, freeze_log and the positions
+    level: system
+    phase: P6
+    status: planned
+  - id: FC05
+    statement: The configuration refuses POLICY__MAX_STALENESS=0.
+    oracle: the configuration error
+    level: unit
+    phase: P5
+    status: planned
+  - id: FO01
+    statement: A PostgreSQL failover that loses published commits is detected automatically and starts a new epoch (epoch_start); every region converges to the new primary and no later answer reflects the lost write. The time from the failover to the first answer of each region is reported, and S must exceed it.
+    oracle: the state of the new primary
+    level: fault
+    phase: P7
+    status: planned
+
+  # ---------- AZ / PEP: AuthZEN and the authentication of PEPs ----------
+  - id: AZ01
+    statement: A missing required field is a 400, per endpoint as the specification requires it.
+    oracle: the specification
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ02
+    statement: Defaults of /evaluations are merged and the three semantics answer as in the examples of the specification; context.licetum is read from the top-level context only.
+    oracle: the examples of the specification (core/pdp/authzen/testdata/spec)
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ03
+    statement: A short-circuiting batch evaluates nothing after the stopping evaluation.
+    oracle: an evaluation counter
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ04
+    statement: Each search page is computed at the current position, and no page expires. The cursor is (bucket, last key, digest of the request); until P5 it has no bucket and keys follow today's order by id (ADR 0001, 7.6). Paging ends with next_token "" and has no gaps or repeats for the items present throughout; a changed request is a 400 (authzen_page_invalid).
+    oracle: the full result set
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ05
+    statement: The metadata name an https PDP identifier and only the endpoints implemented.
+    oracle: the specification
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ06
+    statement: Unknown fields are ignored and a nested context value is ignored by conditions instead of refused.
+    oracle: status and decision
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ07
+    statement: X-Request-ID is returned verbatim when it is safe for a header.
+    oracle: the response header
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ08
+    statement: A 401 carries WWW-Authenticate; the Bearer scheme is case-insensitive and another scheme is a 401.
+    oracle: RFC 6750
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ09
+    statement: An unregistered client, a missing operation and an unknown service give the same 403.
+    oracle: status and body
+    level: pg
+    phase: P2
+    status: active
+  - id: AZ10
+    statement: The public port serves exactly the AuthZEN routes (snapshot of the route table).
+    oracle: the route table
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ11
+    statement: An unknown type or resource is decision false, not an error.
+    oracle: the specification
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ12
+    statement: explain requires the explain operation of the client.
+    oracle: status code
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ13
+    statement: Resource search is limited to the requested type and to the scan budget; a short page carries next_token.
+    oracle: the result set
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ14
+    statement: An exhausted rate bucket is a 429 with Retry-After. The limit is per pod; a global limit belongs to the ingress.
+    oracle: status and header
+    level: unit
+    phase: P2
+    status: active
+  - id: AZ15
+    statement: A client holds at most its share of the computation slots and of the requests in flight, and searches run in a pool of their own; a search storm from one client does not delay another client's evaluations.
+    oracle: the evaluations of a second client, counted and timed
+    level: system
+    phase: P5
+    status: planned
+  - id: AZ16
+    statement: "An explanation given to the PEP of service B names a rule of an upstream service A only as upstream: <slug of A> with the level; it never shows the rule's id, anchors or groups."
+    oracle: the explanation
+    level: unit
+    phase: P4
+    status: planned
+  - id: PEP01
+    statement: A PEP JWT is accepted only from an allowed issuer, with the PDP audience in aud (not checked today), within exp/nbf, signed with an allowed algorithm.
+    oracle: RFC 7519 / RFC 9068
+    level: unit
+    phase: P2
+    status: active
+  - id: PEP02
+    statement: API keys are stored as hashes, rotate with two active keys, and a revoked key is refused by every PDP within the revocation SLO.
+    oracle: status codes over time
+    level: system
+    phase: P2
+    status: active
+  - id: PEP03
+    statement: One JWKS fetch per TTL, one refetch per unknown kid, and junk tokens do not multiply fetches.
+    oracle: fetches counted by the fake IdP
+    level: unit
+    phase: P2
+    status: active
+  - id: PEP04
+    statement: The keys of a PEP issuer reach the PDP only through the replicated state; the PDP never calls the IdP.
+    oracle: connections of the PDP
+    level: system
+    phase: P6
+    status: planned
+
+  # ---------- ADM: administration of Licetum itself ----------
+  - id: ADM01
+    statement: A missing, invalid or wrong-audience token is a 401 with WWW-Authenticate, and a 403 comes before the body is validated.
+    oracle: status codes
+    level: pg
+    phase: P2
+    status: active
+  - id: ADM02
+    statement: The isolation matrix (every route × platform and service roles of A, B and a group) holds; lists contain only the caller's scope; a route without a policy fails the build.
+    oracle: the route table and the role matrix
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM03
+    statement: Creating needs a role in the scope; creating a service needs platform_admin or service_creator.
+    oracle: status codes
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM04
+    statement: No escalation through foreign groups, roles or types (also refused by foreign keys), bindings above one's role, batch/import/revert/rollback outside the service, retargeting, or roles with foreign items.
+    oracle: status codes and the state
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM05
+    statement: The last platform admin and the last owner of a service cannot be removed, also by two concurrent revocations.
+    oracle: the final state
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM06
+    statement: Admin authorization and writes work with the writer, the appliers and the PDPs stopped; a revoked binding takes effect on the next request.
+    oracle: status codes
+    level: system
+    phase: P4
+    status: planned
+  - id: ADM07
+    statement: restore-admin works and is recorded in the change log.
+    oracle: the bindings and the log
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM08
+    statement: Bootstrap never restores revoked access.
+    oracle: the bindings
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM09
+    statement: A cross-service type link is allowed only to an exported type of the same identity domain; unexporting or deleting a linked type is a 409.
+    oracle: status codes
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM10
+    statement: A child entity must belong to the service of the path.
+    oracle: status codes
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM11
+    statement: A service slug cannot be changed after creation and is never given to another service, also after the service is deleted.
+    oracle: status codes
+    level: pg
+    phase: P3
+    status: planned
+  - id: ADM12
+    statement: Only callers whose roles in S include directory_writer (a machine client of the admin IdP, or an editor of S through the role closure of ADR 0001, 8.2) write the directory of S, at a limited rate and without the admin_write lock; an unchanged batch takes no revision, directory_writer allows nothing else, and a role of one service cannot read the directory of another.
+    oracle: status codes and lock waits
+    level: pg
+    phase: P4
+    status: planned
+  - id: ADM13
+    statement: The seed and restore-admin need only the ADMIN_AUTH__* settings; with no PLATFORM__* OAuth variable set, the admin API is seeded and break-glass works. Today both require all six variables (Platform.IsConfigured).
+    oracle: status codes
+    level: pg
+    phase: P2
+    status: active
+
+  # ---------- DIR: the subject directory (ADR 0001, 8.8) ----------
+  # The directory replaces known_subject in P2. DIR02 and DIR04 become active with the first pull request of the directory step
+  # (tables, routes, retention), DIR01 and DIR03 with the second (the readers move to the directory and known_subject is retired).
+  # Until then their tests are named plainly: the check reads comments too. ADM12 (P4) adds the roles, the rate limit and the lock.
+  - id: DIR01
+    statement: Subject search lists the entries of the directory of the service, of the requested subject type, that are allowed; an empty directory gives an empty result, an unknown subject is never found, entries of another service or type never appear, and pages neither skip nor repeat an entry.
+    oracle: the evaluation endpoint asked for each directory entry in turn; the entries written
+    level: pg
+    phase: P2
+    status: active
+  - id: DIR02
+    statement: A directory write changes only the rows whose content differs; an unchanged batch writes no row and takes no revision, and the time an entry was last sent is kept apart from the entry. The same id in two services is two independent entries.
+    oracle: the rows (xmin, updated_at) and revision_state before and after each write
+    level: pg
+    phase: P2
+    status: active
+  - id: DIR03
+    statement: The people a rule reaches (who-has-access, preview, the person page) are the entries of the directories of the services of the rule's types, decided with their stored properties; a service with an empty directory has no people, and the directory of another service is not counted.
+    oracle: hand-written sets of people from the fixture of DEC13 (who has access)
+    level: pg
+    phase: P2
+    status: active
+  - id: DIR04
+    statement: Retention removes, in chunks, the directory entries not sent within the retention period of their service; an entry sent again survives, a service with no retention period keeps everything, and other services are untouched.
+    oracle: the rows written and the times they were sent
+    level: pg
+    phase: P2
+    status: active
+
+  # ---------- OPS / API / LOAD / WEB ----------
+  - id: OPS01
+    statement: /healthz has no dependency; /readyz follows staleness, the schema (newer is fine), the store and draining.
+    oracle: probe results
+    level: unit
+    phase: P5
+    status: planned
+  - id: OPS02
+    statement: A rolling upgrade under AuthZEN load loses no request.
+    oracle: the load generator
+    level: helm
+    phase: P7
+    status: planned
+  - id: OPS03
+    statement: Admission answers 503 with Retry-After beyond the in-flight limit, probes are exempt, the request timeout applies.
+    oracle: status codes
+    level: unit
+    phase: P5
+    status: planned
+  - id: OPS04
+    statement: Migrations of PostgreSQL and of the CQL store started concurrently are applied once.
+    oracle: the schema versions
+    level: pg
+    phase: P3
+    status: planned
+  - id: OPS05
+    statement: A PDP in CQL mode connects only to the nodes of its data center and has no PostgreSQL credentials.
+    oracle: the sockets of the process (/proc/net/tcp)
+    level: system
+    phase: P6
+    status: planned
+  - id: OPS06
+    statement: Least privilege, checked by refused statements and by a list of every write path of each process (retention and the log settings included). The PDP's CQL role selects in its own region only, and in postgres mode its PostgreSQL role only selects; the applier writes the tables of its region and reads the log, and never creates or drops keyspaces (the migrate job creates the generation keyspaces up front); the writer writes the log; freeze uses an operator CQL role; the admin API has no CQL role, and its PostgreSQL role does not write the resource tables.
+    oracle: refused statements
+    level: system
+    phase: P6
+    status: planned
+  - id: OPS07
+    statement: The Helm chart renders the golden files, passes kubeconform, and does not render without its secrets.
+    oracle: golden files
+    level: helm
+    phase: P7
+    status: planned
+  - id: OPS08
+    statement: migrate on a database of v0.1.x refuses with a message that names the release and says there is no upgrade path; schema v2 keeps its versions in a goose table of its own.
+    oracle: the error and the untouched database
+    level: pg
+    phase: P3
+    status: planned
+  - id: OPS09
+    statement: The subject-hash salt is in no outbox entry, checkpoint or regional row, and every process hashes a subject to the same value from the same LOG__SUBJECT_SALT. Phase P5 covers the outbox and the decision log, P6 the checkpoints and the regional rows.
+    oracle: the replicated state and the decision log
+    level: system
+    phase: P5
+    status: planned
+  # API01 covers the two OpenAPI schemas in P2. Its clause for the CQL schema snapshot (one snapshot per engine, ADR 0001, 5.1) is
+  # added to the statement in P6, with the CQL store: it cannot hold before there is a CQL schema.
+  - id: API01
+    statement: The committed OpenAPI schemas (admin and PDP) match the code.
+    oracle: the generated schemas
+    level: unit
+    phase: P2
+    status: active
+  - id: API02
+    statement: Every message and API text has its translations.
+    oracle: the catalogs
+    level: unit
+    phase: P2
+    status: active
+  - id: API03
+    statement: Input bounds are enforced (sizes, counts, names).
+    oracle: status codes
+    level: unit
+    phase: P2
+    status: active
+  - id: LOAD01
+    statement: The load test gives no wrong answer.
+    oracle: admin-api/loadtest oracle (expectedAllowed)
+    level: load
+    phase: P2
+    status: active
+  - id: LOAD02
+    statement: p99, store reads per evaluation and CPU per 1k requests stay within their budgets, on both sides of the tolerance; a run better than its budget by more than the tolerance fails until the budget is set again (today the load test only asks for that in its report).
+    oracle: admin-api/loadtest/budgets.yaml
+    level: load
+    phase: P7
+    status: planned
+  - id: WEB01
+    statement: The BFF and the session are safe (Origin check, path sanitizing, encrypted session cookie); the PKCE verifier, the state and the nonce of the admin sign-in live in a short-lived encrypted cookie, not in Redis (authz:pkce:* today).
+    oracle: unit tests of the BFF
+    level: web
+    phase: P2
+    status: active
+  - id: WEB02
+    statement: The interface shows only what the caller's capabilities in the service allow.
+    oracle: rendered components with mocked capabilities
+    level: web
+    phase: P4
+    status: planned
+  - id: WEB03
+    statement: The AuthZEN request builders of the simulation and integration pages produce valid requests.
+    oracle: the specification
+    level: web
+    phase: P2
+    status: active

@@ -1,18 +1,6 @@
 'use client';
 
-import {
-  Alert,
-  Button,
-  Drawer,
-  Flex,
-  Input,
-  InputNumber,
-  Modal,
-  Segmented,
-  Table,
-  Tag,
-  Typography,
-} from 'antd';
+import { Alert, Button, Drawer, Flex, Input, Modal, Segmented, Table, Tag, Typography } from 'antd';
 import { Plus, X } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -124,9 +112,6 @@ export function SourcesTab() {
                       {s.config.kind === 'http' ? s.config.url : (s.config.dsn ?? '')}
                     </span>
                   </span>
-                  <span style={{ fontSize: 12, color: 'var(--licetum-muted)' }}>
-                    {t('sources.cache', { seconds: s.config.cache_ttl ?? '—' })}
-                  </span>
                 </Flex>
               );
             },
@@ -194,7 +179,6 @@ export function SourceDrawer(props: {
   const [listQuery, setListQuery] = useState('');
   const [parentsQuery, setParentsQuery] = useState('');
   const [parentsListQuery, setParentsListQuery] = useState('');
-  const [ttl, setTtl] = useState<number | null>(null);
   const [probe, setProbe] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [loaded, setLoaded] = useState<string | null>(null);
@@ -220,7 +204,6 @@ export function SourceDrawer(props: {
       setListQuery(c?.list_query ?? '');
       setParentsQuery(c?.parents_query ?? '');
       setParentsListQuery(c?.parents_list_query ?? '');
-      setTtl(c?.cache_ttl ?? null);
       setProbe('');
       setError(null);
       setReport(null);
@@ -254,7 +237,6 @@ export function SourceDrawer(props: {
             ...(parentsQuery.trim() ? { parents_query: parentsQuery.trim() } : {}),
             ...(parentsListQuery.trim() ? { parents_list_query: parentsListQuery.trim() } : {}),
           };
-    if (ttl !== null) config.cache_ttl = ttl;
     return config;
   };
 
@@ -467,22 +449,6 @@ export function SourceDrawer(props: {
           </>
         )}
 
-        {field(
-          t('sources.cacheTtl'),
-          <Flex align="center" gap={8}>
-            <InputNumber
-              min={0}
-              max={86400}
-              value={ttl}
-              onChange={(v) => setTtl(v)}
-              placeholder="10"
-              style={{ width: 120 }}
-              aria-label={t('sources.cacheTtl')}
-            />
-            <span>{t('sources.seconds')}</span>
-          </Flex>,
-          t('sources.cacheTtlHelp'),
-        )}
         {field(
           t('sources.probe'),
           <Input

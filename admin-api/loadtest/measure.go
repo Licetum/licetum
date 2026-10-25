@@ -66,13 +66,10 @@ type Measurement struct {
 	HostSwapPages  float64     `json:"host_swap_pages"`
 	Valid          bool        `json:"valid"`
 	InvalidReasons []string    `json:"invalid_reasons,omitempty"`
-	// Writes and Chaos are the admin writes and the faults of the window (scenarios E and H), with their effect on the
-	// requests around them.
+	// Writes are the admin writes of the window (scenario E), with their effect on the requests around them.
 	Writes        []WriteEvent `json:"writes,omitempty"`
 	WriteInterval float64      `json:"write_interval_seconds,omitempty"`
 	WriteEffect   *WriteEffect `json:"write_effect,omitempty"`
-	Chaos         []ChaosEvent `json:"faults,omitempty"`
-	ChaosEffect   *ChaosEffect `json:"fault_effect,omitempty"`
 	// Passed is the verdict of a ramp step, and nil for a window that is not a step: a valid window, the errors within the
 	// budget, p99 within the objective, and the answers keeping up with the rate. FailReasons says why a step failed.
 	Passed      *bool    `json:"passed,omitempty"`
@@ -107,6 +104,11 @@ func (m *Measurement) judgeMeasurement() {
 	if m.Oracle.Mismatches > 0 {
 		m.InvalidReasons = append(m.InvalidReasons, fmt.Sprintf("%d of %d sampled answers differ from the expected ones",
 			m.Oracle.Mismatches, m.Oracle.Checked))
+	}
+	// An oracle that got no decision to any question (an API key that is refused, a timeout) verified nothing: the
+	// absence of wrong answers means nothing then.
+	if m.Oracle.Checked > 0 && m.Oracle.Unanswered == m.Oracle.Checked {
+		m.InvalidReasons = append(m.InvalidReasons, fmt.Sprintf("the oracle got no answer to any of its %d questions: the answers were not verified", m.Oracle.Checked))
 	}
 	m.Valid = len(m.InvalidReasons) == 0
 }
