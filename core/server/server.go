@@ -372,7 +372,9 @@ func logRequestID(received string) string {
 		received = received[:requestIDMax]
 	}
 	quoted := strconv.QuoteToASCII(received)
-	return quoted[1 : len(quoted)-1]
+	// QuoteToASCII leaves no raw line break; logSafe is kept on top of it so that this value takes the same road as every
+	// other value that came from a client, which the log-injection check of CodeQL recognises.
+	return logSafe(quoted[1 : len(quoted)-1])
 }
 
 func logAndRecover(app *engine.App, next http.Handler) http.Handler {
