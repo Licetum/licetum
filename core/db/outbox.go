@@ -31,6 +31,8 @@ type Change struct {
 	Before    json.RawMessage
 	After     json.RawMessage
 	Touched   []Touched
+	Streams   []string
+	Services  []uuid.UUID
 }
 
 // Position is a global commit position. Revisions are gap-free within an epoch.

@@ -75,7 +75,7 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 		}
 		s.Config = s.Config.Masked()
 		out = s
-		return change{entity: "synchronizer", entityID: s.ID, serviceID: &serviceID, action: actionCreate, after: s}, nil
+		return change{move: move, entity: "synchronizer", entityID: s.ID, serviceID: &serviceID, action: actionCreate, after: s}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -169,7 +169,7 @@ func (a *App) DeleteSynchronizer(ctx context.Context, serviceID, typeResourceID,
 		if err != nil {
 			return change{}, err
 		}
-		return change{entity: "synchronizer", entityID: synchronizerID, serviceID: &serviceID, action: actionDelete,
+		return change{move: move, entity: "synchronizer", entityID: synchronizerID, serviceID: &serviceID, action: actionDelete,
 			before: old.Config.Masked()}, nil
 	})
 	if err != nil {

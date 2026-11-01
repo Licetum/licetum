@@ -1150,7 +1150,7 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 					return err
 				}
 				if changed {
-					return bumpDataRevisions(ctx, tx, g, []uuid.UUID{typeResourceID})
+					return publishData(ctx, tx, g, []uuid.UUID{typeResourceID})
 				}
 				return nil
 			})

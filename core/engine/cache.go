@@ -3,8 +3,13 @@ package engine
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/licetum/licetum/core/outbox"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -267,12 +272,38 @@ func (e *cachedEntry[T]) expiry() int64 { return e.Exp }
 
 func (e *cachedEntry[T]) holdTime() int64 { return e.Hold }
 
-// bumpDataRevisions moves the revision of the resource data of every service that owns one of the given types. It runs in
-// the transaction that wrote the data, so the revision cannot reach a reader before the data does.
-func bumpDataRevisions(ctx context.Context, q db.Querier, g *TypeGraph, typeIDs []uuid.UUID) error {
+// publishData writes the header-only P3 data entry after every entity/fence write.
+func publishData(ctx context.Context, tx pgx.Tx, g *TypeGraph, typeIDs []uuid.UUID) error {
 	if len(typeIDs) == 0 {
 		return nil
 	}
-	_, err := db.BumpRevision(ctx, q, db.ScopeGlobal)
+	services := dataAffectedServices(g, typeIDs)
+	streams := make([]string, 0, len(typeIDs))
+	for _, id := range typeIDs {
+		streams = append(streams, outbox.Data(id))
+	}
+	slices.Sort(streams)
+	streams = slices.Compact(streams)
+	_, err := db.TakeRevision(ctx, tx, outbox.Entry{Kind: outbox.Change, Services: services, Streams: streams})
 	return err
+}
+func dataAffectedServices(g *TypeGraph, typeIDs []uuid.UUID) []uuid.UUID {
+	owners := map[uuid.UUID]bool{}
+	for _, id := range typeIDs {
+		ids := []uuid.UUID{id}
+		for below := range g.DescendantsOf(id) {
+			ids = append(ids, below)
+		}
+		for _, id := range ids {
+			if n, ok := g.Node(id); ok {
+				owners[n.ServiceID] = true
+			}
+		}
+	}
+	out := make([]uuid.UUID, 0, len(owners))
+	for id := range owners {
+		out = append(out, id)
+	}
+	slices.SortFunc(out, func(a, b uuid.UUID) int { return compareUUID(a, b) })
+	return out
 }

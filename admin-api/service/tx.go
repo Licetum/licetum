@@ -14,6 +14,7 @@ import (
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/i18n"
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/outbox"
 )
 
 // Actions of the change log.
@@ -25,6 +26,7 @@ const (
 
 // change is one record of the change log: the entity a write touched, and what it was and what it became.
 type change struct {
+	move      *engine.ClosureMove
 	entity    string
 	entityID  uuid.UUID
 	serviceID *uuid.UUID // the service the entity belongs to; nil for the platform-wide entities
@@ -170,6 +172,12 @@ func publicationChanges(ctx context.Context, changes []change) ([]db.Change, err
 			}
 			for parent, present := range parents {
 				change.Touched = append(change.Touched, db.Touched{Table: "type_resource_parent", Key: map[string]any{"type_resource_id": c.entityID, "parent_id": parent}, ServiceID: owner, Deleted: !present})
+			}
+		}
+		if c.move != nil {
+			change.Services = c.move.Services
+			for _, id := range c.move.Types {
+				change.Streams = append(change.Streams, outbox.Data(id))
 			}
 		}
 		out = append(out, change)

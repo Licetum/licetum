@@ -249,6 +249,9 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 	err = a.syncTx(ctx, keys, func(tx pgx.Tx) error {
 		touched := map[uuid.UUID]struct{}{}
 		movedTypes = nil
+		if err := settle(ctx, tx, unanswered); err != nil {
+			return err
+		}
 		for _, c := range changed {
 			// A hash that differs does not mean the rows do: the database says what changed.
 			var rowsChanged bool
@@ -260,10 +263,6 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 			}
 		}
 		if err := rebuildClosure(ctx, tx, touched); err != nil {
-			return err
-		}
-		// The revision of the data of these services moves in the transaction that moved the data, and only when it moved.
-		if err := bumpDataRevisions(ctx, tx, g, movedTypes); err != nil {
 			return err
 		}
 		for _, st := range settled {
@@ -282,7 +281,7 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 				return err
 			}
 		}
-		return settle(ctx, tx, unanswered)
+		return publishData(ctx, tx, g, movedTypes)
 	})
 	if err != nil {
 		return nil, err

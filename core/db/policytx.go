@@ -57,6 +57,8 @@ func ProjectChanges(ctx context.Context, q outbox.Reader, changes []Change) (out
 	owners := []uuid.UUID{}
 	touched := map[string]Touched{}
 	for _, c := range changes {
+		entry.Streams = append(entry.Streams, c.Streams...)
+		entry.Services = append(entry.Services, c.Services...)
 		for _, t := range c.Touched {
 			key, err := json.Marshal(t.Key)
 			if err != nil {
@@ -101,8 +103,8 @@ func ProjectChanges(ctx context.Context, q outbox.Reader, changes []Change) (out
 		entry.Streams = append(entry.Streams, stream)
 	}
 	slices.Sort(entry.Streams)
-	var err error
-	entry.Services, err = outbox.ServicesBelow(ctx, q, owners)
+	affected, err := outbox.ServicesBelow(ctx, q, owners)
+	entry.Services = append(entry.Services, affected...)
 	return entry, err
 }
 

@@ -22,7 +22,10 @@ import (
 
 // ClosureMove says that ChangeMode rebuilt the closure of the resources of the type and of the types below it (a nil move:
 // there was nothing to rebuild). The caller hands it to AfterClosureMove once the transaction has committed.
-type ClosureMove struct{}
+type ClosureMove struct {
+	Types    []uuid.UUID
+	Services []uuid.UUID
+}
 
 // ChangeMode runs write, the creation or the deletion of the synchronizer of a type, in the transaction tx, and rebuilds the
 // closure of the resources of the type and of the resources below them (found by the declared links) before the transaction commits, under the lock of the
@@ -82,7 +85,11 @@ func (a *App) ChangeMode(ctx context.Context, tx db.Querier, typeID uuid.UUID, w
 		if err := rebuildClosure(ctx, tx, touched); err != nil {
 			return err
 		}
-		move = &ClosureMove{}
+		types := []uuid.UUID{typeID}
+		for id := range g.DescendantsOf(typeID) {
+			types = append(types, id)
+		}
+		move = &ClosureMove{Types: types, Services: dataAffectedServices(g, types)}
 		return nil
 	})
 	return move, modeChangeError(err)
