@@ -37,7 +37,7 @@ func TestContract_HIS01_BatchIsAtomicAndNamesTheFailingOperation(t *testing.T) {
 	w := newWorld(t)
 	role := "00000000-0000-4000-8000-0000000000a1"
 	status, raw := w.do("POST", w.admin.URL+"/batch", map[string]any{"operations": []map[string]any{
-		{"op": "create", "entity": "role", "id": role, "body": map[string]any{"name": "batch_role"}},
+		{"op": "create", "entity": "role", "id": role, "body": map[string]any{"service_id": w.org, "name": "batch_role"}},
 		{"op": "create", "entity": "role_permission", "parent": role,
 			"body": map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "access": []string{"read"}}},
 		{"op": "create", "entity": "assignment_rule", "body": map[string]any{"access": []string{"read"}}},
@@ -52,7 +52,7 @@ func TestContract_HIS01_BatchIsAtomicAndNamesTheFailingOperation(t *testing.T) {
 	// Each operation sees the writes of the ones before it: the item names the role created above it, and the
 	// role assignment grants the role to the subject.
 	res := w.must("POST", "/batch", map[string]any{"operations": []map[string]any{
-		{"op": "create", "entity": "role", "id": role, "body": map[string]any{"name": "batch_role"}},
+		{"op": "create", "entity": "role", "id": role, "body": map[string]any{"service_id": w.org, "name": "batch_role"}},
 		{"op": "create", "entity": "role_permission", "parent": role,
 			"body": map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "access": []string{"read"}}},
 		{"op": "create", "entity": "assignment_rule", "body": map[string]any{"role_id": role, "subject": hierarchySubject}},
@@ -128,7 +128,7 @@ func TestIntegrationRevertUndoesOneChangeOfTheLog(t *testing.T) {
 func TestIntegrationRollbackRestoresThePolicyAtAPosition(t *testing.T) {
 	w := newWorld(t)
 	keep := w.rule("branch", "B1", map[string]any{"subject": hierarchySubject})
-	role := w.must("POST", "/role", map[string]any{"name": "reader"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "reader"})["id"].(string)
 	item := w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B2", "access": []string{"read"}})["id"].(string)
 	roleRule := w.must("POST", "/assignment_rule", map[string]any{"role_id": role, "subject": hierarchySubject})["id"].(string)
@@ -139,7 +139,7 @@ func TestIntegrationRollbackRestoresThePolicyAtAPosition(t *testing.T) {
 	w.must("DELETE", "/assignment_rule/"+roleRule, nil)
 	w.must("DELETE", "/assignment_rule/"+keep, nil)
 	w.must("DELETE", "/role/"+role, nil)
-	group := w.must("POST", "/group", map[string]any{"name": "later"})["id"].(string)
+	group := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "later"})["id"].(string)
 	expectIDs(t, w.permission(w.org, nil), "branch")
 
 	// The dry run names what would be undone, newest first, and applies nothing.
@@ -196,7 +196,7 @@ func TestIntegrationChangeFeedWaitsForTheNextRecord(t *testing.T) {
 		answered <- body
 	}()
 	time.Sleep(300 * time.Millisecond)
-	w.must("POST", "/group", map[string]any{"name": "feed"})
+	w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "feed"})
 	select {
 	case body := <-answered:
 		if !strings.Contains(string(body), `"feed"`) {

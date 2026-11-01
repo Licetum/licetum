@@ -486,11 +486,11 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/group",
 		Summary:     "Create a group",
-		Description: "Group names are globally unique (409 on a duplicate).",
+		Description: "Group names are unique inside their service (409 on a duplicate).",
 		Tags:        []string{"Group"},
 		Errors:      []int{http.StatusConflict},
-	}, requireWholeType(model.PlatformGroup, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.GroupInput }) (*server.Out[*model.Group], error) {
-		out, err := h.app.CreateGroup(ctx, &in.Body)
+	}, requireWholeType(model.PlatformGroup, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.GroupCreateInput }) (*server.Out[*model.Group], error) {
+		out, err := h.app.CreateGroup(ctx, &model.GroupInput{Name: in.Body.Name, ServiceID: &in.Body.ServiceID})
 		if err != nil {
 			return nil, err
 		}
@@ -503,8 +503,14 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		Path:        "/group",
 		Summary:     "List groups",
 		Tags:        []string{"Group"},
-	}, requireAny(model.PlatformGroup, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.Group], error) {
-		out, err := h.app.ListGroups(ctx)
+	}, requireAny(model.PlatformGroup, model.ActionRead)), func(ctx context.Context, in *struct {
+		ServiceID uuid.UUID `query:"service_id" format:"uuid" required:"false"`
+	}) (*server.Out[[]model.Group], error) {
+		var owner *uuid.UUID
+		if in.ServiceID != uuid.Nil {
+			owner = &in.ServiceID
+		}
+		out, err := h.app.ListGroups(ctx, owner)
 		if err != nil {
 			return nil, err
 		}
@@ -627,11 +633,11 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/role",
 		Summary:     "Create a role",
-		Description: "A role is a named set of permissions: add them with the role permission endpoints, then grant the role with an assignment rule (role_id). Role names are globally unique (409 on a duplicate).",
+		Description: "A role is a named set of permissions: add them with the role permission endpoints, then grant the role with an assignment rule (role_id). Role names are unique inside their service (409 on a duplicate).",
 		Tags:        []string{"Role"},
 		Errors:      []int{http.StatusConflict},
-	}, requireWholeType(model.PlatformRole, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.RoleInput }) (*server.Out[*model.Role], error) {
-		out, err := h.app.CreateRole(ctx, &in.Body)
+	}, requireWholeType(model.PlatformRole, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.RoleCreateInput }) (*server.Out[*model.Role], error) {
+		out, err := h.app.CreateRole(ctx, &model.RoleInput{Name: in.Body.Name, ServiceID: &in.Body.ServiceID})
 		if err != nil {
 			return nil, err
 		}
@@ -644,8 +650,14 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 		Path:        "/role",
 		Summary:     "List roles",
 		Tags:        []string{"Role"},
-	}, requireAny(model.PlatformRole, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.Role], error) {
-		out, err := h.app.ListRoles(ctx)
+	}, requireAny(model.PlatformRole, model.ActionRead)), func(ctx context.Context, in *struct {
+		ServiceID uuid.UUID `query:"service_id" format:"uuid" required:"false"`
+	}) (*server.Out[[]model.Role], error) {
+		var owner *uuid.UUID
+		if in.ServiceID != uuid.Nil {
+			owner = &in.ServiceID
+		}
+		out, err := h.app.ListRoles(ctx, owner)
 		if err != nil {
 			return nil, err
 		}

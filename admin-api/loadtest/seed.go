@@ -189,7 +189,7 @@ func createPEPClient(ctx context.Context, e *env, _ Profile, fx *fixture) error 
 func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	fx.groups = make([]uuid.UUID, p.Groups)
 	for g := range p.Groups {
-		group, err := e.admin.CreateGroup(ctx, &model.GroupInput{Name: departmentName(g)})
+		group, err := e.admin.CreateGroup(ctx, &model.GroupInput{ServiceID: &fx.serviceID, Name: departmentName(g)})
 		if err != nil {
 			return fmt.Errorf("create group %s: %w", departmentName(g), err)
 		}

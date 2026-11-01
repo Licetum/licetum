@@ -352,7 +352,7 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 // salesWorld is the hierarchy world with a group of everyone from sales, and a person of it in the directory of the service org.
 func salesWorld(t *testing.T) (w *world, group string) {
 	w = newWorld(t)
-	group = w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	group = w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+group+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
 	w.sendPeople(w.org, person("dave", "Dave Sales", map[string]any{"department": "sales", "secret_claim": "x"}))
@@ -664,12 +664,14 @@ func TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsS
 		t.Fatalf("the rules were tried on %v people, want the 3 of the two directories", info["registry"])
 	}
 
-	// A role with items in both services reaches the people of both, a person of both counted once.
-	role := w.must("POST", "/role", map[string]any{"name": "both"})["id"].(string)
-	w.must("POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.branch, "access": []string{"read"}})
+	// Roles stay within one service; preview counts that service's directory only.
+	role := w.must("POST", "/role", map[string]any{"service_id": w.appSvc, "name": "app-readers"})["id"].(string)
+	w.expect(http.StatusUnprocessableEntity, "POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.branch, "access": []string{"read"}})
 	w.must("POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.item, "access": []string{"read"}})
 	w.sendPeople(w.appSvc, person("dave", "Dave of app", map[string]any{"department": "sales"}))
-	preview := w.must("POST", "/assignment_rule/preview", map[string]any{"role_id": role, "member_of_group_id": group})
+	appGroup := w.must("POST", "/group", map[string]any{"service_id": w.appSvc, "name": "app-sales"})["id"].(string)
+	w.must("POST", "/group/"+appGroup+"/member", map[string]any{"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
+	preview := w.must("POST", "/assignment_rule/preview", map[string]any{"role_id": role, "member_of_group_id": appGroup})
 	people := preview["people"].(map[string]any)
 	var sample []string
 	for _, p := range people["sample"].([]any) {

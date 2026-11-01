@@ -105,7 +105,8 @@ func TestRuleNameAndDescriptionAreStored(t *testing.T) {
 
 func TestChangeLogRecordsEveryWriteWithItsActorAndMasksSecrets(t *testing.T) {
 	e := setup(t)
-	group := e.must("POST", "/group/", map[string]any{"name": "auditors"})["id"].(string)
+	owner := e.newService("audit-owner")
+	group := e.must("POST", "/group/", map[string]any{"service_id": owner, "name": "auditors"})["id"].(string)
 	e.must("PATCH", "/group/"+group, map[string]any{"name": "auditors-2"})
 	e.must("DELETE", "/group/"+group, nil)
 
@@ -212,10 +213,10 @@ func TestWritesReturnARevisionThatReadsCanRequire(t *testing.T) {
 		t.Fatalf("a future revision: %d %s", status, raw)
 	}
 
-	// a read does not return a revision
+	// An authenticated administrative read reports its global read position.
 	status, header, _ = e.call(http.MethodGet, e.admin.URL+"/assignment_rule/", nil)
-	if status != http.StatusOK || header.Get("Licetum-Revision") != "" {
-		t.Fatalf("a read carries no revision: %d %q", status, header.Get("Licetum-Revision"))
+	if status != http.StatusOK || !strings.HasPrefix(header.Get("Licetum-Revision"), "1.") {
+		t.Fatalf("a read carries its epoch and revision: %d %q", status, header.Get("Licetum-Revision"))
 	}
 }
 

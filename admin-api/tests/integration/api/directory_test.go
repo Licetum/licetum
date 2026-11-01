@@ -238,7 +238,7 @@ func TestDirectoryRefusesWhatItCannotHold(t *testing.T) {
 func TestDirectoryListsPagesSearchesAndShowsTheGroupsOfAPerson(t *testing.T) {
 	e := setup(t)
 	s := e.newService("dir-list")
-	sales := e.must(http.MethodPost, "/group", map[string]any{"name": "sales"})["id"].(string)
+	sales := e.must(http.MethodPost, "/group", map[string]any{"service_id": s, "name": "sales"})["id"].(string)
 	e.must(http.MethodPost, "/group/"+sales+"/member", map[string]any{
 		"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
 

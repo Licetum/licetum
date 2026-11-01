@@ -30,12 +30,12 @@ export function useServices(enabled = true) {
   });
 }
 export function useGroups(enabled = true) {
-  return useListGroups({
+  return useListGroups(undefined, {
     query: { enabled, select: (r) => (r.status === 200 ? (r.data ?? []) : ([] as Group[])) },
   });
 }
 export function useRoles(enabled = true) {
-  return useListRoles({
+  return useListRoles(undefined, {
     query: { enabled, select: (r) => (r.status === 200 ? (r.data ?? []) : ([] as Role[])) },
   });
 }

@@ -459,6 +459,14 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		return id
 	}
 
+	owner := func(name string) *uuid.UUID {
+		if name == "" {
+			name = f.Services[0]
+		}
+		id := l.services[name]
+		return &id
+	}
+
 	for _, g := range accessGroups {
 		typeID := l.types[g.Type]
 		id := create(model.BatchAccessGroup, g.Type+"/@"+g.Name, &typeID, model.AccessGroupInput{Name: g.Name, Levels: g.Levels})
@@ -466,7 +474,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 	}
 	groups := map[string]uuid.UUID{}
 	for _, g := range f.Groups {
-		groups[g.Name] = create(model.BatchGroup, g.Name, nil, model.GroupInput{Name: g.Name})
+		groups[g.Name] = create(model.BatchGroup, g.Name, nil, model.GroupInput{ServiceID: owner(g.Service), Name: g.Name})
 		p.groups = append(p.groups, groups[g.Name])
 	}
 	for _, g := range f.Groups {
@@ -488,7 +496,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		}
 	}
 	for _, r := range f.Roles {
-		role := create(model.BatchRole, r.Name, nil, model.RoleInput{Name: r.Name})
+		role := create(model.BatchRole, r.Name, nil, model.RoleInput{ServiceID: owner(r.Service), Name: r.Name})
 		p.roles = append(p.roles, role)
 		for i := range r.Items {
 			item := &r.Items[i]

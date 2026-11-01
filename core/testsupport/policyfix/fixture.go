@@ -176,6 +176,7 @@ type AccessGroup struct {
 
 // Group is a union of people; its members are subjects, predicates over claims, or other groups.
 type Group struct {
+	Service string   `json:"service,omitempty"`
 	Name    string   `json:"name"`
 	Members []Member `json:"members,omitempty"`
 }
@@ -211,8 +212,9 @@ type FromClaim struct {
 
 // Role is a named set of permissions.
 type Role struct {
-	Name  string     `json:"name"`
-	Items []RoleItem `json:"items"`
+	Service string     `json:"service,omitempty"`
+	Name    string     `json:"name"`
+	Items   []RoleItem `json:"items"`
 }
 
 // RoleItem is a permission of a role.
@@ -458,12 +460,23 @@ func (f *Fixture) Validate() error {
 			}
 		}
 	}
+	ownerOf := func(service string) string {
+		if service == "" && len(f.Services) > 0 {
+			return f.Services[0]
+		}
+		return service
+	}
 	groups := map[string]bool{}
+	groupOwners := map[string]string{}
 	for _, g := range f.Groups {
+		if !slices.Contains(f.Services, ownerOf(g.Service)) {
+			bad("group %q: unknown service %q", g.Name, g.Service)
+		}
 		if groups[g.Name] {
 			bad("group %q twice", g.Name)
 		}
 		groups[g.Name] = true
+		groupOwners[g.Name] = ownerOf(g.Service)
 	}
 	for _, g := range f.Groups {
 		for _, m := range g.Members {
@@ -478,6 +491,9 @@ func (f *Fixture) Validate() error {
 			}
 			if m.Group != "" && !groups[m.Group] {
 				bad("group %q: unknown member group %q", g.Name, m.Group)
+			}
+			if m.Group != "" && groups[m.Group] && groupOwners[m.Group] != ownerOf(g.Service) {
+				bad("group %q: member group %q belongs to another service", g.Name, m.Group)
 			}
 		}
 	}
@@ -507,9 +523,15 @@ func (f *Fixture) Validate() error {
 	}
 	roles := map[string]bool{}
 	for _, r := range f.Roles {
+		if !slices.Contains(f.Services, ownerOf(r.Service)) {
+			bad("role %q: unknown service %q", r.Name, r.Service)
+		}
 		roles[r.Name] = true
 		for i := range r.Items {
 			checkTarget(fmt.Sprintf("role %q item %d", r.Name, i), &r.Items[i].Target)
+			if typ := types[r.Items[i].Type]; typ != nil && ownerOf(typ.Service) != ownerOf(r.Service) {
+				bad("role %q: item belongs to another service", r.Name)
+			}
 		}
 	}
 	accessGroups := map[string]bool{}

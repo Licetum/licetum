@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -214,21 +213,16 @@ func removedEnv() []string {
 	return env
 }
 
-// assertOneWarningEach checks that the output of a process that started with removedEnv carries exactly one warning per removed
-// setting: the processes that run for a long time (pdp, admin, worker) call the warning at their start, and a start that does
-// not call it would be silent for the operator who still sets the variables.
-func assertOneWarningEach(t *testing.T, output string) {
+// assertRemovedSettingsSilent checks that retired configuration has no startup warning mechanism.
+func assertRemovedSettingsSilent(t *testing.T, output string) {
 	t.Helper()
-	for _, name := range removedSettings {
-		re := regexp.MustCompile(`the setting no longer has an effect.*"?setting"?[=:]"?` + name + `\b`)
-		if n := len(re.FindAllString(output, -1)); n != 1 {
-			t.Errorf("%s: %d warnings, want 1; the output of the process:\n%s", name, n, output)
-		}
+	if strings.Contains(output, "the setting no longer has an effect") {
+		t.Errorf("removed settings must be ignored silently: %s", output)
 	}
 }
 
-// The three processes start with every removed setting set, and each of them logs one warning per setting.
-func TestProcessesStartWithTheRemovedSettingsAndWarnOnceForEach(t *testing.T) {
+// All three processes start with invalid values for removed settings and ignore them silently.
+func TestProcessesStartWithTheRemovedSettingsIgnoredSilently(t *testing.T) {
 	e := setup(t)
 	t.Run("pdp", func(t *testing.T) {
 		out := runUntilReady(t, buildBinary(t, coreModule, "./cmd/licetum"), func() ([]string, []string, string) {
@@ -236,20 +230,20 @@ func TestProcessesStartWithTheRemovedSettingsAndWarnOnceForEach(t *testing.T) {
 			return []string{"pdp", "-addr", public},
 				e.processEnv(append(removedEnv(), "PDP__PUBLIC_URL=http://"+public, "PDP__OPS_ADDR="+ops)...), "http://" + ops + "/readyz"
 		})
-		assertOneWarningEach(t, out.String())
+		assertRemovedSettingsSilent(t, out.String())
 	})
 	t.Run("worker", func(t *testing.T) {
 		out := runUntilReady(t, buildBinary(t, coreModule, "./cmd/licetum"), func() ([]string, []string, string) {
 			addr := freeAddr(t)
 			return []string{"worker", "-addr", addr}, e.processEnv(removedEnv()...), "http://" + addr + "/readyz"
 		})
-		assertOneWarningEach(t, out.String())
+		assertRemovedSettingsSilent(t, out.String())
 	})
 	t.Run("admin", func(t *testing.T) {
 		out := runUntilReady(t, buildBinary(t, adminModule, "./cmd/licetum-admin"), func() ([]string, []string, string) {
 			addr := freeAddr(t)
 			return []string{"admin", "-addr", addr}, e.processEnv(append(removedEnv(), e.adminAuthEnv()...)...), "http://" + addr + "/readyz"
 		})
-		assertOneWarningEach(t, out.String())
+		assertRemovedSettingsSilent(t, out.String())
 	})
 }

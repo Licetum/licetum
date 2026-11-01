@@ -106,6 +106,8 @@ export function PeopleScreen() {
   const [search, setSearch] = useQueryState('q');
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [owner, setOwner] = useState<string>();
+  const ownerId = owner ?? services.data?.[0]?.id;
   const [error, setError] = useState<unknown>(null);
 
   const canCreate = access.whole('group', 'write');
@@ -135,9 +137,10 @@ export function PeopleScreen() {
   }, [groups.data, members.byGroup, rules.data, groupNames, q, t]);
 
   const submit = async () => {
+    if (!ownerId) return;
     setError(null);
     try {
-      const res = await create.mutateAsync({ data: { name: name.trim() } });
+      const res = await create.mutateAsync({ data: { name: name.trim(), service_id: ownerId } });
       await refresh();
       setCreating(false);
       setName('');
@@ -217,6 +220,13 @@ export function PeopleScreen() {
             })}
             locale={{ emptyText: <EmptyBlock title={t('people.noMatch')} /> }}
             columns={[
+              {
+                title: t('ownership.service'),
+                key: 'service',
+                render: (_, r) =>
+                  services.data?.find((s) => s.id === r.group.service_id)?.name ??
+                  r.group.service_id,
+              },
               {
                 title: t('people.col.group'),
                 key: 'name',
@@ -342,7 +352,7 @@ export function PeopleScreen() {
         onCancel={() => setCreating(false)}
         okText={t('common.create')}
         cancelText={t('common.cancel')}
-        okButtonProps={{ disabled: !name.trim(), loading: create.isPending }}
+        okButtonProps={{ disabled: !name.trim() || !ownerId, loading: create.isPending }}
         onOk={() => void submit()}
         destroyOnHidden
       >
@@ -350,13 +360,21 @@ export function PeopleScreen() {
           {error != null && (
             <Alert type="error" showIcon title={errorDetail(error) ?? t('common.saveFailed')} />
           )}
+          <Select
+            aria-label={t('ownership.service')}
+            placeholder={t('ownership.service')}
+            value={ownerId}
+            onChange={setOwner}
+            loading={services.isPending}
+            options={(services.data ?? []).map((s) => ({ value: s.id, label: s.name }))}
+          />
           <Input
             autoFocus
             aria-label={t('people.nameLabel')}
             placeholder={t('people.namePlaceholder')}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onPressEnter={() => name.trim() && void submit()}
+            onPressEnter={() => name.trim() && ownerId && void submit()}
             className="mono"
           />
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>

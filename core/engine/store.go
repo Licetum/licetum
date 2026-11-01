@@ -63,13 +63,13 @@ func ScanAssignmentRule(row pgx.Row, extra ...any) (*model.AssignmentRule, error
 }
 
 // GroupMemberColumns are the columns scanGroupMember reads (enabled comes with the validity period).
-const GroupMemberColumns = `id, group_id, member_group_id, predicate, enabled, valid_from, expires_at`
+const GroupMemberColumns = `service_id,id, group_id, member_group_id, predicate, enabled, valid_from, expires_at`
 
 func ScanGroupMember(row pgx.Row) (*model.GroupMember, error) {
 	var m model.GroupMember
 	var memberGroup uuid.NullUUID
 	var predicate []byte
-	if err := row.Scan(&m.ID, &m.GroupID, &memberGroup, &predicate, &m.Enabled, &m.ValidFrom, &m.ExpiresAt); err != nil {
+	if err := row.Scan(&m.ServiceID, &m.ID, &m.GroupID, &memberGroup, &predicate, &m.Enabled, &m.ValidFrom, &m.ExpiresAt); err != nil {
 		return nil, err
 	}
 	m.MemberGroupID = NullUUID(memberGroup)
@@ -84,13 +84,13 @@ func ScanGroupMember(row pgx.Row) (*model.GroupMember, error) {
 
 // RolePermissionColumns are the columns scanRolePermission reads.
 const RolePermissionColumns = `rp.id, rp.role_id, rp.type_resource_id, rp.resource_id, rp.resource_from_claim, rp.access,
-	rp.resource_where`
+	rp.resource_where,rp.service_id`
 
 // ScanRolePermission reads the rolePermissionColumns columns plus any extra dest (if given).
 func ScanRolePermission(row pgx.Row, extra ...any) (*model.RolePermission, error) {
 	var p model.RolePermission
 	var fromClaim, where []byte
-	dest := append([]any{&p.ID, &p.RoleID, &p.TypeResourceID, &p.ResourceID, &fromClaim, &p.Access, &where}, extra...)
+	dest := append([]any{&p.ID, &p.RoleID, &p.TypeResourceID, &p.ResourceID, &fromClaim, &p.Access, &where, &p.ServiceID}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}

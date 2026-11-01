@@ -91,11 +91,16 @@ components:
         name:
           description: The name; a rule or an item refers to it as @name
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
         type_resource_id:
           description: Id of the resource type the group belongs to
           format: uuid
           type: string
       required:
+        - service_id
         - id
         - type_resource_id
         - name
@@ -1432,17 +1437,40 @@ components:
         name:
           description: Group name
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
       required:
+        - service_id
         - id
+        - name
+      type: object
+    GroupCreateInput:
+      additionalProperties: true
+      properties:
+        name:
+          description: Group name (unique inside its service)
+          type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
+      required:
+        - service_id
         - name
       type: object
     GroupInput:
       additionalProperties: true
       properties:
         name:
-          description: Group name (globally unique)
+          description: Group name (unique inside its service)
           examples:
             - sales
+          type: string
+        service_id:
+          description: Owning service; required on create and immutable
+          format: uuid
           type: string
       required:
         - name
@@ -1478,6 +1506,10 @@ components:
           type:
             - array
             - "null"
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
         valid_from:
           description: The membership starts at this moment; null — right away
           format: date-time
@@ -1485,6 +1517,7 @@ components:
             - string
             - "null"
       required:
+        - service_id
         - id
         - group_id
         - member_group_id
@@ -2751,17 +2784,40 @@ components:
         name:
           description: Role name
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
       required:
+        - service_id
         - id
+        - name
+      type: object
+    RoleCreateInput:
+      additionalProperties: true
+      properties:
+        name:
+          description: Role name (unique inside its service)
+          type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
+      required:
+        - service_id
         - name
       type: object
     RoleInput:
       additionalProperties: true
       properties:
         name:
-          description: Role name (globally unique)
+          description: Role name (unique inside its service)
           examples:
             - sales_manager
+          type: string
+        service_id:
+          description: Owning service; required on create and immutable
+          format: uuid
           type: string
       required:
         - name
@@ -2799,11 +2855,16 @@ components:
           description: Id of the role the item belongs to
           format: uuid
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
         type_resource_id:
           description: Resource type id
           format: uuid
           type: string
       required:
+        - service_id
         - id
         - role_id
         - type_resource_id
@@ -2840,7 +2901,7 @@ components:
             - array
             - "null"
         type_resource_id:
-          description: Id of the resource type the item applies to (of any service)
+          description: Id of the resource type the item applies to (of the role's service)
           format: uuid
           type: string
       required:
@@ -2881,7 +2942,7 @@ components:
           format: uuid
           type: string
         service_id:
-          description: Id of the service that owns the resource type
+          description: Owning service id
           format: uuid
           type: string
         service_name:
@@ -2898,10 +2959,10 @@ components:
           description: Resource type name
           type: string
       required:
-        - service_id
         - service_name
         - type_resource_name
         - target_valid
+        - service_id
         - id
         - role_id
         - type_resource_id
@@ -4223,6 +4284,13 @@ paths:
   /group:
     get:
       operationId: list_groups
+      parameters:
+        - explode: false
+          in: query
+          name: service_id
+          schema:
+            format: uuid
+            type: string
       responses:
         "200":
           content:
@@ -4288,13 +4356,13 @@ paths:
       tags:
         - Group
     post:
-      description: Group names are globally unique (409 on a duplicate).
+      description: Group names are unique inside their service (409 on a duplicate).
       operationId: create_group
       requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/GroupInput"
+              $ref: "#/components/schemas/GroupCreateInput"
         required: true
       responses:
         "200":
@@ -5251,6 +5319,13 @@ paths:
   /role:
     get:
       operationId: list_roles
+      parameters:
+        - explode: false
+          in: query
+          name: service_id
+          schema:
+            format: uuid
+            type: string
       responses:
         "200":
           content:
@@ -5316,13 +5391,13 @@ paths:
       tags:
         - Role
     post:
-      description: "A role is a named set of permissions: add them with the role permission endpoints, then grant the role with an assignment rule (role_id). Role names are globally unique (409 on a duplicate)."
+      description: "A role is a named set of permissions: add them with the role permission endpoints, then grant the role with an assignment rule (role_id). Role names are unique inside their service (409 on a duplicate)."
       operationId: create_role
       requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RoleInput"
+              $ref: "#/components/schemas/RoleCreateInput"
         required: true
       responses:
         "200":

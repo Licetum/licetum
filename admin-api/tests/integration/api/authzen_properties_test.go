@@ -30,10 +30,10 @@ type propertiesWorld struct {
 func newPropertiesWorld(t *testing.T) *propertiesWorld {
 	t.Helper()
 	w := newWorld(t)
-	group := w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	group := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+group+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
-	team := w.must("POST", "/group", map[string]any{"name": "team"})["id"].(string)
+	team := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "team"})["id"].(string)
 	w.must("POST", "/group/"+team+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "preferred_username", "op": "eq", "value": "alice"}}})
 	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1", "member_of_group_id": group, "access": []string{"read"}})

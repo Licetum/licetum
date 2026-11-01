@@ -182,7 +182,7 @@ func TestF4_6_AWaiterSeesARecordThatComesWhileItWaits(t *testing.T) {
 		done <- ids
 	}()
 	time.Sleep(300 * time.Millisecond)
-	w.must("POST", "/group", map[string]any{"name": "late"})
+	w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "late"})
 	select {
 	case ids := <-done:
 		if len(ids) == 0 {

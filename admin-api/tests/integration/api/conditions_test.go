@@ -221,7 +221,7 @@ func TestIntegrationClockConditionsReadTheHourOfTheDecision(t *testing.T) {
 
 func TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse(t *testing.T) {
 	w := newWorld(t)
-	auditors := w.must("POST", "/group", map[string]any{"name": "auditors"})["id"].(string)
+	auditors := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "auditors"})["id"].(string)
 	w.must("POST", "/group/"+auditors+"/member", map[string]any{
 		"predicate": []map[string]any{{"attr": "team", "op": "eq", "value": "audit"}}})
 	w.rule("branch", "", map[string]any{

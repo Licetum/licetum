@@ -17,14 +17,23 @@ func GroupSubject(groupID uuid.UUID) string {
 	return GroupSubjectPrefix + groupID.String()
 }
 
+// GroupCreateInput requires an owner when creating a service-scoped entity.
+type GroupCreateInput struct {
+	_         struct{}  `additionalProperties:"true"`
+	ServiceID uuid.UUID `json:"service_id" format:"uuid" doc:"Owning service id"`
+	Name      string    `json:"name" doc:"Group name (unique inside its service)"`
+}
+
 type GroupInput struct {
-	_    struct{} `additionalProperties:"true"`
-	Name string   `json:"name" doc:"Group name (globally unique)" example:"sales"`
+	ServiceID *uuid.UUID `json:"service_id" format:"uuid" required:"false" doc:"Owning service; required on create and immutable"`
+	_         struct{}   `additionalProperties:"true"`
+	Name      string     `json:"name" doc:"Group name (unique inside its service)" example:"sales"`
 }
 
 type Group struct {
-	ID   uuid.UUID `json:"id" format:"uuid" doc:"Group id"`
-	Name string    `json:"name" doc:"Group name"`
+	ServiceID uuid.UUID `json:"service_id" format:"uuid" doc:"Owning service id"`
+	ID        uuid.UUID `json:"id" format:"uuid" doc:"Group id"`
+	Name      string    `json:"name" doc:"Group name"`
 }
 
 // GroupMemberInput: either predicate (AND conditions over claims) or member_group_id
@@ -59,6 +68,7 @@ func (m *GroupMemberInput) Validate() error {
 }
 
 type GroupMember struct {
+	ServiceID     uuid.UUID            `json:"service_id" format:"uuid" doc:"Owning service id"`
 	ID            uuid.UUID            `json:"id" format:"uuid" doc:"Rule id"`
 	GroupID       uuid.UUID            `json:"group_id" format:"uuid" doc:"Id of the group the subject or group belongs to"`
 	MemberGroupID *uuid.UUID           `json:"member_group_id" format:"uuid" doc:"Nested group"`

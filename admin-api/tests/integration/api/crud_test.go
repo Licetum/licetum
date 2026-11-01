@@ -101,7 +101,7 @@ func TestGroupAndAssignmentRuleCRUDCoversValidationAndBlocking(t *testing.T) {
 	typeID := e.must(http.MethodPost, "/service/"+serviceID+"/type_resource", map[string]any{"name": "product"})["id"].(string)
 
 	// Create/list/update a group and a rule attached to a concrete type.
-	group := e.must(http.MethodPost, "/group", map[string]any{"name": "catalog-readers"})
+	group := e.must(http.MethodPost, "/group", map[string]any{"service_id": serviceID, "name": "catalog-readers"})
 	groupID := group["id"].(string)
 	status, raw := e.do(http.MethodGet, e.admin.URL+"/group", nil)
 	if status != http.StatusOK || !strings.Contains(string(raw), groupID) {
@@ -144,7 +144,8 @@ func TestGroupAndAssignmentRuleCRUDCoversValidationAndBlocking(t *testing.T) {
 
 func TestGroupMemberCRUDSupportsPredicateUpdateAndDelete(t *testing.T) {
 	e := setup(t)
-	role := e.must(http.MethodPost, "/group", map[string]any{"name": "regional-users"})["id"].(string)
+	serviceID := e.newService("group-members")
+	role := e.must(http.MethodPost, "/group", map[string]any{"service_id": serviceID, "name": "regional-users"})["id"].(string)
 
 	member := e.must(http.MethodPost, "/group/"+role+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "region", "op": "eq", "value": "north"}},

@@ -407,7 +407,7 @@ func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *tes
 	inItem := w.rule("branch", "", withEffect(claim("item_name", "item")))      // looks in item
 	throughItem := w.rule("branch", "", withEffect(claim("part_name", "part"))) // climbs from part through item to branch
 	inBranch := w.rule("branch", "", withEffect(claim("branch_name", "branch")))
-	role := w.must("POST", "/role", map[string]any{"name": "by-item"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "by-item"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "resource_from_claim": claim("item_name", "item")["resource_from_claim"]})
 

@@ -326,7 +326,7 @@ func (a *App) GetExistingTypeResourceAnyService(ctx context.Context, q db.Querie
 
 func (a *App) GetExistingGroup(ctx context.Context, q db.Querier, groupID uuid.UUID) (*model.Group, error) {
 	var g model.Group
-	err := q.QueryRow(ctx, `SELECT id, name FROM user_group WHERE id = $1`, groupID).Scan(&g.ID, &g.Name)
+	err := q.QueryRow(ctx, `SELECT service_id, id, name FROM user_group WHERE id = $1`, groupID).Scan(&g.ServiceID, &g.ID, &g.Name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound(i18n.GroupNotFound, groupID)
 	}
@@ -335,7 +335,7 @@ func (a *App) GetExistingGroup(ctx context.Context, q db.Querier, groupID uuid.U
 
 func (a *App) GetExistingRole(ctx context.Context, q db.Querier, roleID uuid.UUID) (*model.Role, error) {
 	var r model.Role
-	err := q.QueryRow(ctx, `SELECT id, name FROM role WHERE id = $1`, roleID).Scan(&r.ID, &r.Name)
+	err := q.QueryRow(ctx, `SELECT service_id, id, name FROM role WHERE id = $1`, roleID).Scan(&r.ServiceID, &r.ID, &r.Name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound(i18n.RoleNotFound, roleID)
 	}

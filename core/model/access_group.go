@@ -50,6 +50,7 @@ func ValidAccessGroupName(name string) bool {
 // AccessGroup is a named set of access levels of one resource type: a rule or a role item lists @name in its access
 // and gets the levels of the group.
 type AccessGroup struct {
+	ServiceID      uuid.UUID `json:"service_id" format:"uuid" doc:"Owning service id"`
 	ID             uuid.UUID `json:"id" format:"uuid" doc:"Access group id"`
 	TypeResourceID uuid.UUID `json:"type_resource_id" format:"uuid" doc:"Id of the resource type the group belongs to"`
 	Name           string    `json:"name" doc:"The name; a rule or an item refers to it as @name"`

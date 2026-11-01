@@ -25,8 +25,14 @@ func (a *App) CreateGroup(ctx context.Context, in *model.GroupInput) (*model.Gro
 func (a *App) createGroup(ctx context.Context, in *model.GroupInput, id *uuid.UUID) (*model.Group, error) {
 	var g model.Group
 	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
-		err := q.QueryRow(ctx, `INSERT INTO user_group (id, name) VALUES (COALESCE($2::uuid, gen_random_uuid()), $1) RETURNING id, name`,
-			in.Name, id).Scan(&g.ID, &g.Name)
+		if in.ServiceID == nil {
+			return change{}, apperr.Unprocessable(i18n.FieldRequired, "service_id")
+		}
+		if _, err := a.GetExistingService(ctx, q, *in.ServiceID); err != nil {
+			return change{}, err
+		}
+		err := q.QueryRow(ctx, `INSERT INTO user_group (id, name, service_id) VALUES (COALESCE($2::uuid, gen_random_uuid()), $1,$3) RETURNING service_id,id,name`,
+			in.Name, id, *in.ServiceID).Scan(&g.ServiceID, &g.ID, &g.Name)
 		if db.IsPrimaryKeyViolation(err) {
 			return change{}, idTaken(id)
 		}
@@ -36,7 +42,7 @@ func (a *App) createGroup(ctx context.Context, in *model.GroupInput, id *uuid.UU
 		if err != nil {
 			return change{}, err
 		}
-		return change{entity: "group", entityID: g.ID, action: actionCreate, after: g}, nil
+		return change{entity: "group", entityID: g.ID, serviceID: &g.ServiceID, action: actionCreate, after: g}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -44,8 +50,12 @@ func (a *App) createGroup(ctx context.Context, in *model.GroupInput, id *uuid.UU
 	return &g, nil
 }
 
-func (a *App) ListGroups(ctx context.Context) ([]model.Group, error) {
-	rows, err := a.DB.Query(ctx, `SELECT id, name FROM user_group ORDER BY name`)
+func (a *App) ListGroups(ctx context.Context, serviceID ...*uuid.UUID) ([]model.Group, error) {
+	var owner *uuid.UUID
+	if len(serviceID) > 0 {
+		owner = serviceID[0]
+	}
+	rows, err := a.DB.Query(ctx, `SELECT service_id,id,name FROM user_group WHERE ($1::uuid IS NULL OR service_id=$1) ORDER BY name,id`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -63,15 +73,18 @@ func (a *App) UpdateGroup(ctx context.Context, groupID uuid.UUID, in *model.Grou
 		if err != nil {
 			return change{}, err
 		}
-		err = q.QueryRow(ctx, `UPDATE user_group SET name = $2 WHERE id = $1 RETURNING id, name`, groupID, in.Name).
-			Scan(&g.ID, &g.Name)
+		if in.ServiceID != nil && *in.ServiceID != old.ServiceID {
+			return change{}, apperr.Unprocessable(i18n.ServiceOwnershipImmutable)
+		}
+		err = q.QueryRow(ctx, `UPDATE user_group SET name = $2 WHERE id = $1 RETURNING service_id,id,name`, groupID, in.Name).
+			Scan(&g.ServiceID, &g.ID, &g.Name)
 		if db.IsUniqueViolation(err) {
 			return change{}, apperr.Conflict(i18n.GroupNameTaken, in.Name)
 		}
 		if err != nil {
 			return change{}, err
 		}
-		return change{entity: "group", entityID: groupID, action: actionUpdate, before: old, after: g}, nil
+		return change{entity: "group", entityID: groupID, serviceID: &old.ServiceID, action: actionUpdate, before: old, after: g}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -111,7 +124,7 @@ func (a *App) DeleteGroup(ctx context.Context, groupID uuid.UUID) (uuid.UUID, er
 		if _, err := q.Exec(ctx, `DELETE FROM user_group WHERE id = $1`, groupID); err != nil {
 			return change{}, err
 		}
-		return change{entity: "group", entityID: groupID, action: actionDelete, before: old}, nil
+		return change{entity: "group", entityID: groupID, serviceID: &old.ServiceID, action: actionDelete, before: old}, nil
 	})
 	if err != nil {
 		return uuid.Nil, err
@@ -137,8 +150,18 @@ func (a *App) checkMemberGroup(ctx context.Context, q db.Querier, groupID uuid.U
 	if *in.MemberGroupID == groupID {
 		return apperr.BadRequest(i18n.GroupSelfNest)
 	}
-	_, err := a.GetExistingGroup(ctx, q, *in.MemberGroupID)
-	return err
+	parent, err := a.GetExistingGroup(ctx, q, groupID)
+	if err != nil {
+		return err
+	}
+	child, err := a.GetExistingGroup(ctx, q, *in.MemberGroupID)
+	if err != nil {
+		return err
+	}
+	if parent.ServiceID != child.ServiceID {
+		return apperr.Unprocessable(i18n.ServiceOwnershipMismatch)
+	}
+	return nil
 }
 
 func (a *App) CreateGroupMember(ctx context.Context, groupID uuid.UUID, in *model.GroupMemberInput) (*model.GroupMember, error) {
@@ -157,8 +180,8 @@ func (a *App) createGroupMember(ctx context.Context, groupID uuid.UUID, in *mode
 		}
 
 		created, err := engine.ScanGroupMember(q.QueryRow(ctx, `
-			INSERT INTO group_member (id, group_id, member_group_id, predicate, enabled, valid_from, expires_at)
-			VALUES (COALESCE($7::uuid, gen_random_uuid()), $1, $2, $3::jsonb, $4, $5, $6)
+			INSERT INTO group_member (service_id, id, group_id, member_group_id, predicate, enabled, valid_from, expires_at)
+			VALUES ((SELECT service_id FROM user_group WHERE id=$1),COALESCE($7::uuid, gen_random_uuid()), $1, $2, $3::jsonb, $4, $5, $6)
 			RETURNING `+engine.GroupMemberColumns,
 			groupID, engine.ToNullUUID(in.MemberGroupID), engine.MustJSON(in.Predicate), *in.Enabled, in.ValidFrom, in.ExpiresAt, id,
 		))
@@ -169,7 +192,7 @@ func (a *App) createGroupMember(ctx context.Context, groupID uuid.UUID, in *mode
 			return change{}, err
 		}
 		m = created
-		return change{entity: "group_member", entityID: m.ID, action: actionCreate, after: m}, nil
+		return change{entity: "group_member", entityID: m.ID, serviceID: &m.ServiceID, action: actionCreate, after: m}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -218,7 +241,7 @@ func (a *App) UpdateGroupMember(ctx context.Context, groupID, memberID uuid.UUID
 		if err != nil {
 			return change{}, err
 		}
-		return change{entity: "group_member", entityID: memberID, action: actionUpdate, before: old, after: m}, nil
+		return change{entity: "group_member", entityID: memberID, serviceID: &old.ServiceID, action: actionUpdate, before: old, after: m}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -235,7 +258,7 @@ func (a *App) DeleteGroupMember(ctx context.Context, groupID, memberID uuid.UUID
 		if _, err := q.Exec(ctx, `DELETE FROM group_member WHERE id = $1`, memberID); err != nil {
 			return change{}, err
 		}
-		return change{entity: "group_member", entityID: memberID, action: actionDelete, before: old}, nil
+		return change{entity: "group_member", entityID: memberID, serviceID: &old.ServiceID, action: actionDelete, before: old}, nil
 	})
 	if err != nil {
 		return uuid.Nil, err

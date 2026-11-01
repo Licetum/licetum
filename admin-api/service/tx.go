@@ -132,10 +132,6 @@ func publicationChanges(ctx context.Context, changes []change) ([]db.Change, err
 			table = "user_group"
 		}
 		owner := c.serviceID
-		if owner == nil && table != "log_settings" {
-			id := model.PlatformServiceID
-			owner = &id
-		}
 		key := map[string]any{"id": c.entityID}
 		var id *uuid.UUID
 		if c.entityID != uuid.Nil {
@@ -196,11 +192,6 @@ func snapshot(v any) (*string, error) {
 	}
 	s := string(raw)
 	return &s, nil
-}
-
-// uuidOrNull is NULL for the zero id (an entity without one, such as the log settings).
-func uuidOrNull(id uuid.UUID) uuid.NullUUID {
-	return uuid.NullUUID{UUID: id, Valid: id != uuid.Nil}
 }
 
 // serviceOfType returns the service that owns a resource type (nil when it has none).

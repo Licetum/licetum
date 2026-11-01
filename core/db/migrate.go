@@ -309,7 +309,7 @@ func seedPlatformType(ctx context.Context, tx pgx.Tx, dsn string, t model.Platfo
 }
 
 func seedAdminGroup(ctx context.Context, tx pgx.Tx, p config.Platform) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO user_group (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+	if _, err := tx.Exec(ctx, `INSERT INTO user_group (id, name,service_id) VALUES ($1, $2,(SELECT id FROM service WHERE slug='licetum')) ON CONFLICT (id) DO NOTHING`,
 		model.PlatformAdminGroupID, p.AdminGroupName); err != nil {
 		if IsUniqueViolation(err) {
 			return fmt.Errorf("a group named %q already exists — set another PLATFORM__ADMIN_GROUP_NAME", p.AdminGroupName)
@@ -326,8 +326,8 @@ func seedAdminGroup(ctx context.Context, tx pgx.Tx, p config.Platform) error {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO group_member (id, group_id, member_group_id, predicate, enabled)
-			VALUES ($1, $2, NULL, $3::jsonb, true)
+			INSERT INTO group_member (service_id,id, group_id, member_group_id, predicate, enabled)
+			VALUES ((SELECT service_id FROM user_group WHERE id=$2),$1, $2, NULL, $3::jsonb, true)
 			ON CONFLICT (id) DO NOTHING`,
 			model.PlatformAdminGroupMemberID, model.PlatformAdminGroupID, string(predicate),
 		); err != nil {

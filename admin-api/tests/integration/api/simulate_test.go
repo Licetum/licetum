@@ -45,7 +45,7 @@ func reasonOf(answer map[string]any) map[string]any {
 
 func TestSimulationAnswersLikeThePDPForThePropertiesGivenAndExplains(t *testing.T) {
 	w := newWorld(t)
-	sales := w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	sales := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+sales+"/member", map[string]any{"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
 	w.grant(map[string]any{"type_resource_id": w.branch, "member_of_group_id": sales, "access": []string{"write"}})
 	w.rule("division", "D1", nil)

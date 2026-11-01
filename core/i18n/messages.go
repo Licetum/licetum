@@ -9,9 +9,11 @@ package i18n
 // keep working.
 const (
 	// generic
-	InternalError    Key = "internal_error"
-	RouteNotFound    Key = "route_not_found"
-	ValidationFailed Key = "validation_failed"
+	ServiceOwnershipMismatch  Key = "service_ownership_mismatch"
+	ServiceOwnershipImmutable Key = "service_ownership_immutable"
+	InternalError             Key = "internal_error"
+	RouteNotFound             Key = "route_not_found"
+	ValidationFailed          Key = "validation_failed"
 	// availability: the 503 answers of a process that is not ready, cannot trust its copy of the policy, is overloaded or ran
 	// out of time for a request
 	NotReady          Key = "not_ready"
@@ -169,6 +171,8 @@ const (
 )
 
 var catalog = map[Key]Text{
+	ServiceOwnershipMismatch:  {EN: "Referenced entities must belong to the same service", RU: "Связанные сущности должны принадлежать одному сервису", ZH: "引用的实体必须属于同一服务"},
+	ServiceOwnershipImmutable: {EN: "The owning service cannot be changed", RU: "Сервис-владелец нельзя изменить", ZH: "不能更改所属服务"},
 	InternalError: {
 		EN: "Internal server error",
 		RU: "Внутренняя ошибка сервера",

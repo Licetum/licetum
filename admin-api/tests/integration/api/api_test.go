@@ -444,8 +444,8 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 		expectJSON(t, "synchronizer config", sync["config"], `{"kind":"http","url":"`+m+`/sync/`+s.kind+`"}`)
 	}
 
-	sales := e.must("POST", "/group/", map[string]any{"name": "sales"})["id"].(string)
-	managers := e.must("POST", "/group/", map[string]any{"name": "managers"})["id"].(string)
+	sales := e.must("POST", "/group/", map[string]any{"service_id": filials, "name": "sales"})["id"].(string)
+	managers := e.must("POST", "/group/", map[string]any{"service_id": filials, "name": "managers"})["id"].(string)
 	e.must("POST", "/group/"+sales+"/member/",
 		map[string]any{"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
 	e.must("POST", "/group/"+managers+"/member/", map[string]any{"member_group_id": sales})
@@ -539,7 +539,7 @@ func TestIntegrationSchemaValidation(t *testing.T) {
 	typeID := e.must("POST", "/service/"+svcID+"/type_resource/", map[string]any{"name": "t", "type_resource_parent_id": nil})["id"].(string)
 
 	// The frontend sends extra fields and explicit nulls — pydantic accepted them, so must Huma.
-	group := e.must("POST", "/group/", map[string]any{"name": "r1", "id": "ignored", "unknown": 1})
+	group := e.must("POST", "/group/", map[string]any{"service_id": svcID, "name": "r1", "id": "ignored", "unknown": 1})
 	if _, has := group["$schema"]; has {
 		t.Fatal("the response must not contain $schema")
 	}
@@ -708,7 +708,7 @@ func TestIntegrationPlatformPolicies(t *testing.T) {
 	}
 
 	// Without the self-service the admin API is closed to everyone.
-	if _, err := e.pool.Exec(context.Background(), `UPDATE service SET deleted_at = now() WHERE id = $1`,
+	if _, err := support.RawExec(context.Background(), e.pool, `UPDATE service SET deleted_at = now() WHERE id = $1`,
 		model.PlatformServiceID); err != nil {
 		t.Fatal(err)
 	}

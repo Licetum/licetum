@@ -11,7 +11,7 @@ import (
 // that the policy of the service reads.
 func TestPolicyPropertiesListWhatTheRulesRead(t *testing.T) {
 	w := newWorld(t)
-	group := w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	group := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+group+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
 	w.grant(map[string]any{"type_resource_id": w.branch, "member_of_group_id": group, "access": []string{"read"}, "requires_predicate": []any{

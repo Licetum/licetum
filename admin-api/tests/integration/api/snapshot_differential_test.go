@@ -172,12 +172,12 @@ func (g *policyGenerator) setup() {
 		{"predicate": []any{map[string]any{"attr": "region", "op": "in", "value": []any{"eu", "us"}}}},
 		{"predicate": []any{map[string]any{"attr": "preferred_username", "op": "regex", "value": "^user-[3-5]$"}}},
 	} {
-		id := w.must("POST", "/group", map[string]any{"name": fmt.Sprintf("g%d", i)})["id"].(string)
+		id := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": fmt.Sprintf("g%d", i)})["id"].(string)
 		g.groups = append(g.groups, id)
 		w.must("POST", "/group/"+id+"/member", member)
 	}
 	// g3 is nested: whoever is in g0 or g1 is in g3.
-	nested := w.must("POST", "/group", map[string]any{"name": "g3"})["id"].(string)
+	nested := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "g3"})["id"].(string)
 	g.groups = append(g.groups, nested)
 	w.must("POST", "/group/"+nested+"/member", map[string]any{"member_group_id": g.groups[0]})
 	w.must("POST", "/group/"+nested+"/member", map[string]any{"member_group_id": g.groups[1]})
@@ -190,10 +190,13 @@ func (g *policyGenerator) setup() {
 		"valid_from": time.Now().Add(4 * time.Second).UTC().Format(time.RFC3339)})
 
 	for i := range 3 {
-		role := w.must("POST", "/role", map[string]any{"name": fmt.Sprintf("role-%d", i)})["id"].(string)
+		role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": fmt.Sprintf("role-%d", i)})["id"].(string)
 		g.roles = append(g.roles, role)
 		for range 2 + g.rng.Intn(2) {
 			item := g.target(true)
+			for item["type_resource_id"] == w.item {
+				item = g.target(true)
+			}
 			w.must("POST", "/role/"+role+"/permission", item)
 		}
 	}

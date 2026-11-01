@@ -1,7 +1,7 @@
 'use client';
 
 import { useQueries } from '@tanstack/react-query';
-import { Alert, Button, Flex, Input, Modal, Table, Typography } from 'antd';
+import { Alert, Button, Flex, Input, Modal, Select, Table, Typography } from 'antd';
 import { Plus } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -14,19 +14,22 @@ import { EmptyBlock, errorDetail, ErrorBlock, LoadingBlock, PageHeader } from '@
 import { useAccess } from '@/lib/access';
 
 import { AccessTabs } from '../access/access-tabs';
-import { useRefreshAll, useRoles, useRules } from '../data/queries';
+import { useRefreshAll, useRoles, useRules, useServices } from '../data/queries';
 
 export function RolesScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const access = useAccess();
   const roles = useRoles();
+  const services = useServices();
   const rules = useRules();
   const create = useCreateRole();
   const refresh = useRefreshAll();
 
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [owner, setOwner] = useState<string>();
+  const ownerId = owner ?? services.data?.[0]?.id;
   const [error, setError] = useState<unknown>(null);
 
   const counts = useQueries({
@@ -42,9 +45,10 @@ export function RolesScreen() {
   const canCreate = access.whole('role', 'write');
 
   const submit = async () => {
+    if (!ownerId) return;
     setError(null);
     try {
-      const res = await create.mutateAsync({ data: { name: name.trim() } });
+      const res = await create.mutateAsync({ data: { name: name.trim(), service_id: ownerId } });
       await refresh();
       setCreating(false);
       setName('');
@@ -99,6 +103,12 @@ export function RolesScreen() {
           })}
           columns={[
             {
+              title: t('ownership.service'),
+              key: 'service',
+              render: (_, r) =>
+                services.data?.find((s) => s.id === r.service_id)?.name ?? r.service_id,
+            },
+            {
               title: t('roles.col.name'),
               key: 'name',
               render: (_, r) => (
@@ -140,7 +150,7 @@ export function RolesScreen() {
         title={t('roles.new')}
         okText={t('common.create')}
         cancelText={t('common.cancel')}
-        okButtonProps={{ disabled: !name.trim(), loading: create.isPending }}
+        okButtonProps={{ disabled: !name.trim() || !ownerId, loading: create.isPending }}
         onCancel={() => setCreating(false)}
         onOk={() => void submit()}
         destroyOnHidden
@@ -149,13 +159,21 @@ export function RolesScreen() {
           {error != null && (
             <Alert type="error" showIcon title={errorDetail(error) ?? t('common.saveFailed')} />
           )}
+          <Select
+            aria-label={t('ownership.service')}
+            placeholder={t('ownership.service')}
+            value={ownerId}
+            onChange={setOwner}
+            loading={services.isPending}
+            options={(services.data ?? []).map((s) => ({ value: s.id, label: s.name }))}
+          />
           <Input
             autoFocus
             aria-label={t('roles.nameLabel')}
             placeholder={t('roles.namePlaceholder')}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onPressEnter={() => name.trim() && void submit()}
+            onPressEnter={() => name.trim() && ownerId && void submit()}
           />
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
             {t('roles.nameHelp')}

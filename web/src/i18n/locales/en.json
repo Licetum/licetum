@@ -810,7 +810,7 @@
       "title": "No groups yet"
     },
     "findHint": "To look at someone who isn’t listed, open /people/<username>.",
-    "nameHelp": "Unique across the system. A group unites people by a sign — an access given to the group is received by all its members.",
+    "nameHelp": "Unique within the service. A group unites people by a sign — an access given to the group is received by all its members.",
     "nameLabel": "Group name",
     "namePlaceholder": "branch-managers",
     "noMatch": "Nothing found",
@@ -1148,7 +1148,7 @@
       "title": "No roles yet"
     },
     "grant": "Give the role…",
-    "nameHelp": "Unique across the system. A role is a named set of permissions: add permissions, then give the role to a group or a person.",
+    "nameHelp": "Unique within the service. A role is a named set of permissions: add permissions, then give the role to a group or a person.",
     "nameLabel": "Role name",
     "namePlaceholder": "Document editor",
     "new": "Create a role",
@@ -1526,5 +1526,8 @@
     "url": {
       "help": "Optional. Shown in the interface; Licetum does not request it."
     }
+  },
+  "ownership": {
+    "service": "Service"
   }
 }

@@ -19,7 +19,7 @@ import (
 
 func TestIntegrationPointWriterCannotPutAPlatformPolicyIntoARoleThroughABatch(t *testing.T) {
 	w := newWorld(t)
-	role := w.must("POST", "/role", map[string]any{"name": "carol-role"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "carol-role"})["id"].(string)
 	// Carol may write this one role, and nothing of the platform as a whole.
 	w.grant(map[string]any{"type_resource_id": model.PlatformTypeResourceID(model.PlatformRole).String(),
 		"resource_id": role, "subject": "carol", "access": []string{"write"}})
@@ -44,7 +44,7 @@ func TestIntegrationPointWriterChangesWhatARuleAppliesToButNotItsTarget(t *testi
 	w.grant(map[string]any{"type_resource_id": model.PlatformTypeResourceID(model.PlatformAssignmentRule).String(),
 		"resource_id": rule, "subject": "carol", "access": []string{"write"}})
 	carol := "Bearer " + w.token(jwt.MapClaims{"preferred_username": "carol"})
-	role := w.must("POST", "/role", map[string]any{"name": "any-role"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "any-role"})["id"].(string)
 	url := w.admin.URL + "/assignment_rule/" + rule
 
 	// Who the rule applies to and its levels are its own to change: the target stays B1.
@@ -68,7 +68,7 @@ func TestIntegrationPointWriterChangesWhatARuleAppliesToButNotItsTarget(t *testi
 func TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies(t *testing.T) {
 	w := newWorld(t)
 	w.rule("branch", "", map[string]any{"subject": hierarchySubject})
-	sales := w.must("POST", "/group", map[string]any{"name": "sales-team"})["id"].(string)
+	sales := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales-team"})["id"].(string)
 	w.must("POST", "/group/"+sales+"/member", map[string]any{
 		"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
 	// A new deny applies on a missing attribute: without the department claim the membership is unknown, so B1 stays
@@ -103,7 +103,7 @@ func TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute(t *test
 // changing its subject, which would give the platform policy to whoever the subject becomes.
 func TestIntegrationPointWriterCannotGiveItselfARoleWithAPlatformItem(t *testing.T) {
 	w := newWorld(t)
-	role := w.must("POST", "/role", map[string]any{"name": "platform-reader"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": model.PlatformServiceID, "name": "platform-reader"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": model.PlatformTypeResourceID(model.PlatformGroup).String(), "access": []string{"read"}})
 	rule := w.must("POST", "/assignment_rule", map[string]any{"role_id": role, "subject": "dave"})["id"].(string)

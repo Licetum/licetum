@@ -190,3 +190,11 @@ Dependencies are those of the core, plus what the HTTP layer needs (`huma/v2` an
 ## License
 
 GNU AGPL-3.0-only — see [`LICENSE`](LICENSE).
+
+### Service-owned groups and roles
+
+Groups and roles belong to one service. Creating either requires `service_id`; names are unique within that service.
+The owner cannot be changed. During P3 the routes remain `/group` and `/role`; use `?service_id=<uuid>` to filter their lists.
+Memberships, role items and access groups derive their owner from their parent. Nested groups and role items must refer to
+entities of the same service. Policy import resolves group and role names within the imported service, so another service's
+entities with the same names remain independent. The web create forms select the service and the lists show it.

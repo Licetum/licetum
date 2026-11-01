@@ -786,9 +786,12 @@ func (g *gen) member(i int, nested map[string]bool) policyfix.Member {
 // rolesAndItems writes two to four roles with one to four items each, of every kind of target.
 func (g *gen) rolesAndItems() {
 	for _, name := range roleNames[:g.between(2, 4)] {
-		role := policyfix.Role{Name: name}
+		role := policyfix.Role{Name: name, Service: g.f.Services[0]}
 		for range g.between(1, 4) {
 			t := g.target()
+			for g.service[t.Type] != role.Service {
+				t = g.target()
+			}
 			role.Items = append(role.Items, policyfix.RoleItem{Target: t, Access: g.access(t.Type, false)})
 		}
 		g.roles = append(g.roles, name)

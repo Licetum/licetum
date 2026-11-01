@@ -39,15 +39,17 @@ func (a *App) checkRuleTarget(ctx context.Context, q db.Querier, in *model.Assig
 // type of a claim; the target (see checkRuleTarget) when checkTarget is set; the group the rule is bound to and the
 // group the rule is guarded by.
 //
-// It returns the service the inline permission's type belongs to (nil for a role), which the change log records: the type is read
+// It returns the owner of the type or role, which the change log records: the target is read
 // once, for both. Every statement of a write is a round trip to the primary, and the admin API of a region that is not the
 // primary's pays the latency of the link for each.
 func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *model.AssignmentRuleInput, checkTarget bool) (*uuid.UUID, error) {
 	var serviceID *uuid.UUID
 	if in.RoleID != nil {
-		if _, err := a.GetExistingRole(ctx, q, *in.RoleID); err != nil {
+		role, err := a.GetExistingRole(ctx, q, *in.RoleID)
+		if err != nil {
 			return nil, err
 		}
+		serviceID = &role.ServiceID
 	} else {
 		var owner uuid.UUID
 		err := q.QueryRow(ctx, `SELECT service_id FROM type_resource WHERE id = $1 AND deleted_at IS NULL`, *in.TypeResourceID).Scan(&owner)
@@ -103,8 +105,6 @@ func whereParam(conds []model.PredicateCondition) *string {
 	s := engine.MustJSON(conds)
 	return &s
 }
-
-// ruleServiceID is the service a rule belongs to: the one that owns its resource type (none for a role rule).
 
 // onMissingOf is what a denial does when a condition reads an attribute the request does not carry (see
 // model.AssignmentRuleInput.OnMissingAttribute). Given explicitly, that is it. Otherwise a deny rule that was a deny
@@ -318,6 +318,13 @@ func (a *App) DeleteAssignmentRule(ctx context.Context, ruleID uuid.UUID) (uuid.
 			if err != nil {
 				return change{}, err
 			}
+		}
+		if old.RoleID != nil {
+			role, err := a.GetExistingRole(ctx, q, *old.RoleID)
+			if err != nil {
+				return change{}, err
+			}
+			serviceID = &role.ServiceID
 		}
 		return change{entity: "assignment_rule", entityID: ruleID, serviceID: serviceID, action: actionDelete,
 			before: old}, nil

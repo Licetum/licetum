@@ -297,7 +297,7 @@ func TestIntegrationTypeModes(t *testing.T) {
 	// A permission without resources for a role matched by the position claim: the type has no
 	// synchronizer, so it is returned as not_sync.
 	capability := w.typeResource(w.appSvc, "advanced_mode", "")
-	role := w.must("POST", "/group", map[string]any{"name": "advanced-users"})["id"].(string)
+	role := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "advanced-users"})["id"].(string)
 	w.must("POST", "/group/"+role+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "position", "op": "in", "value": []string{"manager"}}},
 	})

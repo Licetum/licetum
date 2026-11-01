@@ -31,7 +31,7 @@ type policyNames struct {
 }
 
 // loadPolicyNames reads the names of the resource types (as service/type), of the groups and of the roles.
-func (a *App) loadPolicyNames(ctx context.Context) (*policyNames, error) {
+func (a *App) loadPolicyNames(ctx context.Context, serviceID uuid.UUID) (*policyNames, error) {
 	types, err := a.namedRows(ctx, `
 		SELECT t.id, s.slug || '/' || t.name FROM type_resource t
 		JOIN service s ON s.id = t.service_id
@@ -39,11 +39,11 @@ func (a *App) loadPolicyNames(ctx context.Context) (*policyNames, error) {
 	if err != nil {
 		return nil, err
 	}
-	groups, err := a.namedRows(ctx, `SELECT id, name FROM user_group`)
+	groups, err := a.namedRows(ctx, `SELECT id, name FROM user_group WHERE service_id=$1`, serviceID)
 	if err != nil {
 		return nil, err
 	}
-	roles, err := a.namedRows(ctx, `SELECT id, name FROM role`)
+	roles, err := a.namedRows(ctx, `SELECT id, name FROM role WHERE service_id=$1`, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,8 +55,8 @@ func (a *App) loadPolicyNames(ctx context.Context) (*policyNames, error) {
 }
 
 // namedRows reads (id, name) rows into a map from the id to the name.
-func (a *App) namedRows(ctx context.Context, sql string) (map[uuid.UUID]string, error) {
-	rows, err := a.DB.Query(ctx, sql)
+func (a *App) namedRows(ctx context.Context, sql string, args ...any) (map[uuid.UUID]string, error) {
+	rows, err := a.DB.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (a *App) ExportPolicy(ctx context.Context, serviceID uuid.UUID) (*model.Pol
 	if err != nil {
 		return nil, err
 	}
-	names, err := a.loadPolicyNames(ctx)
+	names, err := a.loadPolicyNames(ctx, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -341,11 +341,11 @@ func (a *App) PlanPolicyImport(ctx context.Context, serviceID uuid.UUID, doc *mo
 	if err := checkDocumentNames(doc); err != nil {
 		return nil, err
 	}
-	names, err := a.loadPolicyNames(ctx)
+	names, err := a.loadPolicyNames(ctx, serviceID)
 	if err != nil {
 		return nil, err
 	}
-	im := &importer{a: a, names: names, plan: &model.PolicyImportPlan{Operations: []model.BatchOperation{}}}
+	im := &importer{serviceID: serviceID, a: a, names: names, plan: &model.PolicyImportPlan{Operations: []model.BatchOperation{}}}
 	if err := im.run(ctx, serviceID, doc, prune); err != nil {
 		return nil, err
 	}
@@ -400,9 +400,10 @@ const (
 
 // importer carries the state of one plan.
 type importer struct {
-	a     *App
-	names *policyNames
-	plan  *model.PolicyImportPlan
+	serviceID uuid.UUID
+	a         *App
+	names     *policyNames
+	plan      *model.PolicyImportPlan
 	// the new ids of the groups and roles the document creates, by name
 	groupIDs map[string]uuid.UUID
 	roleIDs  map[string]uuid.UUID
@@ -531,7 +532,7 @@ func (im *importer) roles(ctx context.Context, want []model.PolicyRole) error {
 		if !exists {
 			id = im.roleIDs[w.Name]
 			im.add(model.BatchOperation{Op: model.BatchCreate, Entity: model.BatchRole, ID: idOf(id),
-				Body: model.RoleInput{Name: w.Name}})
+				Body: model.RoleInput{ServiceID: &im.serviceID, Name: w.Name}})
 			im.tally(outcomeCreated)
 		} else {
 			items, err := im.a.ListRolePermissions(ctx, id)
@@ -617,7 +618,7 @@ func (im *importer) groups(ctx context.Context, want []model.PolicyGroup) error 
 		if !exists {
 			id = im.groupIDs[w.Name]
 			im.add(model.BatchOperation{Op: model.BatchCreate, Entity: model.BatchGroup, ID: idOf(id),
-				Body: model.GroupInput{Name: w.Name}})
+				Body: model.GroupInput{ServiceID: &im.serviceID, Name: w.Name}})
 			im.tally(outcomeCreated)
 			work = append(work, pending{id: id, members: w.Members})
 			continue

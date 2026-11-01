@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -181,8 +183,27 @@ func TestF5_10_ParallelMigrateRunsApplyEachMigrationOnce(t *testing.T) {
 	}
 	pool.Close()
 	want := readSeedState(ctx, t, aloneURI)
-	if want.appliedMigrations != int(db.LatestMigration()) {
-		t.Fatalf("the reference run applied %d migrations, the latest is %d", want.appliedMigrations, db.LatestMigration())
+	entries, err := os.ReadDir("../../../db/migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".sql") {
+			expected++
+		}
+	}
+	if want.appliedMigrations != expected {
+		t.Fatalf("applied %d migrations, catalog has %d", want.appliedMigrations, expected)
+	}
+	checkPool, err := db.Connect(ctx, cfg.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := db.SchemaVersion(ctx, checkPool)
+	checkPool.Close()
+	if err != nil || version != db.LatestMigration() {
+		t.Fatalf("schema version %d, want %d: %v", version, db.LatestMigration(), err)
 	}
 
 	const runs, rounds = 5, 4

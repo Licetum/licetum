@@ -96,10 +96,10 @@ func TestIntegrationLintNamesWhatDecidesNothingOrGrantsTooMuch(t *testing.T) {
 	w.rule("division", "", map[string]any{"access": []string{"read"}, "predicate": []any{}})
 	w.rule("branch", "B3", map[string]any{"subject": hierarchySubject, "access": []string{"read"}})
 	w.rule("branch", "B3", map[string]any{"subject": hierarchySubject, "access": []string{"read"}})
-	auditors := w.must("POST", "/group", map[string]any{"name": "auditors"})["id"].(string)
+	auditors := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "auditors"})["id"].(string)
 	w.rule("branch", "B4", map[string]any{"member_of_group_id": auditors, "access": []string{"read"}})
 	w.rule("branch", "B1", map[string]any{"subject": hierarchySubject, "access": []string{"read"}, "exception": true})
-	role := w.must("POST", "/role", map[string]any{"name": "unused-role"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "unused-role"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "access": []string{"read"}})
 	// The synchronizer of branch goes: the rule on B1 names a resource no synchronizer reports any more.
@@ -130,11 +130,11 @@ func TestIntegrationLintNamesWhatDecidesNothingOrGrantsTooMuch(t *testing.T) {
 
 func TestIntegrationPolicyExportImportsBackToTheSamePolicy(t *testing.T) {
 	w := newWorld(t)
-	auditors := w.must("POST", "/group", map[string]any{"name": "auditors"})["id"].(string)
+	auditors := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "auditors"})["id"].(string)
 	w.must("POST", "/group/"+auditors+"/member", map[string]any{
 		"predicate": []map[string]any{{"attr": "team", "op": "eq", "value": "audit"}}})
 	w.must("POST", w.typePath("branch")+"/access_group", map[string]any{"name": "editor", "levels": []string{"read", "write"}})
-	role := w.must("POST", "/role", map[string]any{"name": "reader"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "reader"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "access": []string{"read"}})
 	w.rule("branch", "B2", map[string]any{"subject": hierarchySubject, "access": []string{"@editor"}, "name": "branch-edit"})
