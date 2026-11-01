@@ -115,7 +115,7 @@ searches list the levels on a resource and the people who may use it.
   `owner` field, and conditions can read token claims, request context or the time of day.
 - **Time-bound access.** Start and expiry dates on rules and group memberships support temporary access.
 - **Policy as code.** Lint a service's policy, run test scenarios against it, export it as a
-  `licetum.policy/v1` document, and import it with a dry run first.
+  `licetum.policy/v2` document, and import it with a dry run first.
 - **History you can revert.** Every change is recorded with the entity before and after. A recorded change
   can be reverted on its own, or several can be rolled back as one batch.
 

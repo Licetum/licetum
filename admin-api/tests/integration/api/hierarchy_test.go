@@ -120,7 +120,7 @@ func (w *world) grant(rule map[string]any) string {
 	if _, ok := rule["access"]; !ok {
 		rule["access"] = []string{"read"}
 	}
-	if _, ok := rule["subject"]; !ok && rule["member_of_group_id"] == nil && rule["predicate"] == nil {
+	if _, ok := rule["subject"]; !ok && rule["member_of_group_id"] == nil && rule["subject_group_id"] == nil && rule["predicate"] == nil {
 		rule["subject"] = hierarchySubject
 	}
 	return w.must("POST", "/assignment_rule", rule)["id"].(string)

@@ -70,6 +70,7 @@ const (
 	LintRuleDuplicate             Key = "lint_rule_duplicate"
 	LintRoleUnused                Key = "lint_role_unused"
 	LintAccessGroupUnused         Key = "lint_access_group_unused"
+	PolicyV1NotImported           Key = "policy_v1_not_imported"
 	PolicyFormatInvalid           Key = "policy_format_invalid"
 	PolicyServiceMismatch         Key = "policy_service_mismatch"
 	PolicyNameDuplicate           Key = "policy_name_duplicate"
@@ -380,11 +381,10 @@ var catalog = map[Key]Text{
 		ZH: "规则 %s 向所有登录用户授予访问权限",
 	},
 	LintDenyMissingProperty: {
-		EN: "Rule %s denies on a claim that a token may lack: a token without it is denied",
-		RU: "Правило %s запрещает по клейму, которого может не быть в токене: токен без него получает запрет",
-		ZH: "规则 %s 依据可能缺失于令牌中的声明拒绝：没有该声明的令牌会被拒绝",
-	},
-	LintGroupEmpty: {
+		EN: "Rule %s denies on a property that a subject may lack: a subject without it is denied",
+		RU: "Правило %s запрещает доступ по свойству, которого может не быть у субъекта: без свойства доступ запрещён",
+		ZH: "规则 %s 依据主体可能缺少的属性拒绝访问：缺少该属性的主体会被拒绝",
+	}, LintGroupEmpty: {
 		EN: "Rule %s names a group that has no members: nobody gets through it",
 		RU: "Правило %s указывает группу без участников: через него никто не пройдёт",
 		ZH: "规则 %s 指向一个没有成员的组：没有人能通过它",
@@ -414,10 +414,15 @@ var catalog = map[Key]Text{
 		RU: "Группа действий %s не используется ни одним правилом и ни одним элементом роли",
 		ZH: "访问组 %s 未被任何规则或角色项使用",
 	},
+	PolicyV1NotImported: {
+		EN: "Documents in licetum.policy/v1 are not imported; use licetum.policy/v2",
+		RU: "Документы формата licetum.policy/v1 не импортируются; используйте licetum.policy/v2",
+		ZH: "不导入 licetum.policy/v1 文档；请使用 licetum.policy/v2",
+	},
 	PolicyFormatInvalid: {
-		EN: "The document format is %q: expected licetum.policy/v1",
-		RU: "Формат документа %q: ожидается licetum.policy/v1",
-		ZH: "文档格式为 %q：应为 licetum.policy/v1",
+		EN: "The document format is %q: expected licetum.policy/v2",
+		RU: "Формат документа %q: ожидается licetum.policy/v2",
+		ZH: "文档格式为 %q：应为 licetum.policy/v2",
 	},
 	PolicyServiceMismatch: {
 		EN: "The document is for the service %q, not for %q",

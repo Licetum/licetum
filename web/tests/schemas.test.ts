@@ -63,7 +63,7 @@ describe('what a person uploads', () => {
   const scenario = {
     name: 'alice reads documents',
     subject: 'alice',
-    claims: { preferred_username: 'alice' },
+    properties: { preferred_username: 'alice' },
     checks: [{ type: 'Document', action: 'read', expect: 'allow' }],
   };
 
@@ -87,7 +87,7 @@ describe('what a person uploads', () => {
   it('checks the envelope of a policy document and leaves the rest to the server', () => {
     expect(
       policyDocumentShapeSchema.safeParse({
-        format: 'licetum.policy/v1',
+        format: 'licetum.policy/v2',
         service: 'docs',
         rules: [],
       }).success,

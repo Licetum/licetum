@@ -109,7 +109,7 @@ again within it). Until the roles of the service arrive the routes need read or 
   `POST /changes/rollback` apply the undo through the batch (`dry_run` plans only).
 - `POST /service/{id}/policy/test` runs scenarios through the simulation, `GET /service/{id}/policy/lint` checks the
   rules, and `GET`/`POST /service/{id}/policy/export` and `import` move the whole policy as one document
-  (`licetum.policy/v1`).
+  (`licetum.policy/v2`).
 - `POST /assignment_rule/preview` says what a rule would do before it is saved.
 
 ## Languages

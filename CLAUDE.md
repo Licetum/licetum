@@ -652,7 +652,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
 - Policy tools (admin, read access on the service): `POST /service/{id}/policy/test` runs scenarios through the
   simulation and reports the rules that decided each answer and the coverage (`policy_tests.go`);
   `GET /service/{id}/policy/lint` (`lint.go`, messages in the request language); `GET /service/{id}/policy/export` and
-  `POST /service/{id}/policy/import?dry_run&prune` (`policy_document.go`). The document (`licetum.policy/v1`) names
+  `POST /service/{id}/policy/import?dry_run&prune` (`policy_document.go`). The document (`licetum.policy/v2`) names
   everything: a rule is matched by its name, or by its id when it is named `rule-<id>`. The import plans operations with
   the ids of new entities chosen up front, so one batch can name them.
 - A create that is given an id another entity has is refused with 409 (`idTaken`, `db.IsPrimaryKeyViolation`), so a

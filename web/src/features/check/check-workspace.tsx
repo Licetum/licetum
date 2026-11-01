@@ -70,7 +70,7 @@ export function CheckWorkspace() {
   const [mode, setMode] = useState<'one' | 'list'>(params.get('mode') === 'list' ? 'list' : 'one');
   const [serviceSlug, setServiceSlug] = useState(params.get('service') ?? '');
   const [subject, setSubject] = useState(params.get('subject') ?? '');
-  const [claims, setProperties] = useState<Pair[]>([]);
+  const [propertyPairs, setProperties] = useState<Pair[]>([]);
   const [context, setContext] = useState<Pair[]>([]);
   const [questions, setQuestions] = useState<Question[]>([
     question({
@@ -110,9 +110,9 @@ export function CheckWorkspace() {
   const rulesById = useMemo(() => new Map((rules.data ?? []).map((r) => [r.id, r])), [rules.data]);
 
   const ready = !!service && subject.trim() !== '';
-  // The claims of the person and the attributes of the request, as the simulation of the PDP takes them: the person's
-  // username is added by the PDP when the claims do not carry it.
-  const properties: Properties = propertiesOf(claims);
+  // The properties of the person and the attributes of the request, as the simulation of the PDP takes them: the person's
+  // username is added by the PDP when the properties do not carry it.
+  const properties: Properties = propertiesOf(propertyPairs);
   const attributes: Properties = propertiesOf(context);
 
   const run = async () => {
@@ -163,7 +163,7 @@ export function CheckWorkspace() {
         data: {
           name: `${subject.trim()} · ${q.type}${q.resource ? ` ${q.resource}` : ''} · ${q.action}`,
           subject: subject.trim(),
-          claims: { preferred_username: subject.trim(), ...properties },
+          properties: { preferred_username: subject.trim(), ...properties },
           context: attributes,
           checks: [
             {
@@ -250,7 +250,7 @@ export function CheckWorkspace() {
         <PairEditor
           label={t('check.attrs')}
           hint={t('check.attrsHint')}
-          pairs={claims}
+          pairs={propertyPairs}
           onChange={setProperties}
           keyPlaceholder="department"
           valuePlaceholder="sales"

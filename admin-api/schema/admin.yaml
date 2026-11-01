@@ -2092,9 +2092,9 @@ components:
             - array
             - "null"
         format:
-          description: "The version of the format: licetum.policy/v1"
+          description: "The version of the format: licetum.policy/v2"
           enum:
-            - licetum.policy/v1
+            - licetum.policy/v2
           type: string
         groups:
           description: Groups of subjects, with their memberships
@@ -2427,10 +2427,6 @@ components:
           maxItems: 100
           minItems: 1
           type: array
-        claims:
-          additionalProperties: {}
-          description: The properties of the subject (subject.properties of an AuthZEN request)
-          type: object
         context:
           additionalProperties: {}
           description: The attributes of the request
@@ -2442,11 +2438,20 @@ components:
           maxLength: 200
           minLength: 1
           type: string
+        properties:
+          additionalProperties: {}
+          description: The properties of the subject (subject.properties of an AuthZEN request)
+          type: object
         subject:
           description: The subject, named as the rules name it (preferred_username, or sub)
           examples:
             - alice
           minLength: 1
+          type: string
+        subject_type:
+          default: user
+          description: "Subject type used to match literal-subject rules: 1 to 64 characters, and not group"
+          maxLength: 64
           type: string
       required:
         - name
@@ -6925,7 +6930,7 @@ paths:
         - PEP
   /service/{service_id}/policy/export:
     get:
-      description: The rules of the service, the groups and roles they use (with the groups nested in them), and the access groups of the resource types involved, with names instead of ids (licetum.policy/v1). The document is what POST /service/{service_id}/policy/import takes back.
+      description: The rules of the service, the groups and roles they use (with the groups nested in them), and the access groups of the resource types involved, with names instead of ids (licetum.policy/v2). The document is what POST /service/{service_id}/policy/import takes back.
       operationId: export_policy
       parameters:
         - description: Service id

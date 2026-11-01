@@ -22,11 +22,16 @@ func (a *App) RunPolicyTests(ctx context.Context, serviceID uuid.UUID, in *model
 	report := &model.PolicyTestReport{Cases: []model.PolicyTestCaseResult{}}
 	decided := map[string]bool{}
 	for _, c := range in.Cases {
+		subject, err := model.PrepareSubject(c.SubjectType, c.Subject, c.Properties)
+		if err != nil {
+			return nil, err
+		}
+
 		requests := make([]model.CheckRequest, len(c.Checks))
 		for i, check := range c.Checks {
 			requests[i] = model.CheckRequest{Type: check.Type, ResourceID: check.ResourceID, Action: check.Action}
 		}
-		results, err := a.CheckAccess(ctx, serviceID, c.Subject, engine.NewEnv(c.Properties, c.Context), requests, true, engine.HigherConsistency)
+		results, err := a.CheckAccess(ctx, serviceID, c.Subject, engine.NewEnv(engine.Properties(subject.Properties), c.Context).WithSubjectType(subject.Type), requests, true, engine.HigherConsistency)
 		if err != nil {
 			return nil, err
 		}

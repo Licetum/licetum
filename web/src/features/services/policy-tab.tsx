@@ -380,7 +380,8 @@ function TestEditor(props: {
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [subject, setSubject] = useState('');
-  const [claims, setProperties] = useState<{ k: string; v: string }[]>([]);
+  const [subjectType, setSubjectType] = useState('user');
+  const [properties, setProperties] = useState<{ k: string; v: string }[]>([]);
   const [checks, setChecks] = useState<
     { type?: string; resource: string; action: string; expect: 'allow' | 'deny' }[]
   >([{ resource: '', action: 'read', expect: 'allow' }]);
@@ -389,6 +390,7 @@ function TestEditor(props: {
     name.trim() &&
     !props.existing.includes(name.trim()) &&
     subject.trim() &&
+    subjectType.trim() !== 'group' &&
     checks.every((c) => c.type && c.action.trim());
   return (
     <Modal
@@ -404,6 +406,7 @@ function TestEditor(props: {
         if (open) {
           setName('');
           setSubject('');
+          setSubjectType('user');
           setProperties([]);
           setChecks([{ resource: '', action: 'read', expect: 'allow' }]);
         }
@@ -412,9 +415,12 @@ function TestEditor(props: {
         props.onSave({
           name: name.trim(),
           subject: subject.trim(),
-          claims: {
+          subject_type: subjectType.trim() || 'user',
+          properties: {
             preferred_username: subject.trim(),
-            ...Object.fromEntries(claims.filter((c) => c.k.trim()).map((c) => [c.k.trim(), c.v])),
+            ...Object.fromEntries(
+              properties.filter((c) => c.k.trim()).map((c) => [c.k.trim(), c.v]),
+            ),
           },
           checks: checks.map((c) => ({
             type: c.type!,
@@ -440,6 +446,14 @@ function TestEditor(props: {
           className="mono"
           style={{ maxWidth: 240 }}
         />
+        <Input
+          aria-label={t('grant.who.subjectType')}
+          value={subjectType}
+          onChange={(e) => setSubjectType(e.target.value)}
+          maxLength={64}
+          placeholder="user"
+          style={{ maxWidth: 240 }}
+        />
         <Collapse
           ghost
           size="small"
@@ -449,7 +463,7 @@ function TestEditor(props: {
               label: t('check.attrs'),
               children: (
                 <Flex vertical gap={8}>
-                  {claims.map((c, i) => (
+                  {properties.map((c, i) => (
                     <Flex key={i} gap={8}>
                       <Input
                         aria-label={t('cond.attr')}
@@ -458,7 +472,7 @@ function TestEditor(props: {
                         value={c.k}
                         onChange={(e) =>
                           setProperties(
-                            claims.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)),
+                            properties.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)),
                           )
                         }
                       />
@@ -468,7 +482,7 @@ function TestEditor(props: {
                         value={c.v}
                         onChange={(e) =>
                           setProperties(
-                            claims.map((x, j) => (j === i ? { ...x, v: e.target.value } : x)),
+                            properties.map((x, j) => (j === i ? { ...x, v: e.target.value } : x)),
                           )
                         }
                       />
@@ -476,14 +490,14 @@ function TestEditor(props: {
                         type="text"
                         aria-label={t('cond.remove')}
                         icon={<X size={14} aria-hidden />}
-                        onClick={() => setProperties(claims.filter((_, j) => j !== i))}
+                        onClick={() => setProperties(properties.filter((_, j) => j !== i))}
                       />
                     </Flex>
                   ))}
                   <div>
                     <Button
                       size="small"
-                      onClick={() => setProperties([...claims, { k: '', v: '' }])}
+                      onClick={() => setProperties([...properties, { k: '', v: '' }])}
                     >
                       {t('check.addAttr')}
                     </Button>

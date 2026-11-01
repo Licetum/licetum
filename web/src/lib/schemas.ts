@@ -71,19 +71,27 @@ const policyTestCheckSchema = z.object({
 });
 
 /** A scenario of the policy tests (`PolicyTestCase` of the API). */
-export const policyTestCaseSchema = z.object({
-  name: z.string().min(1).max(200),
-  subject: z.string().min(1),
-  claims: z.record(z.string(), z.unknown()).optional(),
-  context: z.record(z.string(), z.unknown()).optional(),
-  checks: z.array(policyTestCheckSchema).min(1).max(100),
-});
+export const policyTestCaseSchema = z
+  .object({
+    subject_type: z
+      .string()
+      .min(1)
+      .max(64)
+      .refine((v) => v !== 'group')
+      .optional(),
+    name: z.string().min(1).max(200),
+    subject: z.string().min(1),
+    properties: z.record(z.string(), z.unknown()).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
+    checks: z.array(policyTestCheckSchema).min(1).max(100),
+  })
+  .strict();
 export type PolicyTestCaseValue = z.infer<typeof policyTestCaseSchema>;
 
 /** A file of scenarios: `{ "cases": [...] }`. */
 export const policyTestFileSchema = z.object({ cases: z.array(policyTestCaseSchema) });
 
-/** A policy document (`licetum.policy/v1`) as far as the browser checks it; the server validates the rest on import. */
+/** A policy document (`licetum.policy/v2`) as far as the browser checks it; the server validates the rest on import. */
 export const policyDocumentShapeSchema = z
   .object({ format: z.string(), service: z.string() })
   .loose();

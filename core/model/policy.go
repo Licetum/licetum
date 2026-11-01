@@ -20,11 +20,12 @@ type PolicyTestCheck struct {
 
 // PolicyTestCase is a scenario: a subject with the properties and the request attributes it has, and the answers it must get.
 type PolicyTestCase struct {
-	Name       string            `json:"name" minLength:"1" maxLength:"200" doc:"What the scenario is about" example:"sales read the branches"`
-	Subject    string            `json:"subject" minLength:"1" doc:"The subject, named as the rules name it (preferred_username, or sub)" example:"alice"`
-	Properties map[string]any    `json:"claims,omitempty" doc:"The properties of the subject (subject.properties of an AuthZEN request)"`
-	Context    RequestContext    `json:"context,omitempty" doc:"The attributes of the request"`
-	Checks     []PolicyTestCheck `json:"checks" minItems:"1" maxItems:"100" nullable:"false" doc:"The answers the scenario must get"`
+	SubjectType string            `json:"subject_type,omitempty" required:"false" default:"user" maxLength:"64" doc:"Subject type used to match literal-subject rules: 1 to 64 characters, and not group"`
+	Name        string            `json:"name" minLength:"1" maxLength:"200" doc:"What the scenario is about" example:"sales read the branches"`
+	Subject     string            `json:"subject" minLength:"1" doc:"The subject, named as the rules name it (preferred_username, or sub)" example:"alice"`
+	Properties  map[string]any    `json:"properties,omitempty" doc:"The properties of the subject (subject.properties of an AuthZEN request)"`
+	Context     RequestContext    `json:"context,omitempty" doc:"The attributes of the request"`
+	Checks      []PolicyTestCheck `json:"checks" minItems:"1" maxItems:"100" nullable:"false" doc:"The answers the scenario must get"`
 }
 
 // PolicyScenario is a stored scenario of a service.
@@ -94,12 +95,12 @@ type LintReport struct {
 }
 
 // PolicyDocumentFormat is the version of the policy document.
-const PolicyDocumentFormat = "licetum.policy/v1"
+const PolicyDocumentFormat = "licetum.policy/v2"
 
 // PolicyDocument is the policy of one service in a file. Resource types are named service/type, groups and roles by
 // their names, and a rule by its name (a rule without one is named rule-<id>, and is matched by its id).
 type PolicyDocument struct {
-	Format       string              `json:"format" enum:"licetum.policy/v1" doc:"The version of the format: licetum.policy/v1"`
+	Format       string              `json:"format" enum:"licetum.policy/v2" doc:"The version of the format: licetum.policy/v2"`
 	Service      string              `json:"service" doc:"The slug of the service whose rules the document holds; an import for another service is refused" example:"org"`
 	AccessGroups []PolicyAccessGroup `json:"access_groups" required:"false" nullable:"true" doc:"Named sets of access levels of resource types"`
 	Groups       []PolicyGroup       `json:"groups" required:"false" nullable:"true" doc:"Groups of subjects, with their memberships"`

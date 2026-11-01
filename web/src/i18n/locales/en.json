@@ -985,7 +985,7 @@
       "choose": "Choose a file",
       "dry": "Show what will change",
       "export": "Download the policy",
-      "hint": "The whole policy of the service as one file with names instead of ids: groups with their members, roles, level sets and accesses. It can be kept next to the code and applied to another environment.",
+      "hint": "Rules, service-owned groups and roles, and access groups as a licetum.policy/v2 document with names instead of ids. Keep it with the code and apply it to another environment. Documents in licetum.policy/v1 are not imported.",
       "import": "Apply a document",
       "noChanges": "Nothing to change: the service already matches the document.",
       "paste": "Or paste the document here",

@@ -324,6 +324,9 @@ func (n *policyNames) rule(r model.AssignmentRule) model.PolicyRule {
 // document does not have are deleted. The ids of the new entities are chosen here, so that the operations of the same
 // batch can name them.
 func (a *App) PlanPolicyImport(ctx context.Context, serviceID uuid.UUID, doc *model.PolicyDocument, prune bool) (*model.PolicyImportPlan, error) {
+	if doc.Format == "licetum.policy/v1" {
+		return nil, apperr.Unprocessable(i18n.PolicyV1NotImported)
+	}
 	if doc.Format != model.PolicyDocumentFormat {
 		return nil, apperr.Unprocessable(i18n.PolicyFormatInvalid, doc.Format)
 	}

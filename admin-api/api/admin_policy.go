@@ -148,7 +148,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service/{service_id}/policy/export",
 		Summary:     "Export the policy of a service as a document",
-		Description: "The rules of the service, the groups and roles they use (with the groups nested in them), and the access groups of the resource types involved, with names instead of ids (licetum.policy/v1). The document is what POST /service/{service_id}/policy/import takes back.",
+		Description: "The rules of the service, the groups and roles they use (with the groups nested in them), and the access groups of the resource types involved, with names instead of ids (licetum.policy/v2). The document is what POST /service/{service_id}/policy/import takes back.",
 		Tags:        []string{"Policy"},
 	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *ServicePath) (*server.Out[*model.PolicyDocument], error) {
 		out, err := h.app.ExportPolicy(ctx, in.ServiceID)
@@ -160,6 +160,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 
 	server.Register(api, withPolicy(huma.Operation{
 		OperationID: "import_policy",
+		Middlewares: huma.Middlewares{rejectPolicyV1},
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/policy/import",
 		Summary:     "Import a policy document",
