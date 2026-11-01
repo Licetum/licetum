@@ -272,7 +272,7 @@ func (c *Cluster) DataRevision(serviceID string) int64 {
 	if err != nil {
 		c.T.Fatalf("read the revisions: %v", err)
 	}
-	return rev.Data[serviceID]
+	return rev.Rules
 }
 
 // Token signs a token of the fake identity provider.

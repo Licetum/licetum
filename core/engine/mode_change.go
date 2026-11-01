@@ -82,13 +82,6 @@ func (a *App) ChangeMode(ctx context.Context, tx db.Querier, typeID uuid.UUID, w
 		if err := rebuildClosure(ctx, tx, touched); err != nil {
 			return err
 		}
-		types := []uuid.UUID{typeID}
-		for id := range g.DescendantsOf(typeID) {
-			types = append(types, id)
-		}
-		if err := bumpDataRevisions(ctx, tx, g, types); err != nil {
-			return err
-		}
 		move = &ClosureMove{}
 		return nil
 	})

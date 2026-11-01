@@ -79,7 +79,7 @@ func TestPEPRevokingAKeyFreesASlot(t *testing.T) {
 	}
 }
 
-func TestPEPWritesMoveTheScopePEPAndNotTheRules(t *testing.T) {
+func TestPEPWritesMoveTheGlobalRevision(t *testing.T) {
 	pool, service := newPEPPool(t)
 	ctx := context.Background()
 	client := apiKeyClient(t, pool, service, "gateway")
@@ -96,11 +96,11 @@ func TestPEPWritesMoveTheScopePEPAndNotTheRules(t *testing.T) {
 	if after.PEP != before.PEP+1 {
 		t.Errorf("a key issue moved the pep scope from %d to %d, want one step", before.PEP, after.PEP)
 	}
-	if after.Rules != before.Rules {
-		t.Errorf("a key issue moved the rules scope from %d to %d, want no change", before.Rules, after.Rules)
+	if after.Rules != before.Rules+1 {
+		t.Errorf("a key issue moved the rules scope from %d to %d, want one step", before.Rules, after.Rules)
 	}
 
-	// The other way round: a rules write leaves the pep scope where it is.
+	// A policy write moves the same global revision as a PEP write.
 	if _, err := db.BumpRevision(ctx, pool, db.ScopeRules); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestPEPWritesMoveTheScopePEPAndNotTheRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.PEP != after.PEP {
+	if again.PEP != after.PEP+1 {
 		t.Errorf("a rules write moved the pep scope from %d to %d", after.PEP, again.PEP)
 	}
 }

@@ -141,7 +141,7 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return rev.Data[org], rev.Data[squads]
+		return rev.Rules, rev.Rules
 	}
 	orgBefore, squadsBefore := revisions()
 
@@ -149,9 +149,9 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 	src.Set("squad", map[string]any{"id": "Q1", "name": "Squad 1", "parent_id": "T2"})
 	e.must("POST", "/type_resource/"+types["squad"]+"/resource/refresh", nil)
 	orgAfter, squadsAfter := revisions()
-	// Only the data of the squads' service moved: the cached answers are dropped only if they recorded it.
-	if squadsAfter <= squadsBefore || orgAfter != orgBefore {
-		t.Fatalf("data revisions: org %d -> %d, squads %d -> %d; want only the squads' to move",
+	// In P3 the synchronization moves the global revision for every service.
+	if squadsAfter <= squadsBefore || orgAfter <= orgBefore {
+		t.Fatalf("data revisions: org %d -> %d, squads %d -> %d; want the global revision to move",
 			orgBefore, orgAfter, squadsBefore, squadsAfter)
 	}
 

@@ -55,7 +55,7 @@ func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing
 	if _, err := c.Pool.Exec(ctx, `DELETE FROM assignment_rule WHERE id = $1`, denyID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Pool.Exec(ctx, `UPDATE revision_state SET revision = $1 WHERE scope = 'rules'`, last); err != nil {
+	if _, err := c.Pool.Exec(ctx, `UPDATE revision_state SET revision = $1 WHERE scope = 'global'`, last); err != nil {
 		t.Fatal(err)
 	}
 	// The regions notice that the revision went backwards.

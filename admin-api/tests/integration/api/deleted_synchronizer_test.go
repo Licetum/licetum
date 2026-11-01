@@ -285,7 +285,7 @@ func TestIntegrationADeletedSynchronizerCutsTheRoutesBelowItWhateverTheLowerSour
 			dataRevision := func() int64 {
 				t.Helper()
 				var rev int64
-				if err := w.pool.QueryRow(ctx, `SELECT revision FROM revision_state WHERE scope = 'data:' || $1`, w.appSvc).Scan(&rev); err != nil {
+				if err := w.pool.QueryRow(ctx, `SELECT revision FROM revision_state WHERE scope = 'global'`).Scan(&rev); err != nil {
 					t.Fatal(err)
 				}
 				return rev

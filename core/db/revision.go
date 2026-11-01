@@ -13,12 +13,12 @@ import (
 const (
 	// ScopeRules numbers the changes of everything a decision is made from except the resource data: rules, memberships,
 	// groups, roles and their items, access groups, services, types and synchronizers.
-	ScopeRules = "rules"
+	ScopeRules = "global"
 	// ScopeLogSettings numbers the changes of the log settings: a process that sees it move loads them.
-	ScopeLogSettings = "log_settings"
+	ScopeLogSettings = "global"
 	// ScopePEP numbers the changes of the PEP directory: the issuers, the clients of the services and their API keys (see
 	// pep.go). They change no decision, so they have a scope of their own: a key rotation must not flush the answers.
-	ScopePEP = "pep"
+	ScopePEP = "global"
 	// dataScopePrefix starts the scope of the resource data of a service.
 	dataScopePrefix = "data:"
 )
@@ -36,18 +36,15 @@ func ServiceOfDataScope(scope string) (string, bool) {
 // administrators write rarely, and a synchronization writes once per change of a service's data.
 func BumpRevision(ctx context.Context, q Querier, scope string) (int64, error) {
 	var revision int64
-	err := q.QueryRow(ctx, bumpRevisionSQL, scope).Scan(&revision)
+	err := q.QueryRow(ctx, bumpRevisionSQL).Scan(&revision)
 	return revision, err
 }
 
-const bumpRevisionSQL = `
-	INSERT INTO revision_state (scope, revision) VALUES ($1, 1)
-	ON CONFLICT (scope) DO UPDATE SET revision = revision_state.revision + 1
-	RETURNING revision`
+const bumpRevisionSQL = `UPDATE revision_state SET revision = revision + 1 WHERE scope = 'global' RETURNING revision`
 
 // QueueBumpRevision adds the bump of the scope to a batch that runs in the transaction of the write, so that it travels with the
 // other statements of the batch in one round trip; the new revision is the result of the statement (a row with one column).
-func QueueBumpRevision(b *pgx.Batch, scope string) { b.Queue(bumpRevisionSQL, scope) }
+func QueueBumpRevision(b *pgx.Batch, scope string) { b.Queue(bumpRevisionSQL) }
 
 // DefaultFailoverJump is how far Failover raises the revisions: well beyond the revisions a primary can have given out that a
 // replica missed, and small enough to stay far from the end of an int64.
@@ -81,6 +78,7 @@ func BumpAllRevisions(ctx context.Context, q Querier, jump int64) (map[string]in
 
 // Revisions are the revisions of the policy as of one reading.
 type Revisions struct {
+	Epoch int32
 	// Rules is the revision of ScopeRules.
 	Rules int64
 	// LogSettings is the revision of ScopeLogSettings.
@@ -93,27 +91,8 @@ type Revisions struct {
 
 // LoadRevisions reads every scope in one statement.
 func LoadRevisions(ctx context.Context, q Querier) (Revisions, error) {
-	rows, err := q.Query(ctx, `SELECT scope, revision FROM revision_state`)
-	if err != nil {
-		return Revisions{}, err
-	}
-	defer rows.Close()
-	out := Revisions{Data: map[string]int64{}}
-	for rows.Next() {
-		var scope string
-		var revision int64
-		if err := rows.Scan(&scope, &revision); err != nil {
-			return Revisions{}, err
-		}
-		if service, ok := ServiceOfDataScope(scope); ok {
-			out.Data[service] = revision
-		} else if scope == ScopeRules {
-			out.Rules = revision
-		} else if scope == ScopeLogSettings {
-			out.LogSettings = revision
-		} else if scope == ScopePEP {
-			out.PEP = revision
-		}
-	}
-	return out, rows.Err()
+	var out Revisions
+	err := q.QueryRow(ctx, `SELECT epoch, revision FROM revision_state WHERE scope = 'global'`).Scan(&out.Epoch, &out.Rules)
+	out.LogSettings, out.PEP, out.Data = out.Rules, out.Rules, map[string]int64{}
+	return out, err
 }

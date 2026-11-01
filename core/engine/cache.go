@@ -325,10 +325,9 @@ func dataServices(g *TypeGraph, typeIDs []uuid.UUID) []uuid.UUID {
 // bumpDataRevisions moves the revision of the resource data of every service that owns one of the given types. It runs in
 // the transaction that wrote the data, so the revision cannot reach a reader before the data does.
 func bumpDataRevisions(ctx context.Context, q db.Querier, g *TypeGraph, typeIDs []uuid.UUID) error {
-	for _, service := range dataServices(g, typeIDs) {
-		if _, err := db.BumpRevision(ctx, q, db.DataScope(service)); err != nil {
-			return err
-		}
+	if len(typeIDs) == 0 {
+		return nil
 	}
-	return nil
+	_, err := db.BumpRevision(ctx, q, db.ScopeRules)
+	return err
 }
