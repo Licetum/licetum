@@ -104,8 +104,8 @@ func (a *App) CreateTypeResource(ctx context.Context, serviceID uuid.UUID, in *m
 
 		var err error
 		t, err = engine.ScanTypeResource(q.QueryRow(ctx, `
-			INSERT INTO type_resource (service_id, name, access_implies)
-			VALUES ($1, $2, $3::jsonb)
+			INSERT INTO type_resource (service_id, name, access_implies, identity_domain_id)
+			VALUES ($1, $2, $3::jsonb, (SELECT identity_domain_id FROM service WHERE id=$1))
 			RETURNING `+engine.TypeResourceColumns,
 			serviceID, in.Name, engine.MustJSON(in.AccessImplies),
 		))

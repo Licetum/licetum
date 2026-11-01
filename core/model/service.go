@@ -2,6 +2,7 @@ package model
 
 import (
 	"regexp"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -88,11 +89,13 @@ func (s *ServiceUpdate) Validate() error {
 
 // Service is a row of the service table.
 type Service struct {
-	ID   uuid.UUID
-	Name string
-	Slug string
-	URL  string
-	Icon string
+	IdentityDomainID uuid.UUID
+	CreatedAt        time.Time
+	ID               uuid.UUID
+	Name             string
+	Slug             string
+	URL              string
+	Icon             string
 }
 
 // ServiceResponse is a service as the admin API returns it.

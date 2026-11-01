@@ -19,8 +19,8 @@ func (a *App) CreateService(ctx context.Context, in *model.ServiceInput) (*model
 	var resp model.ServiceResponse
 	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		s, err := engine.ScanService(q.QueryRow(ctx, `
-			INSERT INTO service (name, slug, url, icon)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO service (name, slug, url, icon, identity_domain_id)
+			VALUES ($1, $2, $3, $4, (SELECT id FROM identity_domain WHERE name='default'))
 			RETURNING `+engine.ServiceColumns,
 			in.Name, in.Slug, derefString(in.URL), derefString(in.Icon),
 		))

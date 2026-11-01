@@ -179,11 +179,11 @@ func (a *App) AfterWrite(ctx context.Context, revision int64, epochs ...int32) {
 
 // ---------- shared existence checks ----------
 
-const ServiceColumns = `id, name, slug, url, icon`
+const ServiceColumns = `id, name, slug, url, icon, identity_domain_id, created_at`
 
 func ScanService(row pgx.Row) (*model.Service, error) {
 	var s model.Service
-	err := row.Scan(&s.ID, &s.Name, &s.Slug, &s.URL, &s.Icon)
+	err := row.Scan(&s.ID, &s.Name, &s.Slug, &s.URL, &s.Icon, &s.IdentityDomainID, &s.CreatedAt)
 	return &s, err
 }
 
