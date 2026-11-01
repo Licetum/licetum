@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/licetum/licetum/core/model"
 )
 
@@ -104,6 +106,18 @@ func TestContract_WR04_ConcurrentRevocationsKeepTheLastAdministrator(t *testing.
 		t.Run(kind, func(t *testing.T) {
 			for round := range 3 {
 				e := setup(t)
+				settle := func(typ model.PlatformType) {
+					ctx := context.Background()
+					graph, err := e.app.LoadTypeGraph(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					id := model.PlatformTypeResourceID(typ)
+					synced, err := e.app.EnsureSynced(ctx, graph, []uuid.UUID{id}, false)
+					if err != nil || !synced[id] {
+						t.Fatalf("prepare platform resources: %v %v", synced, err)
+					}
+				}
 				makePath := func(n int) []map[string]any {
 					var remove []map[string]any
 					body := map[string]any{"type_resource_id": model.PlatformTypeResourceID(model.PlatformAssignmentRule), "subject": "admin", "access": []string{"read", "write"}, "service_id": model.PlatformServiceID}
@@ -118,6 +132,7 @@ func TestContract_WR04_ConcurrentRevocationsKeepTheLastAdministrator(t *testing.
 					}
 					if kind == "role" || kind == "item" {
 						role := e.must("POST", "/role", map[string]any{"name": fmt.Sprintf("backup-%d-%d", round, n), "service_id": model.PlatformServiceID})["id"].(string)
+						settle(model.PlatformRole)
 						item := e.must("POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": model.PlatformTypeResourceID(model.PlatformAssignmentRule), "access": []string{"read", "write"}})["id"].(string)
 						delete(body, "type_resource_id")
 						delete(body, "access")
@@ -135,6 +150,7 @@ func TestContract_WR04_ConcurrentRevocationsKeepTheLastAdministrator(t *testing.
 					return remove
 				}
 				left, right := makePath(0), makePath(1)
+				settle(model.PlatformAssignmentRule)
 				e.must("DELETE", "/assignment_rule/"+model.PlatformAdminRuleID(model.PlatformAssignmentRule).String(), nil)
 				apply := func(ops []map[string]any) func() (int, []byte) {
 					return func() (int, []byte) { return e.do("POST", e.admin.URL+"/batch", map[string]any{"operations": ops}) }

@@ -122,15 +122,15 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 
 		for _, t := range model.PlatformTypes {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO assignment_rule (id, type_resource_id, resource_id, access, subject, predicate, enabled)
-				VALUES ($1, $2, NULL, $3, $4, '[]'::jsonb, true)
+				INSERT INTO assignment_rule (service_id,id, type_resource_id, resource_id, access, subject, predicate, enabled)
+				VALUES ((SELECT service_id FROM type_resource WHERE id=$2),$1, $2, NULL, $3, $4, '[]'::jsonb, true)
 				ON CONFLICT (id) DO UPDATE SET
-				    type_resource_id = EXCLUDED.type_resource_id, resource_id = NULL, resource_from_claim = NULL,
+				    service_id=EXCLUDED.service_id,type_resource_id = EXCLUDED.type_resource_id, resource_id = NULL, resource_from_claim = NULL,
 				    resource_where = NULL, role_id = NULL, access = EXCLUDED.access, subject = EXCLUDED.subject,
 				    predicate = '[]'::jsonb, member_of_group_id = NULL, enabled = true, effect = 'allow',
 				    exception = false, valid_from = NULL, expires_at = NULL, requires_predicate = '[]'::jsonb,
 				    requires_group_id = NULL, on_missing_attribute = 'skip'
- WHERE (assignment_rule.type_resource_id,assignment_rule.resource_id,assignment_rule.resource_from_claim,assignment_rule.resource_where,assignment_rule.role_id,assignment_rule.access,assignment_rule.subject,assignment_rule.predicate,assignment_rule.member_of_group_id,assignment_rule.enabled,assignment_rule.effect,assignment_rule.exception,assignment_rule.valid_from,assignment_rule.expires_at,assignment_rule.requires_predicate,assignment_rule.requires_group_id,assignment_rule.on_missing_attribute) IS DISTINCT FROM (EXCLUDED.type_resource_id,EXCLUDED.resource_id,EXCLUDED.resource_from_claim,EXCLUDED.resource_where,EXCLUDED.role_id,EXCLUDED.access,EXCLUDED.subject,EXCLUDED.predicate,EXCLUDED.member_of_group_id,EXCLUDED.enabled,EXCLUDED.effect,EXCLUDED.exception,EXCLUDED.valid_from,EXCLUDED.expires_at,EXCLUDED.requires_predicate,EXCLUDED.requires_group_id,EXCLUDED.on_missing_attribute)`,
+ WHERE (assignment_rule.service_id,assignment_rule.type_resource_id,assignment_rule.resource_id,assignment_rule.resource_from_claim,assignment_rule.resource_where,assignment_rule.role_id,assignment_rule.access,assignment_rule.subject,assignment_rule.predicate,assignment_rule.member_of_group_id,assignment_rule.enabled,assignment_rule.effect,assignment_rule.exception,assignment_rule.valid_from,assignment_rule.expires_at,assignment_rule.requires_predicate,assignment_rule.requires_group_id,assignment_rule.on_missing_attribute) IS DISTINCT FROM (EXCLUDED.service_id,EXCLUDED.type_resource_id,EXCLUDED.resource_id,EXCLUDED.resource_from_claim,EXCLUDED.resource_where,EXCLUDED.role_id,EXCLUDED.access,EXCLUDED.subject,EXCLUDED.predicate,EXCLUDED.member_of_group_id,EXCLUDED.enabled,EXCLUDED.effect,EXCLUDED.exception,EXCLUDED.valid_from,EXCLUDED.expires_at,EXCLUDED.requires_predicate,EXCLUDED.requires_group_id,EXCLUDED.on_missing_attribute)`,
 				model.PlatformAdminRuleID(t), model.PlatformTypeResourceID(t), adminAccess,
 				model.GroupSubject(model.PlatformAdminGroupID),
 			); err != nil {

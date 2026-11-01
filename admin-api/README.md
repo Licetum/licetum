@@ -198,3 +198,7 @@ The owner cannot be changed. During P3 the routes remain `/group` and `/role`; u
 Memberships, role items and access groups derive their owner from their parent. Nested groups and role items must refer to
 entities of the same service. Policy import resolves group and role names within the imported service, so another service's
 entities with the same names remain independent. The web create forms select the service and the lists show it.
+
+An assignment rule derives its immutable service from its target type or role. Its group references stay within that
+service, and its preview uses that service's subject directory. Retargeting into another service is refused; create a
+new rule there instead. A claim-based resource lookup may still name a type of another service during P3.

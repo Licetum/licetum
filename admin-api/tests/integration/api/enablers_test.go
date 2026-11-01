@@ -271,8 +271,8 @@ func TestRestoreAdminAccessPutsTheAdminsBack(t *testing.T) {
 	if _, err := support.RawExec(ctx, e.pool, `UPDATE assignment_rule SET enabled = false`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := support.RawExec(ctx, e.pool, `INSERT INTO assignment_rule (type_resource_id, access, subject, predicate, enabled, effect)
-	        VALUES ($1, ARRAY['*'], 'admin', '[]'::jsonb, true, 'deny')`, typeID); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, `INSERT INTO assignment_rule (service_id,type_resource_id, access, subject, predicate, enabled, effect)
+	        VALUES ((SELECT service_id FROM type_resource WHERE id=$1),$1, ARRAY['*'], 'admin', '[]'::jsonb, true, 'deny')`, typeID); err != nil {
 		t.Fatal(err)
 	}
 	e.externalChange(ctx)
@@ -620,7 +620,10 @@ func uuidNil() string { return "00000000-0000-0000-0000-000000000000" }
 func TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsServices(t *testing.T) {
 	w, group := salesWorld(t) // dave is in the directory of org, from sales
 	branchRule := w.grant(map[string]any{"type_resource_id": w.branch, "member_of_group_id": group, "access": []string{"write"}})
-	itemRule := w.grant(map[string]any{"type_resource_id": w.item, "member_of_group_id": group, "access": []string{"read"}})
+	appGroup := w.must("POST", "/group", map[string]any{"service_id": w.appSvc, "name": "app-sales"})["id"].(string)
+	w.must("POST", "/group/"+appGroup+"/member", map[string]any{"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
+	w.expect(http.StatusUnprocessableEntity, "POST", "/assignment_rule", map[string]any{"type_resource_id": w.item, "member_of_group_id": group, "access": []string{"read"}})
+	itemRule := w.grant(map[string]any{"type_resource_id": w.item, "member_of_group_id": appGroup, "access": []string{"read"}})
 
 	peopleOf := func(res map[string]any, rule string) (int, []string) {
 		for _, x := range res["entries"].([]any) {
@@ -669,8 +672,6 @@ func TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsS
 	w.expect(http.StatusUnprocessableEntity, "POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.branch, "access": []string{"read"}})
 	w.must("POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.item, "access": []string{"read"}})
 	w.sendPeople(w.appSvc, person("dave", "Dave of app", map[string]any{"department": "sales"}))
-	appGroup := w.must("POST", "/group", map[string]any{"service_id": w.appSvc, "name": "app-sales"})["id"].(string)
-	w.must("POST", "/group/"+appGroup+"/member", map[string]any{"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
 	preview := w.must("POST", "/assignment_rule/preview", map[string]any{"role_id": role, "member_of_group_id": appGroup})
 	people := preview["people"].(map[string]any)
 	var sample []string
@@ -685,7 +686,9 @@ func TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsS
 	// The preview of a rule on a type of a service nobody sent people to: nobody, and nothing is said about people.
 	third := w.newService("quiet")
 	quiet := w.typeResource(third, "doc", "")
-	none := w.must("POST", "/assignment_rule/preview", map[string]any{"type_resource_id": quiet, "member_of_group_id": group, "access": []string{"read"}})
+	quietGroup := w.must("POST", "/group", map[string]any{"service_id": third, "name": "sales"})["id"].(string)
+	w.must("POST", "/group/"+quietGroup+"/member", map[string]any{"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
+	none := w.must("POST", "/assignment_rule/preview", map[string]any{"type_resource_id": quiet, "member_of_group_id": quietGroup, "access": []string{"read"}})
 	if p := none["people"].(map[string]any); p["total"] != float64(0) || p["registry"] != float64(0) {
 		t.Fatalf("a service with an empty directory has people: %+v", p)
 	}

@@ -75,13 +75,21 @@ func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *mod
 		}
 	}
 	if in.MemberOfGroupID != nil {
-		if _, err := a.GetExistingGroup(ctx, q, *in.MemberOfGroupID); err != nil {
+		group, err := a.GetExistingGroup(ctx, q, *in.MemberOfGroupID)
+		if err != nil {
 			return nil, err
+		}
+		if group.ServiceID != *serviceID {
+			return nil, apperr.Unprocessable(i18n.ServiceOwnershipMismatch)
 		}
 	}
 	if in.RequiresGroupID != nil {
-		if _, err := a.GetExistingGroup(ctx, q, *in.RequiresGroupID); err != nil {
+		group, err := a.GetExistingGroup(ctx, q, *in.RequiresGroupID)
+		if err != nil {
 			return nil, err
+		}
+		if group.ServiceID != *serviceID {
+			return nil, apperr.Unprocessable(i18n.ServiceOwnershipMismatch)
 		}
 	}
 	return serviceID, nil
@@ -148,12 +156,12 @@ func (a *App) createAssignmentRule(ctx context.Context, in *model.AssignmentRule
 		}
 		r, err = engine.ScanAssignmentRule(q.QueryRow(ctx, `
 			INSERT INTO assignment_rule AS ar
-				(id, role_id, type_resource_id, resource_id, resource_from_claim, access, subject, predicate, member_of_group_id,
+				(service_id,id, role_id, type_resource_id, resource_id, resource_from_claim, access, subject, predicate, member_of_group_id,
 				 enabled, effect, exception, valid_from, expires_at, name, description,
 				 on_missing_attribute, requires_predicate, requires_group_id, resource_where, subject_kind)
-			VALUES (COALESCE($21::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15,
+			VALUES ($22,COALESCE($21::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15,
 				$16, $17::jsonb, $18, $19::jsonb, $20)
-			RETURNING `+engine.AssignmentRuleColumns, append(ruleArgs(in, onMissingOf(in, nil)), id)...,
+			RETURNING `+engine.AssignmentRuleColumns, append(ruleArgs(in, onMissingOf(in, nil)), id, *serviceID)...,
 		))
 		if db.IsPrimaryKeyViolation(err) {
 			return change{}, idTaken(id)
@@ -173,15 +181,15 @@ func (a *App) createAssignmentRule(ctx context.Context, in *model.AssignmentRule
 // type_resource_id (or role_id), so a single management page does not need nesting in the URL.
 func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWithContext, error) {
 	rows, err := a.DB.Query(ctx, `
-		SELECT `+engine.AssignmentRuleColumns+`, t.service_id, s.name, t.name, ro.name,
+		SELECT `+engine.AssignmentRuleColumns+`, s.name, t.name, ro.name,
 		       ar.role_id IS NOT NULL
 		       OR (ar.resource_id IS NULL AND ar.resource_from_claim IS NULL AND ar.resource_where IS NULL)
 		       OR `+engine.LiveSynchronizerExists("t.id")+`
 		FROM assignment_rule ar
 		LEFT JOIN type_resource t ON t.id = ar.type_resource_id
-		LEFT JOIN service s ON s.id = t.service_id
+		JOIN service s ON s.id = ar.service_id
 		LEFT JOIN role ro ON ro.id = ar.role_id
-		WHERE ar.role_id IS NOT NULL OR (t.deleted_at IS NULL AND s.deleted_at IS NULL)
+		WHERE s.deleted_at IS NULL AND (ar.role_id IS NOT NULL OR t.deleted_at IS NULL)
 		ORDER BY s.name, t.name, ar.id`)
 	if err != nil {
 		return nil, err
@@ -192,7 +200,7 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 	var graph lookupGraph
 	for rows.Next() {
 		var c model.AssignmentRuleWithContext
-		r, err := engine.ScanAssignmentRule(rows, &c.ServiceID, &c.ServiceName, &c.TypeResourceName, &c.RoleName, &c.TargetValid)
+		r, err := engine.ScanAssignmentRule(rows, &c.ServiceName, &c.TypeResourceName, &c.RoleName, &c.TargetValid)
 		if err != nil {
 			return nil, err
 		}
@@ -276,6 +284,9 @@ func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *mo
 		serviceID, err := a.checkAssignmentRuleRefs(ctx, q, in, ruleTargetChanged(old, in))
 		if err != nil {
 			return change{}, err
+		}
+		if *serviceID != old.ServiceID {
+			return change{}, apperr.Unprocessable(i18n.RuleServiceRetarget)
 		}
 
 		r, err = engine.ScanAssignmentRule(q.QueryRow(ctx, `

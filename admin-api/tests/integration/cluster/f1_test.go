@@ -92,13 +92,13 @@ func insertRules(t *testing.T, c *harness.Cluster, typeID string, n int) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := support.RawExec(ctx, c.Pool, `
-		INSERT INTO assignment_rule (type_resource_id, access, subject, predicate, enabled)
-		SELECT $1::uuid, ARRAY['read'], 'filler-' || g, '[]'::jsonb, true FROM generate_series(1, $2) g`, typeID, n); err != nil {
+		INSERT INTO assignment_rule (service_id,type_resource_id, access, subject, predicate, enabled)
+		SELECT (SELECT service_id FROM type_resource WHERE id=$1),$1::uuid, ARRAY['read'], 'filler-' || g, '[]'::jsonb, true FROM generate_series(1, $2) g`, typeID, n); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := support.RawExec(ctx, c.Pool, `
-		INSERT INTO assignment_rule (type_resource_id, access, subject, predicate, enabled)
-		SELECT $1::uuid, ARRAY['read'], NULL, '[{"attr":"department","op":"eq","value":"hr"}]'::jsonb, true
+		INSERT INTO assignment_rule (service_id,type_resource_id, access, subject, predicate, enabled)
+		SELECT (SELECT service_id FROM type_resource WHERE id=$1),$1::uuid, ARRAY['read'], NULL, '[{"attr":"department","op":"eq","value":"hr"}]'::jsonb, true
 		FROM generate_series(1, $2)`, typeID, max(1, n/100)); err != nil {
 		t.Fatal(err)
 	}

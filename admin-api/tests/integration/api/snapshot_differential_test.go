@@ -57,6 +57,19 @@ func (g *policyGenerator) level() []string {
 	return []string{"read", "write"}
 }
 
+// owner is the service of an inline target; generated roles belong to org.
+func (g *policyGenerator) owner(body map[string]any) string {
+	if _, ok := body["role_id"]; ok {
+		return g.w.org
+	}
+	for name, id := range g.w.typeByName {
+		if body["type_resource_id"] == id {
+			return g.w.serviceOfType[name]
+		}
+	}
+	return ""
+}
+
 // target returns the fields of a permission: the type and what it covers.
 func (g *policyGenerator) target(forRole bool) map[string]any {
 	typeName := g.pick(diffTypes...)
@@ -124,8 +137,16 @@ func (g *policyGenerator) rule() string {
 	case 0, 1, 2, 3:
 		rule["subject"] = fmt.Sprintf("user-%d", g.rng.Intn(6))
 	case 4, 5:
+		if g.owner(rule) != g.w.org {
+			rule["subject"] = fmt.Sprintf("user-%d", g.rng.Intn(6))
+			break
+		}
 		rule["subject"] = "group:" + g.groups[g.rng.Intn(len(g.groups))]
 	case 6, 7:
+		if g.owner(rule) != g.w.org {
+			rule["predicate"] = g.conditions()
+			break
+		}
 		rule["member_of_group_id"] = g.groups[g.rng.Intn(len(g.groups))]
 	default:
 		rule["predicate"] = g.conditions()
@@ -149,7 +170,7 @@ func (g *policyGenerator) rule() string {
 	if g.chance(10) {
 		rule["requires_predicate"] = g.conditions()
 	}
-	if g.chance(8) {
+	if g.chance(8) && g.owner(rule) == g.w.org {
 		rule["requires_group_id"] = g.groups[g.rng.Intn(len(g.groups))]
 	}
 	if g.chance(8) {
@@ -194,7 +215,7 @@ func (g *policyGenerator) setup() {
 		g.roles = append(g.roles, role)
 		for range 2 + g.rng.Intn(2) {
 			item := g.target(true)
-			for item["type_resource_id"] == w.item {
+			for g.owner(item) != w.org {
 				item = g.target(true)
 			}
 			w.must("POST", "/role/"+role+"/permission", item)

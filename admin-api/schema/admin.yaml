@@ -318,6 +318,10 @@ components:
           description: Role whose permissions the rule grants; null for an inline rule
           format: uuid
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
         subject:
           description: A specific subject or group (group:{uuid})
           type:
@@ -339,6 +343,7 @@ components:
             - string
             - "null"
       required:
+        - service_id
         - id
         - role_id
         - type_resource_id
@@ -583,11 +588,11 @@ components:
             - string
             - "null"
         service_id:
-          description: Id of the service that owns the resource type; null for a role rule
+          description: Owning service id
           format: uuid
           type: string
         service_name:
-          description: Name of the service that owns the resource type; null for a role rule
+          description: Name of the owning service
           type:
             - string
             - "null"
@@ -620,11 +625,11 @@ components:
             - string
             - "null"
       required:
-        - service_id
         - service_name
         - type_resource_name
         - role_name
         - target_valid
+        - service_id
         - id
         - role_id
         - type_resource_id
@@ -3618,6 +3623,8 @@ paths:
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
         exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
+
+        The owning service is derived from the type or role and cannot be changed. Referenced groups and roles must belong to that service; a claim lookup type may belong to another service.
       operationId: create_assignment_rule
       requestBody:
         content:
@@ -3844,6 +3851,8 @@ paths:
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
         exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
+
+        The owning service is derived from the type or role and cannot be changed. Referenced groups and roles must belong to that service; a claim lookup type may belong to another service.
       operationId: update_assignment_rule
       parameters:
         - description: Rule id

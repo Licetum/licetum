@@ -9,6 +9,7 @@ package i18n
 // keep working.
 const (
 	// generic
+	RuleServiceRetarget       Key = "rule_service_retarget"
 	ServiceOwnershipMismatch  Key = "service_ownership_mismatch"
 	ServiceOwnershipImmutable Key = "service_ownership_immutable"
 	InternalError             Key = "internal_error"
@@ -171,6 +172,7 @@ const (
 )
 
 var catalog = map[Key]Text{
+	RuleServiceRetarget:       {EN: "A rule cannot be retargeted into another service", RU: "Правило нельзя перенести в другой сервис", ZH: "不能将规则重新指向其他服务"},
 	ServiceOwnershipMismatch:  {EN: "Referenced entities must belong to the same service", RU: "Связанные сущности должны принадлежать одному сервису", ZH: "引用的实体必须属于同一服务"},
 	ServiceOwnershipImmutable: {EN: "The owning service cannot be changed", RU: "Сервис-владелец нельзя изменить", ZH: "不能更改所属服务"},
 	InternalError: {

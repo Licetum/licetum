@@ -18,7 +18,7 @@ const adminAccessSQL = `
 SELECT NOT EXISTS (SELECT 1 FROM type_resource WHERE id = $1 AND deleted_at IS NULL)
     OR EXISTS (
 	SELECT 1 FROM assignment_rule ar
-	WHERE ar.enabled
+	WHERE ar.service_id=(SELECT service_id FROM type_resource WHERE id=$1) AND ar.enabled
 	  AND (ar.valid_from IS NULL OR ar.valid_from <= now())
 	  AND (ar.expires_at IS NULL OR ar.expires_at > now())
 	  AND ar.effect = 'allow' AND NOT ar.exception

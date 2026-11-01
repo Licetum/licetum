@@ -522,11 +522,13 @@ func (f *Fixture) Validate() error {
 		}
 	}
 	roles := map[string]bool{}
+	roleOwners := map[string]string{}
 	for _, r := range f.Roles {
 		if !slices.Contains(f.Services, ownerOf(r.Service)) {
 			bad("role %q: unknown service %q", r.Name, r.Service)
 		}
 		roles[r.Name] = true
+		roleOwners[r.Name] = ownerOf(r.Service)
 		for i := range r.Items {
 			checkTarget(fmt.Sprintf("role %q item %d", r.Name, i), &r.Items[i].Target)
 			if typ := types[r.Items[i].Type]; typ != nil && ownerOf(typ.Service) != ownerOf(r.Service) {
@@ -560,9 +562,17 @@ func (f *Fixture) Validate() error {
 		if n != 1 {
 			bad("rule %q: exactly one of subject, subject_group, predicate/everybody, member_of", r.Name)
 		}
+		owner := roleOwners[r.Role]
+		if r.Role == "" && r.Target != nil && types[r.Type] != nil {
+			owner = types[r.Type].Service
+		}
+
 		for _, g := range []string{r.SubjectGroup, r.MemberOf, r.RequiresGroup} {
 			if g != "" && !groups[g] {
 				bad("rule %q: unknown group %q", r.Name, g)
+			}
+			if g != "" && groups[g] && owner != "" && groupOwners[g] != owner {
+				bad("rule %q: group %q belongs to another service", r.Name, g)
 			}
 		}
 		switch {

@@ -223,10 +223,8 @@ func (a *App) groupsWithMembers(ctx context.Context, groupIDs []uuid.UUID) (map[
 // unusedRoles returns the roles with items on the resource types of a service that no rule grants.
 func (a *App) unusedRoles(ctx context.Context, serviceID uuid.UUID) ([]model.Role, error) {
 	rows, err := a.DB.Query(ctx, `
-		SELECT DISTINCT ro.id, ro.name FROM role ro
-		JOIN role_permission rp ON rp.role_id = ro.id
-		JOIN type_resource t ON t.id = rp.type_resource_id
-		WHERE t.service_id = $1 AND t.deleted_at IS NULL
+		SELECT ro.service_id,ro.id, ro.name FROM role ro
+ WHERE ro.service_id=$1
 		  AND NOT EXISTS (SELECT 1 FROM assignment_rule ar WHERE ar.role_id = ro.id)
 		ORDER BY ro.name`, serviceID)
 	if err != nil {
@@ -236,7 +234,7 @@ func (a *App) unusedRoles(ctx context.Context, serviceID uuid.UUID) ([]model.Rol
 	var out []model.Role
 	for rows.Next() {
 		var r model.Role
-		if err := rows.Scan(&r.ID, &r.Name); err != nil {
+		if err := rows.Scan(&r.ServiceID, &r.ID, &r.Name); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

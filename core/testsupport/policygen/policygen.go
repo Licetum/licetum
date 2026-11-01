@@ -840,6 +840,9 @@ func (g *gen) rule(i int) policyfix.Rule {
 		what = "role-" + r.Role
 	} else {
 		t := g.target()
+		for (r.MemberOf != "" || r.SubjectGroup != "") && g.service[t.Type] != g.f.Services[0] {
+			t = g.target()
+		}
 		r.Target = &t
 		r.Access = g.access(t.Type, r.Deny)
 		what = t.Type
@@ -858,7 +861,7 @@ func (g *gen) rule(i int) policyfix.Rule {
 	if g.chance(12) {
 		r.RequiresPredicate = []model.PredicateCondition{g.condition(requestAttributes)}
 	}
-	if g.chance(9) {
+	if g.chance(9) && (r.Role != "" || g.service[r.Type] == g.f.Services[0]) {
 		r.RequiresGroup = pick(g, g.groups)
 	}
 	if g.chance(6) {

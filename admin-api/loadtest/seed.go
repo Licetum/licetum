@@ -205,17 +205,23 @@ func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	return nil
 }
 
-// createRules writes the assignment rules straight into the table with COPY. The check API reads the table and nothing
-// else of a rule, so each row needs the constraints of the table and the defaults of a new rule, and no more: the
-// change log and the revisions belong to the admin API's writes, which the measured path does not make. The table
-// is analyzed afterwards, so the planner sees its real size, as it would after a few writes.
+// createRules loads fixture rows with COPY and publishes the fixture transaction's
+// revision atomically. Measured writes still go through the real admin API.
 func createRules(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	columns := []string{"id", "type_resource_id", "resource_id", "resource_from_claim", "access", "subject", "predicate",
-		"member_of_group_id", "enabled", "effect", "exception", "on_missing_attribute", "requires_predicate"}
-	n, err := e.pool.CopyFrom(ctx, pgx.Identifier{"assignment_rule"}, columns,
-		pgx.CopyFromSlice(p.Rules, func(i int) ([]any, error) {
-			return ruleRow(ruleFor(i, p, fx))
+		"member_of_group_id", "enabled", "effect", "exception", "on_missing_attribute", "requires_predicate", "service_id"}
+	var n int64
+	err := support.RawPolicyTx(ctx, e.pool, func(tx pgx.Tx) error {
+		var err error
+		n, err = tx.CopyFrom(ctx, pgx.Identifier{"assignment_rule"}, columns, pgx.CopyFromSlice(p.Rules, func(i int) ([]any, error) {
+			row, err := ruleRow(ruleFor(i, p, fx))
+			if err != nil {
+				return nil, err
+			}
+			return append(row, fx.serviceID), nil
 		}))
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("copy the rules: %w", err)
 	}

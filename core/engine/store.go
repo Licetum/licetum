@@ -14,7 +14,7 @@ import (
 const AssignmentRuleColumns = `ar.id, ar.role_id, ar.type_resource_id, ar.resource_id, ar.resource_from_claim, ar.access,
 	ar.subject, ar.predicate, ar.member_of_group_id, ar.enabled, ar.effect, ar.exception, ar.valid_from, ar.expires_at,
 	ar.name, ar.description, ar.on_missing_attribute, ar.requires_predicate, ar.requires_group_id, ar.resource_where,
-	ar.subject_kind`
+	ar.subject_kind,ar.service_id`
 
 // RuleActiveSQL selects the rules in force now: enabled and inside their validity period.
 const RuleActiveSQL = `ar.enabled
@@ -28,7 +28,7 @@ func ScanAssignmentRule(row pgx.Row, extra ...any) (*model.AssignmentRule, error
 	var memberOf, requiresGroup uuid.NullUUID
 	dest := append([]any{&r.ID, &r.RoleID, &r.TypeResourceID, &r.ResourceID, &fromClaim, &r.Access,
 		&r.Subject, &predicate, &memberOf, &r.Enabled, &r.Effect, &r.Exception, &r.ValidFrom, &r.ExpiresAt,
-		&r.Name, &r.Description, &r.OnMissingAttribute, &requires, &requiresGroup, &where, &r.SubjectKind}, extra...)
+		&r.Name, &r.Description, &r.OnMissingAttribute, &requires, &requiresGroup, &where, &r.SubjectKind, &r.ServiceID}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}

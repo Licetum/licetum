@@ -36,7 +36,8 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 	if err != nil {
 		return nil, err
 	}
-	if _, err := a.checkAssignmentRuleRefs(ctx, a.DB, in, true); err != nil {
+	owner, err := a.checkAssignmentRuleRefs(ctx, a.DB, in, true)
+	if err != nil {
 		return nil, err
 	}
 	g, err := a.LoadTypeGraph(ctx)
@@ -45,6 +46,7 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 	}
 
 	rule := ruleFromInput(in)
+	rule.ServiceID = *owner
 	// The types the rule reaches: its own, or those of the items of its role.
 	var roleTypes []uuid.UUID
 	if in.RoleID != nil {

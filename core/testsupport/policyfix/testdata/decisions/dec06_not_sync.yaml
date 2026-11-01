@@ -40,6 +40,7 @@ resources:
   - {type: kiosk, id: K1}
 groups:
   - name: advanced-users
+    service: app
     members:
       - predicate: [{attr: position, op: in, value: [manager]}]
 rules:

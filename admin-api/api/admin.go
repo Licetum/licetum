@@ -815,7 +815,9 @@ Who the rule applies to — exactly one of: **subject** (a specific user or a gr
 the rule applies to everyone.
 
 **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
-exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.`
+exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
+
+The owning service is derived from the type or role and cannot be changed. Referenced groups and roles must belong to that service; a claim lookup type may belong to another service.`
 
 func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 	server.Register(api, withPolicy(huma.Operation{
