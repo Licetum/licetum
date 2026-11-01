@@ -335,7 +335,7 @@ contracts:
     oracle: the final state
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR05
     statement: Each write route produces exactly its streams and affected services (generated from the route table).
     oracle: the route table
