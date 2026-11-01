@@ -210,8 +210,9 @@ made through another process is seen within `REVISION__POLL_INTERVAL`.
 ### Migrations
 
 `licetum migrate` takes an advisory lock, so several runs started together (one per pod) apply each migration once; the seed of the
-self-service runs under another one. A migration must work with the previous release (expand/contract), see
-[CONTRIBUTING.md](../CONTRIBUTING.md#migrations-must-work-with-the-previous-release).
+self-service runs under another one. During P3, development databases are recreated as schema v2 is built;
+there is no upgrade from v0.1.x, and expand/contract compatibility resumes after the first v2 release. See
+[CONTRIBUTING.md](../CONTRIBUTING.md#migrations-during-p3).
 
 ## Synchronization worker
 

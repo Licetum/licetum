@@ -110,28 +110,27 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 - Add a new numbered Goose migration for schema changes. Do not rewrite an already-applied migration.
 - Run `task generate` after changing an API schema and verify that `task check` passes.
 
-### Migrations must work with the previous release
+### Migrations during P3
 
-During a rolling update the new schema is applied (`licetum migrate`, which runs first) while pods of the **previous**
-release are still serving requests, and a rollback puts those pods back for good. So a migration must leave the schema
-usable by the release that came before it. Make every change in two steps, **expand** and **contract**, in two releases:
+P3 builds schema v2 on fresh databases; there is no upgrade from v0.1.x. The expand/contract compatibility rule is
+suspended until the first v2 release, when it resumes for subsequent releases within v2. The CI job that ran the old
+release against the new schema has been removed deliberately. If **Previous release on the new schema** is a required
+status check on the epic or stage branches, remove that requirement from branch protection too.
 
-1. **Expand** (release N): add what the new code needs, and change nothing the old code reads or writes. Add a column
-   as nullable or with a default, add a table or an index, add an enum value. The new code reads and writes both the old
-   and the new shape.
-2. **Contract** (release N+1 or later, once release N-1 can no longer run): drop the column, the table or the constraint
-   nothing uses any more, make a column `NOT NULL`, tighten a check.
+While the P3 migrations are written, recreate local development databases after pulling schema changes:
 
-In particular, in one release do not: drop or rename a column, a table or an enum value; add a `NOT NULL` column without
-a default; narrow a column type; add a constraint that rows written by the old code can violate; change the meaning of
-an existing value. A rename is a new column, a copy, a switch of the readers, and a drop two releases later. Long
-statements (a table rewrite, an index on a large table) need `CREATE INDEX CONCURRENTLY` or batches, because they hold
-locks that the pods of the previous release wait on.
+```bash
+docker compose down -v  # deletes the local development data; never use against production
+docker compose up
+```
 
-The PDP reports ready (`/readyz` on its ops port, `PDP__OPS_ADDR`, `:9090` by default) when the schema is **at least** the
-version it was built for, so pods of the previous release stay in service while the new schema is applied. `licetum migrate` takes an advisory lock, so several
-runs started together (one per pod) apply each migration once; it needs a connection that lasts for the whole run, which
-behind PgBouncer in transaction mode means `DB__MIGRATE_URI` pointing at PostgreSQL itself.
+Intermediate P3 commits are not deployable upgrades. Add schema-only numbered migrations on empty databases; the
+stage later folds them into the schema-v2 `00001_init.sql`, with a separate goose version table and an explicit
+refusal of v0.1.x databases. See [ADR 0001, P3 decisions](docs/adr/0001-regional-pdp.md#1171-p3-decisions).
+
+`licetum migrate` takes an advisory lock, so several runs started together apply each migration once. It needs a
+connection that lasts for the whole run; behind PgBouncer in transaction mode, point `DB__MIGRATE_URI` at PostgreSQL
+itself. Readiness of a running older binary does not establish compatibility with P3's intermediate schema.
 
 ### Interface changes
 

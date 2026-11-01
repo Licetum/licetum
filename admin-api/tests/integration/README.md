@@ -147,8 +147,10 @@ brings them back; F2-11 (stage 2, scoped bumps) is a separate pull request.
 | `TestF5_6_*` | PostgreSQL cut: the replica answers from memory until `POLICY__MAX_STALENESS` has passed since it last confirmed the policy, then 503 `policy_unavailable`; with no limit it keeps answering; it recovers without a restart |
 | `TestF5_7_*` | a rolling restart of three replicas at 600 requests a second behind a balancer that probes `/readyz`: no connection error and no 5xx (and 61 failures without the drain) |
 
-Not covered here: F5-8 at three times the sustainable rate (a load test: `admin-api/loadtest`), and F5-11 (the previous release against the
-schema of this one, `.github/workflows/ci.yml`, job `previous-release`).
+Not covered here: F5-8 at three times the sustainable rate (a load test: `admin-api/loadtest`).
+
+P3 deliberately removes the old-release compatibility check: schema v2 has no upgrade from v0.1.x. Development
+databases are recreated while P3 migrations are written; see [the migration workflow](../../../CONTRIBUTING.md#migrations-during-p3).
 
 ### Failover and a far region (F6)
 
