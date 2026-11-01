@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/licetum/licetum/core/engine"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -40,7 +42,7 @@ func newWorld(t *testing.T) *world {
 	e := setup(t)
 	ctx := context.Background()
 	for _, table := range []string{"division", "rrs", "branch", "item"} {
-		if _, err := e.pool.Exec(ctx, `CREATE TABLE src_`+table+` (id text PRIMARY KEY, name text, parent_id text)`); err != nil {
+		if _, err := support.RawExec(ctx, e.pool, `CREATE TABLE src_`+table+` (id text PRIMARY KEY, name text, parent_id text)`); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -99,7 +101,7 @@ func (w *world) source(table string, values ...string) {
 		if values[i+2] != "" {
 			parent = &values[i+2]
 		}
-		if _, err := w.pool.Exec(context.Background(), `INSERT INTO src_`+table+` VALUES ($1, $2, $3)`,
+		if _, err := support.RawExec(context.Background(), w.pool, `INSERT INTO src_`+table+` VALUES ($1, $2, $3)`,
 			values[i], values[i+1], parent); err != nil {
 			w.t.Fatal(err)
 		}
@@ -108,7 +110,7 @@ func (w *world) source(table string, values ...string) {
 
 func (w *world) exec(sql string, args ...any) {
 	w.t.Helper()
-	if _, err := w.pool.Exec(context.Background(), sql, args...); err != nil {
+	if _, err := support.RawExec(context.Background(), w.pool, sql, args...); err != nil {
 		w.t.Fatal(err)
 	}
 }

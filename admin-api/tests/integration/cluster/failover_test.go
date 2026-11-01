@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
@@ -52,10 +54,10 @@ func TestF6_11_FailoverRaisesTheRevisionsAboveEverythingTheRegionsSaw(t *testing
 	}
 
 	// The promotion: the new primary never received the denial, nor its revision.
-	if _, err := c.Pool.Exec(ctx, `DELETE FROM assignment_rule WHERE id = $1`, denyID); err != nil {
+	if _, err := support.RawExec(ctx, c.Pool, `DELETE FROM assignment_rule WHERE id = $1`, denyID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Pool.Exec(ctx, `UPDATE revision_state SET revision = $1 WHERE scope = 'global'`, last); err != nil {
+	if _, err := support.RawExec(ctx, c.Pool, `UPDATE revision_state SET revision = $1 WHERE scope = 'global'`, last); err != nil {
 		t.Fatal(err)
 	}
 	// The regions notice that the revision went backwards.

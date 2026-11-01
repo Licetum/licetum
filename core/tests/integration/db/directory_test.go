@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/licetum/licetum/core/db"
 )
 
@@ -89,7 +91,7 @@ func TestPruneDirectoryDeletesInChunksAndOnlyWhatARetentionPeriodCovers(t *testi
 	if _, err := db.UpsertDirectory(ctx, pool, service, entries); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days' WHERE subject_id < 'u20'`); err != nil {
+	if _, err := support.RawExec(ctx, pool, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days' WHERE subject_id < 'u20'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,7 +144,7 @@ func TestPruneDirectoryRunsOfSeveralWorkersDeleteEveryExpiredEntryOnce(t *testin
 	if _, err := db.UpsertDirectory(ctx, pool, service, entries); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
+	if _, err := support.RawExec(ctx, pool, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
 		t.Fatal(err)
 	}
 	days := 30
@@ -202,7 +204,7 @@ func TestPruneDirectorySkipsTheEntriesAnotherWorkerHasTakenWithoutWaiting(t *tes
 	if _, err := db.UpsertDirectory(ctx, pool, service, entries); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
+	if _, err := support.RawExec(ctx, pool, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
 		t.Fatal(err)
 	}
 	days := 30
@@ -254,7 +256,7 @@ func TestPruneDirectoryDoesNotDeadlockWithASendingOfTheSameEntry(t *testing.T) {
 	if _, err := db.UpsertDirectory(ctx, pool, service, []db.DirectoryEntry{entry("user", "alice")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
+	if _, err := support.RawExec(ctx, pool, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days'`); err != nil {
 		t.Fatal(err)
 	}
 	days := 30
@@ -330,7 +332,7 @@ func TestPruneDirectoryRunsAlongsideSendingsOfTheSameEntries(t *testing.T) {
 			defer wg.Done()
 			for range 60 {
 				// The ageing takes the records in the order of the sendings (by id), as the sending does.
-				if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days' WHERE ctid IN (
+				if _, err := support.RawExec(ctx, pool, `UPDATE subject_directory_seen SET seen_at = now() - interval '90 days' WHERE ctid IN (
 					SELECT ctid FROM subject_directory_seen ORDER BY subject_id FOR UPDATE)`); err != nil {
 					t.Errorf("ageing: %v", err)
 					return

@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
@@ -89,12 +91,12 @@ func TestF1_1_AWarmRequestSendsNoQueryToPostgreSQL(t *testing.T) {
 func insertRules(t *testing.T, c *harness.Cluster, typeID string, n int) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := c.Pool.Exec(ctx, `
+	if _, err := support.RawExec(ctx, c.Pool, `
 		INSERT INTO assignment_rule (type_resource_id, access, subject, predicate, enabled)
 		SELECT $1::uuid, ARRAY['read'], 'filler-' || g, '[]'::jsonb, true FROM generate_series(1, $2) g`, typeID, n); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Pool.Exec(ctx, `
+	if _, err := support.RawExec(ctx, c.Pool, `
 		INSERT INTO assignment_rule (type_resource_id, access, subject, predicate, enabled)
 		SELECT $1::uuid, ARRAY['read'], NULL, '[{"attr":"department","op":"eq","value":"hr"}]'::jsonb, true
 		FROM generate_series(1, $2)`, typeID, max(1, n/100)); err != nil {

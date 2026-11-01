@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -220,7 +222,7 @@ func createRules(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	if n != int64(p.Rules) {
 		return fmt.Errorf("copied %d rules, want %d", n, p.Rules)
 	}
-	if _, err := e.pool.Exec(ctx, `ANALYZE assignment_rule`); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, `ANALYZE assignment_rule`); err != nil {
 		return fmt.Errorf("analyze the rules: %w", err)
 	}
 	return nil
@@ -331,7 +333,7 @@ type statement struct {
 
 func execAll(ctx context.Context, pool *pgxpool.Pool, stmts []statement) error {
 	for _, s := range stmts {
-		if _, err := pool.Exec(ctx, s.sql, s.args...); err != nil {
+		if _, err := support.RawExec(ctx, pool, s.sql, s.args...); err != nil {
 			return fmt.Errorf("exec %.40q: %w", s.sql, err)
 		}
 	}

@@ -5,6 +5,9 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/licetum/licetum/core/outbox"
 )
 
 // ScopeGlobal is the only revision-state row.
@@ -14,16 +17,17 @@ const ScopeGlobal = "global"
 // revision numbers: the revision commits with it, or not at all. Writers of one scope queue on its row, which is accepted:
 // administrators write rarely, and a synchronization writes once per change of a service's data.
 func BumpRevision(ctx context.Context, q Querier, scope string) (int64, error) {
-	var revision int64
-	err := q.QueryRow(ctx, bumpRevisionSQL).Scan(&revision)
-	return revision, err
+	if tx, ok := q.(pgx.Tx); ok {
+		p, err := TakeRevision(ctx, tx, outbox.Entry{})
+		return p.Revision, err
+	}
+	if pool, ok := q.(*pgxpool.Pool); ok {
+		var p Position
+		err := InTx(ctx, pool, func(tx pgx.Tx) error { var err error; p, err = TakeRevision(ctx, tx, outbox.Entry{}); return err })
+		return p.Revision, err
+	}
+	return 0, fmt.Errorf("revision bump requires a transaction or pool")
 }
-
-const bumpRevisionSQL = `UPDATE revision_state SET revision = revision + 1 WHERE scope = 'global' RETURNING revision`
-
-// QueueBumpRevision adds the bump of the scope to a batch that runs in the transaction of the write, so that it travels with the
-// other statements of the batch in one round trip; the new revision is the result of the statement (a row with one column).
-func QueueBumpRevision(b *pgx.Batch, scope string) { b.Queue(bumpRevisionSQL) }
 
 // DefaultFailoverJump is how far Failover raises the revisions: well beyond the revisions a primary can have given out that a
 // replica missed, and small enough to stay far from the end of an int64.

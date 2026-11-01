@@ -75,7 +75,7 @@ func TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings(t *te
 
 	// Nobody can manage the platform: the group is emptied and its rules are gone.
 	for _, stmt := range []string{`DELETE FROM group_member`, `DELETE FROM assignment_rule`} {
-		if _, err := pool.Exec(ctx, stmt); err != nil {
+		if _, err := support.RawExec(ctx, pool, stmt); err != nil {
 			t.Fatal(err)
 		}
 	}

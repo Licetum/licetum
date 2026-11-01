@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/db"
@@ -266,10 +268,10 @@ func TestRestoreAdminAccessPutsTheAdminsBack(t *testing.T) {
 	typeID := model.PlatformTypeResourceID(model.PlatformAssignmentRule)
 
 	// Locked out behind the API's back: the rules are off, and a denial covers the policy.
-	if _, err := e.pool.Exec(ctx, `UPDATE assignment_rule SET enabled = false`); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, `UPDATE assignment_rule SET enabled = false`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.pool.Exec(ctx, `INSERT INTO assignment_rule (type_resource_id, access, subject, predicate, enabled, effect)
+	if _, err := support.RawExec(ctx, e.pool, `INSERT INTO assignment_rule (type_resource_id, access, subject, predicate, enabled, effect)
 	        VALUES ($1, ARRAY['*'], 'admin', '[]'::jsonb, true, 'deny')`, typeID); err != nil {
 		t.Fatal(err)
 	}

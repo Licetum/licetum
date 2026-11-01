@@ -46,7 +46,7 @@ func newPEPFixture(t *testing.T) *pepFixture {
 	t.Cleanup(app.Close)
 
 	service := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'pep', '', '', 'pep')`, service); err != nil {
+	if _, err := support.RawExec(ctx, pool, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'pep', '', '', 'pep')`, service); err != nil {
 		t.Fatal(err)
 	}
 	return &pepFixture{pool: pool, app: app, service: service}
@@ -109,7 +109,7 @@ func TestPEPDirectoryChecksTheExpiryOfAKeyAgainstTheClock(t *testing.T) {
 	_, keyID := support.IssueTestAPIKey(t, fx.pool, gateway.ID)
 
 	// The expiry is set in the table and announced by a pep write: the directory keeps the key, and the clock decides.
-	if _, err := fx.pool.Exec(ctx, `UPDATE pep_credential SET expires_at = now() + interval '1 hour' WHERE key_id = $1`, keyID); err != nil {
+	if _, err := support.RawExec(ctx, fx.pool, `UPDATE pep_credential SET expires_at = now() + interval '1 hour' WHERE key_id = $1`, keyID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.BumpRevision(ctx, fx.pool, db.ScopeGlobal); err != nil {

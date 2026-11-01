@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/licetum/licetum/admin-api/service"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/engine"
@@ -41,12 +43,12 @@ func (w *world) countRows(query string, args ...any) int {
 func TestF4_4_RetentionRemovesOldRecordsInChunks(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	if _, err := w.pool.Exec(ctx, `
+	if _, err := support.RawExec(ctx, w.pool, `
 		INSERT INTO known_subject (subject, last_seen)
 		SELECT 's' || g, now() - interval '400 days' FROM generate_series(1, 25000) g`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject) VALUES ('fresh')`); err != nil {
+	if _, err := support.RawExec(ctx, w.pool, `INSERT INTO known_subject (subject) VALUES ('fresh')`); err != nil {
 		t.Fatal(err)
 	}
 	app := w.replica(func(c *config.Config) {})
@@ -61,7 +63,7 @@ func TestF4_4_RetentionRemovesOldRecordsInChunks(t *testing.T) {
 func TestF4_4_RetentionDropsWhatIsLeftOfTheRetiredRegistryAfterNinetyDays(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject, last_seen) VALUES ('old', now() - interval '200 days'), ('fresh', now())`); err != nil {
+	if _, err := support.RawExec(ctx, w.pool, `INSERT INTO known_subject (subject, last_seen) VALUES ('old', now() - interval '200 days'), ('fresh', now())`); err != nil {
 		t.Fatal(err)
 	}
 	app := w.replica(func(c *config.Config) {})
@@ -77,12 +79,12 @@ func TestF4_4_WorkersApplyTheRetentionAtTheSameTimeAndDivideTheWork(t *testing.T
 	w := newWorld(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if _, err := w.pool.Exec(ctx, `
+	if _, err := support.RawExec(ctx, w.pool, `
 		INSERT INTO known_subject (subject, last_seen)
 		SELECT 's' || g, now() - interval '400 days' FROM generate_series(1, 30000) g`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject) VALUES ('fresh')`); err != nil {
+	if _, err := support.RawExec(ctx, w.pool, `INSERT INTO known_subject (subject) VALUES ('fresh')`); err != nil {
 		t.Fatal(err)
 	}
 	tune := func(c *config.Config) {}

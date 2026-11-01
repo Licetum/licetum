@@ -603,7 +603,7 @@ func applyExtraSQL(ctx context.Context, e *env, settings *Settings) error {
 		return fmt.Errorf("read the extra SQL: %w", err)
 	}
 	// Without arguments pgx sends the text as it is, so the file may hold several statements.
-	if _, err := e.pool.Exec(ctx, string(raw)); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, string(raw)); err != nil {
 		return fmt.Errorf("apply the extra SQL %s: %w", path, err)
 	}
 	settings.ExtraSQL = filepath.Base(path)

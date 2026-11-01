@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/model"
@@ -154,7 +156,7 @@ func TestContract_DIR02_AWriteChangesOnlyTheRowsWhoseContentDiffers(t *testing.T
 	// The time of the sending lives apart: sent again an hour and more later, an entry that has not changed is not rewritten,
 	// and its sending time moves; sent again at once, even that stays.
 	old := time.Now().Add(-3 * time.Hour)
-	if _, err := e.pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = $2 WHERE service_id = $1`, a, old); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, `UPDATE subject_directory_seen SET seen_at = $2 WHERE service_id = $1`, a, old); err != nil {
 		t.Fatal(err)
 	}
 	rows := e.directoryRows(a)
@@ -331,7 +333,7 @@ func TestContract_DIR04_RetentionRemovesInChunksTheEntriesNotSentWithinTheRetent
 
 	for _, s := range []string{short, none, long} {
 		e.sendPeople(s, person("old", "Old", nil), person("again", "Sent again", nil), person("fresh", "Fresh", nil))
-		if _, err := e.pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '40 days'
+		if _, err := support.RawExec(ctx, e.pool, `UPDATE subject_directory_seen SET seen_at = now() - interval '40 days'
 			WHERE service_id = $1 AND subject_id IN ('old', 'again')`, s); err != nil {
 			t.Fatal(err)
 		}
@@ -375,7 +377,7 @@ func TestContract_DIR04_RetentionRemovesInChunksTheEntriesNotSentWithinTheRetent
 	}
 	// Removing the period keeps what is left for good.
 	e.expect(http.StatusOK, http.MethodPut, "/service/"+short+"/subjects/settings", map[string]any{"retention_days": nil})
-	if _, err := e.pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at = now() - interval '4000 days' WHERE service_id = $1`, short); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, `UPDATE subject_directory_seen SET seen_at = now() - interval '4000 days' WHERE service_id = $1`, short); err != nil {
 		t.Fatal(err)
 	}
 	e.app.RunRetention(ctx)

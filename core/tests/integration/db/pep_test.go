@@ -33,7 +33,7 @@ func newPEPPool(t *testing.T) (*pgxpool.Pool, uuid.UUID) {
 		t.Fatal(err)
 	}
 	service := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'pep', '', '', 'pep')`, service); err != nil {
+	if _, err := support.RawExec(ctx, pool, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'pep', '', '', 'pep')`, service); err != nil {
 		t.Fatal(err)
 	}
 	return pool, service
@@ -119,7 +119,7 @@ func TestPEPDeletedServiceTakesItsClientsAndKeys(t *testing.T) {
 	client := apiKeyClient(t, pool, service, "gateway")
 	support.IssueTestAPIKey(t, pool, client.ID)
 
-	if _, err := pool.Exec(ctx, `DELETE FROM service WHERE id = $1`, service); err != nil {
+	if _, err := support.RawExec(ctx, pool, `DELETE FROM service WHERE id = $1`, service); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
@@ -152,7 +152,7 @@ func TestPEPSoftDeletedServiceLeavesTheDirectory(t *testing.T) {
 		t.Fatalf("before the soft delete: %d clients and %d credentials, want 1 and 1", len(data.Clients), len(data.Credentials))
 	}
 
-	if _, err := pool.Exec(ctx, `UPDATE service SET deleted_at = now() WHERE id = $1`, service); err != nil {
+	if _, err := support.RawExec(ctx, pool, `UPDATE service SET deleted_at = now() WHERE id = $1`, service); err != nil {
 		t.Fatal(err)
 	}
 	data, err = db.LoadPEPDirectory(ctx, pool)
