@@ -166,7 +166,7 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   PDP's PostgreSQL may itself be a replica set behind one DSN, which is not Licetum's business until the postgres adapter on streaming replicas returns in P5. There is no test against a real
   streaming replica meanwhile (the contracts REV02, CONS01 and FC01-FC03 bring them back in P5/P6, and `task go:test:integration:replica` returns with them; `scripts/pg-replica.sh` stays);
   `cluster/failover_test.go` (`TestF6_11_*`) tests `licetum failover` without a replica.
-  `licetum failover` (`db.BumpAllRevisions`) raises every revision after a promotion and a revision that goes backwards is counted
+  `licetum failover` (`db.StartEpoch`) atomically increments the global epoch, jumps the revision and appends an `epoch_start` header after a promotion. PDPs discard old-epoch caches; a revision that goes backwards within an epoch is counted
   (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` is stored but not enforced: any executor may ask a source until regions are
   enforced again; `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
   `docs/deployment.md`, the Compose environment `admin-api/tests/multiregion` (tag `multiregion`, `task go:test:multiregion`, `multiregion.yml`, switched off until P7 per ADR 0001 §10.7).

@@ -143,17 +143,19 @@ regional deployment (`admin-api/tests/multiregion`).
 
 ### Failing over the primary
 
-PostgreSQL replication is asynchronous: a promoted standby may be missing the last transactions of the old primary, **including
-revision bumps the pods have already seen**. After the promotion the new primary would number its next writes with
-revisions the pods already used for other content, and answers cached under such a revision would be wrong. Run, once, against the
-new primary and before the traffic is sent to it:
+A promoted asynchronous standby may have lost transactions and positions already observed by PDPs. Fence the old primary,
+stop writer traffic, promote the standby, then run once against the new primary before reopening traffic:
 
-```
-licetum failover            # raises every revision of revision_state by one jump (default 1 000 000), in one transaction
+```sh
+licetum failover             # epoch + 1; global revision + 1,000,000
+licetum failover -jump 2000000  # optional positive revision jump
 ```
 
-Every view and every cached answer is then older than the data, and is replaced within `REVISION__POLL_INTERVAL`. Check that
-`licetum_revision_regressions_total` stops growing (a process counts a revision that went backwards).
+One transaction updates the global position and appends an `epoch_start` outbox header with empty services and streams.
+PDPs discard answers and snapshots from the previous epoch within `REVISION__POLL_INTERVAL`; `Licetum-Revision` then carries
+the new `epoch.revision`. `licetum_epoch_resets_total` accounts for this reset. A revision falling within the same epoch
+still increments `licetum_revision_regressions_total` and needs investigation. P3 provides the epoch fence; automatic
+divergence detection, `base_position` and the full reconciliation payload are introduced in P6.
 
 ## Cells (no cross-border replication)
 

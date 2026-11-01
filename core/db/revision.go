@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,30 +34,23 @@ func BumpRevision(ctx context.Context, q Querier, scope string) (int64, error) {
 // replica missed, and small enough to stay far from the end of an int64.
 const DefaultFailoverJump int64 = 1_000_000
 
-// BumpAllRevisions adds jump to every revision of revision_state, and creates the revision of the rules when there is none. It is
-// what an operator does after promoting a replica (licetum failover): a replica that missed the last transactions of the old
-// primary missed their revisions too, and would number its next writes with revisions the regions already used for other content.
-func BumpAllRevisions(ctx context.Context, q Querier, jump int64) (map[string]int64, error) {
+// StartEpoch fences a promoted primary with a new epoch and an atomic outbox
+// marker. Call before reopening traffic; P6 supplies divergence reconciliation.
+func StartEpoch(ctx context.Context, tx pgx.Tx, jump int64) (Position, error) {
 	if jump < 1 {
-		return nil, fmt.Errorf("the jump must be positive, got %d", jump)
+		return Position{}, fmt.Errorf("the jump must be positive, got %d", jump)
 	}
-	rows, err := q.Query(ctx, `
-		WITH ensure AS (INSERT INTO revision_state (scope, revision) VALUES ($2, 0) ON CONFLICT (scope) DO NOTHING)
-		UPDATE revision_state SET revision = revision + $1 RETURNING scope, revision`, jump, ScopeGlobal)
+	var p Position
+	err := tx.QueryRow(ctx, `WITH r AS (
+ UPDATE revision_state SET epoch=epoch+1, revision=revision+$1 WHERE scope='global' RETURNING epoch,revision
+ ) INSERT INTO outbox(revision,epoch,kind,committed_at,services,streams,policy,chunk_count)
+ SELECT revision,epoch,'epoch_start',clock_timestamp(),'{}'::uuid[],'{}'::text[],'{}'::jsonb,0 FROM r
+ RETURNING epoch,revision`, jump).Scan(&p.Epoch, &p.Revision)
 	if err != nil {
-		return nil, err
+		return Position{}, err
 	}
-	defer rows.Close()
-	out := map[string]int64{}
-	for rows.Next() {
-		var scope string
-		var revision int64
-		if err := rows.Scan(&scope, &revision); err != nil {
-			return nil, err
-		}
-		out[scope] = revision
-	}
-	return out, rows.Err()
+	_, err = tx.Exec(ctx, `SELECT pg_notify('licetum_outbox',$1)`, strconv.FormatInt(p.Revision, 10))
+	return p, err
 }
 
 // Revisions are the revisions of the policy as of one reading.

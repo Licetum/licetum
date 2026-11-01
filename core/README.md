@@ -15,7 +15,7 @@ The admin API (`admin-api/`, AGPL-3.0-only) is a separate module that depends on
 | `licetum pdp` | the PDP: the AuthZEN API under `/service/{slug}/access/v1/` (default `:8001`); its probes and `/metrics` are on the ops port (`PDP__OPS_ADDR`, default `:9090`) |
 | `licetum worker` | the synchronization worker: runs the jobs that fetch the resource sources (metrics and `/readyz` on `HTTP__ADDR`, default `:8002`), see [Synchronization worker](#synchronization-worker) |
 | `licetum migrate` | applies the database migrations and seeds the platform self-service (idempotent) |
-| `licetum failover` | raises every revision of the policy after a standby was promoted to primary, see [`docs/deployment.md`](../docs/deployment.md) |
+| `licetum failover` | starts a new global epoch after a standby was promoted to primary, see [`docs/deployment.md`](../docs/deployment.md) |
 | `licetum openapi pdp [-yaml] [-lang en\|ru\|zh]` | prints the OpenAPI spec without a server or a database |
 
 ## Quick start

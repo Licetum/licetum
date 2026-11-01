@@ -49,12 +49,10 @@ func Migrate(ctx context.Context) error {
 	return db.RunMigrate(ctx, cfg)
 }
 
-// Failover raises every revision of the policy by a jump (-jump, default db.DefaultFailoverJump), in one transaction, against the
-// primary the process connects to. Run it once after a replica has been promoted, before the traffic is sent to it (see
-// docs/deployment.md): the regions then see revisions above everything they used, and drop what they kept under older ones.
+// Failover starts a new global epoch on the promoted primary before traffic resumes.
 func Failover(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("failover", flag.ExitOnError)
-	jump := fs.Int64("jump", db.DefaultFailoverJump, "how much to add to every revision")
+	jump := fs.Int64("jump", db.DefaultFailoverJump, "how much to add to the global revision")
 	_ = fs.Parse(args)
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -65,17 +63,14 @@ func Failover(ctx context.Context, args []string) error {
 		return err
 	}
 	defer pool.Close()
-	var revisions map[string]int64
+	var position db.Position
 	if err := db.InTx(ctx, pool, func(tx pgx.Tx) (err error) {
-		revisions, err = db.BumpAllRevisions(ctx, tx, *jump)
+		position, err = db.StartEpoch(ctx, tx, *jump)
 		return err
 	}); err != nil {
 		return err
 	}
-	for scope, revision := range revisions {
-		slog.InfoContext(ctx, "revision raised", "scope", scope, "revision", revision)
-	}
-	slog.InfoContext(ctx, "failover done: the regions replace their views and their cached answers within REVISION__POLL_INTERVAL", "jump", *jump)
+	slog.InfoContext(ctx, "failover epoch started: views reset within REVISION__POLL_INTERVAL", "epoch", position.Epoch, "revision", position.Revision, "jump", *jump)
 	return nil
 }
 
