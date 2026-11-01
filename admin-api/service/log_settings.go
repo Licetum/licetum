@@ -59,7 +59,7 @@ func (a *App) PutLogSettings(ctx context.Context, in model.LogSettings) (model.L
 			return err
 		}
 		// The revision commits with the settings; the poll of every process sees it move and loads them.
-		if _, err := db.BumpRevision(ctx, tx, db.ScopeLogSettings); err != nil {
+		if _, err := db.BumpRevision(ctx, tx, db.ScopeGlobal); err != nil {
 			return err
 		}
 		return recordChange(ctx, tx, change{entity: "log_settings", action: actionUpdate, before: before, after: in})

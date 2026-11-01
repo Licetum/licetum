@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -41,10 +42,11 @@ const AdminAudience = "licetum-admin"
 
 // Cluster is one environment: the shared state, the fakes, the admin API and the check replicas.
 type Cluster struct {
-	T      testing.TB
-	Infra  *support.Infrastructure
-	IdP    *support.IdP
-	Source *support.Source
+	workerStop func()
+	T          testing.TB
+	Infra      *support.Infrastructure
+	IdP        *support.IdP
+	Source     *support.Source
 	// Cfg is the configuration of the admin API (it reaches PostgreSQL directly).
 	Cfg *config.Config
 	// Pool is the test's own direct connection, for fixtures and for looking at the state.
@@ -57,7 +59,7 @@ type Cluster struct {
 	// PostgresFault is the proxy the replicas connect through (nil without WithFaultProxies).
 	PostgresFault *support.FaultProxy
 
-	// LastRevision is the revision (X-Authz-Revision) of the last write made through AdminDo or Must. The replicas
+	// LastRevision is the revision (Licetum-Revision) of the last write made through AdminDo or Must. The replicas
 	// follow the revision with a delay of up to REVISION__POLL_INTERVAL; Replica.Permission asks for at least this one, so
 	// that it sees the writes of the test, as a client that passes at_least_as_fresh does (authzenreq.AtLeast).
 	LastRevision atomic.Int64
@@ -206,7 +208,8 @@ func (c *Cluster) startWorker() {
 		defer close(done)
 		_ = app.RunWorker(runCtx)
 	}()
-	t.Cleanup(func() { stop(); <-done })
+	c.workerStop = func() { stop(); <-done }
+	t.Cleanup(c.workerStop)
 }
 
 func (c *Cluster) startReplica(index int, dbURI string) *Replica {
@@ -262,7 +265,7 @@ func (c *Cluster) Revision() int64 {
 	if err != nil {
 		c.T.Fatalf("read the revisions: %v", err)
 	}
-	return rev.Rules
+	return rev.Revision
 }
 
 // DataRevision is the revision of the resource data of a service in the database.
@@ -272,7 +275,7 @@ func (c *Cluster) DataRevision(serviceID string) int64 {
 	if err != nil {
 		c.T.Fatalf("read the revisions: %v", err)
 	}
-	return rev.Rules
+	return rev.Revision
 }
 
 // Token signs a token of the fake identity provider.
@@ -287,17 +290,17 @@ func (c *Cluster) UserToken(name string) string {
 func (c *Cluster) AdminDo(method, path string, body any) (int, []byte) {
 	c.T.Helper()
 	status, raw, header := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "", nil)
-	if rev, err := strconv.ParseInt(header.Get("X-Authz-Revision"), 10, 64); err == nil && rev > c.LastRevision.Load() {
+	if rev, err := strconv.ParseInt(strings.SplitN(header.Get("Licetum-Revision"), ".", 2)[len(strings.SplitN(header.Get("Licetum-Revision"), ".", 2))-1], 10, 64); err == nil && rev > c.LastRevision.Load() {
 		c.LastRevision.Store(rev)
 	}
 	return status, raw
 }
 
-// AdminWrite is AdminDo that also returns the revision the write took (X-Authz-Revision; 0 when the request wrote nothing).
+// AdminWrite is AdminDo that also returns the revision the write took (Licetum-Revision; 0 when the request wrote nothing).
 func (c *Cluster) AdminWrite(method, path string, body any) (status int, raw []byte, revision int64) {
 	c.T.Helper()
 	status, raw, header := c.do(method, c.AdminServer.URL+path, c.AdminToken, body, "", nil)
-	revision, _ = strconv.ParseInt(header.Get("X-Authz-Revision"), 10, 64)
+	revision, _ = strconv.ParseInt(strings.SplitN(header.Get("Licetum-Revision"), ".", 2)[len(strings.SplitN(header.Get("Licetum-Revision"), ".", 2))-1], 10, 64)
 	if revision > c.LastRevision.Load() {
 		c.LastRevision.Store(revision)
 	}
@@ -534,3 +537,7 @@ func (r *Replica) Warm(c *Cluster, req authzenreq.Request, token string) *Result
 	c.T.Fatalf("%s %s did not settle: the last request cost db=%d", req.Method, req.Path, last.Trace.DBQueries())
 	return nil
 }
+
+// StopWorker isolates policy-transaction tests from unrelated resource commits.
+// It does not change the transactions, assertions, or revision semantics under test.
+func (c *Cluster) StopWorker() { c.T.Helper(); c.WaitForSyncIdle(); c.workerStop() }

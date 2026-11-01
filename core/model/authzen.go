@@ -66,7 +66,7 @@ type AuthzenAction struct {
 // AuthzenLicetum holds the settings of Licetum that an AuthZEN request carries in the top-level key licetum of its context.
 // A licetum nested in an attribute is an attribute like any other.
 type AuthzenLicetum struct {
-	MinRevision string `json:"min_revision,omitempty" doc:"The revision the answer must reflect: the Licetum-Revision header of an earlier answer (1.<r>) or the X-Authz-Revision header of an admin write, as a string. A bare decimal r is accepted too"`
+	MinRevision string `json:"min_revision,omitempty" doc:"The revision the answer must reflect: the Licetum-Revision header of an earlier answer (<epoch>.<revision>) or of an admin write, as a string. A bare decimal r is accepted too"`
 	Explain     bool   `json:"explain,omitempty" doc:"Return the explanation of the decision in context.reason_admin"`
 }
 

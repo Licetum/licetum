@@ -141,7 +141,7 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return rev.Rules, rev.Rules
+		return rev.Revision, rev.Revision
 	}
 	orgBefore, squadsBefore := revisions()
 

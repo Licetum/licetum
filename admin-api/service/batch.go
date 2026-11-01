@@ -44,7 +44,7 @@ func (a *App) RunBatch(ctx context.Context, ops []model.BatchOperation) ([]model
 			return nil
 		}
 		var err error
-		revision, err = db.BumpRevision(ctx, tx, db.ScopeRules)
+		revision, err = db.BumpRevision(ctx, tx, db.ScopeGlobal)
 		return err
 	})
 	if err != nil {

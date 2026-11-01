@@ -74,7 +74,7 @@ func (a *App) SearchResources(ctx context.Context, serviceID uuid.UUID, subject 
 	}
 	sum := sha256.Sum256(ask)
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
-	key := fmt.Sprintf("authz:search:%s:r%d:%s:%s:%s:%s", searchResultFormat, state.version, serviceID, subject,
+	key := fmt.Sprintf("authz:search:%s:e%d:r%d:%s:%s:%s:%s", searchResultFormat, state.epoch, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env), hex.EncodeToString(sum[:]))
 	return cachedAnswer(ctx, a, key, state, consistency, a.metrics.searchCache,
 		func(ctx context.Context) (computed[ResourcePage], error) {
@@ -90,7 +90,7 @@ func (a *App) SearchResources(ctx context.Context, serviceID uuid.UUID, subject 
 			if err != nil {
 				return computed[ResourcePage]{}, err
 			}
-			return computed[ResourcePage]{value: page, deps: p.deps, ttl: p.ttl, hold: p.hold}, nil
+			return computed[ResourcePage]{value: page, ttl: p.ttl, hold: p.hold}, nil
 		})
 }
 

@@ -16,7 +16,7 @@ func TestAnAnswerIsServedFromMemoryUntilItsExpiry(t *testing.T) {
 	results := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "memory_test_results"}, []string{"result"})
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(results)
-	state := cacheState{ok: true, version: 1, tag: "t"}
+	state := cacheState{ok: true, version: 1, epoch: 1}
 
 	var computations int
 	compute := func(context.Context) (computed[int], error) {

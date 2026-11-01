@@ -171,13 +171,13 @@ func TestWritesReturnARevisionThatReadsCanRequire(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("create rule: %d %s", status, raw)
 	}
-	revision := header.Get("X-Authz-Revision")
+	revision := header.Get("Licetum-Revision")
 	if revision == "" {
 		t.Fatal("a write returns the revision it produced")
 	}
 
 	// a read that asks for the revision sees the write: alice may read the flag, a type without resources, as a whole
-	rev, err := strconv.ParseInt(revision, 10, 64)
+	rev, err := strconv.ParseInt(strings.SplitN(revision, ".", 2)[1], 10, 64)
 	if err != nil {
 		t.Fatalf("the revision of a write is a number: %q", revision)
 	}
@@ -204,8 +204,8 @@ func TestWritesReturnARevisionThatReadsCanRequire(t *testing.T) {
 
 	// a read does not return a revision
 	status, header, _ = e.call(http.MethodGet, e.admin.URL+"/assignment_rule/", nil)
-	if status != http.StatusOK || header.Get("X-Authz-Revision") != "" {
-		t.Fatalf("a read carries no revision: %d %q", status, header.Get("X-Authz-Revision"))
+	if status != http.StatusOK || header.Get("Licetum-Revision") != "" {
+		t.Fatalf("a read carries no revision: %d %q", status, header.Get("Licetum-Revision"))
 	}
 }
 

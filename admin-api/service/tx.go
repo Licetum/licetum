@@ -125,7 +125,7 @@ func recordChangeAndBump(ctx context.Context, tx pgx.Tx, c change) (int64, error
 	}
 	b := &pgx.Batch{}
 	b.Queue(insertChangeSQL, args...)
-	db.QueueBumpRevision(b, db.ScopeRules)
+	db.QueueBumpRevision(b, db.ScopeGlobal)
 	results := tx.SendBatch(ctx, b)
 	defer func() { _ = results.Close() }()
 	if _, err := results.Exec(); err != nil {

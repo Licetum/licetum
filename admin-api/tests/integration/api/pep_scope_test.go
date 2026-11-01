@@ -15,17 +15,17 @@ import (
 func TestIntegrationDeletingAServiceMovesThePEPScope(t *testing.T) {
 	e := setup(t)
 	id := e.must(http.MethodPost, "/service", servicePayload(e, "pep-scope"))["id"].(string)
-	pepBefore := scopeRevision(t, e, db.ScopePEP)
-	rulesBefore := scopeRevision(t, e, db.ScopeRules)
+	pepBefore := scopeRevision(t, e, db.ScopeGlobal)
+	rulesBefore := scopeRevision(t, e, db.ScopeGlobal)
 
 	status, raw := e.do(http.MethodDelete, e.admin.URL+"/service/"+id, nil)
 	if status != http.StatusOK {
 		t.Fatalf("delete = %d (%s)", status, raw)
 	}
-	if after := scopeRevision(t, e, db.ScopePEP); after <= pepBefore {
+	if after := scopeRevision(t, e, db.ScopeGlobal); after <= pepBefore {
 		t.Errorf("the pep revision stayed at %d after the service was deleted", after)
 	}
-	if after := scopeRevision(t, e, db.ScopeRules); after <= rulesBefore {
+	if after := scopeRevision(t, e, db.ScopeGlobal); after <= rulesBefore {
 		t.Errorf("the rules revision stayed at %d after the service was deleted", after)
 	}
 }

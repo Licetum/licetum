@@ -10,10 +10,12 @@ import (
 // the request (both for the logs), and the revision of the last write it made. The API creates a Trace per
 // request (see WithTrace); the service layer only reports into it.
 type Trace struct {
-	mu        sync.Mutex
-	requestID string
-	actor     string
-	revision  int64
+	mu         sync.Mutex
+	requestID  string
+	actor      string
+	revision   int64
+	writeEpoch int32
+	readEpoch  int32
 	// readRevision is the lowest revision of the policy the request's answers were read at (see noteReadRevision).
 	readRevision int64
 	// syncPending says the answer lacks the data of a type that was not synchronized yet (see SyncResult.Pending).
@@ -85,10 +87,13 @@ func (t *Trace) Revision() int64 {
 	return t.revision
 }
 
-func (t *Trace) setRevision(v int64) {
+func (t *Trace) setRevision(v int64, epoch ...int32) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.revision = v
+	if len(epoch) > 0 {
+		t.writeEpoch = epoch[0]
+	}
 	t.state = nil
 }
 
@@ -102,16 +107,18 @@ func (t *Trace) ReadRevision() int64 {
 
 // noteReadRevision records the revision of the policy an answer was read at (cachedAnswer). The lowest one is kept: a
 // request whose answers were read at different revisions reflects only the lowest of them for every answer.
-func (t *Trace) noteReadRevision(v int64) {
+func (t *Trace) noteReadPosition(epoch int32, v int64) {
 	if v <= 0 {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.readRevision == 0 || v < t.readRevision {
-		t.readRevision = v
+	if t.readRevision == 0 || epoch < t.readEpoch || (epoch == t.readEpoch && v < t.readRevision) {
+		t.readEpoch, t.readRevision = epoch, v
 	}
 }
+func (t *Trace) WriteEpoch() int32 { t.mu.Lock(); defer t.mu.Unlock(); return max(t.writeEpoch, 1) }
+func (t *Trace) ReadEpoch() int32  { t.mu.Lock(); defer t.mu.Unlock(); return max(t.readEpoch, 1) }
 
 func (t *Trace) who() string {
 	t.mu.Lock()

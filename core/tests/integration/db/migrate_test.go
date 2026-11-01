@@ -131,7 +131,7 @@ func readSeedState(ctx context.Context, t *testing.T, uri string) seedState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.rulesRevision = rev.Rules
+	s.rulesRevision = rev.Revision
 	return s
 }
 

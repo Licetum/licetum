@@ -260,7 +260,7 @@ func (l *Loaded) changeToTheFixture() {
 					return err
 				}
 			}
-			_, err := db.BumpRevision(ctx, tx, db.ScopeRules)
+			_, err := db.BumpRevision(ctx, tx, db.ScopeGlobal)
 			return err
 		})
 		if err != nil {

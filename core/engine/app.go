@@ -156,13 +156,20 @@ func (a *App) Close() {
 }
 
 // AfterWrite is called once a write that can change a decision has committed, with the revision the write took
-// (db.BumpRevision, in the write's own transaction): it is the revision of the write for the caller (X-Authz-Revision),
+// (db.BumpRevision, in the write's own transaction): it is the revision of the write for the caller (Licetum-Revision),
 // it makes this process read the revisions again at once, and it makes the types of the platform itself due for synchronization (the
 // entities they are made of were just written, and a write must show at once; the data of the other services is not
 // touched: a change of a type or of a synchronizer changes its structure signature instead).
-func (a *App) AfterWrite(ctx context.Context, revision int64) {
+func (a *App) AfterWrite(ctx context.Context, revision int64, epochs ...int32) {
 	if t := TraceFrom(ctx); t != nil {
-		t.setRevision(revision)
+		var epoch int32
+		if len(epochs) > 0 {
+			t.setRevision(revision, epochs[0])
+		} else if err := a.DB.QueryRow(ctx, `SELECT epoch FROM revision_state WHERE scope = 'global'`).Scan(&epoch); err == nil {
+			t.setRevision(revision, epoch)
+		} else {
+			t.setRevision(revision)
+		}
 	}
 	a.invalidateView()
 	if err := a.invalidatePlatformSync(ctx); err != nil {

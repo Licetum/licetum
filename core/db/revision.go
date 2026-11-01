@@ -3,33 +3,12 @@ package db
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-// Scopes of the revision_state table (see migration 00002).
-const (
-	// ScopeRules numbers the changes of everything a decision is made from except the resource data: rules, memberships,
-	// groups, roles and their items, access groups, services, types and synchronizers.
-	ScopeRules = "global"
-	// ScopeLogSettings numbers the changes of the log settings: a process that sees it move loads them.
-	ScopeLogSettings = "global"
-	// ScopePEP numbers the changes of the PEP directory: the issuers, the clients of the services and their API keys (see
-	// pep.go). They change no decision, so they have a scope of their own: a key rotation must not flush the answers.
-	ScopePEP = "global"
-	// dataScopePrefix starts the scope of the resource data of a service.
-	dataScopePrefix = "data:"
-)
-
-// DataScope is the scope of the resource data of a service.
-func DataScope(serviceID uuid.UUID) string { return dataScopePrefix + serviceID.String() }
-
-// ServiceOfDataScope is the service a data scope belongs to.
-func ServiceOfDataScope(scope string) (string, bool) {
-	return strings.CutPrefix(scope, dataScopePrefix)
-}
+// ScopeGlobal is the only revision-state row.
+const ScopeGlobal = "global"
 
 // BumpRevision adds one to the revision of the scope and returns the new value. q is the transaction of the write the
 // revision numbers: the revision commits with it, or not at all. Writers of one scope queue on its row, which is accepted:
@@ -59,7 +38,7 @@ func BumpAllRevisions(ctx context.Context, q Querier, jump int64) (map[string]in
 	}
 	rows, err := q.Query(ctx, `
 		WITH ensure AS (INSERT INTO revision_state (scope, revision) VALUES ($2, 0) ON CONFLICT (scope) DO NOTHING)
-		UPDATE revision_state SET revision = revision + $1 RETURNING scope, revision`, jump, ScopeRules)
+		UPDATE revision_state SET revision = revision + $1 RETURNING scope, revision`, jump, ScopeGlobal)
 	if err != nil {
 		return nil, err
 	}
@@ -78,21 +57,14 @@ func BumpAllRevisions(ctx context.Context, q Querier, jump int64) (map[string]in
 
 // Revisions are the revisions of the policy as of one reading.
 type Revisions struct {
-	Epoch int32
-	// Rules is the revision of ScopeRules.
-	Rules int64
-	// LogSettings is the revision of ScopeLogSettings.
-	LogSettings int64
-	// PEP is the revision of ScopePEP.
-	PEP int64
-	// Data is the revision of the resource data of each service (its id as text); a service that is absent has 0.
-	Data map[string]int64
+	Epoch      int32
+	Revision   int64
+	LogVersion int64
 }
 
-// LoadRevisions reads every scope in one statement.
+// LoadRevisions reads the global position and log-settings version in one snapshot.
 func LoadRevisions(ctx context.Context, q Querier) (Revisions, error) {
 	var out Revisions
-	err := q.QueryRow(ctx, `SELECT epoch, revision FROM revision_state WHERE scope = 'global'`).Scan(&out.Epoch, &out.Rules)
-	out.LogSettings, out.PEP, out.Data = out.Rules, out.Rules, map[string]int64{}
+	err := q.QueryRow(ctx, `SELECT epoch, revision, (SELECT version FROM log_settings WHERE id = 1) FROM revision_state WHERE scope = 'global'`).Scan(&out.Epoch, &out.Revision, &out.LogVersion)
 	return out, err
 }

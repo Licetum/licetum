@@ -115,7 +115,7 @@ func missCost(t *testing.T, n int) (queries int, ops map[string]int) {
 	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 
 	insertRules(t, c, p.Branch, n)
-	rev, err := db.BumpRevision(context.Background(), c.Pool, db.ScopeRules)
+	rev, err := db.BumpRevision(context.Background(), c.Pool, db.ScopeGlobal)
 	if err != nil {
 		t.Fatal(err)
 	}

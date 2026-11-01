@@ -255,7 +255,7 @@ func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) e
 			return err
 		}
 		// New policies and an admin group: the replicas that run already must read the rules again.
-		_, err := BumpRevision(ctx, tx, ScopeRules)
+		_, err := BumpRevision(ctx, tx, ScopeGlobal)
 		return err
 	})
 	if err != nil {

@@ -79,7 +79,7 @@ func (a *App) GetPermission(ctx context.Context, serviceID uuid.UUID, subject st
 // on each type as a whole.
 func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, consistency Consistency) (*permissionData, error) {
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
-	key := fmt.Sprintf("authz:permission:%s:r%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
+	key := fmt.Sprintf("authz:permission:%s:e%d:r%d:%s:%s:%s", resultCacheFormat, state.epoch, state.version, serviceID, subject,
 		a.requestFingerprint(ctx, state, env))
 	return cachedAnswer(ctx, a, key, state, consistency, a.metrics.permissionCache,
 		func(ctx context.Context) (computed[*permissionData], error) {
@@ -87,12 +87,12 @@ func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subjec
 				return computed[*permissionData]{}, err
 			}
 			started := time.Now()
-			data, deps, ttl, hold, err := a.computePermissionData(ctx, serviceID, subject, env, state, consistency)
+			data, ttl, hold, err := a.computePermissionData(ctx, serviceID, subject, env, state, consistency)
 			if err != nil {
 				return computed[*permissionData]{}, err
 			}
 			a.metrics.permissionCompute.Observe(time.Since(started).Seconds())
-			return computed[*permissionData]{value: data, deps: deps, ttl: ttl, hold: hold}, nil
+			return computed[*permissionData]{value: data, ttl: ttl, hold: hold}, nil
 		})
 }
 
@@ -111,7 +111,7 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 		return fingerprint(allRequestAttributes(env), env)
 	}
 	if state.ok {
-		a.attrsMemo.Store(&attrsMemo{revision: state.version, attrs: attrs})
+		a.attrsMemo.Store(&attrsMemo{epoch: state.epoch, revision: state.version, attrs: attrs})
 	}
 	return fingerprint(attrs, env)
 }
@@ -588,8 +588,6 @@ type Prepared struct {
 	// hold is how long the answer stays correct with respect to validity windows and the state of the data it was made from
 	// (see validityUntil): never less than ttl.
 	hold time.Duration
-	// deps are the data versions of the services whose resource data the decision reads (see prepare).
-	deps map[string]int64
 }
 
 // syncedTypes keeps the involved types that have resources (see sourced), and the service types among them, whose data is
@@ -612,7 +610,7 @@ func (p *Prepared) syncedTypes(synced map[uuid.UUID]bool) {
 // prepare loads and resolves everything a decision needs, except the resources themselves. The independent
 // reads run in parallel: the identity set and the type graph first, then the applicable rules, the validity
 // boundary and the sync types. asked names the types of the service the caller asks about: they are
-// synchronized even if no rule reaches them. The data versions the answer reads are recorded in p.deps.
+// synchronized even if no rule reaches them. Every data-changing synchronization moves the global revision.
 func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency, asked []string) (*Prepared, error) {
 	var identity identitySet
 	var identityUsesNow bool
@@ -724,16 +722,6 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		p.hold = min(p.hold, pendingAnswerTTL) // an answer that lacks data is never served beyond its short life
 	}
 	p.syncedTypes(synced)
-
-	// What the answer reads is the resource data of the involved types. Their services are recorded with the
-	// data versions this request saw before reading any of that data.
-	p.deps = map[string]int64{}
-	for id := range involved {
-		if n, ok := g.Node(id); ok {
-			svc := n.ServiceID.String()
-			p.deps[svc] = state.data[svc]
-		}
-	}
 
 	if p.Insts, err = a.buildInstances(ctx, g, snap, rules, env, missing, p.hasResources); err != nil {
 		return nil, err
@@ -1123,14 +1111,14 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 
 // computePermissionData computes the permissions of a subject in a service. Along with the answer it returns
 // the data versions it read (see prepare) and how long it stays correct.
-func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency) (*permissionData, map[string]int64, time.Duration, time.Duration, error) {
+func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency) (*permissionData, time.Duration, time.Duration, error) {
 	p, err := a.prepare(ctx, serviceID, subject, env, state, consistency, nil)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, 0, 0, err
 	}
 	nodes, err := a.coverNodes(ctx, p)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, 0, 0, err
 	}
 
 	data := &permissionData{
@@ -1180,7 +1168,7 @@ func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, su
 			}
 		}
 	}
-	return data, p.deps, p.ttl, p.hold, nil
+	return data, p.ttl, p.hold, nil
 }
 
 func Keys[K comparable, V any](m map[K]V) []K {

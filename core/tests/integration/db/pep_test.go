@@ -93,23 +93,23 @@ func TestPEPWritesMoveTheGlobalRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.PEP != before.PEP+1 {
-		t.Errorf("a key issue moved the pep scope from %d to %d, want one step", before.PEP, after.PEP)
+	if after.Revision != before.Revision+1 {
+		t.Errorf("a key issue moved the pep scope from %d to %d, want one step", before.Revision, after.Revision)
 	}
-	if after.Rules != before.Rules+1 {
-		t.Errorf("a key issue moved the rules scope from %d to %d, want one step", before.Rules, after.Rules)
+	if after.Revision != before.Revision+1 {
+		t.Errorf("a key issue moved the rules scope from %d to %d, want one step", before.Revision, after.Revision)
 	}
 
 	// A policy write moves the same global revision as a PEP write.
-	if _, err := db.BumpRevision(ctx, pool, db.ScopeRules); err != nil {
+	if _, err := db.BumpRevision(ctx, pool, db.ScopeGlobal); err != nil {
 		t.Fatal(err)
 	}
 	again, err := db.LoadRevisions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.PEP != after.PEP+1 {
-		t.Errorf("a rules write moved the pep scope from %d to %d", after.PEP, again.PEP)
+	if again.Revision != after.Revision+1 {
+		t.Errorf("a rules write moved the pep scope from %d to %d", after.Revision, again.Revision)
 	}
 }
 
@@ -286,7 +286,7 @@ func TestPEPClientAndKeysAreReachedThroughTheirServiceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := revisions.PEP
+	before := revisions.Revision
 	stop := errors.New("stop")
 	if _, err := db.ModifyPEPClient(ctx, pool, service, client.ID, func(c *db.PEPClient) error { c.Name = "renamed"; return stop }); !errors.Is(err, stop) {
 		t.Fatalf("an error of the change = %v", err)
@@ -295,7 +295,7 @@ func TestPEPClientAndKeysAreReachedThroughTheirServiceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := db.GetPEPClient(ctx, pool, service, client.ID); got.Name != "checkout" || revisions.PEP != before {
+	if got, _ := db.GetPEPClient(ctx, pool, service, client.ID); got.Name != "checkout" || revisions.Revision != before {
 		t.Fatalf("a refused change was written: %v", got)
 	}
 

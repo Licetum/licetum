@@ -2,8 +2,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +25,7 @@ const pepLoadTimeout = 10 * time.Second
 // PEPDirectory is the PEP directory as of one revision of the pep scope. The requests of the process share it: it is read-only
 // once loaded.
 type PEPDirectory struct {
+	epoch    int32
 	revision int64
 	// Verifiers verifies the tokens of each issuer, by issuer.
 	Verifiers map[string]*pepauth.Verifier
@@ -62,7 +63,7 @@ type pepState struct {
 func (p *pepState) keep(d *PEPDirectory) *PEPDirectory {
 	for {
 		cur := p.dir.Load()
-		if cur != nil && cur.revision >= d.revision {
+		if cur != nil && (cur.epoch > d.epoch || (cur.epoch == d.epoch && cur.revision >= d.revision)) {
 			return cur
 		}
 		if p.dir.CompareAndSwap(cur, d) {
@@ -99,14 +100,14 @@ func (a *App) PEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 		return a.pep.keep(d), nil
 	}
 	cur := a.pep.dir.Load()
-	if cur != nil && cur.revision >= state.pep {
+	if cur != nil && cur.epoch == state.epoch && cur.revision >= state.version {
 		cur.behind.Store(0)
 		return cur, nil
 	}
 	if cur != nil {
 		cur.behind.CompareAndSwap(0, time.Now().UnixNano())
 	}
-	got, err, _ := a.pep.loads.Do(strconv.FormatInt(state.pep, 10), func() (any, error) {
+	got, err, _ := a.pep.loads.Do(fmt.Sprintf("%d.%d", state.epoch, state.version), func() (any, error) {
 		d, err := a.loadPEPDirectory(ctx)
 		if err != nil {
 			return nil, err
@@ -122,7 +123,7 @@ func (a *App) PEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 	if cur == nil {
 		return nil, err
 	}
-	if cur.revision >= state.pep {
+	if cur.epoch == state.epoch && cur.revision >= state.version {
 		return cur, nil
 	}
 	cur.behind.CompareAndSwap(0, time.Now().UnixNano())
@@ -147,6 +148,7 @@ func (a *App) loadPEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 // newPEPDirectory builds the directory from its rows: a verifier per issuer, the clients by service and the credentials by key id.
 func (a *App) newPEPDirectory(data db.PEPDirectoryData) *PEPDirectory {
 	d := &PEPDirectory{
+		epoch:            data.Epoch,
 		revision:         data.Revision,
 		Verifiers:        make(map[string]*pepauth.Verifier, len(data.Issuers)),
 		ClientsByService: make(map[uuid.UUID][]db.PEPClient),

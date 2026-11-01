@@ -169,7 +169,7 @@ func setup(t *testing.T) *env {
 // restore-admin in another process): the revision is bumped as every write does, and the app reads it again at once.
 func (e *env) externalChange(ctx context.Context) {
 	e.t.Helper()
-	revision, err := db.BumpRevision(ctx, e.pool, db.ScopeRules)
+	revision, err := db.BumpRevision(ctx, e.pool, db.ScopeGlobal)
 	if err != nil {
 		e.t.Fatal(err)
 	}

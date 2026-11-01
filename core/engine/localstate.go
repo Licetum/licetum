@@ -95,7 +95,7 @@ func (a *App) NoteReadRevision(ctx context.Context) {
 		return
 	}
 	if state := a.cacheState(ctx); state.ok {
-		t.noteReadRevision(state.version)
+		t.noteReadPosition(state.epoch, state.version)
 	}
 }
 
@@ -238,7 +238,7 @@ const revisionRetry = 20 * time.Millisecond
 // the interval. It returns when ctx ends. Requests renew the view too, from the same singleflight, so the reading is never
 // done twice at once.
 //
-// The poll also carries the revision of the log settings (db.ScopeLogSettings), so it runs in every process, with the local view or
+// The poll also carries the revision of the log settings (db.ScopeGlobal), so it runs in every process, with the local view or
 // without it (the worker, or SNAPSHOT__MAX_BYTES below zero): it is the only thing that polls for a settings change.
 func (a *App) WatchRevision(ctx context.Context) {
 	ticker := time.NewTicker(a.tuningOrDefault().revisionPoll)
@@ -288,12 +288,23 @@ func (a *App) readView(ctx context.Context) *localView {
 	}
 	loadCtx, cancelLoad := context.WithTimeout(ctx, snapshotLoadTimeout)
 	defer cancelLoad()
-	snap := a.snapshotFor(loadCtx, state.version, a.local.view.Load())
+	previous := a.local.view.Load()
+	if previous != nil && previous.state.epoch != state.epoch {
+		if a.metrics != nil {
+			a.metrics.epochResets.Inc()
+		}
+		slog.InfoContext(ctx, "global revision epoch changed", "was", previous.state.epoch, "now", state.epoch)
+		a.answersL1.Clear()
+		a.pep.dir.Store(nil)
+		a.local.oversized.Store(0)
+		previous = nil
+	}
+	snap := a.snapshotFor(loadCtx, state.version, previous)
 	if snap != nil {
 		state.snap, state.attrs, state.attrsOK = snap, snap.attrs, true
 	}
 	v := &localView{state: state, snap: snap, readAt: time.Now(), epoch: epoch}
-	if prev := a.local.view.Load(); prev != nil && state.version < prev.state.version {
+	if prev := a.local.view.Load(); prev != nil && state.epoch == prev.state.epoch && state.version < prev.state.version {
 		// The revision went backwards: the database this process reads is not the one it read before (a failover to a replica that
 		// had not received the last writes, or a restore). Revisions it used for other content may be used again, so what is
 		// kept under them in this process is dropped; `licetum failover` raises the revisions above everything seen.

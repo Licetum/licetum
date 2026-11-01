@@ -84,6 +84,7 @@ type PEPCredential struct {
 // PEPDirectoryData is what LoadPEPDirectory reads: the issuers, the enabled clients that are not deleted, the credentials of those
 // clients that are not revoked, and the revision of the pep scope. It is one snapshot.
 type PEPDirectoryData struct {
+	Epoch       int32
 	Revision    int64
 	Issuers     []PEPIssuer
 	Clients     []PEPClient
@@ -110,13 +111,13 @@ SELECT
 		ORDER BY k.key_id), '[]'::jsonb)
 	 FROM pep_credential k JOIN pep_client c ON c.id = k.client_id JOIN service s ON s.id = c.service_id AND s.deleted_at IS NULL
 	 WHERE k.revoked_at IS NULL AND c.enabled AND c.deleted_at IS NULL),
-	COALESCE((SELECT revision FROM revision_state WHERE scope = 'pep'), 0)`
+	(SELECT epoch FROM revision_state WHERE scope = 'global'), (SELECT revision FROM revision_state WHERE scope = 'global')`
 
 // LoadPEPDirectory reads the PEP directory in one statement, through q (the reader of the check path, see engine.PEPDirectory).
 func LoadPEPDirectory(ctx context.Context, q Querier) (PEPDirectoryData, error) {
 	var issuers, clients, credentials []byte
 	var out PEPDirectoryData
-	if err := q.QueryRow(ctx, pepDirectorySQL).Scan(&issuers, &clients, &credentials, &out.Revision); err != nil {
+	if err := q.QueryRow(ctx, pepDirectorySQL).Scan(&issuers, &clients, &credentials, &out.Epoch, &out.Revision); err != nil {
 		return PEPDirectoryData{}, err
 	}
 	if err := json.Unmarshal(issuers, &out.Issuers); err != nil {
@@ -152,7 +153,7 @@ func UpsertIssuer(ctx context.Context, pool *pgxpool.Pool, i PEPIssuer) error {
 			i.Issuer, i.JWKSURL, audiences, algs, i.RequireTyp); err != nil {
 			return err
 		}
-		_, err := BumpRevision(ctx, tx, ScopePEP)
+		_, err := BumpRevision(ctx, tx, ScopeGlobal)
 		return err
 	})
 }
@@ -170,7 +171,7 @@ func DeleteIssuer(ctx context.Context, pool *pgxpool.Pool, issuer string) error 
 		if tag.RowsAffected() == 0 {
 			return ErrPEPNotFound
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
+		_, err = BumpRevision(ctx, tx, ScopeGlobal)
 		return err
 	})
 }
@@ -211,7 +212,7 @@ func CreatePEPClient(ctx context.Context, pool *pgxpool.Pool, c PEPClient) (PEPC
 		).Scan(&c.CreatedAt); err != nil {
 			return pepClientError(err)
 		}
-		_, err := BumpRevision(ctx, tx, ScopePEP)
+		_, err := BumpRevision(ctx, tx, ScopeGlobal)
 		return err
 	})
 	if err != nil {
@@ -262,7 +263,7 @@ func ModifyPEPClient(ctx context.Context, pool *pgxpool.Pool, serviceID, clientI
 			c.ID, c.ServiceID, c.Name, c.Issuer, c.ClientID, c.Operations, c.Enabled); err != nil {
 			return pepClientError(err)
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
+		_, err = BumpRevision(ctx, tx, ScopeGlobal)
 		return err
 	})
 	if err != nil {
@@ -287,7 +288,7 @@ func DeletePEPClient(ctx context.Context, pool *pgxpool.Pool, serviceID, clientI
 			UPDATE pep_credential SET revoked_at = now() WHERE client_id = $1 AND revoked_at IS NULL`, clientID); err != nil {
 			return err
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
+		_, err = BumpRevision(ctx, tx, ScopeGlobal)
 		return err
 	})
 }
@@ -396,7 +397,7 @@ func IssueAPIKey(ctx context.Context, pool *pgxpool.Pool, clientID uuid.UUID) (s
 			keyID, clientID, hash); err != nil {
 			return err
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
+		_, err = BumpRevision(ctx, tx, ScopeGlobal)
 		return err
 	})
 	if err != nil {
@@ -423,7 +424,7 @@ func RevokeAPIKey(ctx context.Context, pool *pgxpool.Pool, keyID string) error {
 			}
 			return nil
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
+		_, err = BumpRevision(ctx, tx, ScopeGlobal)
 		return err
 	})
 }
