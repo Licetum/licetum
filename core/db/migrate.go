@@ -100,7 +100,7 @@ func SchemaVersion(ctx context.Context, q Querier) (int64, error) {
 }
 
 // MigrateUpTo applies the migrations up to and including version, without seeding the self-service. It
-// lets a test bring a database to the schema of an earlier release, fill it, and migrate it on.
+// lets a test apply a specific schema-v2 version without platform seed data.
 func MigrateUpTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
 	if err := rejectLegacySchema(ctx, pool); err != nil {
 		return err
@@ -124,7 +124,7 @@ func MigrateUpTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
 }
 
 // MigrateDownTo rolls the schema back to version (the migrations above it are reverted). Tests use it to check
-// that the down migrations still reach the schema of the previous release.
+// that schema-v2 migrations can be reverted. Released v0.1 schemas are refused.
 func MigrateDownTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
 	if err := rejectLegacySchema(ctx, pool); err != nil {
 		return err

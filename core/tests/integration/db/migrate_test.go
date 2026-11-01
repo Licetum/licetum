@@ -384,7 +384,7 @@ func TestF5_10_TheTestHelpersTakeNoSessionLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- db.MigrateUpTo(ctx, pool, 2) }()
+	go func() { done <- db.MigrateUpTo(ctx, pool, db.LatestMigration()) }()
 	select {
 	case err := <-done:
 		if err != nil {
