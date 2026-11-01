@@ -30,7 +30,8 @@ import (
 )
 
 type App struct {
-	DB *pgxpool.Pool
+	dbosWrongDatabase atomic.Bool
+	DB                *pgxpool.Pool
 	// SyncDB is the pool of the synchronization transactions (DB__SYNC_POOL_SIZE connections), apart from the request pool,
 	// so that a synchronization waiting for a lock never takes a connection a request needs. Nil: DB is used.
 	SyncDB *pgxpool.Pool

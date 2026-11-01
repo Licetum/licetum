@@ -217,3 +217,8 @@ Before P6 supplies publication, the worker retains the outbox by age (`OUTBOX__R
 headers and their whole payloads in bounded transactions, always preserving the newest header. History has independent
 retention and is not deleted. `licetum_outbox_rows` and `licetum_outbox_oldest_age_seconds` describe retained data.
 
+### DBOS placement
+
+The DBOS system tables must be in schema `dbos` of the application database. `SYNC__DBOS_URI` may select a different host,
+port or pooler, but must name the same database as `DB__URI`; startup warns about a mismatch. DBOS owns its table DDL.
+`SYNC__DBOS_SCHEMA` defaults to `dbos`; isolated tests use a schema of their own in that same database.
