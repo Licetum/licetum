@@ -223,7 +223,7 @@ contracts:
     oracle: the outbox
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: PUB03
     statement: "Heartbeat: every commit before pg_time has a revision at most the heartbeat's position."
     oracle: snapshots of PostgreSQL

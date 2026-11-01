@@ -52,7 +52,7 @@ func Project(ctx context.Context, q Reader, table string, key map[string]any) (I
 	case "service":
 		expr += " - ARRAY['authorization_url','token_url','jwks_url','issuer','client_id','client_secret','trusted_clients']"
 	case "synchronizer":
-		expr = "jsonb_build_object('id',t.id,'type_resource_id',t.type_resource_id,'regions',to_jsonb(t)->'regions','refresh_interval',to_jsonb(t)->'refresh_interval','deleted_at',to_jsonb(t)->'deleted_at')"
+		expr = "jsonb_build_object('id',t.id,'type_resource_id',t.type_resource_id,'regions',to_jsonb(t)->'regions','refresh_interval',to_jsonb(t)->'refresh_interval','refresh_interval_max',to_jsonb(t)->'refresh_interval_max','deleted_at',to_jsonb(t)->'deleted_at')"
 	case "log_settings":
 		expr += " - 'salt'"
 	case "type_resource":
