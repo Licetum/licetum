@@ -44,6 +44,9 @@ func PolicyTx(ctx context.Context, pool *pgxpool.Pool, recheck func(context.Cont
 		position, err = finishPolicy(ctx, tx, entry, changes)
 		return err
 	})
+	if err == nil && position.Revision > 0 {
+		notePublication(ctx, position)
+	}
 	return position, err
 }
 

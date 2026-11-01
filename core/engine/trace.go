@@ -4,6 +4,8 @@ import (
 	"context"
 	"maps"
 	"sync"
+
+	"github.com/licetum/licetum/core/db"
 )
 
 // Trace is what one request leaves for the layers below the API: the request id and the subject that makes
@@ -195,4 +197,13 @@ func (t *Trace) addDB(operation string) {
 	}
 	t.dbQueries++
 	t.dbOps[operation]++
+}
+
+// NoteCommittedPosition attaches the exact committed write position to the response.
+func (a *App) NoteCommittedPosition(ctx context.Context, p db.Position) {
+	if p.Revision > 0 {
+		if t := TraceFrom(ctx); t != nil {
+			t.setRevision(p.Revision, p.Epoch)
+		}
+	}
 }
