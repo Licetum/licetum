@@ -37,6 +37,8 @@ flowchart LR
   L --- DB
 ```
 
+规则条件通过 `source: "subject"`（默认值）读取 `subject.properties`，通过 `source: "context"` 读取请求属性，通过 `source: "now"` 读取时间。旧来源名称 `claim` 会被拒绝，请改用 `subject`。`resource_where` 条件读取资源属性，不指定来源。
+
 PDP 使用 [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html)，并限定在单个服务内：路径
 以 slug 指明服务。使用方是策略执行点（PEP）。管理员把它注册为服务的 *PEP 客户端*，它用 Licetum 签发的 API 密钥，或用管理员
 注册的身份提供方签发的访问令牌进行认证。PEP 指明要询问的人，并以问题中的 `subject` 为其 claims 担保：

@@ -2075,9 +2075,9 @@ components:
           format: int64
           type: integer
         source:
-          description: claim — read from subject.properties of the request; context — read from the context of the request
+          description: subject — read from subject.properties of the request; context — read from the context of the request
           enum:
-            - claim
+            - subject
             - context
           type: string
         targets:
@@ -2580,7 +2580,7 @@ components:
       additionalProperties: false
       properties:
         attr:
-          description: "The attribute: a claim name (source claim), a key of the request context (source context), or hour or weekday (source now)"
+          description: "The attribute: a subject property name (source subject), a key of the request context (source context), or hour or weekday (source now)"
           examples:
             - department
           type: string
@@ -2599,9 +2599,9 @@ components:
             - in_cidr
           type: string
         source:
-          description: "Where the attribute comes from: claim (a claim of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"
+          description: "Where the attribute comes from: subject (a property of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"
           enum:
-            - claim
+            - subject
             - context
             - now
           type: string

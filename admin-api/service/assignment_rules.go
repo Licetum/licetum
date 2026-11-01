@@ -144,9 +144,9 @@ func onMissingOf(in *model.AssignmentRuleInput, old *model.AssignmentRule) strin
 func ruleArgs(in *model.AssignmentRuleInput, onMissing string) []any {
 	return []any{
 		engine.ToNullUUID(in.RoleID), engine.ToNullUUID(in.TypeResourceID), in.ResourceID, fromPropertyParam(in.ResourceFromProperty),
-		in.Access, in.Subject, engine.MustJSON(in.Predicate), engine.ToNullUUID(in.MemberOfGroupID), *in.Enabled,
+		in.Access, in.Subject, engine.MustJSON(model.SubjectPredicate(in.Predicate)), engine.ToNullUUID(in.MemberOfGroupID), *in.Enabled,
 		in.Effect, in.Exception, in.ValidFrom, in.ExpiresAt, in.Name, in.Description,
-		onMissing, engine.MustJSON(in.RequiresPredicate), engine.ToNullUUID(in.RequiresGroupID), whereParam(in.ResourceWhere), in.SubjectType, engine.ToNullUUID(in.SubjectGroupID),
+		onMissing, engine.MustJSON(model.SubjectPredicate(in.RequiresPredicate)), engine.ToNullUUID(in.RequiresGroupID), whereParam(in.ResourceWhere), in.SubjectType, engine.ToNullUUID(in.SubjectGroupID),
 	}
 }
 

@@ -248,9 +248,9 @@
     "remove": "Убрать",
     "source": "Источник",
     "sources": {
-      "claim": "Токен",
       "context": "Запрос",
-      "now": "Время"
+      "now": "Время",
+      "subject": "Свойства субъекта"
     },
     "value": "Значение",
     "valueList": "a, b, c"

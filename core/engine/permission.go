@@ -30,7 +30,7 @@ const (
 	// resultCacheFormat is the version of the cached result format: when the format or the decisions change, new
 	// keys do not overlap the old ones. The answers live in the memory of one process, so it only keeps apart the keys
 	// of two formats inside it; stale entries simply expire by TTL.
-	resultCacheFormat = "t10"
+	resultCacheFormat = "t11"
 )
 
 // PermissionResult — {type_resource_name: sync {resources} | not_sync {access}}.
@@ -119,9 +119,9 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 
 // conditionAttrSQL names the attribute of a condition by its source: "context:<name>" for a context attribute, and
 // "property:<name>" otherwise. The time (source now) reads nothing from the request.
-const conditionAttrSQL = `CASE WHEN c->>'source' = 'context' THEN 'context:' ELSE 'claim:' END || (c->>'attr')`
+const conditionAttrSQL = `CASE WHEN c->>'source' = 'context' THEN 'context:' ELSE 'subject:' END || (c->>'attr')`
 
-const notNowSQL = `COALESCE(c->>'source', 'claim') <> 'now'`
+const notNowSQL = `COALESCE(c->>'source', 'subject') <> 'now'`
 
 // RequestAttributes reads the attributes the rules look at: the conditions of the rules, of their guards and of the group
 // memberships, and the properties of the resource_from_claim specs (of rules and of role items).
@@ -135,8 +135,8 @@ func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
 			SELECT `+conditionAttrSQL+` AS attr FROM assignment_rule, jsonb_array_elements(predicate) c WHERE `+notNowSQL+`
 			UNION ALL SELECT `+conditionAttrSQL+` FROM assignment_rule, jsonb_array_elements(requires_predicate) c WHERE `+notNowSQL+`
 			UNION ALL SELECT `+conditionAttrSQL+` FROM group_member, jsonb_array_elements(predicate) c WHERE `+notNowSQL+`
-			UNION ALL SELECT 'claim:' || (resource_from_claim->>'claim') FROM assignment_rule WHERE resource_from_claim IS NOT NULL
-			UNION ALL SELECT 'claim:' || (resource_from_claim->>'claim') FROM role_permission WHERE resource_from_claim IS NOT NULL
+			UNION ALL SELECT 'subject:' || (resource_from_claim->>'claim') FROM assignment_rule WHERE resource_from_claim IS NOT NULL
+			UNION ALL SELECT 'subject:' || (resource_from_claim->>'claim') FROM role_permission WHERE resource_from_claim IS NOT NULL
 		) x WHERE attr IS NOT NULL ORDER BY attr`)
 	if err != nil {
 		return nil, err
@@ -157,7 +157,7 @@ func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
 func allRequestAttributes(env Env) []string {
 	var names []string
 	for k := range env.Properties {
-		names = append(names, "claim:"+k)
+		names = append(names, "subject:"+k)
 	}
 	for k := range env.Context {
 		names = append(names, "context:"+k)
@@ -173,7 +173,7 @@ func (e Env) attribute(name string) (any, bool) {
 		v, found := e.Context[key]
 		return v, found && v != nil
 	}
-	key := strings.TrimPrefix(name, "claim:")
+	key := strings.TrimPrefix(name, "subject:")
 	v, found := e.Properties[key]
 	return v, found && v != nil
 }

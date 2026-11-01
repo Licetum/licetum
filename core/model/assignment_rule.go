@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -68,10 +69,10 @@ func (v *PredicateValue) UnmarshalJSON(data []byte) error {
 // from: a property of the subject (the default), an attribute the request carries (context), or the time of the decision
 // (now: hour and weekday, in UTC).
 type PredicateCondition struct {
-	Attr   string         `json:"attr" doc:"The attribute: a claim name (source claim), a key of the request context (source context), or hour or weekday (source now)" example:"department"`
+	Attr   string         `json:"attr" doc:"The attribute: a subject property name (source subject), a key of the request context (source context), or hour or weekday (source now)" example:"department"`
 	Op     string         `json:"op" enum:"eq,ne,in,not_in,regex,gt,ge,lt,le,in_cidr" doc:"Operator: eq — equality, ne — inequality, in — membership in a list, not_in — absence from a list, regex — regular expression search (RE2), gt, ge, lt, le — numeric comparison, in_cidr — the address lies in one of the networks. An attribute the request does not carry never satisfies a condition of an allow rule; ne and not_in included"`
 	Value  PredicateValue `json:"value" doc:"The value to compare with: a string, or a list for in, not_in and in_cidr"`
-	Source string         `json:"source,omitempty" enum:"claim,context,now" doc:"Where the attribute comes from: claim (a claim of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"`
+	Source string         `json:"source,omitempty" enum:"subject,context,now" doc:"Where the attribute comes from: subject (a property of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"`
 }
 
 const (
@@ -89,7 +90,7 @@ const (
 
 // Sources of a condition.
 const (
-	SourceSubject = "claim"
+	SourceSubject = "subject"
 	SourceContext = "context"
 	SourceNow     = "now"
 )
@@ -112,6 +113,9 @@ func (c *PredicateCondition) UnmarshalJSON(data []byte) error {
 	}
 	*c = PredicateCondition{Attr: *raw.Attr, Op: *raw.Op, Value: *raw.Value}
 	if raw.Source != nil {
+		if *raw.Source == "claim" {
+			return apperr.Unprocessable(i18n.PredicateSourceInvalid, *raw.Source)
+		}
 		c.Source = *raw.Source
 	}
 	return nil
@@ -125,6 +129,18 @@ func validatePredicate(conds []PredicateCondition) error {
 		}
 	}
 	return nil
+}
+
+// SubjectPredicate returns a copy with the default source made explicit for storage.
+// Resource-attribute conditions keep their separate, source-free representation.
+func SubjectPredicate(conds []PredicateCondition) []PredicateCondition {
+	out := slices.Clone(conds)
+	for i := range out {
+		if out[i].Source == "" {
+			out[i].Source = SourceSubject
+		}
+	}
+	return out
 }
 
 // validateResourceWhere checks the conditions over the attributes of the resources: they take no source, the
@@ -347,6 +363,8 @@ func (a *AssignmentRuleInput) Validate() error {
 	if err := validatePredicate(a.RequiresPredicate); err != nil {
 		return err
 	}
+	a.Predicate = SubjectPredicate(a.Predicate)
+	a.RequiresPredicate = SubjectPredicate(a.RequiresPredicate)
 	if a.OnMissingAttribute != nil && *a.OnMissingAttribute == OnMissingApply && a.Effect != EffectDeny {
 		return apperr.Unprocessable(i18n.OnMissingApplyNeedsDeny)
 	}

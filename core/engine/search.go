@@ -20,7 +20,7 @@ const searchBatch = 500
 
 // searchResultFormat is the version of the cached pages of the resource search: it changes with their format and with the
 // decisions.
-const searchResultFormat = "t2"
+const searchResultFormat = "t3"
 
 // ResourceSearch is a request of the resource search: the type and the action asked for, where the page starts, and its bounds.
 type ResourceSearch struct {

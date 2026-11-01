@@ -7,7 +7,7 @@ import type {
 } from '@/api/admin/model';
 import { endOfDayISO } from '@/domain/format';
 
-export type CondSource = 'claim' | 'context' | 'now';
+export type CondSource = 'subject' | 'context' | 'now';
 export type CondOp =
   | 'eq'
   | 'ne'
@@ -85,7 +85,7 @@ export const emptyForm = (): GrantForm => ({
 });
 
 let counter = 0;
-export const newCond = (source: CondSource = 'claim'): Cond => ({
+export const newCond = (source: CondSource = 'subject'): Cond => ({
   id: `c${++counter}`,
   source,
   attr: '',

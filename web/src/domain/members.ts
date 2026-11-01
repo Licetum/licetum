@@ -9,7 +9,7 @@ export type MemberView = { kind: MemberKind; label: string; username?: string; g
 
 /** A person is a membership whose only condition is "preferred_username = name" — there is no separate person record. */
 export const personPredicate = (username: string): PredicateCondition[] => [
-  { attr: 'preferred_username', op: 'eq', source: 'claim', value: username.trim() },
+  { attr: 'preferred_username', op: 'eq', source: 'subject', value: username.trim() },
 ];
 
 export function personOf(predicate: PredicateCondition[] | null | undefined): string | null {
@@ -19,7 +19,7 @@ export function personOf(predicate: PredicateCondition[] | null | undefined): st
       p &&
       p.attr === 'preferred_username' &&
       p.op === 'eq' &&
-      (p.source ?? 'claim') === 'claim' &&
+      (p.source ?? 'subject') === 'subject' &&
       typeof p.value === 'string'
     )
       return p.value;

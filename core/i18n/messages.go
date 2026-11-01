@@ -273,9 +273,9 @@ var catalog = map[Key]Text{
 		ZH: "ne 运算符只能与单个字符串比较，不能与列表比较",
 	},
 	PredicateSourceInvalid: {
-		EN: "Unknown source %q: expected claim, context or now",
-		RU: "Неизвестный источник %q: ожидается claim, context или now",
-		ZH: "未知的来源 %q：应为 claim、context 或 now",
+		EN: "Unknown source %q: expected subject, context or now; claim was replaced by subject",
+		RU: "Неизвестный источник %q: ожидается subject, context или now; вместо claim используйте subject",
+		ZH: "未知的来源 %q：应为 subject、context 或 now；请使用 subject 替代 claim",
 	},
 	PredicateNowAttrInvalid: {
 		EN: "Attribute %q of source now: expected hour (0-23) or weekday (1-7)",

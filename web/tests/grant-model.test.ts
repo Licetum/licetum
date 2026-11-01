@@ -87,7 +87,7 @@ describe('the "give access" form', () => {
     const cond = { ...newCond(), attr: 'department', op: 'in' as const, value: 'sales, legal' };
     const [byCondition] = buildInputs(form({ who: 'condition', whoConds: [cond] }));
     expect(byCondition?.predicate).toEqual([
-      { attr: 'department', op: 'in', source: 'claim', value: ['sales', 'legal'] },
+      { attr: 'department', op: 'in', source: 'subject', value: ['sales', 'legal'] },
     ]);
   });
 

@@ -33,13 +33,13 @@ func TestPolicyPropertiesListWhatTheRulesRead(t *testing.T) {
 	for _, c := range decodeList(t, raw) {
 		got[c["source"].(string)+":"+c["name"].(string)] = row{c["source"].(string), c["rules"].(float64), c["targets"].(float64), c["memberships"].(float64)}
 	}
-	if got["claim:department"].memberships != 1 {
+	if got["subject:department"].memberships != 1 {
 		t.Fatalf("department is read by the membership: %+v", got)
 	}
 	if got["context:ip"].rules != 1 {
 		t.Fatalf("ip is read from the context by a guard: %+v", got)
 	}
-	if got["claim:branch_name"].targets != 1 {
+	if got["subject:branch_name"].targets != 1 {
 		t.Fatalf("branch_name is read by a claim-based target: %+v", got)
 	}
 }

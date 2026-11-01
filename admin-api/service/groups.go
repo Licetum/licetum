@@ -183,7 +183,7 @@ func (a *App) createGroupMember(ctx context.Context, groupID uuid.UUID, in *mode
 			INSERT INTO group_member (service_id, id, group_id, member_group_id, predicate, enabled, valid_from, expires_at)
 			VALUES ((SELECT service_id FROM user_group WHERE id=$1),COALESCE($7::uuid, gen_random_uuid()), $1, $2, $3::jsonb, $4, $5, $6)
 			RETURNING `+engine.GroupMemberColumns,
-			groupID, engine.ToNullUUID(in.MemberGroupID), engine.MustJSON(in.Predicate), *in.Enabled, in.ValidFrom, in.ExpiresAt, id,
+			groupID, engine.ToNullUUID(in.MemberGroupID), engine.MustJSON(model.SubjectPredicate(in.Predicate)), *in.Enabled, in.ValidFrom, in.ExpiresAt, id,
 		))
 		if db.IsPrimaryKeyViolation(err) {
 			return change{}, idTaken(id)
@@ -236,7 +236,7 @@ func (a *App) UpdateGroupMember(ctx context.Context, groupID, memberID uuid.UUID
 			UPDATE group_member SET member_group_id = $2, predicate = $3::jsonb, enabled = $4, valid_from = $5, expires_at = $6
 			WHERE id = $1
 			RETURNING `+engine.GroupMemberColumns,
-			memberID, engine.ToNullUUID(in.MemberGroupID), engine.MustJSON(in.Predicate), *in.Enabled, in.ValidFrom, in.ExpiresAt,
+			memberID, engine.ToNullUUID(in.MemberGroupID), engine.MustJSON(model.SubjectPredicate(in.Predicate)), *in.Enabled, in.ValidFrom, in.ExpiresAt,
 		))
 		if err != nil {
 			return change{}, err

@@ -248,9 +248,9 @@
     "remove": "Remove",
     "source": "Source",
     "sources": {
-      "claim": "Token",
       "context": "Request",
-      "now": "Time"
+      "now": "Time",
+      "subject": "Subject properties"
     },
     "value": "Value",
     "valueList": "a, b, c"

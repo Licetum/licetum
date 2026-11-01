@@ -45,6 +45,8 @@ flowchart LR
   L --- DB
 ```
 
+Rule conditions read `subject.properties` with `source: "subject"` (the default), request attributes with `source: "context"`, and the clock with `source: "now"`. The old source name `claim` is rejected; use `subject`. Conditions in `resource_where` read resource attributes and have no source.
+
 The PDP speaks the [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html),
 scoped to a service: the path names the service by its slug. A consumer is a policy enforcement point (PEP). An
 administrator registers it as a *PEP client* of the service, and it authenticates with an API key that Licetum issues or

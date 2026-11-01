@@ -320,7 +320,7 @@ func seedAdminGroup(ctx context.Context, tx pgx.Tx, p config.Platform) error {
 	if len(p.AdminClaimValues) > 0 {
 		// Who belongs to the group: the property takes one of the configured values.
 		predicate, err := json.Marshal([]model.PredicateCondition{
-			{Attr: p.AdminClaim, Op: model.OpIn, Value: model.PredicateValue{List: p.AdminClaimValues, IsList: true}},
+			{Source: model.SourceSubject, Attr: p.AdminClaim, Op: model.OpIn, Value: model.PredicateValue{List: p.AdminClaimValues, IsList: true}},
 		})
 		if err != nil {
 			return err

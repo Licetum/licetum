@@ -60,6 +60,7 @@ func (m *GroupMemberInput) Validate() error {
 	if err := validatePredicate(m.Predicate); err != nil {
 		return err
 	}
+	m.Predicate = SubjectPredicate(m.Predicate)
 	if m.MemberGroupID != nil && len(m.Predicate) > 0 {
 		return apperr.Unprocessable(i18n.GroupMemberExclusive)
 	}

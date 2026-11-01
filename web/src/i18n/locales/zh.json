@@ -236,9 +236,9 @@
     "remove": "移除",
     "source": "来源",
     "sources": {
-      "claim": "令牌",
       "context": "请求",
-      "now": "时间"
+      "now": "时间",
+      "subject": "主体属性"
     },
     "value": "值",
     "valueList": "a, b, c"

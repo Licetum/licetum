@@ -241,7 +241,7 @@ func ruleRow(in *model.AssignmentRuleInput) ([]any, error) {
 	if predicate == nil {
 		predicate = []model.PredicateCondition{}
 	}
-	rawPredicate, err := json.Marshal(predicate)
+	rawPredicate, err := json.Marshal(model.SubjectPredicate(predicate))
 	if err != nil {
 		return nil, fmt.Errorf("encode a predicate: %w", err)
 	}

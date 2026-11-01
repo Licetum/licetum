@@ -283,7 +283,7 @@ func TestIntegrationResourceWhereCoversTheResourcesWhoseAttributesMatch(t *testi
 	// and so is a type without a synchronizer (no resources to match).
 	bad := []map[string]any{
 		{"type_resource_id": w.typeByName["project"], "subject": "u", "access": []string{"read"},
-			"resource_where": []map[string]any{{"attr": "owner", "source": "claim", "op": "eq", "value": "a"}}},
+			"resource_where": []map[string]any{{"attr": "owner", "source": "subject", "op": "eq", "value": "a"}}},
 		{"type_resource_id": w.typeByName["project"], "subject": "u", "access": []string{"read"}, "resource_id": "P1",
 			"resource_where": []map[string]any{{"attr": "owner", "op": "eq", "value": "a"}}},
 		{"type_resource_id": w.typeByName["project"], "subject": "u", "access": []string{"read"},

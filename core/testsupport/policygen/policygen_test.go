@@ -393,7 +393,7 @@ func wantedFeatures() []string {
 		"rule/where", "rule/requires-predicate", "rule/requires-group", "rule/deny", "rule/deny-wildcard", "rule/exception",
 		"rule/on-missing-skip", "rule/on-missing-apply", "rule/allow-on-missing-skip", "rule/valid-from", "rule/expires-at",
 		"rule/window", "rule/disabled", "rule/access-group", "rule/deny-access-group",
-		"source/claim-default", "source/claim", "source/context", "source/now-hour", "source/now-weekday",
+		"source/subject-default", "source/subject", "source/context", "source/now-hour", "source/now-weekday",
 		"value/list-eq", "value/scalar-in",
 		"case/first-service-default", "case/first-service-named", "case/second-service", "case/missing-claim", "case/null-claim",
 		"case/no-context", "case/missing-context", "case/null-context", "case/number-claim", "case/bool-claim", "case/list-claim",
@@ -533,7 +533,7 @@ func features(f *policyfix.Fixture) map[string]bool {
 			}
 			switch c.Source {
 			case "":
-				has["source/claim-default"] = true
+				has["source/subject-default"] = true
 			case model.SourceNow:
 				has["source/now-"+c.Attr] = true
 			default:

@@ -232,7 +232,7 @@ function PropertiesPanel() {
   const properties = usePolicyProperties(service.id, {
     query: { select: (r) => (r.status === 200 ? (r.data ?? []) : []) },
   });
-  const read = (properties.data ?? []).filter((p) => p.source === 'claim');
+  const read = (properties.data ?? []).filter((p) => p.source === 'subject');
   const context = (properties.data ?? []).filter((p) => p.source === 'context');
 
   return (

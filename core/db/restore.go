@@ -84,7 +84,7 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 		}
 
 		upsertMember := func(id any, predicate []model.PredicateCondition) error {
-			raw, err := json.Marshal(predicate)
+			raw, err := json.Marshal(model.SubjectPredicate(predicate))
 			if err != nil {
 				return err
 			}

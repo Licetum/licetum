@@ -414,7 +414,7 @@ export function GrantDrawer() {
                       <CondEditor
                         value={form.requires}
                         onChange={(requires) => patch({ requires })}
-                        sources={['claim', 'context', 'now']}
+                        sources={['subject', 'context', 'now']}
                         addLabel={t('cond.add')}
                         label={t('grant.when.guard')}
                       />

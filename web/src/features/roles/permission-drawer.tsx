@@ -30,7 +30,7 @@ function formOf(item?: RolePermissionWithContext): GrantForm {
       scope: 'where',
       where: item.resource_where.map((c, i) => ({
         id: `w${i}`,
-        source: 'claim' as const,
+        source: 'subject' as const,
         attr: c.attr,
         op: c.op,
         value: Array.isArray(c.value) ? c.value.join(', ') : c.value,

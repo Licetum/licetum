@@ -153,7 +153,7 @@ func TestAuthzenTheResourcesOfAPersonAreSearchedByTheirProperties(t *testing.T) 
 		t.Fatalf("the branches of dave from sales: %v", got)
 	}
 	if got := search("dave", nil); len(got) != 0 {
-		t.Fatalf("the branches of dave without the claim: %v", got)
+		t.Fatalf("the branches of dave without the subject: %v", got)
 	}
 	// The name of the person is their preferred_username here as well: alice is in team, which reads under D2.
 	if got := search("alice", nil); !slices.Equal(got, []string{"B4"}) {
