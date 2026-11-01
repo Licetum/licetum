@@ -53,30 +53,34 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 		syncIDs = append(syncIDs, model.PlatformSynchronizerID(t).String())
 	}
 
-	err := InTx(ctx, pool, func(tx pgx.Tx) error {
+	_, err := PolicyTx(ctx, pool, nil, func(ctx context.Context, tx pgx.Tx) ([]Change, error) {
+		before, err := platformImages(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
 		report = RestoreReport{}
 		if _, err := tx.Exec(ctx, `UPDATE service SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL`,
 			model.PlatformServiceID); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE type_resource SET deleted_at = NULL WHERE id::text = ANY($1) AND deleted_at IS NOT NULL`,
 			typeIDs); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE synchronizer s SET deleted_at = NULL
 			WHERE s.id::text = ANY($1) AND s.deleted_at IS NOT NULL
 			  AND NOT EXISTS (SELECT 1 FROM synchronizer o
 			                  WHERE o.type_resource_id = s.type_resource_id AND o.deleted_at IS NULL)`, syncIDs); err != nil {
-			return err
+			return nil, err
 		}
 
 		if _, err := tx.Exec(ctx, `INSERT INTO user_group (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
 			model.PlatformAdminGroupID, p.AdminGroupName); err != nil {
 			if IsUniqueViolation(err) {
-				return fmt.Errorf("a group named %q already exists — set another PLATFORM__ADMIN_GROUP_NAME", p.AdminGroupName)
+				return nil, fmt.Errorf("a group named %q already exists — set another PLATFORM__ADMIN_GROUP_NAME", p.AdminGroupName)
 			}
-			return err
+			return nil, err
 		}
 
 		upsertMember := func(id any, predicate []model.PredicateCondition) error {
@@ -88,7 +92,9 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 				INSERT INTO group_member (id, group_id, member_group_id, predicate, enabled)
 				VALUES ($1, $2, NULL, $3::jsonb, true)
 				ON CONFLICT (id) DO UPDATE SET group_id = EXCLUDED.group_id, member_group_id = NULL,
-				    predicate = EXCLUDED.predicate, enabled = true, valid_from = NULL, expires_at = NULL`,
+				    predicate = EXCLUDED.predicate, enabled = true, valid_from = NULL, expires_at = NULL
+ WHERE (group_member.group_id,group_member.member_group_id,group_member.predicate,group_member.enabled,group_member.valid_from,group_member.expires_at)
+ IS DISTINCT FROM (EXCLUDED.group_id,NULL::uuid,EXCLUDED.predicate,true,NULL::timestamptz,NULL::timestamptz)`,
 				id, model.PlatformAdminGroupID, string(raw))
 			if err == nil {
 				report.Members++
@@ -99,7 +105,7 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 			if err := upsertMember(model.PlatformAdminGroupMemberID, []model.PredicateCondition{
 				{Attr: p.AdminClaim, Op: model.OpIn, Value: model.PredicateValue{List: p.AdminClaimValues, IsList: true}},
 			}); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		subjectClaim := cfg.AdminAuth.SubjectClaim
@@ -110,7 +116,7 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 			if err := upsertMember(model.PlatformRestoredMemberID(user), []model.PredicateCondition{
 				{Attr: subjectClaim, Op: model.OpEq, Value: model.PredicateValue{Str: user}},
 			}); err != nil {
-				return err
+				return nil, err
 			}
 		}
 
@@ -123,11 +129,12 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 				    resource_where = NULL, role_id = NULL, access = EXCLUDED.access, subject = EXCLUDED.subject,
 				    predicate = '[]'::jsonb, member_of_group_id = NULL, enabled = true, effect = 'allow',
 				    exception = false, valid_from = NULL, expires_at = NULL, requires_predicate = '[]'::jsonb,
-				    requires_group_id = NULL, on_missing_attribute = 'skip'`,
+				    requires_group_id = NULL, on_missing_attribute = 'skip'
+ WHERE (assignment_rule.type_resource_id,assignment_rule.resource_id,assignment_rule.resource_from_claim,assignment_rule.resource_where,assignment_rule.role_id,assignment_rule.access,assignment_rule.subject,assignment_rule.predicate,assignment_rule.member_of_group_id,assignment_rule.enabled,assignment_rule.effect,assignment_rule.exception,assignment_rule.valid_from,assignment_rule.expires_at,assignment_rule.requires_predicate,assignment_rule.requires_group_id,assignment_rule.on_missing_attribute) IS DISTINCT FROM (EXCLUDED.type_resource_id,EXCLUDED.resource_id,EXCLUDED.resource_from_claim,EXCLUDED.resource_where,EXCLUDED.role_id,EXCLUDED.access,EXCLUDED.subject,EXCLUDED.predicate,EXCLUDED.member_of_group_id,EXCLUDED.enabled,EXCLUDED.effect,EXCLUDED.exception,EXCLUDED.valid_from,EXCLUDED.expires_at,EXCLUDED.requires_predicate,EXCLUDED.requires_group_id,EXCLUDED.on_missing_attribute)`,
 				model.PlatformAdminRuleID(t), model.PlatformTypeResourceID(t), adminAccess,
 				model.GroupSubject(model.PlatformAdminGroupID),
 			); err != nil {
-				return fmt.Errorf("rule of policy %s: %w", t, err)
+				return nil, fmt.Errorf("rule of policy %s: %w", t, err)
 			}
 		}
 
@@ -135,12 +142,14 @@ func RestoreAdminAccess(ctx context.Context, pool *pgxpool.Pool, cfg *config.Con
 			UPDATE assignment_rule SET enabled = false
 			WHERE enabled AND effect = 'deny' AND type_resource_id::text = ANY($1)`, typeIDs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		report.DisabledDenials = int(tag.RowsAffected())
-		// The rules changed: every replica must read them again.
-		_, bumpErr := BumpRevision(ctx, tx, ScopeGlobal)
-		return bumpErr
+		after, err := platformImages(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		return platformChanges(before, after, "system:restore-admin"), nil
 	})
 	return report, err
 }

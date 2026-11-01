@@ -223,12 +223,16 @@ func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) e
 	}
 
 	var created []model.PlatformType
-	err := InTx(ctx, pool, func(tx pgx.Tx) error {
+	_, err := PolicyTx(ctx, pool, nil, func(ctx context.Context, tx pgx.Tx) ([]Change, error) {
+		before, err := platformImages(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
 		created = nil
 		// Parallel runs of the seed (the pods of a release start together) take turns: the one that comes second finds the
 		// rows of the first and creates nothing. The lock is released with the transaction.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, seedLockKey); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO service (id, name, slug, url, icon)
@@ -236,27 +240,29 @@ func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) e
 			ON CONFLICT (id) DO NOTHING`,
 			model.PlatformServiceID, p.Name, model.PlatformSlug, p.URL, p.Icon,
 		); err != nil {
-			return err
+			return nil, err
 		}
 
 		for _, t := range model.PlatformTypes {
 			ok, err := seedPlatformType(ctx, tx, cfg.DB.URI, t)
 			if err != nil {
-				return fmt.Errorf("policy %s: %w", t, err)
+				return nil, fmt.Errorf("policy %s: %w", t, err)
 			}
 			if ok {
 				created = append(created, t)
 			}
 		}
 		if len(created) == 0 {
-			return nil
+			return nil, nil
 		}
 		if err := seedAdminGroup(ctx, tx, p); err != nil {
-			return err
+			return nil, err
 		}
-		// New policies and an admin group: the replicas that run already must read the rules again.
-		_, err := BumpRevision(ctx, tx, ScopeGlobal)
-		return err
+		after, err := platformImages(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		return platformChanges(before, after, "system:seed"), nil
 	})
 	if err != nil {
 		return fmt.Errorf("seed self-service: %w", err)

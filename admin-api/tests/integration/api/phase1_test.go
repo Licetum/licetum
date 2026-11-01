@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,15 @@ func (e *env) newService(name string) string {
 // changes reads the change log (the query string starts with "?" or is empty).
 func (e *env) changes(query string) []map[string]any {
 	e.t.Helper()
+	params, err := url.ParseQuery(strings.TrimPrefix(query, "?"))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if !params.Has("after_revision") {
+		params.Set("after_revision", strconv.FormatInt(e.seedRevision, 10))
+		params.Set("after_seq", "2147483647")
+	}
+	query = "?" + params.Encode()
 	status, raw := e.do(http.MethodGet, e.admin.URL+"/changes"+query, nil)
 	if status != http.StatusOK {
 		e.t.Fatalf("list changes: %d %s", status, raw)

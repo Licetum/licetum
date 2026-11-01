@@ -60,15 +60,16 @@ func TestMain(m *testing.M) {
 }
 
 type env struct {
-	t     *testing.T
-	admin *httptest.Server
-	check *httptest.Server
-	ops   *httptest.Server // the operations listener of the same PDP: probes and metrics (server.NewOpsHandler)
-	mock  *httptest.Server
-	key   *rsa.PrivateKey
-	app   *service.App
-	pool  *pgxpool.Pool
-	cfg   *config.Config
+	seedRevision int64
+	t            *testing.T
+	admin        *httptest.Server
+	check        *httptest.Server
+	ops          *httptest.Server // the operations listener of the same PDP: probes and metrics (server.NewOpsHandler)
+	mock         *httptest.Server
+	key          *rsa.PrivateKey
+	app          *service.App
+	pool         *pgxpool.Pool
+	cfg          *config.Config
 	// adminToken is sent to the admin API by default (see do).
 	adminToken string
 	// callers makes the questions of the tests the questions of a PEP client (see doWithHeader); extra are the other apps of
@@ -162,6 +163,9 @@ func setup(t *testing.T) *env {
 			other.AfterPEPWrite()
 		}
 	})
+	if err := pool.QueryRow(context.Background(), `SELECT revision FROM revision_state WHERE scope='global'`).Scan(&e.seedRevision); err != nil {
+		t.Fatal(err)
+	}
 	return e
 }
 

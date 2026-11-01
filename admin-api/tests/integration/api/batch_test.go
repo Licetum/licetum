@@ -22,7 +22,7 @@ func (e *env) lastChangeID() int64 {
 	e.t.Helper()
 	recs := e.changes("?limit=500")
 	if len(recs) == 0 {
-		return 0
+		return e.seedRevision
 	}
 	return int64(recs[len(recs)-1]["revision"].(float64))
 }
@@ -132,8 +132,8 @@ func TestIntegrationRollbackRestoresThePolicyAtAPosition(t *testing.T) {
 	item := w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B2", "access": []string{"read"}})["id"].(string)
 	roleRule := w.must("POST", "/assignment_rule", map[string]any{"role_id": role, "subject": hierarchySubject})["id"].(string)
-	position := w.lastChangeID()
 	expectIDs(t, w.permission(w.org, nil), "branch", "B1", "B2")
+	position := w.lastChangeID()
 
 	// After the position: the rules go, the role with its item goes; a group comes.
 	w.must("DELETE", "/assignment_rule/"+roleRule, nil)
