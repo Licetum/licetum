@@ -216,3 +216,10 @@ it under the license of its part. Commit with `git commit -s`. The CI checks it 
 
 This is not a CLA: the project does not take the right to relicense your code. Only the author's own code may be offered
 under another license.
+
+### Policy writes in migrations
+
+Once the mandatory-outbox triggers exist, any migration that rewrites or truncates a covered policy table must also
+write an outbox entry in that transaction. Foreign-key cascades count too. Do not disable the triggers, use replica mode,
+or change expected checksums to make a migration pass. The folded v2 init inserts its initial rows before installing
+triggers. Test fixture SQL uses `core/testsupport.RawPolicyTx`; production writers use `PolicyTx` or `TakeRevision`.

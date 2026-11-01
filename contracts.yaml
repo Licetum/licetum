@@ -323,7 +323,7 @@ contracts:
     oracle: the commit result
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR03
     statement: The outbox images reproduce exactly the rows a write changed.
     oracle: a diff of the tables around the operation
