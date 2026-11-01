@@ -202,3 +202,11 @@ the configuration and the monitoring need a clean-up:
   gauge counts the DBOS queue). `/readyz` no longer fails with the reason `replica_lag`.
 - **Multi-region**: a PDP that read a regional replica now reads the PostgreSQL named by `DB__URI`; see
   [Several regions](#several-regions) before you upgrade such a deployment.
+
+### Subject hash salt
+
+Set `LOG__SUBJECT_SALT` from a deployment secret, using the same value in every process and region that logs subjects.
+The Helm chart accepts `secrets.logSubjectSalt`, or `LOG__SUBJECT_SALT` in `existingSecret`. The salt is not stored in PostgreSQL,
+returned by the admin API, or projected in the outbox. Hash mode without a salt omits subject fields and warns once; it never
+falls back to plain text. Rotate by updating the secret and restarting all processes together. Rotation intentionally breaks
+correlation between old and new subject hashes; retain any old secret only according to your log-retention policy.

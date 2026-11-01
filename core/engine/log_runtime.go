@@ -37,9 +37,8 @@ func LogOptions(s model.LogSettings, salt string) (logx.Options, error) {
 func (a *App) LoadLogSettings(ctx context.Context) error {
 	var version int64
 	var raw []byte
-	var salt string
-	if err := a.DB.QueryRow(ctx, `SELECT version, settings, salt FROM log_settings WHERE id = 1`).
-		Scan(&version, &raw, &salt); err != nil {
+	if err := a.DB.QueryRow(ctx, `SELECT version, settings FROM log_settings WHERE id = 1`).
+		Scan(&version, &raw); err != nil {
 		return err
 	}
 	if version == a.logVersion.Load() {
@@ -49,13 +48,13 @@ func (a *App) LoadLogSettings(ctx context.Context) error {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return err
 	}
-	return a.ApplyLogSettings(s, salt, version)
+	return a.ApplyLogSettings(s, version)
 }
 
 // ApplyLogSettings applies a configuration this process has stored or read. A configuration the logger refuses keeps
 // the one in force.
-func (a *App) ApplyLogSettings(s model.LogSettings, salt string, version int64) error {
-	opts, err := LogOptions(s, salt)
+func (a *App) ApplyLogSettings(s model.LogSettings, version int64) error {
+	opts, err := LogOptions(s, a.Cfg.Log.SubjectSalt)
 	if err != nil {
 		return err
 	}

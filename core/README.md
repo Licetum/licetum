@@ -369,3 +369,10 @@ Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/
 
 MIT — see [`LICENSE`](LICENSE).
 
+### Subject hash salt
+
+Set `LOG__SUBJECT_SALT` from a deployment secret, using the same value in every process and region that logs subjects.
+The Helm chart accepts `secrets.logSubjectSalt`, or `LOG__SUBJECT_SALT` in `existingSecret`. The salt is not stored in PostgreSQL,
+returned by the admin API, or projected in the outbox. Hash mode without a salt omits subject fields and warns once; it never
+falls back to plain text. Rotate by updating the secret and restarting all processes together. Rotation intentionally breaks
+correlation between old and new subject hashes; retain any old secret only according to your log-retention policy.

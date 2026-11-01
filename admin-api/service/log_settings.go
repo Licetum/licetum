@@ -39,17 +39,16 @@ func (a *App) PutLogSettings(ctx context.Context, in model.LogSettings) (model.L
 		in.Fields = []model.LogField{}
 	}
 	var version int64
-	var salt string
 	err := db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
 		var raw []byte
-		if err := tx.QueryRow(ctx, `SELECT settings, salt FROM log_settings WHERE id = 1 FOR UPDATE`).Scan(&raw, &salt); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT settings FROM log_settings WHERE id = 1 FOR UPDATE`).Scan(&raw); err != nil {
 			return err
 		}
 		var before model.LogSettings
 		if err := json.Unmarshal(raw, &before); err != nil {
 			return err
 		}
-		if _, err := engine.LogOptions(in, salt); err != nil {
+		if _, err := engine.LogOptions(in, a.Cfg.Log.SubjectSalt); err != nil {
 			return apperr.Unprocessable(i18n.LogSettingInvalid, err.Error())
 		}
 		if err := tx.QueryRow(ctx, `
@@ -63,7 +62,7 @@ func (a *App) PutLogSettings(ctx context.Context, in model.LogSettings) (model.L
 	if err != nil {
 		return model.LogSettings{}, err
 	}
-	if err := a.ApplyLogSettings(in, salt, version); err != nil {
+	if err := a.ApplyLogSettings(in, version); err != nil {
 		slog.WarnContext(ctx, "the stored log settings cannot be applied", "error", err)
 	}
 	return in, nil

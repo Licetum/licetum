@@ -6,6 +6,7 @@ include:
   - infra/dex.compose.yml
 
 x-env-app: &env-app
+  LOG__SUBJECT_SALT: "${LOG__SUBJECT_SALT:-development-only-subject-salt}"
   DB__URI: "${DB__URI:-postgresql://authz:authz@postgres:5432/authz_db}"
   # air restarts the apps on every change: no drain on shutdown in development (the default of 10 s is for a balancer).
   SHUTDOWN__DRAIN: "${SHUTDOWN__DRAIN:-0}"

@@ -232,7 +232,11 @@ type Shutdown struct {
 	Timeout time.Duration
 }
 
+// Log contains deployment-only secrets, never projected in the settings stream.
+type Log struct{ SubjectSalt string }
+
 type Config struct {
+	Log        Log
 	DB         Database
 	Auth       Auth
 	Platform   Platform
@@ -255,6 +259,7 @@ type Config struct {
 func Load() (*Config, error) {
 	e := &envReader{}
 	cfg := &Config{
+		Log: Log{SubjectSalt: e.str("LOG__SUBJECT_SALT", "")},
 		DB: Database{
 			URI:                e.str("DB__URI", ""),
 			PoolSize:           e.int("DB__POOL_SIZE", 10),

@@ -45,7 +45,9 @@ func main() {
 	}
 	// The process logs through logx: its format, fields and sampling come from the admin API once the settings are
 	// loaded (see cli.Serve); until then the defaults below apply.
-	logs, logErr := logx.New(os.Stdout, logx.DefaultOptions(logLevel))
+	logOptions := logx.DefaultOptions(logLevel)
+	logOptions.Salt = os.Getenv("LOG__SUBJECT_SALT")
+	logs, logErr := logx.New(os.Stdout, logOptions)
 	if logErr != nil {
 		fmt.Fprintln(os.Stderr, "logging:", logErr)
 		os.Exit(1)
