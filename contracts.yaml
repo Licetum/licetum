@@ -112,6 +112,13 @@ contracts:
     phase: P1
     status: active
 
+  - id: DEC15
+    statement: A literal-subject rule matches only the same subject id and, when subject_type is set, the same subject type; a null subject_type matches any type. Group subjects are matched through subject_group_id, not a group-prefixed literal.
+    oracle: decision tables and core/testsupport/refeval
+    level: pg
+    phase: P3
+    status: planned
+
   # ---------- ST: read model stores (core/readmodel/storetest against every adapter) ----------
   - id: ST01
     statement: The lineage of every resource, itself included, with its masks equals the definition of the closure.

@@ -5,6 +5,8 @@
 - **Issue:** #49 (phases #50–#58)
 - **Supersedes:** the read-replica design kept at tag `archive/pg-replica-design`
 
+The accepted P3 decisions in [11.7.1](#1171-p3-decisions) qualify the target design below during P3.
+
 ## 1. Context and decision
 
 ### 1.1 Context
@@ -817,7 +819,7 @@ The schema checks the rule at `COMMIT`; it does not rely on convention.
   - P3: the policy tables (`identity_domain`, `service`, `type_resource`, `type_resource_parent`, `synchronizer`, `access_group`, `user_group`, `group_member`, `role`, `role_permission`, `assignment_rule`), the PEP tables, `log_settings` and `subject_directory`.
   - P3 as well: `admin_binding`, which schema v2 creates (8.3) though nothing writes it before P4.
   - P5: `resource_cache`, `resource_edge`, `resource_ancestor` and `resource_unresolved`, once the writer is their only writer (4.10).
-  - Never: `outbox`, `outbox_chunk`, `change_log`, `revision_state`, `heartbeat`, `publish_state`, `stream_state`, `sync_state`, `sync_executor`, `policy_scenario`, `subject_directory_seen` (8.8) and the `dbos` schema.
+  - Never: `outbox`, `outbox_chunk`, `change_log`, `revision_state`, `heartbeat`, `publish_state`, `stream_state`, `sync_state`, `sync_executor`, `policy_scenario`, `subject_directory_seen`, `subject_directory_settings` (8.8, 11.7.1) and the `dbos` schema.
 
 ### 4.8 What an outbox entry carries
 
@@ -3350,6 +3352,95 @@ Every file adds only (a table, a nullable column or an index) and has a `Down` s
   - the WR06 budget is measured, not postulated;
   - `migrate` on a `v0.1.0` database stops with its message (a test);
   - the existing admin tests still pass, because platform authorization is not touched yet.
+
+#### 11.7.1 P3 decisions
+
+The owner accepted the proposed defaults of [#94](https://github.com/Licetum/licetum/issues/94) on 2026-11-01.
+These decisions are the implementation contract for #54; they do not move P4–P6 features into P3.
+
+1. **Migration method.** Build schema v2 as schema-only numbered migrations on empty development databases, then switch
+   the goose table to `goose_db_version_v2`, refuse a v0.1.x database, and fold the chain into `00001_init.sql`.
+   Intermediate commits are not deployable upgrades. Recreate development databases after pulling schema changes;
+   `docker compose down -v` deletes the local development data. Compare `pg_dump --schema-only` of the migrated chain
+   and the folded init before accepting the fold. There is no upgrade from v0.1.x.
+
+   | Migration | Task | Contents |
+   |---|---|---|
+   | `00009` | P3-03 | One global revision and epoch |
+   | `00010` | P3-07 | Outbox, chunks, change log and publication state |
+   | `00011` | P3-13 | Drop the log-settings salt column |
+   | `00012` | P3-20 | Deferred mandatory-outbox check |
+   | `00013` | P3-25 | Group and role ownership |
+   | `00014` | P3-26 | Assignment-rule ownership |
+   | `00015` | P3-27 | `subject_group_id` |
+   | `00016` | P3-28 | `subject_type` |
+   | `00017` | P3-32 | `resource_from_property` |
+   | `00018` | P3-33 | Identity domains |
+   | `00019` | P3-34 | Immutable, never-reused service slugs |
+   | `00020` | P3-35 | Desired and effective type links |
+   | `00021` | P3-36 | `synced_at` |
+   | `00022` | P3-37 | Remaining schema-v2 tables and columns |
+   | `00023` | P3-41 | Drop the legacy tables and columns |
+
+2. **Transitional administration API.** Groups and roles gain a required, immutable `service_id` in create bodies;
+   their global routes stay until P4. Lists filter by `?service_id`; members, role items and rules derive the owner.
+   Web forms select the service. The platform admin group belongs to the platform service, and existing platform
+   authorization stays in force. This qualifies 8.7 and the existing-admin-tests exit criterion of 11.7.
+3. **Contracts.** Activate only PUB02, PUB05, WR01–WR06, HIS01, HIS04, HIS05, ADM11, OPS08 and the PostgreSQL half
+   of OPS04, plus the newly planned DEC15 in P3-29. WR07 and PUB03 belong to P5; HIS02 and HIS03 to P4;
+   ASOF02 and CONS04 to P5/P6. A contract is activated only with the tests that prove it.
+4. **Schema contents.** The folded init contains the 11.7 list plus `tx_dirty` and `pep_issuer_keys`.
+   The key-set table holds `issuer` (foreign key, cascading delete), `key_set jsonb`, `digest bytea` and `fetched_at`.
+   Heartbeat arrives in P5 and `stream_state` in P6 as numbered migrations; the broader 4.3 list describes the target.
+5. **Interim type links.** Until P5 supplies `RebuildComponent`, the admin transaction writes desired and effective
+   link states together; the engine reads the effective columns. A link write has the `catalog` stream in P3.
+   P5 switches the admin write to desired-only, with an empty stream set, and the worker makes it effective.
+6. **Directory settings.** `subject_directory_settings` stays a separate table and is never a covered table in 4.7.
+   Changing retention is still an admin write, with a revision and an outbox entry whose stream set is empty.
+   This settles 8.8 and 11.6.1 item 11; it does not add a retention column to `service`.
+7. **Subject matching.** `subject_type` is a matching attribute, not a label: NULL means any type, otherwise it must
+   equal the request subject's type. Literal ids must match too. P3-29 applies this to the engine, reference evaluator,
+   generator and fixtures, and activates DEC15. P3-28 stores the attribute first.
+8. **Identity-domain immutability.** P3 implements the 4.2 trigger literally: changing `slug` or `identity_domain_id`
+   is refused. The platform-admin move between identity domains in 7.5 and 8.9 needs a new P4 migration.
+9. **Authorization inside PolicyTx.** P3 adds the `admin_write` lock and a transactional re-check hook, but leaves
+   that hook empty: authorization still uses the platform policies and synchronized resources. P4 fills it with the
+   binding check. P3 must not claim that the future binding re-check already runs.
+10. **Failover.** In P3, `licetum failover` raises the epoch by one, jumps the revision and writes an `epoch_start`
+    outbox entry without `base_position`. PUB02 holds per epoch; the jump is the one permitted gap.
+    `BumpAllRevisions` is removed. P6 adds the full failover procedure of 6.8.
+11. **History.** Until P4, routes stay global: `GET /changes?after_revision&after_seq`,
+    `POST /changes/{revision}/revert` undoes the entire revision, and rollback accepts `{to: revision}`.
+    `change_log` stores the admin entity JSON before/after for revert; outbox images are canonical database rows.
+    Unifying them is P4. P3 retains only the outbox by age; history retention has no setting yet.
+12. **Type mode.** P3-36 makes mode `synced_at IS NOT NULL AND a live synchronizer`. Deleting a synchronizer clears
+    `synced_at` in the catalog transaction. As an interim exception, `checkRuleTarget` requires only a live synchronizer,
+    so rules may be created before its first synchronization. It does not require `synced_at`.
+13. **Interim cache invalidation.** Every admin, PEP, settings, directory and data-changing synchronization write takes
+    the global revision and invalidates answers in every process. Per-service precision returns with CONS04 in P5.
+    Adapt `TestF2_6` and `pep_scope_test.go` to these interim guarantees; do not delete them. AfterWrite stops invalidating
+    the view, and admin tools ask for at least the current revision. Measure the medium load-test profile before merging
+    P3-04, P3-18 and P3-29.
+14. **Affected services and streams.** Policy writes name the owner service and the services below it through type
+    links, without exported gating until P4. PEP, settings and directory writes name no affected decision services.
+    Data headers conservatively name the owners of changed types and of every type below them. WR05 derives its route
+    expectations from these rules; P5 refines the data calculation using the payload.
+15. **Interim lock order.** ChangeMode stays inline until P5. An admin transaction may therefore take component locks
+    after `admin_write`, qualifying 3.5 step 5. Synchronizations never take `admin_write`, so this introduces no reverse
+    lock ordering; P5's WR07 proves the final protocol. Take the revision row last in either path.
+16. **Unexposed columns and DBOS.** P3 does not expose identity domains, `exported` or `refresh_interval` in the API;
+    their columns have sensible defaults and occur in canonical outbox images. Their routes and rules arrive in P4/P5.
+    DBOS system tables live in the application's database, in schema `dbos`. Licetum may create the schema, but DBOS
+    owns its table DDL; no migration-owned copy of those tables is introduced.
+17. **Migrations after enforcement.** A later migration that updates or deletes covered rows must write an outbox entry
+    in the same transaction. P3's intermediate migrations are schema-only on empty tables. The folded init inserts seed
+    rows before installing the enforcement triggers. This rule also applies to truncation and cascading writes.
+18. **Starting state and process.** Start from completed P2 (including step 2e), on `stage/p3-schema-v2-outbox` from
+    `epic/production-load-readiness`. Keep one signed-off commit per task and one draft PR for the stage. Renames and
+    semantic changes are separate commits. API changes update both OpenAPI schemas as applicable, generated web client,
+    web consumers, en/ru/zh translations, fixtures, load test and the affected documentation in the same commit.
+    Keep all existing checks enabled, and activate contracts with their tests. The final whole-stage review, measured
+    WR06 budget, schema-fold comparison and nightly runs are required before closing #54.
 
 ### 11.8 P4: service-scoped administration and the web interface (#55)
 
