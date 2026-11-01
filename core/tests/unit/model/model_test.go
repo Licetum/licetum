@@ -66,9 +66,9 @@ func TestAssignmentRuleValidationEnforcesTargetShape(t *testing.T) {
 	if err != nil || valid == nil || !*valid.Enabled || valid.Predicate == nil {
 		t.Fatalf("defaults were not applied: %+v, %v", valid, err)
 	}
-	fromClaim, err := decodeAndValidate[model.AssignmentRuleInput](t, `{"type_resource_id":"`+typeResourceID+`","access":["read"],"resource_from_claim":{"claim":"owner","lookup_type_resource_id":"`+typeResourceID+`"}}`)
-	if err != nil || fromClaim.ResourceFromClaim.MatchBy != model.MatchByName {
-		t.Fatalf("match_by must default to name: %+v, %v", fromClaim, err)
+	fromProperty, err := decodeAndValidate[model.AssignmentRuleInput](t, `{"type_resource_id":"`+typeResourceID+`","access":["read"],"resource_from_claim":{"claim":"owner","lookup_type_resource_id":"`+typeResourceID+`"}}`)
+	if err != nil || fromProperty.ResourceFromProperty.MatchBy != model.MatchByName {
+		t.Fatalf("match_by must default to name: %+v, %v", fromProperty, err)
 	}
 
 	invalid := map[string]string{

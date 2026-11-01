@@ -58,7 +58,7 @@ roles:
   - name: regional
     items:
       - {type: branch, where: [{attr: region, op: eq, value: south}], access: [read]}
-      - {type: branch, from_claim: {claim: home, lookup_type: branch, match_by: id}, access: [write]}
+      - {type: branch, from_property: {claim: home, lookup_type: branch, match_by: id}, access: [write]}
   - {name: viewer, items: [{type: division, resource: D2, access: [read]}]}
   - {name: auditor, items: [{type: rrs, resource: R2, access: [audit]}]}
   - {name: part-a, items: [{type: branch, resource: B1, access: [read]}]}
@@ -98,7 +98,7 @@ cases:
   # from admin-api/tests/integration/api/roles_test.go:TestRolePermissionsReachSubjectsThroughAssignments
   - name: a person in sales gets the item on B1 of the role, and nothing else of the business
     subject: seller
-    claims: {department: sales, phase: before}
+    properties: {department: sales, phase: before}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [grant-catalog], denials: []}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
@@ -108,7 +108,7 @@ cases:
   - name: a person in sales gets the whole-type item of the role in the same service
     subject: seller
     service: org
-    claims: {department: sales, phase: before}
+    properties: {department: sales, phase: before}
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [grant-catalog], denials: []}
       - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [grant-catalog], denials: []}
@@ -127,7 +127,7 @@ cases:
   # from admin-api/tests/integration/api/roles_test.go:TestRolePermissionsReachSubjectsThroughAssignments
   - name: a denial that grants the same role takes all of its items away
     subject: seller
-    claims: {department: sales, phase: after}
+    properties: {department: sales, phase: after}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [grant-catalog], denials: [{rule: deny-catalog}]}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
@@ -135,7 +135,7 @@ cases:
   - name: a denial that grants the same role takes its items away in the same service too
     subject: seller
     service: org
-    claims: {department: sales, phase: after}
+    properties: {department: sales, phase: after}
     questions:
       # I1 is covered by both items (below B1, and of the type item) of both rules.
       - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [grant-catalog], denials: [{rule: deny-catalog}]}
@@ -185,7 +185,7 @@ cases:
       - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, granted_by: [rt-allow-D1], denials: []}
   - name: items found by attributes and by a claim expand like the others
     subject: regional
-    claims: {home: B1}
+    properties: {home: B1}
     questions:
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [grant-regional]}
@@ -197,14 +197,14 @@ cases:
   - name: items found by attributes and by a claim reach below their anchors into the same service
     subject: regional
     service: org
-    claims: {home: B1}
+    properties: {home: B1}
     questions:
       - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: item, resource: I1, action: write, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: item, resource: I1, action: read, allowed: false, decision: no_access}
   - name: the claim decides where the item found by a claim lies
     subject: regional
-    claims: {home: B2}
+    properties: {home: B2}
     questions:
       - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: branch, resource: B1, action: write, allowed: false, decision: no_access}

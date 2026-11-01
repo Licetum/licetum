@@ -124,7 +124,7 @@ cases:
   # from admin-api/tests/integration/api/enablers_test.go:TestNothingIsSaidAboutPeopleWhileTheRegistryIsOff
   - name: read on the whole type branch covers the four branches
     subject: dave
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch], denials: []}
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch]}
@@ -136,7 +136,7 @@ cases:
   - name: read on the whole type branch covers the two items under the branches
     subject: dave
     service: app
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch]}
       - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [sales-read-branch]}
@@ -176,7 +176,7 @@ cases:
   - name: user type is matched outside properties
     subject: typed-id
     subject_type: user
-    claims: {type: service, subject_type: service, typed_member: yes}
+    properties: {type: service, subject_type: service, typed_member: yes}
     questions:
       - {type: feature, action: typed-user, allowed: true, decision: allowed, granted_by: [typed-user], denials: []}
       - {type: feature, action: typed-service, allowed: false, decision: no_access, granted_by: [], denials: []}
@@ -185,7 +185,7 @@ cases:
   - name: service type with the same id has separate grants and denial
     subject: typed-id
     subject_type: service
-    claims: {type: user, subject_type: user, typed_member: yes}
+    properties: {type: user, subject_type: user, typed_member: yes}
     questions:
       - {type: feature, action: typed-user, allowed: false, decision: no_access, granted_by: [], denials: []}
       - {type: feature, action: typed-service, allowed: true, decision: allowed, granted_by: [typed-service], denials: []}
@@ -200,7 +200,7 @@ cases:
   - name: a property named id cannot change the literal subject id
     subject: different-id
     subject_type: user
-    claims: {id: typed-id, type: user}
+    properties: {id: typed-id, type: user}
     questions:
       - {type: feature, action: typed-user, allowed: false, decision: no_access, granted_by: [], denials: []}
       - {type: feature, action: typed-any, allowed: false, decision: no_access, granted_by: [], denials: []}

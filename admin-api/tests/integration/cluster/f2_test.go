@@ -179,7 +179,7 @@ func TestF2_4_AnAnswerIsNotKeptUnderARevisionItWasNotConfirmedFor(t *testing.T) 
 	if took := time.Since(started); took > 3*time.Second {
 		t.Fatalf("waiting for a revision that never comes took %v, want about REVISION__WAIT_MAX (500ms)", took)
 	}
-	// The same request without the claim of freshness finds nothing kept for carol: it is computed, so it reads the database.
+	// The same request without the property of freshness finds nothing kept for carol: it is computed, so it reads the database.
 	first := r.Send(c, harness.Branches(p.Slug, carol), carol)
 	if first.Status != http.StatusOK {
 		t.Fatalf("an ordinary request: %d %s", first.Status, first.Body)

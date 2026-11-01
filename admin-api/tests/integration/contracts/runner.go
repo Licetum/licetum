@@ -483,7 +483,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 			in := model.GroupMemberInput{Predicate: m.Predicate, Enabled: ptr(!m.Disabled), ValidFrom: m.ValidFrom, ExpiresAt: m.ExpiresAt}
 			switch {
 			case m.Subject != "":
-				// A membership names people by their claims: the subject is the preferred_username of the token (see Ask).
+				// A membership names people by their properties: the subject is the preferred_username of the token (see Ask).
 				in.Predicate = []model.PredicateCondition{{Attr: "preferred_username", Op: model.OpEq, Value: model.PredicateValue{Str: m.Subject}}}
 			case m.Group != "":
 				in.MemberGroupID = ptr(groups[m.Group])
@@ -501,7 +501,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		for i := range r.Items {
 			item := &r.Items[i]
 			in := model.RolePermissionInput{Access: item.Access}
-			in.TypeResourceID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere = l.target(&item.Target)
+			in.TypeResourceID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere = l.target(&item.Target)
 			create(model.BatchRolePermission, fmt.Sprintf("%s#%d", r.Name, i), &role, in)
 		}
 	}
@@ -544,7 +544,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		} else {
 			in.Access = r.Access
 			var typeID uuid.UUID
-			typeID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere = l.target(r.Target)
+			typeID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere = l.target(r.Target)
 			in.TypeResourceID = &typeID
 		}
 		id := create(model.BatchAssignmentRule, r.Name, nil, in)
@@ -557,19 +557,19 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 }
 
 // target is the target of a rule or a role item in the terms of the API.
-func (l *Loaded) target(t *policyfix.Target) (typeID uuid.UUID, resourceID *string, fromClaim *model.ResourceFromClaim, where []model.PredicateCondition) {
+func (l *Loaded) target(t *policyfix.Target) (typeID uuid.UUID, resourceID *string, fromProperty *model.ResourceFromProperty, where []model.PredicateCondition) {
 	typeID = l.types[t.Type]
 	if t.Resource != "" {
 		resourceID = ptr(t.Resource)
 	}
-	if fc := t.FromClaim; fc != nil {
+	if fc := t.FromProperty; fc != nil {
 		matchBy := fc.MatchBy
 		if matchBy == "" {
 			matchBy = model.MatchByName
 		}
-		fromClaim = &model.ResourceFromClaim{Claim: fc.Claim, LookupTypeResourceID: l.types[fc.LookupType], MatchBy: matchBy}
+		fromProperty = &model.ResourceFromProperty{Property: fc.Property, LookupTypeResourceID: l.types[fc.LookupType], MatchBy: matchBy}
 	}
-	return typeID, resourceID, fromClaim, t.Where
+	return typeID, resourceID, fromProperty, t.Where
 }
 
 // batchSize is the most operations POST /batch takes at once.
@@ -597,7 +597,7 @@ func (l *Loaded) runBatch(ops []model.BatchOperation, what []string) {
 	}
 }
 
-// Ask asks the questions of a case of the loaded fixture: as the case's subject, with the case's claims in the token
+// Ask asks the questions of a case of the loaded fixture: as the case's subject, with the case's properties in the token
 // (preferred_username is the subject), the case's request attributes in the context, at the case's time (the clock of the
 // replica), through POST /service/{slug}/access/v1/evaluations?consistency=higher with explain. The explanation of an
 // evaluation is its context.reason_admin. The answers are in the order of the questions. A request that fails, an evaluation
@@ -650,10 +650,10 @@ func questionsOf(qs []policyfix.Question) []authzenreq.Question {
 	return out
 }
 
-// tokenOf is the token of a case: its claims, with the subject as preferred_username.
+// tokenOf is the token of a case: its properties, with the subject as preferred_username.
 func (l *Loaded) tokenOf(c *policyfix.Case) string {
 	claims := jwt.MapClaims{}
-	maps.Copy(claims, c.Claims)
+	maps.Copy(claims, c.Properties)
 	claims["preferred_username"] = c.Subject
 	return l.Cluster.Token(claims)
 }

@@ -27,7 +27,7 @@ type RestoreReport struct {
 // a command somebody with access to the database runs deliberately (`licetum restore-admin`).
 //
 // It makes sure the platform service, its policy types and their sources exist and are not deleted, that the admin
-// group exists with a membership for PLATFORM__ADMIN_CLAIM_VALUES and for each of users (matched by the claim of
+// group exists with a membership for PLATFORM__ADMIN_CLAIM_VALUES and for each of users (matched by the property of
 // ADMIN_AUTH__SUBJECT_CLAIM, preferred_username by default),
 // that each policy has its admin rule in force (allow, read and write, the whole type, no guard), and it switches off the
 // deny rules that cover a policy. Everything else is left as it is. Safe to re-run.

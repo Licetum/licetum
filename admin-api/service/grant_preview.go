@@ -19,7 +19,7 @@ func ruleFromInput(in *model.AssignmentRuleInput) model.AssignmentRule {
 	enabled := in.Enabled == nil || *in.Enabled
 	return model.AssignmentRule{
 		SubjectGroupID: in.SubjectGroupID, RoleID: in.RoleID, TypeResourceID: in.TypeResourceID, ResourceID: in.ResourceID,
-		ResourceFromClaim: in.ResourceFromClaim, Access: in.Access, Subject: in.Subject, Predicate: in.Predicate,
+		ResourceFromProperty: in.ResourceFromProperty, Access: in.Access, Subject: in.Subject, Predicate: in.Predicate,
 		MemberOfGroupID: in.MemberOfGroupID, Enabled: enabled, Effect: in.Effect, Exception: in.Exception,
 		ValidFrom: in.ValidFrom, ExpiresAt: in.ExpiresAt, Name: in.Name, Description: in.Description,
 		OnMissingAttribute: onMissingOf(in, nil), RequiresPredicate: in.RequiresPredicate,
@@ -108,7 +108,7 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 	}
 
 	for _, r := range rules {
-		if r.ResourceFromClaim != nil {
+		if r.ResourceFromProperty != nil {
 			out.Dynamic = true
 		}
 	}
@@ -254,7 +254,7 @@ func (a *App) grantMeets(ctx context.Context, g *engine.TypeGraph, rule *model.A
 	}
 	var static []model.AssignmentRule
 	for _, r := range existing {
-		if r.ResourceFromClaim == nil {
+		if r.ResourceFromProperty == nil {
 			static = append(static, r)
 		}
 	}
@@ -387,5 +387,5 @@ func sameTarget(a, b *model.AssignmentRule) bool {
 	if (a.ResourceID == nil) != (b.ResourceID == nil) || (a.ResourceID != nil && *a.ResourceID != *b.ResourceID) {
 		return false
 	}
-	return len(a.ResourceWhere) == 0 && len(b.ResourceWhere) == 0 && a.ResourceFromClaim == nil && b.ResourceFromClaim == nil
+	return len(a.ResourceWhere) == 0 && len(b.ResourceWhere) == 0 && a.ResourceFromProperty == nil && b.ResourceFromProperty == nil
 }

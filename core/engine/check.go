@@ -261,7 +261,7 @@ func (p *Prepared) explanation(decision string, lv *levelVerdict) *model.Explana
 	return e
 }
 
-// RefOf is ruleRef for an instance that is not in the list (a rule found by a claim).
+// RefOf is ruleRef for an instance that is not in the list (a rule found by a property).
 func (p *Prepared) RefOf(in *Instance) model.RuleRef {
 	typeName := in.AnchorType.String()
 	if n, ok := p.Graph.Node(in.AnchorType); ok {

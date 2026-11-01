@@ -20,8 +20,8 @@ func condition(attr, op string, value any) model.PredicateCondition {
 	return result
 }
 
-func TestEvaluatePredicateMatchesClaimsUsingStableStringRules(t *testing.T) {
-	claims := engine.Claims{
+func TestEvaluatePredicateMatchesPropertiesUsingStableStringRules(t *testing.T) {
+	properties := engine.Properties{
 		"department": "sales", "level": 5, "ratio": 1.5, "active": true,
 		"groups": []any{"a", "b"}, "email": "alice@corp", "nothing": nil,
 	}
@@ -43,14 +43,14 @@ func TestEvaluatePredicateMatchesClaimsUsingStableStringRules(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := engine.EvaluatePredicate(tt.pred, claims); got != tt.want {
+			if got := engine.EvaluatePredicate(tt.pred, properties); got != tt.want {
 				t.Fatalf("EvaluatePredicate = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestPyStrMatchesClaimFormattingContract(t *testing.T) {
+func TestPyStrMatchesPropertyFormattingContract(t *testing.T) {
 	tests := map[string]string{
 		`"x"`: "x", `5`: "5", `-3`: "-3", `1.5`: "1.5", `true`: "True", `false`: "False", `null`: "None",
 		`["a", "it's"]`: `['a', "it's"]`, `[1, true, null]`: "[1, True, None]", `{"b":1,"a":"x"}`: "{'a': 'x', 'b': 1}",

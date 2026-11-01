@@ -5,7 +5,7 @@ package api_test
 // F1-11: the policy snapshot must not change an answer. The same policy, generated at random, is asked of two engines on
 // one database: one reads the policy from memory (the snapshot, the default), the other reads it with queries for every
 // answer (SNAPSHOT__MAX_BYTES off, the code of before the fast read path). Their answers to the permission and to the
-// checks, with explanations, must be identical: for a policy with validity windows, claim-based rules, roles, nested
+// checks, with explanations, must be identical: for a policy with validity windows, property-based rules, roles, nested
 // groups, conditions on the request and on the clock, denials and exceptions; again after the policy was changed; and
 // again after some of its validity windows have passed without any change of the policy at all.
 
@@ -232,7 +232,7 @@ func (g *policyGenerator) setup() {
 type diffCase struct {
 	subjectType string
 	subject     string
-	claims      engine.Claims
+	claims      engine.Properties
 	context     model.RequestContext
 }
 
@@ -240,7 +240,7 @@ func diffCases(rng *rand.Rand, n int) []diffCase {
 	var out []diffCase
 	for range n {
 		subject := fmt.Sprintf("user-%d", rng.Intn(7))
-		claims := engine.Claims{"preferred_username": subject}
+		claims := engine.Properties{"preferred_username": subject}
 		if rng.Intn(4) != 0 {
 			claims["department"] = []string{"sales", "eng", "ops"}[rng.Intn(3)]
 		}

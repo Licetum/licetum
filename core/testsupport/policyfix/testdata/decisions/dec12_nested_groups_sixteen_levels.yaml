@@ -63,7 +63,7 @@ cases:
   # from admin-api/tests/integration/api/gaps_test.go:TestIntegrationNestedGroupsRoundTrip
   - name: a member of the nested group is a member of the group that nests it
     subject: auditor
-    claims: {team: audit}
+    properties: {team: audit}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [outer-read-B1], denials: []}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: []}
@@ -71,13 +71,13 @@ cases:
   - name: the rule of the nesting group reaches below B1 in another service
     subject: auditor
     service: app
-    claims: {team: audit}
+    properties: {team: audit}
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [outer-read-B1]}
       - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
   - name: the nesting group as the subject of a rule reaches the members of the nested group
     subject: auditor
-    claims: {team: audit}
+    properties: {team: audit}
     questions:
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [outer-as-subject-read-B3], denials: []}
   - name: without the claim the subject is a member of neither group
@@ -87,7 +87,7 @@ cases:
       - {type: branch, resource: B3, action: read, allowed: false, decision: no_access, granted_by: []}
   - name: with another value the subject is a member of neither group
     subject: outsider
-    claims: {team: sales}
+    properties: {team: sales}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
       - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}

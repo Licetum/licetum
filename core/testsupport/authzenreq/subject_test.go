@@ -8,7 +8,7 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// token is a JWT with the claims; the signature is not looked at.
+// token is a JWT with the properties; the signature is not looked at.
 func token(t *testing.T, claims map[string]any) string {
 	t.Helper()
 	enc := base64.RawURLEncoding

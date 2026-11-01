@@ -401,7 +401,7 @@ func (s *snapshot) expandRoles(rules []model.AssignmentRule, relevant map[uuid.U
 			copied := r
 			copied.TypeResourceID = &typeID
 			copied.ResourceID = item.ResourceID
-			copied.ResourceFromClaim = item.ResourceFromClaim
+			copied.ResourceFromProperty = item.ResourceFromProperty
 			copied.ResourceWhere = item.ResourceWhere
 			copied.Access = item.Access
 			out = append(out, copied)

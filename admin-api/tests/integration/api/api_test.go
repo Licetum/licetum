@@ -265,7 +265,7 @@ func (e *env) mockHandler() http.Handler {
 // testAdminAudience is the audience (ADMIN_AUTH__AUDIENCE) the admin API of the tests requires.
 const testAdminAudience = "licetum-admin"
 
-// token signs claims as the mock identity provider. A token that names no audience gets the one of the admin API, so the same
+// token signs properties as the mock identity provider. A token that names no audience gets the one of the admin API, so the same
 // token works there and (where the audience is not looked at) at a service; a test of the audience sets "aud" itself.
 func (e *env) token(claims jwt.MapClaims) string {
 	claims["iss"] = e.mock.URL + "/realm"
@@ -341,7 +341,7 @@ func (e *env) track(app *engine.App) *engine.App {
 }
 
 // asPEP turns a question to the AuthZEN API that names who asks by a person's token into the question of a PEP client: the API key of
-// the client of the service, and the claims of the token as the properties of the subject (support.PEPCallers). The PDP takes
+// the client of the service, and the properties of the token as the properties of the subject (support.PEPCallers). The PDP takes
 // no person's token on these routes; a test of that gives the header legacyToken, which this does not touch.
 func (e *env) asPEP(target string, headers []string, body any) ([]string, any) {
 	if e.callers == nil || e.admin == nil || strings.HasPrefix(target, e.admin.URL) {
@@ -473,7 +473,7 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 		return out
 	}
 
-	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a claim.
+	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a property.
 	expectJSON(t, "alice@filials", permissions("filials", alice, "division", "branch"), `{
 		"division": [{"id":"d1","name":"North","access":["read"]}],
 		"branch": [
@@ -485,7 +485,7 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	expectJSON(t, "alice@replan", permissions("replan", alice, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["read"]},
 		{"id":"p3","name":"Plano3","access":["audit"]}]}`)
-	// bob: predicate level in [5,6] (an int claim is compared as a string) — the whole planogram type.
+	// bob: predicate level in [5,6] (an int property is compared as a string) — the whole planogram type.
 	expectJSON(t, "bob@replan", permissions("replan", bob, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["write"]},
 		{"id":"p3","name":"Plano3","access":["write"]}]}`)

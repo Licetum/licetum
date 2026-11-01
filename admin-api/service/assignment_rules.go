@@ -19,8 +19,8 @@ import (
 // grants access to the type as a whole (no resource_id, no resource_from_claim and no resource_where), and
 // the permission result lists such a type as not_sync. Used for inline rules and for the items of roles alike.
 func (a *App) checkResourceTarget(ctx context.Context, q db.Querier, typeResourceID uuid.UUID, resourceID *string,
-	fromClaim *model.ResourceFromClaim, where []model.PredicateCondition) error {
-	if resourceID == nil && fromClaim == nil && len(where) == 0 {
+	fromProperty *model.ResourceFromProperty, where []model.PredicateCondition) error {
+	if resourceID == nil && fromProperty == nil && len(where) == 0 {
 		return nil
 	}
 	ok, err := a.hasSynchronizer(ctx, q, typeResourceID)
@@ -32,11 +32,11 @@ func (a *App) checkResourceTarget(ctx context.Context, q db.Querier, typeResourc
 
 // checkRuleTarget checks the target of an inline rule (see checkResourceTarget).
 func (a *App) checkRuleTarget(ctx context.Context, q db.Querier, in *model.AssignmentRuleInput) error {
-	return a.checkResourceTarget(ctx, q, *in.TypeResourceID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere)
+	return a.checkResourceTarget(ctx, q, *in.TypeResourceID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere)
 }
 
 // checkAssignmentRuleRefs checks the referenced entities: the role, or the type with its access groups and the lookup
-// type of a claim; the target (see checkRuleTarget) when checkTarget is set; the group the rule is bound to and the
+// type of a property; the target (see checkRuleTarget) when checkTarget is set; the group the rule is bound to and the
 // group the rule is guarded by.
 //
 // It returns the owner of the type or role, which the change log records: the target is read
@@ -68,8 +68,8 @@ func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *mod
 		if err := a.checkAccessGroupRefs(ctx, q, *in.TypeResourceID, in.Access); err != nil {
 			return nil, err
 		}
-		if in.ResourceFromClaim != nil {
-			if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromClaim.LookupTypeResourceID); err != nil {
+		if in.ResourceFromProperty != nil {
+			if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromProperty.LookupTypeResourceID); err != nil {
 				return nil, err
 			}
 		}
@@ -106,7 +106,7 @@ func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *mod
 
 // fromClaimParam: SQL NULL (not JSON null) for a missing resource_from_claim, otherwise the
 // check constraint "resource_id IS NULL OR resource_from_claim IS NULL" does not work.
-func fromClaimParam(v *model.ResourceFromClaim) *string {
+func fromPropertyParam(v *model.ResourceFromProperty) *string {
 	if v == nil {
 		return nil
 	}
@@ -143,7 +143,7 @@ func onMissingOf(in *model.AssignmentRuleInput, old *model.AssignmentRule) strin
 // ruleArgs are the values of the columns an assignment rule is written with, in the order of its INSERT.
 func ruleArgs(in *model.AssignmentRuleInput, onMissing string) []any {
 	return []any{
-		engine.ToNullUUID(in.RoleID), engine.ToNullUUID(in.TypeResourceID), in.ResourceID, fromClaimParam(in.ResourceFromClaim),
+		engine.ToNullUUID(in.RoleID), engine.ToNullUUID(in.TypeResourceID), in.ResourceID, fromPropertyParam(in.ResourceFromProperty),
 		in.Access, in.Subject, engine.MustJSON(in.Predicate), engine.ToNullUUID(in.MemberOfGroupID), *in.Enabled,
 		in.Effect, in.Exception, in.ValidFrom, in.ExpiresAt, in.Name, in.Description,
 		onMissing, engine.MustJSON(in.RequiresPredicate), engine.ToNullUUID(in.RequiresGroupID), whereParam(in.ResourceWhere), in.SubjectType, engine.ToNullUUID(in.SubjectGroupID),
@@ -214,8 +214,8 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 			return nil, err
 		}
 		c.AssignmentRule = *r
-		if c.TargetValid && r.ResourceFromClaim != nil && r.TypeResourceID != nil {
-			cut, err := graph.cut(ctx, a, r.ResourceFromClaim.LookupTypeResourceID, *r.TypeResourceID)
+		if c.TargetValid && r.ResourceFromProperty != nil && r.TypeResourceID != nil {
+			cut, err := graph.cut(ctx, a, r.ResourceFromProperty.LookupTypeResourceID, *r.TypeResourceID)
 			if err != nil {
 				return nil, err
 			}
@@ -261,7 +261,7 @@ func (a *App) getExistingAssignmentRule(ctx context.Context, q db.Querier, ruleI
 func ruleTargetChanged(old *model.AssignmentRule, in *model.AssignmentRuleInput) bool {
 	return !equalPtr(old.TypeResourceID, in.TypeResourceID) ||
 		!equalPtr(old.ResourceID, in.ResourceID) ||
-		!equalPtr(old.ResourceFromClaim, in.ResourceFromClaim) ||
+		!equalPtr(old.ResourceFromProperty, in.ResourceFromProperty) ||
 		!sameConditions(old.ResourceWhere, in.ResourceWhere)
 }
 
@@ -271,7 +271,7 @@ func sameConditions(a, b []model.PredicateCondition) bool {
 }
 
 // RetargetsRule reports whether an update moves a rule to another target: its type or its role, the resource it names,
-// the claim that finds it, or its conditions on resources. The API checks such a change with more than a point write.
+// the property that finds it, or its conditions on resources. The API checks such a change with more than a point write.
 func RetargetsRule(old *model.AssignmentRule, in *model.AssignmentRuleInput) bool {
 	return ruleTargetChanged(old, in) || !equalPtr(old.RoleID, in.RoleID)
 }

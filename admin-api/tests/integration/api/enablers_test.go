@@ -416,7 +416,7 @@ func TestWhoHasAccessListsTheRulesAndThePeople(t *testing.T) {
 	status, raw := w.do("GET", w.admin.URL+w.typePath("branch")+"/access?resource_id=NOPE", nil)
 	requireErrorCode(t, status, raw, http.StatusNotFound, "resource_not_found")
 
-	// A rule that finds its resource by a claim is listed apart.
+	// A rule that finds its resource by a property is listed apart.
 	dynamic := w.grant(map[string]any{"type_resource_id": w.branch, "subject": "walker", "access": []string{"read"},
 		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": w.branch}})
 	res = look("?resource_id=B1")
@@ -586,7 +586,7 @@ func TestPreviewGrantSaysWhatARuleWouldDo(t *testing.T) {
 		t.Fatalf("capability: %s", mustJSON(res))
 	}
 
-	// A rule that finds its resource by a claim cannot be counted.
+	// A rule that finds its resource by a property cannot be counted.
 	res = preview(map[string]any{"type_resource_id": w.branch, "subject": "walker", "access": []string{"read"},
 		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": w.branch}})
 	if res["dynamic"] != true {

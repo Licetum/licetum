@@ -73,7 +73,7 @@ cases:
   # from hierarchy_test.go:TestIntegrationTypeModes
   - name: a manager gets the capability through the group, and the items below D1
     subject: user-1
-    claims: {position: manager}
+    properties: {position: manager}
     service: app
     questions:
       - {type: advanced_mode, action: read, allowed: true, decision: allowed, granted_by: [modes-advanced]}
@@ -83,7 +83,7 @@ cases:
   # from hierarchy_test.go:TestIntegrationTypeModes
   - name: without an applicable rule a not_sync type gives nothing
     subject: user-1
-    claims: {position: cashier}
+    properties: {position: cashier}
     service: app
     questions:
       - {type: advanced_mode, action: read, allowed: false, decision: no_access}
@@ -91,7 +91,7 @@ cases:
       - {type: item, resource: I1, action: read, allowed: true}
   - name: a not_sync type has no resources
     subject: user-1
-    claims: {position: manager}
+    properties: {position: manager}
     service: app
     questions:
       - {type: advanced_mode, resource: X1, action: read, allowed: false, decision: resource_not_found}

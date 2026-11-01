@@ -81,8 +81,8 @@ func (f *fakePDP) ServiceIDByRef(_ context.Context, ref string) (uuid.UUID, erro
 	return fakeServiceID, nil
 }
 
-func (f *fakePDP) NewEnv(claims engine.Claims, attrs map[string]any) engine.Env {
-	return engine.NewEnv(claims, attrs)
+func (f *fakePDP) NewEnv(properties engine.Properties, attrs map[string]any) engine.Env {
+	return engine.NewEnv(properties, attrs)
 }
 
 func (f *fakePDP) CheckAccess(_ context.Context, _ uuid.UUID, subject string, _ engine.Env, requests []model.CheckRequest, explain bool, _ engine.Consistency) ([]model.CheckResult, error) {

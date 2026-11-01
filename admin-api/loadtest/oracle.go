@@ -42,7 +42,7 @@ type Mismatch struct {
 // The rules that can grant a document, in terms of the rule index r:
 //   - the owner pattern (rule 0): document g is owned by subject g mod users;
 //   - kinds 4-6 (a subject on a document) and 9 (an exception: an allow for a subject on a document);
-//   - kinds 0-3 (a department's group on a folder) and 7 (a department's claim on a folder), where the department of a
+//   - kinds 0-3 (a department's group on a folder) and 7 (a department's property on a folder), where the department of a
 //     rule is (r div 10) mod groups and its folder is r mod folders; a document inherits its folder's grant.
 //
 // A denial is a kind-8 rule: the department's group is denied a folder, and so every document of it. An exception lifts
@@ -132,7 +132,7 @@ func (p Profile) oracleSample(rnd *rand.Rand) (int, int) {
 }
 
 // runOracle asks the AuthZEN API about sampled pairs at the given rate until stop is closed, and compares each answer
-// with expectedAllowed. The requests are real evaluations, asked as the PEP client with the claims of the subject, so they
+// with expectedAllowed. The requests are real evaluations, asked as the PEP client with the properties of the subject, so they
 // load the server as one more client; they are counted apart from the k6 traffic.
 func runOracle(ctx context.Context, base, service string, p Profile, apiKey string, seed uint64, rate float64, stop <-chan struct{}) Oracle {
 	var out Oracle
@@ -175,7 +175,7 @@ func runOracle(ctx context.Context, base, service string, p Profile, apiKey stri
 	}
 }
 
-// askEvaluation asks whether subject u of the profile may read the document, as the PEP client with the claims of the subject,
+// askEvaluation asks whether subject u of the profile may read the document, as the PEP client with the properties of the subject,
 // and returns the decision. A question that got no decision returns a status other than 200 (the API refused or failed it), or
 // an error: a transport failure, an answer that is not one, or an evaluation the API could not decide (decision false with
 // context.error), which must not be mistaken for a denial.

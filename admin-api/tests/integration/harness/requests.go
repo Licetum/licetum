@@ -88,7 +88,7 @@ func HTTPRequest(ctx context.Context, base string, req authzenreq.Request, token
 }
 
 // HTTPRequest is the package function HTTPRequest for a cluster: a question that names who asks by a person's token is sent as the
-// question of the PEP client of its service (the API key, and the claims of the token as the properties of the subject), as
+// question of the PEP client of its service (the API key, and the properties of the token as the properties of the subject), as
 // Replica.Send sends it. The package function sends the token as it is.
 func (c *Cluster) HTTPRequest(ctx context.Context, base string, req authzenreq.Request, token string, levers ...Lever) (*http.Request, error) {
 	token, body := c.asPEP(base+req.Path, token, req.Body)

@@ -150,7 +150,7 @@ func TestLiteralSubjectTypesAgreeWithSnapshotAndRuleTruth(t *testing.T) {
 	snap.direct[model.GroupSubject(group)] = []model.AssignmentRule{grouped}
 	identity := identitySet{"same": Yes, model.GroupSubject(group): Yes}
 	for _, subjectType := range []string{"user", "service", "robot"} {
-		env := NewEnv(Claims{"type": "spoofed", "id": "other"}, nil).WithSubjectType(subjectType)
+		env := NewEnv(Properties{"type": "spoofed", "id": "other"}, nil).WithSubjectType(subjectType)
 		direct, _ := snap.applicable(map[uuid.UUID]bool{typ: true}, []string{"same", model.GroupSubject(group)}, now, subjectType)
 		for _, r := range append(append([]model.AssignmentRule{}, snap.direct["same"]...), grouped) {
 			applies, _ := RuleApplies(r, identity, env)

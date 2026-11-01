@@ -24,13 +24,13 @@ import (
 // denial found that way has no anchor: it fails open.
 //
 // zone <- team (inherit read) <- squad (inherit write) <- space. Read flows from a zone to its teams, write from a team to its
-// squads, nothing from a zone to a squad or a space: the squad, of another service, lies between the space a claim names and
+// squads, nothing from a zone to a squad or a space: the squad, of another service, lies between the space a property names and
 // the zone the denial is anchored on, and only the climb reaches it (read is granted on the zones as a whole: a rule on the
 // teams would bring the squads in as its descendants, and the questions name teams only). The answer then reads the data of
 // the squads' service, so a change of that data alone (the squad, and with it the space, moves under another team) reaches
 // the cached answers without consistency=higher: at once in the process that ran the synchronization, within the poll
 // interval in another.
-func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
+func TestIntegrationPropertyLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
 	src := support.NewSource(t)
@@ -83,7 +83,7 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 
 	token := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub", "blocked": "S1"})
 	type teamAnswer struct{ decision, deniedAt string }
-	// ask asks the check API at base, with the default consistency, about read on T1 and T2 as alice, whose claim names S1.
+	// ask asks the check API at base, with the default consistency, about read on T1 and T2 as alice, whose property names S1.
 	ask := func(base string) [2]teamAnswer {
 		t.Helper()
 		req := authzenreq.Evaluations("org", authzenreq.SubjectOf(token), []authzenreq.Question{

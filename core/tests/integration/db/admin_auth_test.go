@@ -39,7 +39,7 @@ func seededPool(t *testing.T) (context.Context, *pgxpool.Pool, *config.Config) {
 
 // TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings: with ADMIN_AUTH__* and no OAuth variable of PLATFORM__*
 // the self-service is seeded (its service row carries no OAuth client), and restore-admin puts the access back and matches
-// its users by the claim of ADMIN_AUTH__SUBJECT_CLAIM.
+// its users by the property of ADMIN_AUTH__SUBJECT_CLAIM.
 func TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings(t *testing.T) {
 	t.Setenv("ADMIN_AUTH__ISSUER", "https://idp.test")
 	t.Setenv("ADMIN_AUTH__AUDIENCE", "licetum-admin")

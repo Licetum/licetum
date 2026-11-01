@@ -71,7 +71,7 @@ func TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies(t *
 	sales := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales-team"})["id"].(string)
 	w.must("POST", "/group/"+sales+"/member", map[string]any{
 		"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
-	// A new deny applies on a missing attribute: without the department claim the membership is unknown, so B1 stays
+	// A new deny applies on a missing attribute: without the department property the membership is unknown, so B1 stays
 	// denied. Known not to be a member, the subject gets B1 back.
 	w.rule("branch", "B1", map[string]any{"effect": "deny", "access": []string{"read"}, "member_of_group_id": sales})
 

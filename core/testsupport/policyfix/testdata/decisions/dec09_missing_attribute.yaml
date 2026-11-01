@@ -87,7 +87,7 @@ cases:
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
   - name: a member of the group is denied by every denial on it and granted by the grant on it
     subject: u2
-    claims: {clearance: low}
+    properties: {clearance: low}
     questions:
       - {type: folder, resource: F1, action: read, allowed: false, decision: denied, granted_by: [read-folders], denials: [{rule: deny-F1-to-low, missing_attribute: false}]}
       - {type: folder, resource: F2, action: read, allowed: false, decision: denied, denials: [{rule: deny-F2-to-low-skip, missing_attribute: false}]}
@@ -96,7 +96,7 @@ cases:
       - {type: folder, resource: F1, action: write, allowed: true, decision: allowed, granted_by: [write-folders-for-low]}
   - name: somebody who is not a member is neither denied nor granted through the group
     subject: u2
-    claims: {clearance: high}
+    properties: {clearance: high}
     questions:
       - {type: folder, resource: F1, action: read, allowed: true, decision: allowed, denials: []}
       - {type: folder, resource: F2, action: read, allowed: true, decision: allowed, denials: []}
@@ -113,18 +113,18 @@ cases:
       - {type: folder, resource: F1, action: write, allowed: false, decision: no_access}
   - name: one membership that holds makes a member, an unknown condition of a denial with one that holds applies it
     subject: u3
-    claims: {department: ops}
+    properties: {department: ops}
     questions:
       - {type: folder, resource: F2, action: audit, allowed: true, decision: allowed, granted_by: [audit-folders-for-staff], denials: []}
       - {type: folder, resource: F1, action: audit, allowed: false, decision: denied, granted_by: [audit-folders-for-staff], denials: [{rule: deny-F1-audit-to-low-ops, missing_attribute: true}]}
   - name: a condition that fails decides the denial although another one is unknown
     subject: u3
-    claims: {badge: staff, department: sales}
+    properties: {badge: staff, department: sales}
     questions:
       - {type: folder, resource: F1, action: audit, allowed: true, decision: allowed, granted_by: [audit-folders-for-staff], denials: []}
   - name: a membership that fails and one that is unknown leave the subject an unknown member, who is granted nothing
     subject: u3
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: folder, resource: F2, action: audit, allowed: false, decision: no_access}
   - name: two unknown memberships grant nothing

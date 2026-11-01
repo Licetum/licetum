@@ -35,7 +35,7 @@ type Group struct {
 	Name      string    `json:"name" doc:"Group name"`
 }
 
-// GroupMemberInput: either predicate (AND conditions over claims) or member_group_id
+// GroupMemberInput: either predicate (AND conditions over properties) or member_group_id
 // (a group nested as a whole into another group), but not both.
 type GroupMemberInput struct {
 	_             struct{}             `additionalProperties:"true"`

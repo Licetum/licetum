@@ -35,7 +35,7 @@ type caseState struct {
 }
 
 func newCaseState(f *policyfix.Fixture, g *graph, c *policyfix.Case) *caseState {
-	s := &caseState{g: g, f: f, c: c, at: attrs{claims: c.Claims, context: c.Context, now: f.NowOf(c)}}
+	s := &caseState{g: g, f: f, c: c, at: attrs{properties: c.Properties, context: c.Context, now: f.NowOf(c)}}
 	s.resolveGroups()
 	for i := range f.Rules {
 		r := &f.Rules[i]
@@ -151,13 +151,13 @@ func (s *caseState) addTarget(r *policyfix.Rule, t *policyfix.Target, access []s
 	switch {
 	case t.Resource != "":
 		add(false, t.Resource)
-	case t.FromClaim != nil:
-		for _, id := range s.claimAnchors(t) {
+	case t.FromProperty != nil:
+		for _, id := range s.propertyAnchors(t) {
 			add(false, id)
 		}
 		// A denial whose lookup cannot reach all its anchors keeps one that is no resource of the fixture: it covers nothing for
 		// real, but can still be the missing parent of an unresolved link, as the denial on a resource that is not there.
-		if r.Deny && s.claimGiven(t) && s.g.lookupIsCut(t.FromClaim.LookupType, t.Type) {
+		if r.Deny && s.claimGiven(t) && s.g.lookupIsCut(t.FromProperty.LookupType, t.Type) {
 			add(false, "")
 		}
 	case len(t.Where) > 0:
@@ -175,20 +175,20 @@ func (s *caseState) addTarget(r *policyfix.Rule, t *policyfix.Target, access []s
 	}
 }
 
-// claimGiven reports whether the request carries a claim a resource_from_claim looks up: one that is present and not falsy
+// claimGiven reports whether the request carries a property a resource_from_claim looks up: one that is present and not falsy
 // (null, false, 0, an empty string or list), as Python's `if not value` reads it.
 func (s *caseState) claimGiven(t *policyfix.Target) bool {
-	return truthy(s.at.claims[t.FromClaim.Claim])
+	return truthy(s.at.properties[t.FromProperty.Property])
 }
 
 // claimAnchors returns the anchors of a resource_from_claim target: the resources of the lookup type that match the
-// claim value (by name, id or attribute), each replaced by its ancestors-or-self of the target's type. A missing claim, or
+// property value (by name, id or attribute), each replaced by its ancestors-or-self of the target's type. A missing property, or
 // a match with no ancestor of that type, gives no anchor.
-func (s *caseState) claimAnchors(t *policyfix.Target) []string {
+func (s *caseState) propertyAnchors(t *policyfix.Target) []string {
 	if !s.claimGiven(t) {
 		return nil
 	}
-	value := pyStr(s.at.claims[t.FromClaim.Claim])
+	value := pyStr(s.at.properties[t.FromProperty.Property])
 	seen := map[string]bool{}
 	var out []string
 	add := func(id string) {
@@ -197,8 +197,8 @@ func (s *caseState) claimAnchors(t *policyfix.Target) []string {
 			out = append(out, id)
 		}
 	}
-	for _, res := range s.g.byType[t.FromClaim.LookupType] {
-		if !s.g.matchesClaim(res, t.FromClaim.MatchBy, value) {
+	for _, res := range s.g.byType[t.FromProperty.LookupType] {
+		if !s.g.matchesProperty(res, t.FromProperty.MatchBy, value) {
 			continue
 		}
 		if res.Type == t.Type {

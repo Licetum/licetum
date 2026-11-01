@@ -23,7 +23,7 @@ const accessPeopleSample = 20
 // whom each applies to — a subject, a group, a condition, everyone — and, where the registry knows them, the people.
 // It is the reverse of a check: the rules are those of every subject, loaded once, and the covering is the one the
 // decision uses (coversOf), so what is listed is what a decision would weigh. Rules that find their resource from a
-// claim cannot be placed without a token and are listed apart.
+// property cannot be placed without a token and are listed apart.
 func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.UUID, resourceID *string) (*model.AccessLookup, error) {
 	ctx, err := a.CurrentReadContext(ctx)
 	if err != nil {
@@ -93,7 +93,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 
 	var static, dynamic []model.AssignmentRule
 	for _, r := range rules {
-		if r.ResourceFromClaim != nil {
+		if r.ResourceFromProperty != nil {
 			dynamic = append(dynamic, r)
 		} else {
 			static = append(static, r)
@@ -353,7 +353,7 @@ func (a *App) peopleReached(ctx context.Context, rules []*model.AssignmentRule) 
 	now := time.Now()
 	counted := make([]map[string]bool, len(rules))
 	for _, p := range people {
-		env := engine.Env{SubjectType: p.entry.Type, Claims: engine.Claims(p.entry.Properties), Now: now}
+		env := engine.Env{SubjectType: p.entry.Type, Properties: engine.Properties(p.entry.Properties), Now: now}
 		identity, _ := engine.IdentityOf(members, p.entry.ID, env)
 		for i, rule := range rules {
 			if !slices.Contains(ruleServices[i], p.service) {

@@ -41,4 +41,4 @@ func TestCheckOperationsNamesTheOperationThatIsWrong(t *testing.T) {
 	}
 }
 
-// Claims compare as numbers and as networks too; an absent claim does not hold, negative conditions included.
+// Properties compare as numbers and as networks too; an absent property does not hold, negative conditions included.

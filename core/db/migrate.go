@@ -207,7 +207,7 @@ var adminAccess = []string{string(model.ActionRead), string(model.ActionWrite)}
 //     its own table of this very instance — without it a type would have no resources and hence no
 //     whole-type access (that is expanded into entries per resource);
 //   - the platform admin group (PLATFORM__ADMIN_GROUP_NAME), whose members are matched by a predicate
-//     over claims (PLATFORM__ADMIN_CLAIM in PLATFORM__ADMIN_CLAIM_VALUES);
+//     over properties (PLATFORM__ADMIN_CLAIM in PLATFORM__ADMIN_CLAIM_VALUES);
 //   - rules granting that group read+write on every policy type as a whole.
 //
 // Skipped, with a log line, if ADMIN_AUTH__* is not configured (nobody could sign in to the admin API it protects). The
@@ -318,7 +318,7 @@ func seedAdminGroup(ctx context.Context, tx pgx.Tx, p config.Platform) error {
 	}
 
 	if len(p.AdminClaimValues) > 0 {
-		// Who belongs to the group: the claim takes one of the configured values.
+		// Who belongs to the group: the property takes one of the configured values.
 		predicate, err := json.Marshal([]model.PredicateCondition{
 			{Attr: p.AdminClaim, Op: model.OpIn, Value: model.PredicateValue{List: p.AdminClaimValues, IsList: true}},
 		})

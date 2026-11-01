@@ -30,7 +30,7 @@ func TestParseMix(t *testing.T) {
 	}
 	for _, bad := range []string{"nope=1", "evaluation", "evaluation=x", "evaluation=-1", "evaluation=0",
 		// The requests of the check API the traffic sent before it moved to AuthZEN are gone, and so is the question of a trusted
-		// client about another person: every question names its person and brings the claims now.
+		// client about another person: every question names its person and brings the properties now.
 		"permission=1", "check1=1", "authzen=1", "on_behalf=1", "evaluation_properties=1"} {
 		if _, err := ParseMix(bad); err == nil {
 			t.Errorf("ParseMix(%q) accepted", bad)
@@ -384,7 +384,7 @@ func TestRuleMix(t *testing.T) {
 	}
 
 	owner := ruleFor(0, p, fx)
-	if owner.ResourceFromClaim == nil || owner.ResourceFromClaim.MatchBy != "meta.owner" {
+	if owner.ResourceFromProperty == nil || owner.ResourceFromProperty.MatchBy != "meta.owner" {
 		t.Fatalf("rule 0 is not the owner pattern: %+v", owner)
 	}
 	if denial := ruleFor(8, p, fx); denial.Effect != "deny" || denial.MemberOfGroupID == nil {

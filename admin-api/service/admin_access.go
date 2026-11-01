@@ -12,7 +12,7 @@ import (
 // adminAccessSQL is true when somebody can still change the access rules of the platform, or when the platform is not
 // seeded (then the admin API is closed anyway and there is nothing to protect). "Can change" means: a rule in force
 // that allows write on the platform policy `assignment_rule` as a whole — directly or through a role — and applies to
-// somebody: a named subject (a group needs a live member), a predicate over claims, or a group with a live member.
+// somebody: a named subject (a group needs a live member), a predicate over properties, or a group with a live member.
 // A predicate or a nested group is taken as non-empty: whether anybody matches it cannot be known here.
 const adminAccessSQL = `
 SELECT NOT EXISTS (SELECT 1 FROM type_resource WHERE id = $1 AND deleted_at IS NULL)

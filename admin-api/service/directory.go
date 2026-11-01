@@ -55,7 +55,7 @@ func directoryEntryResponse(e db.DirectoryEntry) model.DirectoryEntry {
 	return model.DirectoryEntry{Type: e.Type, ID: e.ID, Name: e.DisplayName, Properties: e.Properties, UpdatedAt: e.UpdatedAt, SentAt: e.SentAt}
 }
 
-// GetDirectoryEntry returns a person of the service with the groups they are in, decided with the stored properties as claims.
+// GetDirectoryEntry returns a person of the service with the groups they are in, decided with the stored properties as properties.
 func (a *App) GetDirectoryEntry(ctx context.Context, serviceID uuid.UUID, subjectType, subjectID string) (*model.DirectoryEntryDetail, error) {
 	if err := a.requireLiveService(ctx, serviceID); err != nil {
 		return nil, err
@@ -71,9 +71,9 @@ func (a *App) GetDirectoryEntry(ctx context.Context, serviceID uuid.UUID, subjec
 	return &model.DirectoryEntryDetail{DirectoryEntry: directoryEntryResponse(entry), Groups: groups}, nil
 }
 
-// groupsOf lists the groups a subject is in now, nested groups included, as its claims say.
-func (a *App) groupsOf(ctx context.Context, subject string, claims map[string]any) ([]model.SubjectGroup, error) {
-	identity, _, err := a.ResolveIdentitySet(ctx, subject, engine.NewEnv(engine.Claims(claims), nil))
+// groupsOf lists the groups a subject is in now, nested groups included, as its properties say.
+func (a *App) groupsOf(ctx context.Context, subject string, properties map[string]any) ([]model.SubjectGroup, error) {
+	identity, _, err := a.ResolveIdentitySet(ctx, subject, engine.NewEnv(engine.Properties(properties), nil))
 	if err != nil {
 		return nil, err
 	}

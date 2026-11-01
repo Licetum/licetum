@@ -325,7 +325,7 @@ func TestContract_DIR01_SubjectSearchListsTheAllowedEntriesOfTheDirectoryOfTheSe
 	requireAuthzenError(t, status, header, body, http.StatusBadRequest, "authzen_page_invalid")
 }
 
-// searchResourcePages pages the resource search of the type and the action for the claims until the token is empty. It returns
+// searchResourcePages pages the resource search of the type and the action for the properties until the token is empty. It returns
 // the ids in the order of the pages, and the number of pages that had no result yet carried a token (the scan budget stopped
 // them).
 func (w *world) searchResourcePages(resourceType, action string, limit int, claims jwt.MapClaims) (ids []string, pages, emptyWithToken int) {

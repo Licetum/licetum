@@ -197,8 +197,8 @@ func shapeProblems(f *policyfix.Fixture) []string {
 	for _, c := range f.Cases {
 		inRange("questions in "+c.Name, len(c.Questions), 10, 30)
 		asked[f.ServiceOf(&c)] = true
-		if c.Claims["preferred_username"] != c.Subject {
-			bad("case %s: preferred_username %v is not the subject %s", c.Name, c.Claims["preferred_username"], c.Subject)
+		if c.Properties["preferred_username"] != c.Subject {
+			bad("case %s: preferred_username %v is not the subject %s", c.Name, c.Properties["preferred_username"], c.Subject)
 		}
 		for _, q := range c.Questions {
 			if q.Allowed || q.Decision != "" || q.GrantedBy != nil || q.Denials != nil {
@@ -215,7 +215,7 @@ func shapeProblems(f *policyfix.Fixture) []string {
 // apiProblems checks what the runner of the engine sends through the admin API with the validation of its inputs, and
 // what the generator promises beyond them: a group nests only groups before it (never itself, which the API refuses, and
 // never in a cycle), a resource names parents of types with a synchronizer (or that had one) only, the request attributes are what the
-// check API takes, and no claim is one the token sets itself.
+// check API takes, and no property is one the token sets itself.
 func apiProblems(f *policyfix.Fixture) []string {
 	var out []string
 	bad := func(format string, args ...any) { out = append(out, fmt.Sprintf(format, args...)) }
@@ -290,7 +290,7 @@ func apiProblems(f *policyfix.Fixture) []string {
 		}
 		seen[g.Name] = true
 	}
-	fromClaim := func(fc *policyfix.FromClaim) *model.ResourceFromClaim {
+	fromProperty := func(fc *policyfix.FromProperty) *model.ResourceFromProperty {
 		if fc == nil {
 			return nil
 		}
@@ -301,7 +301,7 @@ func apiProblems(f *policyfix.Fixture) []string {
 		if _, isMeta := model.MetaKeyOf(matchBy); matchBy != model.MatchByName && matchBy != model.MatchByID && !isMeta {
 			bad("match_by %q", fc.MatchBy)
 		}
-		return &model.ResourceFromClaim{Claim: fc.Claim, LookupTypeResourceID: *id("type " + fc.LookupType), MatchBy: matchBy}
+		return &model.ResourceFromProperty{Property: fc.Property, LookupTypeResourceID: *id("type " + fc.LookupType), MatchBy: matchBy}
 	}
 	resourceID := func(t *policyfix.Target) *string {
 		if t.Resource == "" {
@@ -312,7 +312,7 @@ func apiProblems(f *policyfix.Fixture) []string {
 	for _, r := range f.Roles {
 		for i, item := range r.Items {
 			in := model.RolePermissionInput{
-				TypeResourceID: *id("type " + item.Type), ResourceID: resourceID(&item.Target), ResourceFromClaim: fromClaim(item.FromClaim),
+				TypeResourceID: *id("type " + item.Type), ResourceID: resourceID(&item.Target), ResourceFromProperty: fromProperty(item.FromProperty),
 				ResourceWhere: item.Where, Access: item.Access,
 			}
 			if err := in.Validate(); err != nil {
@@ -345,7 +345,7 @@ func apiProblems(f *policyfix.Fixture) []string {
 		if r.Role != "" {
 			in.RoleID = id("role " + r.Role)
 		} else {
-			in.TypeResourceID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere = id("type "+r.Type), resourceID(r.Target), fromClaim(r.FromClaim), r.Where
+			in.TypeResourceID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere = id("type "+r.Type), resourceID(r.Target), fromProperty(r.FromProperty), r.Where
 			in.Access = r.Access
 		}
 		if err := in.Validate(); err != nil {
@@ -356,7 +356,7 @@ func apiProblems(f *policyfix.Fixture) []string {
 		if err := model.RequestContext(c.Context).Validate(); err != nil {
 			bad("case %s: context: %v", c.Name, err)
 		}
-		for name := range c.Claims {
+		for name := range c.Properties {
 			switch name {
 			case "sub", "iss", "aud", "exp", "iat", "nbf", "azp", "client_id":
 				bad("case %s: the claim %s is the token's own", c.Name, name)
@@ -577,11 +577,11 @@ func features(f *policyfix.Fixture) map[string]bool {
 			if missing[t.Type+"/"+t.Resource] {
 				has[prefix+"missing-parent"] = true
 			}
-		case t.FromClaim != nil:
+		case t.FromProperty != nil:
 			has[prefix+"from-claim"] = true
-			has[prefix+"from-claim-in-deleted-type"] = has[prefix+"from-claim-in-deleted-type"] || gone[t.FromClaim.LookupType]
-			has[prefix+"from-claim-through-deleted-type"] = has[prefix+"from-claim-through-deleted-type"] || passesGone(t.FromClaim.LookupType, t.Type)
-			switch fc := t.FromClaim; {
+			has[prefix+"from-claim-in-deleted-type"] = has[prefix+"from-claim-in-deleted-type"] || gone[t.FromProperty.LookupType]
+			has[prefix+"from-claim-through-deleted-type"] = has[prefix+"from-claim-through-deleted-type"] || passesGone(t.FromProperty.LookupType, t.Type)
+			switch fc := t.FromProperty; {
 			case fc.MatchBy == "":
 				has[prefix+"from-claim-default"] = true
 			case strings.HasPrefix(fc.MatchBy, model.MatchByMetaPrefix):
@@ -589,7 +589,7 @@ func features(f *policyfix.Fixture) map[string]bool {
 			default:
 				has[prefix+"from-claim-"+fc.MatchBy] = true
 			}
-			if t.FromClaim.LookupType != t.Type {
+			if t.FromProperty.LookupType != t.Type {
 				has[prefix+"from-claim-below"] = true
 			}
 		case len(t.Where) > 0:
@@ -604,7 +604,7 @@ func features(f *policyfix.Fixture) map[string]bool {
 			}
 		}
 		has[prefix+"on-deleted-type"] = has[prefix+"on-deleted-type"] ||
-			gone[t.Type] && (t.Resource != "" || t.FromClaim != nil || len(t.Where) > 0)
+			gone[t.Type] && (t.Resource != "" || t.FromProperty != nil || len(t.Where) > 0)
 	}
 	for _, r := range f.Roles {
 		for i := range r.Items {
@@ -638,7 +638,7 @@ func features(f *policyfix.Fixture) map[string]bool {
 			}
 			has["rule/deny-wildcard"] = has["rule/deny-wildcard"] || slices.Contains(r.Access, model.AllLevels)
 			if t := r.Target; r.Deny && t != nil {
-				if fc := t.FromClaim; fc != nil {
+				if fc := t.FromProperty; fc != nil {
 					has["rule/deny-by-claim-in-deleted-type"] = has["rule/deny-by-claim-in-deleted-type"] || gone[fc.LookupType] || gone[t.Type]
 					has["rule/deny-by-claim-through-deleted-type"] = has["rule/deny-by-claim-through-deleted-type"] || passesGone(fc.LookupType, t.Type)
 				}
@@ -689,12 +689,12 @@ func features(f *policyfix.Fixture) map[string]bool {
 		default:
 			has["case/second-service"] = true
 		}
-		for _, claim := range []string{"department", "region", "level", "vip", "teams", "team", "home", "home_id"} {
-			v, ok := c.Claims[claim]
+		for _, property := range []string{"department", "region", "level", "vip", "teams", "team", "home", "home_id"} {
+			v, ok := c.Properties[property]
 			has["case/missing-claim"] = has["case/missing-claim"] || !ok
 			has["case/null-claim"] = has["case/null-claim"] || ok && v == nil
 		}
-		for _, v := range c.Claims {
+		for _, v := range c.Properties {
 			switch v.(type) {
 			case float64:
 				has["case/number-claim"] = true

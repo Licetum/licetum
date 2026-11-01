@@ -42,9 +42,9 @@ rules:
   - {name: sales-write-branch, member_of: sales, type: branch, access: [write]}
   - {name: mallory-deny-B2, subject: mallory, type: branch, resource: B2, access: [read], deny: true}
   - {name: zed-read-D2, subject: zed, type: division, resource: D2, access: [read]}
-  - {name: walker-read-by-name, subject: walker, type: branch, from_claim: {claim: branch_name, lookup_type: branch}, access: [read]}
+  - {name: walker-read-by-name, subject: walker, type: branch, from_property: {claim: branch_name, lookup_type: branch}, access: [read]}
   # resource_from_claim by id.
-  - {name: walker-id-read-by-id, subject: walker-id, type: branch, from_claim: {claim: branch_id, lookup_type: branch, match_by: id}, access: [read]}
+  - {name: walker-id-read-by-id, subject: walker-id, type: branch, from_property: {claim: branch_id, lookup_type: branch, match_by: id}, access: [read]}
 cases:
   # from admin-api/tests/integration/api/enablers_test.go:TestWhoHasAccessListsTheRulesAndThePeople
   - name: alice reads B2 through the grant on an ancestor, and the denial of another person is not hers
@@ -56,14 +56,14 @@ cases:
   # from admin-api/tests/integration/api/enablers_test.go:TestKnownSubjectsAreNotedAndForgotten
   - name: a member of sales writes B2 through the rule on the whole type
     subject: dave
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [sales-write-branch], denials: []}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: []}
   # from admin-api/tests/integration/api/enablers_test.go:TestWhoHasAccessListsTheRulesAndThePeople
   - name: the type as a whole counts only the rule anchored on the type itself
     subject: dave
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: branch, action: write, allowed: true, decision: allowed, granted_by: [sales-write-branch], denials: []}
   # from admin-api/tests/integration/api/enablers_test.go:TestWhoHasAccessListsTheRulesAndThePeople
@@ -74,7 +74,7 @@ cases:
   - name: the rule on the whole type reaches the lower types of another service
     subject: dave
     service: app
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: item, resource: I1, action: write, allowed: true, decision: allowed, granted_by: [sales-write-branch]}
       - {type: item, resource: I4, action: write, allowed: true, decision: allowed, granted_by: [sales-write-branch]}
@@ -89,7 +89,7 @@ cases:
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: []}
   - name: mallory's denial of read leaves the write the group gives
     subject: mallory
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [sales-write-branch], denials: []}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: []}
@@ -108,14 +108,14 @@ cases:
   # from admin-api/tests/integration/api/enablers_test.go:TestWhoHasAccessListsTheRulesAndThePeople
   - name: the rule that finds its resource by a claim covers the branch of that name
     subject: walker
-    claims: {branch_name: Branch 1}
+    properties: {branch_name: Branch 1}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [walker-read-by-name], denials: []}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: []}
   - name: the anchor found by a claim covers what lies below it in another service
     subject: walker
     service: app
-    claims: {branch_name: Branch 1}
+    properties: {branch_name: Branch 1}
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [walker-read-by-name]}
       - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
@@ -125,22 +125,22 @@ cases:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
   - name: a claim that names no resource finds no anchor
     subject: walker
-    claims: {branch_name: No such branch}
+    properties: {branch_name: No such branch}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
   - name: a claim looked up by name does not match an id
     subject: walker
-    claims: {branch_name: B1}
+    properties: {branch_name: B1}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
   - name: a claim looked up by id covers the branch with that id
     subject: walker-id
-    claims: {branch_id: B3}
+    properties: {branch_id: B3}
     questions:
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [walker-id-read-by-id], denials: []}
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
   - name: a claim looked up by id does not match a name
     subject: walker-id
-    claims: {branch_id: Branch 3}
+    properties: {branch_id: Branch 3}
     questions:
       - {type: branch, resource: B3, action: read, allowed: false, decision: no_access, granted_by: []}

@@ -24,7 +24,7 @@ func sourcelessGraph(org, app uuid.UUID, types [4]uuid.UUID, itemSync, sourceDel
 }
 
 // A type without a live synchronizer has no resources, whatever rows its deleted synchronizer left in the local copy: the
-// type graph says so, the climb of a claim lookup does not pass it, and a rule on a resource of it anchors nothing (a
+// type graph says so, the climb of a property lookup does not pass it, and a rule on a resource of it anchors nothing (a
 // denial stays, absent, for the links below that name its rows).
 func TestATypeWithoutASynchronizerHasNoResourcesForARule(t *testing.T) {
 	org, app := uuid.New(), uuid.New()
@@ -71,7 +71,7 @@ func TestATypeWithoutASynchronizerHasNoResourcesForARule(t *testing.T) {
 		rule('3', model.EffectAllow, func(r *model.AssignmentRule) {
 			branchID := branch
 			r.TypeResourceID = &branchID
-			r.ResourceFromClaim = &model.ResourceFromClaim{Claim: "item_name", LookupTypeResourceID: item, MatchBy: model.MatchByName}
+			r.ResourceFromProperty = &model.ResourceFromProperty{Property: "item_name", LookupTypeResourceID: item, MatchBy: model.MatchByName}
 		}),
 		rule('4', model.EffectAllow, func(r *model.AssignmentRule) {
 			r.ResourceWhere = []model.PredicateCondition{{Attr: "owner", Op: model.OpEq, Value: model.PredicateValue{Str: "alice"}}}
@@ -81,20 +81,20 @@ func TestATypeWithoutASynchronizerHasNoResourcesForARule(t *testing.T) {
 		rule('6', model.EffectDeny, func(r *model.AssignmentRule) {
 			branchID := branch
 			r.TypeResourceID = &branchID
-			r.ResourceFromClaim = &model.ResourceFromClaim{Claim: "item_name", LookupTypeResourceID: item, MatchBy: model.MatchByName}
+			r.ResourceFromProperty = &model.ResourceFromProperty{Property: "item_name", LookupTypeResourceID: item, MatchBy: model.MatchByName}
 		}),
 		rule('7', model.EffectDeny, func(r *model.AssignmentRule) {
 			r.ResourceWhere = []model.PredicateCondition{{Attr: "owner", Op: model.OpEq, Value: model.PredicateValue{Str: "alice"}}}
 		}),
-		// A denial with no claim to look up is not applied, as for a lookup that is not cut.
+		// A denial with no property to look up is not applied, as for a lookup that is not cut.
 		rule('8', model.EffectDeny, func(r *model.AssignmentRule) {
 			branchID := branch
 			r.TypeResourceID = &branchID
-			r.ResourceFromClaim = &model.ResourceFromClaim{Claim: "missing", LookupTypeResourceID: item, MatchBy: model.MatchByName}
+			r.ResourceFromProperty = &model.ResourceFromProperty{Property: "missing", LookupTypeResourceID: item, MatchBy: model.MatchByName}
 		}),
 	}
 	// No resource is looked up for any of them (a lookup among the resources of part would be): an App without a database answers.
-	insts, err := (&App{}).BuildInstances(context.Background(), g, rules, NewEnv(Claims{"item_name": "Item 1"}, nil), nil)
+	insts, err := (&App{}).BuildInstances(context.Background(), g, rules, NewEnv(Properties{"item_name": "Item 1"}, nil), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestATypeWithoutASynchronizerHasNoResourcesForARule(t *testing.T) {
 	wants := []want{
 		{rule: 1, anchor: item, ext: "I1"},   // the denial on I1
 		{rule: 4, anchor: item, whole: true}, // the whole-type rule on item
-		{rule: 5, anchor: branch},            // the claim is looked up among the resources of item
+		{rule: 5, anchor: branch},            // the property is looked up among the resources of item
 		{rule: 6, anchor: item},              // the attributes of the resources of item
 	}
 	if len(insts) != len(wants) {

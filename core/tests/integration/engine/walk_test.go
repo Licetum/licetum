@@ -190,20 +190,20 @@ func mustExec(tb testing.TB, pool *pgxpool.Pool, sql string, args ...any) {
 	}
 }
 
-// rules turns the scenarios into rules, each reading the claim named after its index, and the claims of the caller.
+// rules turns the scenarios into rules, each reading the property named after its index, and the properties of the caller.
 func (fx *walkFixture) rules(scenarios []walkScenario) ([]model.AssignmentRule, engine.Env) {
 	rules := make([]model.AssignmentRule, len(scenarios))
-	claims := engine.Claims{}
+	properties := engine.Properties{}
 	for i, s := range scenarios {
 		target := fx.types[s.target]
-		claim := fmt.Sprintf("c%d", i)
-		claims[claim] = s.value
+		property := fmt.Sprintf("c%d", i)
+		properties[property] = s.value
 		rules[i] = model.AssignmentRule{
 			ID: uuid.New(), TypeResourceID: &target, Access: []string{"read"}, Enabled: true, Effect: model.EffectAllow,
-			ResourceFromClaim: &model.ResourceFromClaim{Claim: claim, LookupTypeResourceID: fx.types[s.lookup], MatchBy: s.matchBy},
+			ResourceFromProperty: &model.ResourceFromProperty{Property: property, LookupTypeResourceID: fx.types[s.lookup], MatchBy: s.matchBy},
 		}
 	}
-	return rules, engine.NewEnv(claims, nil)
+	return rules, engine.NewEnv(properties, nil)
 }
 
 // anchors returns the external ids of the anchors found for each rule.
@@ -265,7 +265,7 @@ func (fx *walkFixture) expected(s walkScenario) []string {
 
 // The walk finds every anchor a climb to the roots finds: stopping at the target type, leaving the links that lead
 // away from it and not climbing at all when the lookup type is the target change nothing in the answer.
-func TestFromClaimAnchorsOnADeepHierarchy(t *testing.T) {
+func TestFromPropertyAnchorsOnADeepHierarchy(t *testing.T) {
 	fx := newWalkFixture(t)
 	rules, env := fx.rules(walkScenarios)
 	got := fx.anchors(t, rules, env)
@@ -287,7 +287,7 @@ func first(s []string) []string { return s[:min(len(s), 5)] }
 // A type without a live synchronizer has no resources, whatever rows its deleted synchronizer left in the local copy: the
 // lookup does not match among them, the climb does not pass through them and a rule does not anchor at them. The
 // anchors come back with the synchronizer.
-func TestFromClaimIgnoresTheRowsOfATypeWithoutASynchronizer(t *testing.T) {
+func TestFromPropertyIgnoresTheRowsOfATypeWithoutASynchronizer(t *testing.T) {
 	fx := newWalkFixture(t)
 	ctx := context.Background()
 	rules, env := fx.rules(walkScenarios)
@@ -327,9 +327,9 @@ func TestFromClaimIgnoresTheRowsOfATypeWithoutASynchronizer(t *testing.T) {
 	}
 }
 
-// BenchmarkFromClaimWalk measures the lookups of the scenarios one by one, and all of them as one request (one query per
+// BenchmarkFromPropertyWalk measures the lookups of the scenarios one by one, and all of them as one request (one query per
 // kind of match).
-func BenchmarkFromClaimWalk(b *testing.B) {
+func BenchmarkFromPropertyWalk(b *testing.B) {
 	fx := newWalkFixture(b)
 	run := func(name string, scenarios []walkScenario) {
 		b.Run(name, func(b *testing.B) {

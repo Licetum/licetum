@@ -42,26 +42,26 @@ resources:
   - {type: project, id: P5, name: Project 5, parents: [{type: branch, id: B1}], meta: {owner: carol}}
 rules:
   # The rules of TestIntegrationResourceAttributes, one subject per step of the test.
-  - {name: projects-of-owner, subject: owner-user, type: project, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owner}}
-  - {name: projects-of-owners, subject: owners-user, type: project, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owners}}
-  - {name: projects-of-owners-again, subject: user-1, type: project, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owners}}
-  - {name: branches-of-owned-projects, subject: user-1, type: branch, access: [read], from_claim: {claim: username, lookup_type: project, match_by: meta.owner}}
+  - {name: projects-of-owner, subject: owner-user, type: project, access: [read], from_property: {claim: username, lookup_type: project, match_by: meta.owner}}
+  - {name: projects-of-owners, subject: owners-user, type: project, access: [read], from_property: {claim: username, lookup_type: project, match_by: meta.owners}}
+  - {name: projects-of-owners-again, subject: user-1, type: project, access: [read], from_property: {claim: username, lookup_type: project, match_by: meta.owners}}
+  - {name: branches-of-owned-projects, subject: user-1, type: branch, access: [read], from_property: {claim: username, lookup_type: project, match_by: meta.owner}}
   # The rule of TestIntegrationHierarchyResourceFromClaim: the rrs above the branch the department claim names.
-  - {name: rrs-of-department, subject: dept-user, type: rrs, access: [read], from_claim: {claim: department, lookup_type: branch, match_by: name}}
+  - {name: rrs-of-department, subject: dept-user, type: rrs, access: [read], from_property: {claim: department, lookup_type: branch, match_by: name}}
   # By id, by the default (name), by a number rendered as text, from a type above the rule's type.
-  - {name: branch-by-id, subject: id-user, type: branch, access: [read], from_claim: {claim: branch_id, lookup_type: branch, match_by: id}}
-  - {name: branch-by-name, subject: name-user, type: branch, access: [read], from_claim: {claim: branch_name, lookup_type: branch}}
-  - {name: branch-by-number, subject: number-user, type: branch, access: [read], from_claim: {claim: branch_no, lookup_type: branch, match_by: id}}
-  - {name: branch-by-division-name, subject: up-user, type: branch, access: [read], from_claim: {claim: division_name, lookup_type: division, match_by: name}}
+  - {name: branch-by-id, subject: id-user, type: branch, access: [read], from_property: {claim: branch_id, lookup_type: branch, match_by: id}}
+  - {name: branch-by-name, subject: name-user, type: branch, access: [read], from_property: {claim: branch_name, lookup_type: branch}}
+  - {name: branch-by-number, subject: number-user, type: branch, access: [read], from_property: {claim: branch_no, lookup_type: branch, match_by: id}}
+  - {name: branch-by-division-name, subject: up-user, type: branch, access: [read], from_property: {claim: division_name, lookup_type: division, match_by: name}}
   # A denial anchored by a claim.
   - {name: read-all-branches, subject: deny-user, type: branch, access: [read]}
-  - {name: deny-blocked-branch, subject: deny-user, type: branch, access: [read], deny: true, from_claim: {claim: blocked, lookup_type: branch, match_by: id}}
+  - {name: deny-blocked-branch, subject: deny-user, type: branch, access: [read], deny: true, from_property: {claim: blocked, lookup_type: branch, match_by: id}}
 cases:
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
   - name: the owner pattern gives alice her projects
     subject: owner-user
     service: app
-    claims: {username: alice}
+    properties: {username: alice}
     questions:
       - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [projects-of-owner]}
       - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
@@ -70,7 +70,7 @@ cases:
   - name: the owner pattern gives bob his project
     subject: owner-user
     service: app
-    claims: {username: bob}
+    properties: {username: bob}
     questions:
       - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
       - {type: project, resource: P2, action: read, allowed: true, decision: allowed, granted_by: [projects-of-owner]}
@@ -79,7 +79,7 @@ cases:
   - name: an owner nobody names gets nothing
     subject: owner-user
     service: app
-    claims: {username: nobody}
+    properties: {username: nobody}
     questions:
       - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
       - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
@@ -89,7 +89,7 @@ cases:
   - name: the owner pattern reads its own attribute, not another one that holds the claim
     subject: owner-user
     service: app
-    claims: {username: dave}
+    properties: {username: dave}
     questions:
       - {type: project, resource: P3, action: read, allowed: false, decision: no_access, granted_by: []}
       - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
@@ -98,7 +98,7 @@ cases:
   - name: a list attribute holds the claim as one of its items
     subject: owners-user
     service: app
-    claims: {username: dave}
+    properties: {username: dave}
     questions:
       - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
       - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
@@ -106,7 +106,7 @@ cases:
   - name: every resource whose list holds the claim is an anchor
     subject: owners-user
     service: app
-    claims: {username: alice}
+    properties: {username: alice}
     questions:
       - {type: project, resource: P1, action: read, allowed: true, decision: allowed}
       - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
@@ -114,7 +114,7 @@ cases:
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
   - name: the anchor may lie above the matched resource, in another service
     subject: user-1
-    claims: {username: bob}
+    properties: {username: bob}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
@@ -123,7 +123,7 @@ cases:
   - name: the branch anchor cascades down to the items and projects below it
     subject: user-1
     service: app
-    claims: {username: bob}
+    properties: {username: bob}
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
       - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
@@ -134,7 +134,7 @@ cases:
   # his two projects P1 and P2 lie under B1, and the permission list names exactly B1)
   - name: two matches under one branch anchor the rule at that branch once
     subject: user-1
-    claims: {username: carol}
+    properties: {username: carol}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects], denials: []}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
@@ -145,7 +145,7 @@ cases:
   - name: the branch both matches climb to cascades into the other service
     subject: user-1
     service: app
-    claims: {username: carol}
+    properties: {username: carol}
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
       - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
@@ -155,7 +155,7 @@ cases:
       - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
   - name: the owner of projects under two branches gets both branches
     subject: user-1
-    claims: {username: alice}
+    properties: {username: alice}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [branches-of-owned-projects]}
@@ -163,7 +163,7 @@ cases:
   # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationHierarchyResourceFromClaim
   - name: the rrs above the branch named by the claim, and everything under it
     subject: dept-user
-    claims: {department: Branch 3}
+    properties: {department: Branch 3}
     questions:
       - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, granted_by: [rrs-of-department]}
       - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
@@ -172,7 +172,7 @@ cases:
   # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationHierarchyResourceFromClaim
   - name: a value no resource has gives no anchor
     subject: dept-user
-    claims: {department: no such branch}
+    properties: {department: no such branch}
     questions:
       - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
       - {type: rrs, resource: R2, action: read, allowed: false, decision: no_access}
@@ -180,7 +180,7 @@ cases:
       - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
   - name: a name two resources share gives an anchor for each
     subject: dept-user
-    claims: {department: Central}
+    properties: {department: Central}
     questions:
       - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [rrs-of-department]}
       - {type: rrs, resource: R2, action: read, allowed: false, decision: no_access}
@@ -196,52 +196,52 @@ cases:
       - {type: rrs, resource: R2, action: read, allowed: false, decision: no_access}
   - name: by id the claim names the resource itself
     subject: id-user
-    claims: {branch_id: B2}
+    properties: {branch_id: B2}
     questions:
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [branch-by-id]}
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
       - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
   - name: by id a name does not match
     subject: id-user
-    claims: {branch_id: Branch 2}
+    properties: {branch_id: Branch 2}
     questions:
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
   - name: without match_by the claim is looked up by name
     subject: name-user
-    claims: {branch_name: Branch 4}
+    properties: {branch_name: Branch 4}
     questions:
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [branch-by-name]}
       - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
   - name: by name an id does not match
     subject: name-user
-    claims: {branch_name: B4}
+    properties: {branch_name: B4}
     questions:
       - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
   - name: an empty claim gives no anchor
     subject: name-user
-    claims: {branch_name: ""}
+    properties: {branch_name: ""}
     questions:
       - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
   - name: a number claim is looked up as its text
     subject: number-user
-    claims: {branch_no: 7}
+    properties: {branch_no: 7}
     questions:
       - {type: branch, resource: "7", action: read, allowed: true, decision: allowed, granted_by: [branch-by-number]}
       - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
   - name: a number given as a string is the same text
     subject: number-user
-    claims: {branch_no: "7"}
+    properties: {branch_no: "7"}
     questions:
       - {type: branch, resource: "7", action: read, allowed: true, decision: allowed}
   - name: a lookup type above the rule's type has no ancestor of that type to anchor at
     subject: up-user
-    claims: {division_name: Div 1}
+    properties: {division_name: Div 1}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
       - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
   - name: a denial anchored by a claim takes the level from the resource it names
     subject: deny-user
-    claims: {blocked: B2}
+    properties: {blocked: B2}
     questions:
       - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [read-all-branches], denials: [{rule: deny-blocked-branch}]}
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, denials: []}

@@ -33,14 +33,14 @@ type Role struct {
 
 // RolePermissionInput is one item of a role: access levels on a target inside a resource type. The
 // target is the same as for an inline rule — the whole type (no resource_id and no resource_from_claim),
-// a resource, or a resource computed from a claim of the subject.
+// a resource, or a resource computed from a property of the subject.
 type RolePermissionInput struct {
-	_                 struct{}             `additionalProperties:"true"`
-	TypeResourceID    uuid.UUID            `json:"type_resource_id" format:"uuid" doc:"Id of the resource type the item applies to (of the role's service)"`
-	ResourceID        *string              `json:"resource_id" required:"false" doc:"Resource id; null means the item covers the whole resource type (if resource_from_claim and resource_where are not set either)"`
-	ResourceFromClaim *ResourceFromClaim   `json:"resource_from_claim" required:"false" doc:"Compute resource_id dynamically from a claim of the subject; mutually exclusive with resource_id and resource_where"`
-	ResourceWhere     []PredicateCondition `json:"resource_where" required:"false" nullable:"true" doc:"Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions; mutually exclusive with resource_id and resource_from_claim; needs a synchronizer"`
-	Access            []string             `json:"access" minItems:"1" nullable:"false" doc:"Access levels (read, write, ...) or access groups (@name, see AccessGroup). '*' is not allowed here: denying everything is possible only with an inline deny rule" example:"[\"read\",\"write\"]"`
+	_                    struct{}              `additionalProperties:"true"`
+	TypeResourceID       uuid.UUID             `json:"type_resource_id" format:"uuid" doc:"Id of the resource type the item applies to (of the role's service)"`
+	ResourceID           *string               `json:"resource_id" required:"false" doc:"Resource id; null means the item covers the whole resource type (if resource_from_claim and resource_where are not set either)"`
+	ResourceFromProperty *ResourceFromProperty `json:"resource_from_claim" required:"false" doc:"Compute resource_id dynamically from a claim of the subject; mutually exclusive with resource_id and resource_where"`
+	ResourceWhere        []PredicateCondition  `json:"resource_where" required:"false" nullable:"true" doc:"Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions; mutually exclusive with resource_id and resource_from_claim; needs a synchronizer"`
+	Access               []string              `json:"access" minItems:"1" nullable:"false" doc:"Access levels (read, write, ...) or access groups (@name, see AccessGroup). '*' is not allowed here: denying everything is possible only with an inline deny rule" example:"[\"read\",\"write\"]"`
 }
 
 func (p *RolePermissionInput) Validate() error {
@@ -52,19 +52,19 @@ func (p *RolePermissionInput) Validate() error {
 			return apperr.Unprocessable(i18n.AccessLevelInvalid, "access")
 		}
 	}
-	return validateTarget(p.ResourceID, p.ResourceFromClaim, p.ResourceWhere)
+	return validateTarget(p.ResourceID, p.ResourceFromProperty, p.ResourceWhere)
 }
 
 // RolePermission is an item of a role.
 type RolePermission struct {
-	ServiceID         uuid.UUID            `json:"service_id" format:"uuid" doc:"Owning service id"`
-	ID                uuid.UUID            `json:"id" format:"uuid" doc:"Item id"`
-	RoleID            uuid.UUID            `json:"role_id" format:"uuid" doc:"Id of the role the item belongs to"`
-	TypeResourceID    uuid.UUID            `json:"type_resource_id" format:"uuid" doc:"Resource type id"`
-	ResourceID        *string              `json:"resource_id" doc:"Resource id; null means the whole type"`
-	ResourceFromClaim *ResourceFromClaim   `json:"resource_from_claim" doc:"Dynamic resource_id computed from a claim"`
-	ResourceWhere     []PredicateCondition `json:"resource_where" nullable:"true" doc:"The conditions over the resource attributes the item covers; null for the other targets"`
-	Access            []string             `json:"access" doc:"Access levels"`
+	ServiceID            uuid.UUID             `json:"service_id" format:"uuid" doc:"Owning service id"`
+	ID                   uuid.UUID             `json:"id" format:"uuid" doc:"Item id"`
+	RoleID               uuid.UUID             `json:"role_id" format:"uuid" doc:"Id of the role the item belongs to"`
+	TypeResourceID       uuid.UUID             `json:"type_resource_id" format:"uuid" doc:"Resource type id"`
+	ResourceID           *string               `json:"resource_id" doc:"Resource id; null means the whole type"`
+	ResourceFromProperty *ResourceFromProperty `json:"resource_from_claim" doc:"Dynamic resource_id computed from a claim"`
+	ResourceWhere        []PredicateCondition  `json:"resource_where" nullable:"true" doc:"The conditions over the resource attributes the item covers; null for the other targets"`
+	Access               []string              `json:"access" doc:"Access levels"`
 }
 
 // RolePermissionWithContext is an item with the names of its type and service, for the admin UI.

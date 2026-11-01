@@ -28,7 +28,7 @@ func evaluationBody(person, action string, explain bool) string {
 		person, action, ctx)
 }
 
-// A PEP client asks about the person of the body, with the claims of the properties: nothing of the person comes from the credential.
+// A PEP client asks about the person of the body, with the properties of the properties: nothing of the person comes from the credential.
 func TestPEPClientAsksAboutThePersonOfTheBody(t *testing.T) {
 	fake := newFakePDP([4]string{"bob", "read", "todo", "1"}).withPEPClient(pepKey, "gateway", engine.PEPEvaluate)
 	h := authzenTestAPI(fake, &config.Config{})

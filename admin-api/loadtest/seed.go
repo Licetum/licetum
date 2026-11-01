@@ -75,7 +75,7 @@ func seed(ctx context.Context, e *env, p Profile) (*fixture, error) {
 }
 
 // createSource fills the tables the synchronizers read: the folders, and the documents with their folder and owner.
-// The owner is the attribute the owner pattern rule matches the claims against (meta.owner).
+// The owner is the attribute the owner pattern rule matches the properties against (meta.owner).
 func createSource(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	return execAll(ctx, e.pool, []statement{
 		{`CREATE TABLE lt_folder (id text PRIMARY KEY, name text NOT NULL)`, nil},
@@ -167,7 +167,7 @@ func createServiceAndTypes(ctx context.Context, e *env, _ Profile, fx *fixture) 
 var loadtestOperations = []string{engine.PEPEvaluate, engine.PEPSearchResource, engine.PEPSearchAction, engine.PEPSearchSubject, engine.PEPExplain}
 
 // createPEPClient makes the one PEP client of the service and issues its API key, the credential of every request of the run:
-// the traffic names the person a question is about in the body, and brings the claims the rules read as the properties of the
+// the traffic names the person a question is about in the body, and brings the properties the rules read as the properties of the
 // subject. The check servers read the PEP directory from the database when they start, after the seeding; AfterPEPWrite makes
 // the engine of this process read it too.
 func createPEPClient(ctx context.Context, e *env, _ Profile, fx *fixture) error {
@@ -184,8 +184,8 @@ func createPEPClient(ctx context.Context, e *env, _ Profile, fx *fixture) error 
 	return nil
 }
 
-// createGroups makes one group per department. A member is whoever carries the department claim: the membership is a
-// predicate over the claims, so a group has no list of people to keep.
+// createGroups makes one group per department. A member is whoever carries the department property: the membership is a
+// predicate over the properties, so a group has no list of people to keep.
 func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	fx.groups = make([]uuid.UUID, p.Groups)
 	for g := range p.Groups {
@@ -245,9 +245,9 @@ func ruleRow(in *model.AssignmentRuleInput) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode a predicate: %w", err)
 	}
-	var claim any // NULL unless the rule takes its resource from a claim
-	if in.ResourceFromClaim != nil {
-		raw, err := json.Marshal(in.ResourceFromClaim)
+	var claim any // NULL unless the rule takes its resource from a property
+	if in.ResourceFromProperty != nil {
+		raw, err := json.Marshal(in.ResourceFromProperty)
 		if err != nil {
 			return nil, fmt.Errorf("encode a claim: %w", err)
 		}
@@ -268,7 +268,7 @@ func ruleRow(in *model.AssignmentRuleInput) ([]any, error) {
 }
 
 // ruleFor is the i-th rule of the policy. The mix is the one a service accumulates over time: departments read folders
-// (and so their documents), people read single documents, claims reach a folder, a department is denied a folder
+// (and so their documents), people read single documents, properties reach a folder, a department is denied a folder
 // and one document is excepted back below it. Rule 0 is the owner pattern: every subject reads and writes the
 // documents whose owner attribute is its own name.
 func ruleFor(i int, p Profile, fx *fixture) *model.AssignmentRuleInput {
@@ -282,11 +282,11 @@ func ruleFor(i int, p Profile, fx *fixture) *model.AssignmentRuleInput {
 
 	if i == 0 {
 		return &model.AssignmentRuleInput{
-			Name:              ptr("owner pattern"),
-			Predicate:         []model.PredicateCondition{{Attr: "preferred_username", Op: model.OpRegex, Value: model.PredicateValue{Str: "^user-"}}},
-			TypeResourceID:    ptr(fx.documentType),
-			ResourceFromClaim: &model.ResourceFromClaim{Claim: "preferred_username", LookupTypeResourceID: fx.documentType, MatchBy: "meta.owner"},
-			Access:            []string{"read", "write"},
+			Name:                 ptr("owner pattern"),
+			Predicate:            []model.PredicateCondition{{Attr: "preferred_username", Op: model.OpRegex, Value: model.PredicateValue{Str: "^user-"}}},
+			TypeResourceID:       ptr(fx.documentType),
+			ResourceFromProperty: &model.ResourceFromProperty{Property: "preferred_username", LookupTypeResourceID: fx.documentType, MatchBy: "meta.owner"},
+			Access:               []string{"read", "write"},
 		}
 	}
 	switch i % 10 {

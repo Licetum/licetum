@@ -60,7 +60,7 @@ type permissionData struct {
 	Denied map[string][]model.ResourceAccess `json:"denied"`
 }
 
-// GetPermission is the core of Licetum: what the subject (in the given environment: its claims, and the attributes of
+// GetPermission is the core of Licetum: what the subject (in the given environment: its properties, and the attributes of
 // the request) may do with the resources of serviceID, per resource type. A type's mode is derived from its
 // synchronizer: a type with one is sync — {"type": "sync", "resources": [...]} — without one it is not_sync —
 // {"type": "not_sync", "access": [...]}. A type without applicable rules is not in the result.
@@ -97,7 +97,7 @@ func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subjec
 		})
 }
 
-// requestFingerprint hashes what the request carries that the rules look at (its claims and its context attributes):
+// requestFingerprint hashes what the request carries that the rules look at (its properties and its context attributes):
 // two requests with the same fingerprint get the same answer. The names of those attributes are kept in the cache state
 // for the current revision of the rules (by the snapshot, or by the memo of the process); when they are not there, they
 // are read from the rules and remembered for the requests that follow.
@@ -118,13 +118,13 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 }
 
 // conditionAttrSQL names the attribute of a condition by its source: "context:<name>" for a context attribute, and
-// "claim:<name>" otherwise. The time (source now) reads nothing from the request.
+// "property:<name>" otherwise. The time (source now) reads nothing from the request.
 const conditionAttrSQL = `CASE WHEN c->>'source' = 'context' THEN 'context:' ELSE 'claim:' END || (c->>'attr')`
 
 const notNowSQL = `COALESCE(c->>'source', 'claim') <> 'now'`
 
 // RequestAttributes reads the attributes the rules look at: the conditions of the rules, of their guards and of the group
-// memberships, and the claims of the resource_from_claim specs (of rules and of role items).
+// memberships, and the properties of the resource_from_claim specs (of rules and of role items).
 func (a *App) RequestAttributes(ctx context.Context) ([]string, error) {
 	return requestAttributes(ctx, a.DB)
 }
@@ -156,7 +156,7 @@ func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
 // allRequestAttributes names every attribute the request carries (the fallback without the list of the rules).
 func allRequestAttributes(env Env) []string {
 	var names []string
-	for k := range env.Claims {
+	for k := range env.Properties {
 		names = append(names, "claim:"+k)
 	}
 	for k := range env.Context {
@@ -166,15 +166,15 @@ func allRequestAttributes(env Env) []string {
 	return names
 }
 
-// attribute returns the value of an attribute named by its source ("claim:x" or "context:x"); a name without a source
-// is a claim, as the names stored before the sources were.
+// attribute returns the value of an attribute named by its source ("property:x" or "context:x"); a name without a source
+// is a property, as the names stored before the sources were.
 func (e Env) attribute(name string) (any, bool) {
 	if key, ok := strings.CutPrefix(name, "context:"); ok {
 		v, found := e.Context[key]
 		return v, found && v != nil
 	}
 	key := strings.TrimPrefix(name, "claim:")
-	v, found := e.Claims[key]
+	v, found := e.Properties[key]
 	return v, found && v != nil
 }
 
@@ -452,7 +452,7 @@ func (a *App) ExpandRoles(ctx context.Context, rules []model.AssignmentRule, typ
 			copied := r
 			copied.TypeResourceID = &typeID
 			copied.ResourceID = item.ResourceID
-			copied.ResourceFromClaim = item.ResourceFromClaim
+			copied.ResourceFromProperty = item.ResourceFromProperty
 			copied.ResourceWhere = item.ResourceWhere
 			copied.Access = item.Access
 			out = append(out, copied)
@@ -723,11 +723,11 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		for id := range g.DescendantsOf(*rule.TypeResourceID) {
 			involved[id] = true
 		}
-		if rule.ResourceFromClaim != nil {
+		if rule.ResourceFromProperty != nil {
 			// The lookup climbs from the matched resource to the rule's type through every type in between, also those no
 			// level flows through (DescendantsOf leaves them out): their data must be there, or the climb stops short.
-			involved[rule.ResourceFromClaim.LookupTypeResourceID] = true
-			for _, id := range g.TypesBetween(rule.ResourceFromClaim.LookupTypeResourceID, *rule.TypeResourceID) {
+			involved[rule.ResourceFromProperty.LookupTypeResourceID] = true
+			for _, id := range g.TypesBetween(rule.ResourceFromProperty.LookupTypeResourceID, *rule.TypeResourceID) {
 				involved[id] = true
 			}
 		}
@@ -793,9 +793,9 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 			groupTypes = append(groupTypes, *r.TypeResourceID)
 		}
 		switch {
-		case r.ResourceFromClaim != nil:
-			spec := r.ResourceFromClaim
-			value := env.Claims[spec.Claim]
+		case r.ResourceFromProperty != nil:
+			spec := r.ResourceFromProperty
+			value := env.Properties[spec.Property]
 			if !PyTruthy(value) {
 				continue
 			}
@@ -871,16 +871,16 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 			return in
 		}
 		switch {
-		case rule.ResourceFromClaim != nil:
+		case rule.ResourceFromProperty != nil:
 			for _, n := range found[i] {
 				in := base
 				id := n.ID
 				in.AnchorRow, in.AnchorExt = &id, n.Ext
-				in.Note += fmt.Sprintf("; resource %s found by claim %s=%s", n.Ext, rule.ResourceFromClaim.Claim, claimValues[i])
+				in.Note += fmt.Sprintf("; resource %s found by claim %s=%s", n.Ext, rule.ResourceFromProperty.Property, claimValues[i])
 				out = append(out, in)
 			}
 			if base.Deny && cut[i] {
-				out = append(out, absent(fmt.Sprintf("a type its claim %s is looked up through has no resources", rule.ResourceFromClaim.Claim)))
+				out = append(out, absent(fmt.Sprintf("a type its claim %s is looked up through has no resources", rule.ResourceFromProperty.Property)))
 			}
 		case rule.ResourceID != nil:
 			id, ok := rows[anchorRef{Type: *rule.TypeResourceID, Ext: *rule.ResourceID}]

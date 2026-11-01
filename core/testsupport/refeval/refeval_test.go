@@ -277,7 +277,7 @@ cases:
       - {type: cap, action: office, allowed: false}
   - name: outside the network
     subject: u
-    claims: {username: petrov}
+    properties: {username: petrov}
     context: {ip: 192.168.1.1, channel: api}
     questions:
       - {type: cap, action: use, allowed: true}
@@ -381,7 +381,7 @@ cases:
 // A resource_from_claim finds the resources of the lookup type by name, id or attribute (a list attribute holds the
 // value) and anchors the rule on their ancestors-or-self of its type; a resource_where covers the matching resources and
 // what lies below them.
-func TestClaimAndAttributeTargets(t *testing.T) {
+func TestPropertyAndAttributeTargets(t *testing.T) {
 	check(t, `
 services: [s]
 types:
@@ -396,16 +396,16 @@ resources:
   - {type: project, id: P3, parents: [{type: branch, id: B2}], meta: {owner: alice, flag: true}}
   - {type: task, id: T2, parents: [{type: project, id: P2}]}
 rules:
-  - {name: own, everybody: true, type: project, from_claim: {claim: username, lookup_type: project, match_by: meta.owner}, access: [read]}
-  - {name: co-own, everybody: true, type: project, from_claim: {claim: username, lookup_type: project, match_by: meta.owners}, access: [write]}
-  - {name: branch-of-project, everybody: true, type: branch, from_claim: {claim: project, lookup_type: project, match_by: id}, access: [audit]}
-  - {name: by-name, everybody: true, type: branch, from_claim: {claim: branch, lookup_type: branch}, access: [list]}
+  - {name: own, everybody: true, type: project, from_property: {claim: username, lookup_type: project, match_by: meta.owner}, access: [read]}
+  - {name: co-own, everybody: true, type: project, from_property: {claim: username, lookup_type: project, match_by: meta.owners}, access: [write]}
+  - {name: branch-of-project, everybody: true, type: branch, from_property: {claim: project, lookup_type: project, match_by: id}, access: [audit]}
+  - {name: by-name, everybody: true, type: branch, from_property: {claim: branch, lookup_type: branch}, access: [list]}
   - {name: big, subject: z, type: project, where: [{attr: tier, op: gt, value: "6"}], access: [read]}
   - {name: flagged, subject: z, type: project, where: [{attr: flag, op: eq, value: "True"}], access: [write]}
 cases:
   - name: alice
     subject: alice
-    claims: {username: alice, project: P2, branch: South}
+    properties: {username: alice, project: P2, branch: South}
     questions:
       - {type: project, resource: P1, action: read, allowed: true, granted_by: [own]}
       - {type: project, resource: P3, action: read, allowed: true}
@@ -418,7 +418,7 @@ cases:
       - {type: branch, resource: B1, action: list, allowed: false}
   - name: dave and a number claim
     subject: dave
-    claims: {username: dave, project: 5}
+    properties: {username: dave, project: 5}
     questions:
       - {type: project, resource: P1, action: write, allowed: true}
       - {type: project, resource: P1, action: read, allowed: false}
@@ -503,9 +503,9 @@ func TestClockConditions(t *testing.T) {
 	}
 }
 
-// A denial by claim or by attributes that cannot find its anchors because a type it needs has no synchronizer keeps an
+// A denial by property or by attributes that cannot find its anchors because a type it needs has no synchronizer keeps an
 // anchor that is no resource: it covers nothing for real, and covers what lies below a link to a parent that is not there.
-// A claim that is not given (missing, null, or falsy as Python reads it) is not looked up, so it keeps none.
+// A property that is not given (missing, null, or falsy as Python reads it) is not looked up, so it keeps none.
 func TestADenialThatCannotFindItsAnchorsKeepsAnAbsentOne(t *testing.T) {
 	check(t, `
 services: [s]
@@ -523,29 +523,29 @@ rules:
   - {name: grant-leaf, subject: u, type: leaf, access: [read]}
   - {name: grant-other, subject: u, type: other, access: [read]}
   # The climb from a leaf to the root passes mid, which has no synchronizer.
-  - {name: deny-root-by-claim, subject: u, type: root, access: ["*"], deny: true, from_claim: {claim: leaf_name, lookup_type: leaf}}
+  - {name: deny-root-by-claim, subject: u, type: root, access: ["*"], deny: true, from_property: {claim: leaf_name, lookup_type: leaf}}
   # The claim is looked up in mid, which has none.
-  - {name: deny-by-claim-in-mid, subject: v, type: root, access: ["*"], deny: true, from_claim: {claim: mid_name, lookup_type: mid}}
+  - {name: deny-by-claim-in-mid, subject: v, type: root, access: ["*"], deny: true, from_property: {claim: mid_name, lookup_type: mid}}
   - {name: grant-v, subject: v, type: leaf, access: [read]}
   # The climb from other to root passes nothing: it finds R1 for real.
-  - {name: deny-root-from-other, subject: w, type: root, access: ["*"], deny: true, from_claim: {claim: other_name, lookup_type: other}}
+  - {name: deny-root-from-other, subject: w, type: root, access: ["*"], deny: true, from_property: {claim: other_name, lookup_type: other}}
   - {name: grant-w, subject: w, type: other, access: [read]}
   # An attribute match on a type without resources.
   - {name: deny-mid-by-tier, subject: x, type: mid, access: ["*"], deny: true, where: [{attr: tier, op: eq, value: gold}]}
   - {name: grant-x, subject: x, type: leaf, access: [read]}
   # An allow rule that finds no anchor grants nothing.
-  - {name: allow-by-claim-in-mid, subject: y, type: root, access: [read], from_claim: {claim: mid_name, lookup_type: mid}}
+  - {name: allow-by-claim-in-mid, subject: y, type: root, access: [read], from_property: {claim: mid_name, lookup_type: mid}}
 cases:
   - name: the climb passes a type without resources
     subject: u
-    claims: {leaf_name: Leaf}
+    properties: {leaf_name: Leaf}
     questions:
       - {type: leaf, resource: L1, action: read, allowed: false, decision: denied, denials: [{rule: deny-root-by-claim, unresolved_parent: true}]}
       - {type: leaf, resource: L2, action: read, allowed: true, decision: allowed}
       - {type: other, resource: O1, action: read, allowed: true, decision: allowed}
   - name: a claim that is not given is not looked up
     subject: u
-    claims: {leaf_name: ""}
+    properties: {leaf_name: ""}
     questions:
       - {type: leaf, resource: L1, action: read, allowed: true, decision: allowed}
   - name: no claim at all
@@ -554,13 +554,13 @@ cases:
       - {type: leaf, resource: L1, action: read, allowed: true, decision: allowed}
   - name: the lookup type has no resources
     subject: v
-    claims: {mid_name: Mid}
+    properties: {mid_name: Mid}
     questions:
       - {type: leaf, resource: L1, action: read, allowed: false, decision: denied, denials: [{rule: deny-by-claim-in-mid, unresolved_parent: true}]}
       - {type: leaf, resource: L2, action: read, allowed: true, decision: allowed}
   - name: a climb that loses nothing finds its anchor for real
     subject: w
-    claims: {other_name: Other}
+    properties: {other_name: Other}
     questions:
       - {type: other, resource: O1, action: read, allowed: false, decision: denied, denials: [{rule: deny-root-from-other}]}
   - name: the attributes of a type without resources
@@ -570,7 +570,7 @@ cases:
       - {type: leaf, resource: L2, action: read, allowed: true, decision: allowed}
   - name: an allow rule that finds no anchor grants nothing
     subject: y
-    claims: {mid_name: Mid}
+    properties: {mid_name: Mid}
     questions:
       - {type: leaf, resource: L1, action: read, allowed: false, decision: no_access}
 before:

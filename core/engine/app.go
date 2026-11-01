@@ -111,9 +111,9 @@ func (a *App) now() time.Time {
 // it must be called before the App serves a request, and now must be safe for concurrent use.
 func (a *App) SetClock(now func() time.Time) { a.clock = now }
 
-// NewEnv is the environment of a request decided by this App: the claims, the request attributes and the time of its clock.
-func (a *App) NewEnv(claims Claims, context map[string]any) Env {
-	return Env{SubjectType: "user", Claims: claims, Context: context, Now: a.now()}
+// NewEnv is the environment of a request decided by this App: the properties, the request attributes and the time of its clock.
+func (a *App) NewEnv(properties Properties, context map[string]any) Env {
+	return Env{SubjectType: "user", Properties: properties, Context: context, Now: a.now()}
 }
 
 func New(pool *pgxpool.Pool, cfg *config.Config) *App {

@@ -120,8 +120,8 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		Summary:     "The properties of the subject and the context attributes the policy of a service reads",
 		Description: "The claims and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in claim-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. The claims are the keys of subject.properties, the attributes the keys of context, that a PEP of the service has to send for the answers to be the real ones.",
 		Tags:        []string{"Policy"},
-	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *ServicePath) (*server.Out[[]model.PolicyClaim], error) {
-		out, err := h.app.PolicyClaims(ctx, in.ServiceID)
+	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *ServicePath) (*server.Out[[]model.PolicyProperty], error) {
+		out, err := h.app.PolicyProperties(ctx, in.ServiceID)
 		if err != nil {
 			return nil, err
 		}

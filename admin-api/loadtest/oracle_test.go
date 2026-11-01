@@ -76,7 +76,7 @@ func TestContract_LOAD01_TheLoadTestGivesNoWrongAnswer(t *testing.T) {
 				http.Error(w, "not a subject of the policy", http.StatusBadRequest)
 				return
 			}
-			// The oracle asks as the PEP client, with the claims of the person it asks about in the properties of the subject.
+			// The oracle asks as the PEP client, with the properties of the person it asks about in the properties of the subject.
 			if r.Header.Get("Authorization") != "Bearer lct_test" || q.Subject.Properties["department"] != departmentName(u%p.Groups) {
 				http.Error(w, "not asked as the PEP client about a person with its claims", http.StatusForbidden)
 				return

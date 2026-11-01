@@ -12,7 +12,7 @@ import (
 )
 
 // RunPolicyTests answers the scenarios of a policy test the way the simulation answers them: the subjects with their
-// claims and request attributes, the rules and the data as they are now. It reports which expectations hold, and which
+// properties and request attributes, the rules and the data as they are now. It reports which expectations hold, and which
 // of the rules in force decided an answer at all (the coverage): a rule that no scenario reaches is one nothing checks.
 func (a *App) RunPolicyTests(ctx context.Context, serviceID uuid.UUID, in *model.PolicyTestInput) (*model.PolicyTestReport, error) {
 	ctx, err := a.CurrentReadContext(ctx)
@@ -26,7 +26,7 @@ func (a *App) RunPolicyTests(ctx context.Context, serviceID uuid.UUID, in *model
 		for i, check := range c.Checks {
 			requests[i] = model.CheckRequest{Type: check.Type, ResourceID: check.ResourceID, Action: check.Action}
 		}
-		results, err := a.CheckAccess(ctx, serviceID, c.Subject, engine.NewEnv(c.Claims, c.Context), requests, true, engine.HigherConsistency)
+		results, err := a.CheckAccess(ctx, serviceID, c.Subject, engine.NewEnv(c.Properties, c.Context), requests, true, engine.HigherConsistency)
 		if err != nil {
 			return nil, err
 		}

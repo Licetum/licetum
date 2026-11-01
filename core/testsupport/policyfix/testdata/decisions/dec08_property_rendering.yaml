@@ -20,7 +20,7 @@ rules:
 cases:
   - name: a boolean, an integer, a fraction and lists rendered as str() renders them
     subject: alice
-    claims: {admin: true, level: 5, score: 2.5, roles: [a, b], tags: [1, x, true]}
+    properties: {admin: true, level: 5, score: 2.5, roles: [a, b], tags: [1, x, true]}
     questions:
       - {type: flag, action: bool_true, allowed: true, decision: allowed, granted_by: [admin-is-True]}
       - {type: flag, action: bool_false, allowed: false, decision: no_access}
@@ -31,19 +31,19 @@ cases:
       - {type: flag, action: mixed_list, allowed: true, decision: allowed, granted_by: [tags-mixed]}
   - name: a list claim is one value, in and ne do not look at its items
     subject: alice
-    claims: {roles: [a, b]}
+    properties: {roles: [a, b]}
     questions:
       - {type: flag, action: list_in, allowed: false, decision: no_access}
       - {type: flag, action: list_ne, allowed: true, decision: allowed, granted_by: [roles-ne-a]}
   - name: a list in another order renders differently
     subject: alice
-    claims: {roles: [b, a]}
+    properties: {roles: [b, a]}
     questions:
       - {type: flag, action: list, allowed: false, decision: no_access}
       - {type: flag, action: list_regex, allowed: true, decision: allowed}
   - name: a string claim is itself
     subject: alice
-    claims: {roles: a}
+    properties: {roles: a}
     questions:
       - {type: flag, action: list, allowed: false, decision: no_access}
       - {type: flag, action: list_in, allowed: true, decision: allowed, granted_by: [roles-in-a]}
@@ -51,34 +51,34 @@ cases:
       - {type: flag, action: list_regex, allowed: false, decision: no_access}
   - name: false is a value and renders as False
     subject: alice
-    claims: {admin: false}
+    properties: {admin: false}
     questions:
       - {type: flag, action: bool_true, allowed: false, decision: no_access}
       - {type: flag, action: bool_false, allowed: true, decision: allowed, granted_by: [admin-is-False]}
   - name: the string true is not the boolean
     subject: alice
-    claims: {admin: "true"}
+    properties: {admin: "true"}
     questions:
       - {type: flag, action: bool_true, allowed: false, decision: no_access}
       - {type: flag, action: bool_false, allowed: false, decision: no_access}
   - name: the string True is equal to the rendered boolean
     subject: alice
-    claims: {admin: "True"}
+    properties: {admin: "True"}
     questions:
       - {type: flag, action: bool_true, allowed: true, decision: allowed}
   - name: an integer given as a string is the same text
     subject: alice
-    claims: {level: "5"}
+    properties: {level: "5"}
     questions:
       - {type: flag, action: int, allowed: true, decision: allowed}
   - name: other numbers render as other text
     subject: alice
-    claims: {level: 50, score: 2.25}
+    properties: {level: 50, score: 2.25}
     questions:
       - {type: flag, action: int, allowed: false, decision: no_access}
       - {type: flag, action: float, allowed: false, decision: no_access}
   - name: a fraction is not equal to its integer part
     subject: alice
-    claims: {level: 5.5}
+    properties: {level: 5.5}
     questions:
       - {type: flag, action: int, allowed: false, decision: no_access}

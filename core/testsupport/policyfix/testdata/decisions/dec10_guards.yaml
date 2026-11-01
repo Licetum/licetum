@@ -54,7 +54,7 @@ cases:
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse
   - name: with the team and the environment the guarded rule applies
     subject: user-1
-    claims: {preferred_username: user-1, team: audit, env: prod}
+    properties: {preferred_username: user-1, team: audit, env: prod}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [audited-branches]}
       - {type: branch, resource: B2, action: read, allowed: true}
@@ -63,7 +63,7 @@ cases:
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse
   - name: without the team the guard group does not hold
     subject: user-1
-    claims: {preferred_username: user-1, env: prod}
+    properties: {preferred_username: user-1, env: prod}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
@@ -72,7 +72,7 @@ cases:
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse
   - name: without the environment the guard predicate does not hold
     subject: user-1
-    claims: {preferred_username: user-1, team: audit}
+    properties: {preferred_username: user-1, team: audit}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
@@ -80,53 +80,53 @@ cases:
       - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
   - name: another team fails the guard group
     subject: user-1
-    claims: {preferred_username: user-1, team: dev, env: prod}
+    properties: {preferred_username: user-1, team: dev, env: prod}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
   - name: another environment fails the guard predicate
     subject: user-1
-    claims: {preferred_username: user-1, team: audit, env: staging}
+    properties: {preferred_username: user-1, team: audit, env: staging}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
   - name: a member of a group nested into the guard group passes the guard
     subject: user-1
-    claims: {preferred_username: user-1, team: leads, env: prod}
+    properties: {preferred_username: user-1, team: leads, env: prod}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [audited-branches]}
   - name: the guards do not widen the rule to another subject who passes them
     subject: user-2
-    claims: {preferred_username: user-2, team: audit, env: prod}
+    properties: {preferred_username: user-2, team: audit, env: prod}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
   - name: a member of the group of the rule who is also in the guard group
     subject: op-1
-    claims: {shift: day, team: audit}
+    properties: {shift: day, team: audit}
     questions:
       - {type: rrs, resource: R1, action: write, allowed: true, decision: allowed, granted_by: [operators-who-audit]}
       - {type: branch, resource: B4, action: write, allowed: true, decision: allowed, granted_by: [operators-who-audit]}
   - name: the guard group may be reached through a nested group
     subject: op-1
-    claims: {shift: day, team: leads}
+    properties: {shift: day, team: leads}
     questions:
       - {type: rrs, resource: R1, action: write, allowed: true, decision: allowed}
   - name: a member of the group of the rule whose guard membership is unknown
     subject: op-1
-    claims: {shift: day}
+    properties: {shift: day}
     questions:
       - {type: rrs, resource: R1, action: write, allowed: false, decision: no_access}
   - name: a member of the guard group only
     subject: op-1
-    claims: {team: audit}
+    properties: {team: audit}
     questions:
       - {type: rrs, resource: R1, action: write, allowed: false, decision: no_access}
   - name: a member of the guard group whose other membership fails
     subject: op-1
-    claims: {shift: night, team: audit}
+    properties: {shift: night, team: audit}
     questions:
       - {type: rrs, resource: R1, action: write, allowed: false, decision: no_access}
   - name: guarded denials apply when their guards hold
     subject: guard-user
-    claims: {env: prod, team: audit}
+    properties: {env: prod, team: audit}
     questions:
       - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [guard-user-reads-D1], denials: []}
       - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [guard-user-reads-D1], denials: [{rule: deny-R1-in-prod}]}
@@ -135,7 +135,7 @@ cases:
       - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: deny-R2-in-prod-skip}, {rule: deny-B3-to-auditors}]}
   - name: guarded denials do not apply when their guards fail
     subject: guard-user
-    claims: {env: dev, team: dev}
+    properties: {env: dev, team: dev}
     questions:
       - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, denials: []}
       - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, denials: []}
@@ -149,13 +149,13 @@ cases:
       - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: deny-B3-to-auditors}]}
   - name: an unknown guard group with a failing guard predicate elsewhere
     subject: guard-user
-    claims: {env: dev}
+    properties: {env: dev}
     questions:
       - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, denials: []}
       - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: deny-B3-to-auditors}]}
   - name: a failing guard group with an unknown guard predicate elsewhere
     subject: guard-user
-    claims: {team: dev}
+    properties: {team: dev}
     questions:
       - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, denials: [{rule: deny-R1-in-prod}]}
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
@@ -175,13 +175,13 @@ cases:
       - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
   - name: a guarded role assignment grants the items of the role when its guard holds
     subject: role-user
-    claims: {env: prod}
+    properties: {env: prod}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [role-in-prod]}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
   - name: a guarded role assignment grants nothing when its guard fails
     subject: role-user
-    claims: {env: dev}
+    properties: {env: dev}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
   - name: a guarded role assignment grants nothing when its guard is unknown
@@ -190,12 +190,12 @@ cases:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
   - name: a guarded exception lifts the guarded denial above it when its guard holds
     subject: guard-user
-    claims: {env: prod, team: audit}
+    properties: {env: prod, team: audit}
     questions:
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [guard-user-reads-D1, except-B2-for-auditors], denials: [{rule: deny-R1-in-prod, lifted_by: [except-B2-for-auditors]}]}
   - name: a guarded exception lifts nothing when its guard fails
     subject: guard-user
-    claims: {env: prod, team: dev}
+    properties: {env: prod, team: dev}
     questions:
       - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [guard-user-reads-D1], denials: [{rule: deny-R1-in-prod}]}
   - name: a guarded exception lifts nothing when its guard is unknown, while the denial applies on its unknown guard

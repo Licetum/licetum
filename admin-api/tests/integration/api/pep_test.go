@@ -224,7 +224,7 @@ func TestPEPTokenOfARegisteredIssuerAuthenticatesItsClient(t *testing.T) {
 	requireAuthzenError(t, status, header, raw, http.StatusUnauthorized, "token_invalid")
 }
 
-// The claims of a PEP client's own token are the client's: they never become the claims of the person it asks about. A token that
+// The properties of a PEP client's own token are the client's: they never become the properties of the person it asks about. A token that
 // carries department=sales and a preferred_username does not make the person it asks about a member of sales or that user.
 func TestPEPTokenClaimsAreNotTheClaimsOfThePerson(t *testing.T) {
 	w := newWorld(t)

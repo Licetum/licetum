@@ -21,7 +21,7 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// checkWith asks the AuthZEN evaluations of the checks as the subject of claims, with the request attributes context, and
+// checkWith asks the AuthZEN evaluations of the checks as the subject of properties, with the request attributes context, and
 // returns each answer in the form the check API gave before them: {"allowed", "explanation"}, the explanation being there
 // when it was asked for. A check is {"type", "resource_id", "action"}; without resource_id it is about the type as a whole.
 // consistency is minimize_latency, the default, or higher. An evaluation that could not be decided fails the test: it is

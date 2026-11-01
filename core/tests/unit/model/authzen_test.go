@@ -254,7 +254,7 @@ func TestContract_API03_SubjectBoundsCountCharacters(t *testing.T) {
 	}
 }
 
-// The claims of a subject are at most 100 claims and 16 KiB of JSON, and the boundary is the one that is accepted.
+// The properties of a subject are at most 100 properties and 16 KiB of JSON, and the boundary is the one that is accepted.
 func TestContract_API03_SubjectPropertyBounds(t *testing.T) {
 	many := map[string]any{}
 	for i := range 100 {
@@ -268,7 +268,7 @@ func TestContract_API03_SubjectPropertyBounds(t *testing.T) {
 		t.Fatal("101 claims must be refused")
 	}
 
-	// A claim with a string of n bytes encodes to base+n bytes; base is the encoding of the empty string.
+	// A property with a string of n bytes encodes to base+n bytes; base is the encoding of the empty string.
 	padded := func(n int) map[string]any { return map[string]any{"pad": strings.Repeat("x", n)} }
 	base := len(mustJSON(t, padded(0)))
 	const limit = 16 * 1024
@@ -279,7 +279,7 @@ func TestContract_API03_SubjectPropertyBounds(t *testing.T) {
 		t.Fatal("16 KiB + 1 byte of JSON must be refused")
 	}
 
-	// The subject search returns the ids and reads no claims, but the claims of its subject are bounded all the same.
+	// The subject search returns the ids and reads no properties, but the properties of its subject are bounded all the same.
 	search := model.AuthzenSubjectSearchRequest{
 		Subject:  &model.AuthzenSubject{Type: "user", Properties: many},
 		Resource: resource("branch", ""),
@@ -288,22 +288,22 @@ func TestContract_API03_SubjectPropertyBounds(t *testing.T) {
 	rejectedWith(t, search.Validate(), i18n.DelegationClaimsInvalid)
 }
 
-// preferred_username is the id unless the claims hold a truthy one; the claims are a copy.
+// preferred_username is the id unless the properties hold a truthy one; the properties are a copy.
 func TestPrepareSubjectDefaultsPreferredUsername(t *testing.T) {
 	props := map[string]any{"role": "auditor", "preferred_username": ""}
 	prepared, err := model.PrepareSubject("user", "alice", props)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Claims["preferred_username"] != "alice" || prepared.Type != "user" || prepared.ID != "alice" {
+	if prepared.Properties["preferred_username"] != "alice" || prepared.Type != "user" || prepared.ID != "alice" {
 		t.Fatalf("prepared: %+v", prepared)
 	}
 	if props["preferred_username"] != "" {
 		t.Fatal("the properties of the caller must not change")
 	}
 	kept, _ := model.PrepareSubject("", "alice", map[string]any{"preferred_username": "bob"})
-	if kept.Claims["preferred_username"] != "bob" {
-		t.Fatalf("a truthy preferred_username is kept: %+v", kept.Claims)
+	if kept.Properties["preferred_username"] != "bob" {
+		t.Fatalf("a truthy preferred_username is kept: %+v", kept.Properties)
 	}
 }
 

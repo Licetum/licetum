@@ -358,7 +358,7 @@ func (c *Cluster) send(client *http.Client, method, target, token string, body a
 }
 
 // asPEP turns a question to the AuthZEN API that names who asks by a person's token into the question of a PEP client: the API key
-// of the client of the service, and the claims of the token as the properties of the subject (support.PEPCallers). The PDP takes
+// of the client of the service, and the properties of the token as the properties of the subject (support.PEPCallers). The PDP takes
 // no person's token on these routes. Any other request is sent as it is.
 func (c *Cluster) asPEP(target, token string, body any) (string, any) {
 	if c.callers == nil || token == "" {

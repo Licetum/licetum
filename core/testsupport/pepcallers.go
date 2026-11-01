@@ -20,8 +20,8 @@ import (
 var pepOperations = []string{"evaluate", "search_resource", "search_action", "search_subject", "explain"}
 
 // PEPCallers lets the tests ask the PDP the way a PEP does. A test names who asks by the access token of a person (the token of
-// the mock identity provider, with the claims the rules read): the PDP does not take such a token, so a request that carries one
-// is sent as the PEP client of the service it is about, with the person as the subject of the body and the claims of the token as
+// the mock identity provider, with the properties the rules read): the PDP does not take such a token, so a request that carries one
+// is sent as the PEP client of the service it is about, with the person as the subject of the body and the properties of the token as
 // the properties of the subject. One client, with an API key and every operation, is made per service when it is first needed.
 // The token of a client application (it names its client in azp) and an API key are sent as they are.
 type PEPCallers struct {
@@ -43,10 +43,10 @@ func NewPEPCallers(tb testing.TB, pool *pgxpool.Pool, changed func()) *PEPCaller
 	return &PEPCallers{tb: tb, pool: pool, changed: changed, keys: map[uuid.UUID]string{}, byRef: map[string]string{}}
 }
 
-// credentialClaims are the claims that identify a token and not a person: they are not sent as properties.
+// credentialClaims are the properties that identify a token and not a person: they are not sent as properties.
 var credentialClaims = map[string]bool{"iss": true, "aud": true, "exp": true, "nbf": true, "iat": true, "jti": true}
 
-// Prepare is what a request of a test is sent as: the credential of the PEP client and the body with the person's claims. The
+// Prepare is what a request of a test is sent as: the credential of the PEP client and the body with the person's properties. The
 // path decides whether the request is a question to the AuthZEN API of a service (/service/<ref>/access/v1/...); anything else,
 // and a request without a token, is sent as it is.
 func (p *PEPCallers) Prepare(path, token string, body any) (credential string, prepared any) {
@@ -57,7 +57,7 @@ func (p *PEPCallers) Prepare(path, token string, body any) (credential string, p
 	if !ok {
 		return token, body
 	}
-	claims, ok := claimsOf(token)
+	claims, ok := propertiesOf(token)
 	if !ok {
 		// Not a token of the mock provider: whatever it is, it is the PDP's to refuse.
 		return token, body
@@ -71,7 +71,7 @@ func (p *PEPCallers) Prepare(path, token string, body any) (credential string, p
 	if !ok {
 		return token, body
 	}
-	return key, withClaims(body, claims)
+	return key, withProperties(body, claims)
 }
 
 // serviceOfAuthzenPath is the reference of the service (slug or id) of a path below /service/<ref>/access/v1/.
@@ -124,8 +124,8 @@ func (p *PEPCallers) credential(ref string) (string, bool) {
 	return key, true
 }
 
-// subjectOfClaims is the person the claims stand for, as the check API read it: preferred_username, else sub.
-func subjectOfClaims(claims map[string]any) string {
+// subjectOfProperties is the person the properties stand for, as the check API read it: preferred_username, else sub.
+func subjectOfProperties(claims map[string]any) string {
 	for _, name := range []string{"preferred_username", "sub"} {
 		switch v := claims[name].(type) {
 		case string:
@@ -139,8 +139,8 @@ func subjectOfClaims(claims map[string]any) string {
 	return ""
 }
 
-// claimsOf reads the payload of a token without verifying it, and returns the claims of the person.
-func claimsOf(token string) (map[string]any, bool) {
+// propertiesOf reads the payload of a token without verifying it, and returns the properties of the person.
+func propertiesOf(token string) (map[string]any, bool) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, false
@@ -162,9 +162,9 @@ func claimsOf(token string) (map[string]any, bool) {
 	return claims, true
 }
 
-// withClaims returns the body of a question with the claims as the properties of its subject, unless the request brought
+// withProperties returns the body of a question with the properties as the properties of its subject, unless the request brought
 // properties of its own. A body that is not a question about a person (a subject search names no person) is returned as it is.
-func withClaims(body any, claims map[string]any) any {
+func withProperties(body any, claims map[string]any) any {
 	question, ok := body.(map[string]any)
 	if !ok {
 		return body
@@ -176,9 +176,9 @@ func withClaims(body any, claims map[string]any) any {
 	if _, given := subject["properties"]; given || len(claims) == 0 {
 		return body
 	}
-	// The claims are the holder's: a question about somebody else (a client asking on behalf of a person) brings the claims of that
+	// The properties are the holder's: a question about somebody else (a client asking on behalf of a person) brings the properties of that
 	// person itself.
-	if id, _ := subject["id"].(string); id != subjectOfClaims(claims) {
+	if id, _ := subject["id"].(string); id != subjectOfProperties(claims) {
 		return body
 	}
 	withProperties := make(map[string]any, len(subject)+1)

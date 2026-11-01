@@ -51,7 +51,7 @@ func TestSimulationAnswersLikeThePDPForThePropertiesGivenAndExplains(t *testing.
 	w.rule("division", "D1", nil)
 	w.rule("rrs", "R1", deny("read"))
 
-	// The properties are the claims: with the department the group rule holds, without it it does not.
+	// The properties are the properties: with the department the group rule holds, without it it does not.
 	department := authzenreq.WithProperties(map[string]any{"department": "sales"})
 	status, out := w.simulate(authzenreq.Evaluation(w.org, "dave", authzenreq.On("branch", "B3"), "write", department))
 	if status != http.StatusOK || out["decision"] != true {

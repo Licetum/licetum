@@ -28,14 +28,14 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationOrphanFailsClosed | dec11_unresolved_parent (the recovery is synchronization) |
 | TestIntegrationOrphanAboveFailsClosed | dec11_unresolved_above (the recovery is synchronization) |
 | TestIntegrationCheckExplainAuthzenMetrics | dec13_explanations (one denial on B1, one exception on B2: the runner's check of repeated entries); the AuthZEN envelope, the subject mismatch and the metrics are not decisions |
-| TestIntegrationResourceAttributes | dec10_resource_from_claim (the attributes in the admin list and the refused attribute name are not decisions) |
+| TestIntegrationResourceAttributes | dec10_resource_from_property (the attributes in the admin list and the refused attribute name are not decisions) |
 
 ### hierarchy_test.go
 
 | Test | Tables |
 |---|---|
 | TestIntegrationHierarchyCascade | dec05_cross_service_cascade, dec01_what_a_rule_covers (the sync state is not a decision) |
-| TestIntegrationHierarchyResourceFromClaim | dec10_resource_from_claim |
+| TestIntegrationHierarchyResourceFromClaim | dec10_resource_from_property |
 | TestIntegrationHierarchyWholeTypeAndMerge | dec05_cross_service_cascade |
 | TestIntegrationHierarchySourceChanges | dec05_source_changes, dec05_cross_service_cascade (the cache rows and the admin list are not decisions) |
 | TestIntegrationHierarchyTypeTreeChanges | dec05_retyped_parent_link |

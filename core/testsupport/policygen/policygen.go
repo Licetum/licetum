@@ -15,16 +15,16 @@
 //     missing names, and attributes (strings and lists) that resource_where and resource_from_claim read;
 //   - now and then a type that had a synchronizer when the resources were first synchronized and the policy written, and
 //     lost it since (Fixture.Before): the rows it reported stay in the local copy, resources of the types below it still
-//     name them as parents (links to a parent that is not there), and rules, role items and claim lookups still name its
+//     name them as parents (links to a parent that is not there), and rules, role items and property lookups still name its
 //     resources and its type, which a rule on a type with no synchronizer could not;
-//   - access groups, groups whose members are subjects, predicates over the claims, the request context and the clock
+//   - access groups, groups whose members are subjects, predicates over the properties, the request context and the clock
 //     (every operator), everybody, other groups (nested a few levels deep, never in a cycle), with disabled memberships
 //     and validity windows around the fixture's now;
 //   - roles whose items take every kind of target, and 20-60 rules of every kind: to a subject, to a group as a subject,
 //     to the members of a group, by a predicate, to everybody; inline or by a role; allow, deny (with '*' too) and
 //     exceptions; on_missing skip and apply; guards; disabled rules and validity windows; targets on the whole type, on
-//     a resource (one that does not exist too), from a claim with every match_by, and by resource attributes;
-//   - 6-12 cases asked of both services by the subjects the rules name, with claims and request attributes that are
+//     a resource (one that does not exist too), from a property with every match_by, and by resource attributes;
+//   - 6-12 cases asked of both services by the subjects the rules name, with properties and request attributes that are
 //     sometimes missing (or null), at the fixture's now, at the boundaries of the validity windows, just beside them, or
 //     hours away; each with 10-30 questions over existing and missing resources, whole types, types without a
 //     synchronizer, the types of the other service and a type that does not exist.
@@ -113,10 +113,10 @@ const (
 	listValued
 )
 
-// attribute is something a condition reads: a claim, a request attribute or the clock (requestAttributes), or a resource
+// attribute is something a condition reads: a property, a request attribute or the clock (requestAttributes), or a resource
 // attribute of a resource_where (resourceAttributes, with no source).
 type attribute struct {
-	source   string // model.SourceClaim, model.SourceContext, model.SourceNow; empty for a resource attribute
+	source   string // model.SourceSubject, model.SourceContext, model.SourceNow; empty for a resource attribute
 	name     string
 	kind     attrKind
 	values   []string // the values a condition compares the attribute with
@@ -126,12 +126,12 @@ type attribute struct {
 // requestAttributes are what the predicates and the guards read. The values include some that no case carries ("legal",
 // "mars"), so that a condition can be known and false.
 var requestAttributes = []attribute{
-	{model.SourceClaim, "department", categorical, []string{"sales", "eng", "ops", "legal"}, []string{"^s", "^(eng|ops)$", "e", "(?i)^SALES$"}},
-	{model.SourceClaim, "region", categorical, []string{"eu", "us", "asia", "mars"}, []string{"^(eu|us)$", "a"}},
-	{model.SourceClaim, "preferred_username", categorical, subjects, []string{"^[a-c]", "e$", "^(alice|dave)$"}},
-	{model.SourceClaim, "level", numeric, []string{"1", "2", "2.5", "3", "4", "5"}, []string{"^[1-3]"}},
-	{model.SourceClaim, "vip", boolean, []string{"True", "False"}, []string{"^T"}},
-	{model.SourceClaim, "teams", listValued, tags, []string{"red", "gold|blue"}},
+	{model.SourceSubject, "department", categorical, []string{"sales", "eng", "ops", "legal"}, []string{"^s", "^(eng|ops)$", "e", "(?i)^SALES$"}},
+	{model.SourceSubject, "region", categorical, []string{"eu", "us", "asia", "mars"}, []string{"^(eu|us)$", "a"}},
+	{model.SourceSubject, "preferred_username", categorical, subjects, []string{"^[a-c]", "e$", "^(alice|dave)$"}},
+	{model.SourceSubject, "level", numeric, []string{"1", "2", "2.5", "3", "4", "5"}, []string{"^[1-3]"}},
+	{model.SourceSubject, "vip", boolean, []string{"True", "False"}, []string{"^T"}},
+	{model.SourceSubject, "teams", listValued, tags, []string{"red", "gold|blue"}},
 	{model.SourceContext, "ip", address, addresses, []string{`^10\.`, ":"}},
 	{model.SourceContext, "channel", categorical, channels, []string{"^(web|api)$", "mob"}},
 	{model.SourceContext, "risk", numeric, []string{"0", "3", "5", "7.5", "9"}, []string{"^[0-4]"}},
@@ -232,7 +232,7 @@ func (g *gen) subset(options []string, lo, hi int) []string {
 	return out
 }
 
-// anyList turns strings into the list a claim, a request attribute or a resource attribute holds once read from YAML.
+// anyList turns strings into the list a property, a request attribute or a resource attribute holds once read from YAML.
 func anyList(items []string) []any {
 	out := make([]any, len(items))
 	for i, s := range items {
@@ -506,7 +506,7 @@ func (g *gen) goneBelowOrAt(typ string) []string {
 }
 
 // syncBelowAGone returns the types with a synchronizer below a type that lie below a type that lost its synchronizer, itself
-// below the type: a claim looked up in one climbs up to the type through the rows that are not there.
+// below the type: a property looked up in one climbs up to the type through the rows that are not there.
 func (g *gen) syncBelowAGone(typ string) []string {
 	var out []string
 	below := g.below(typ)
@@ -879,7 +879,7 @@ func (g *gen) rule(i int) policyfix.Rule {
 }
 
 // target returns what a rule or a role item covers: the whole of a type (always for a type without a synchronizer), or,
-// on a type with one, a resource (now and then one that does not exist), the resource found from a claim, or the
+// on a type with one, a resource (now and then one that does not exist), the resource found from a property, or the
 // resources whose attributes match. A type that lost its synchronizer after the policy was written is covered like one
 // that has it: the rule was written then, and the admin API keeps it, dead, when the synchronizer is gone.
 func (g *gen) target() policyfix.Target {
@@ -892,7 +892,7 @@ func (g *gen) target() policyfix.Target {
 	case x < 68:
 		t.Resource = g.resourceID(t.Type)
 	case x < 84:
-		t.FromClaim = g.fromClaim(t.Type)
+		t.FromProperty = g.fromProperty(t.Type)
 	default:
 		t.Where = g.where()
 	}
@@ -911,14 +911,14 @@ func (g *gen) resourceID(typ string) string {
 	return pick(g, g.idsOf(typ))
 }
 
-// fromClaim returns a resource_from_claim on a type: the claim is looked up among the resources of the type itself (the
+// fromClaim returns a resource_from_claim on a type: the property is looked up among the resources of the type itself (the
 // owner pattern), of a type below it (the rule climbs up), of a type that lost its synchronizer, or of any type, by name
-// (match_by given or left out), id or an attribute. The cases carry claims that match some resources and claims that match none (see gen.claims).
-func (g *gen) fromClaim(typ string) *policyfix.FromClaim {
-	fc := &policyfix.FromClaim{LookupType: typ}
+// (match_by given or left out), id or an attribute. The cases carry properties that match some resources and properties that match none (see gen.properties).
+func (g *gen) fromProperty(typ string) *policyfix.FromProperty {
+	fc := &policyfix.FromProperty{LookupType: typ}
 	switch x := g.rng.IntN(100); {
 	case x < 16 && len(g.goneBelowOrAt(typ)) > 0:
-		// The claim is looked up among the rows of a type that lost its synchronizer: the rule's own type, or a type below it
+		// The property is looked up among the rows of a type that lost its synchronizer: the rule's own type, or a type below it
 		// (the climb then starts from rows that are not there).
 		fc.LookupType = pick(g, g.goneBelowOrAt(typ))
 	case x < 36 && len(g.syncBelowAGone(typ)) > 0:
@@ -933,17 +933,17 @@ func (g *gen) fromClaim(typ string) *policyfix.FromClaim {
 	}
 	switch x := g.rng.IntN(100); {
 	case x < 15:
-		fc.Claim = "home" // by name, the default
+		fc.Property = "home" // by name, the default
 	case x < 40:
-		fc.Claim, fc.MatchBy = "home", model.MatchByName
+		fc.Property, fc.MatchBy = "home", model.MatchByName
 	case x < 62:
-		fc.Claim, fc.MatchBy = "home_id", model.MatchByID
+		fc.Property, fc.MatchBy = "home_id", model.MatchByID
 	case x < 80:
-		fc.Claim, fc.MatchBy = "preferred_username", model.MatchByMetaPrefix+"owner"
+		fc.Property, fc.MatchBy = "preferred_username", model.MatchByMetaPrefix+"owner"
 	case x < 90:
-		fc.Claim, fc.MatchBy = "team", model.MatchByMetaPrefix+"tags"
+		fc.Property, fc.MatchBy = "team", model.MatchByMetaPrefix+"tags"
 	default:
-		fc.Claim, fc.MatchBy = "region", model.MatchByMetaPrefix+"region"
+		fc.Property, fc.MatchBy = "region", model.MatchByMetaPrefix+"region"
 	}
 	return fc
 }
@@ -1017,7 +1017,7 @@ func (g *gen) condition(attrs []attribute) model.PredicateCondition {
 	}
 	a := pick(g, candidates)
 	c := model.PredicateCondition{Attr: a.name, Op: op, Value: g.value(op, a), Source: a.source}
-	if a.source == model.SourceClaim && g.chance(75) {
+	if a.source == model.SourceSubject && g.chance(75) {
 		c.Source = "" // the default source
 	}
 	return c
@@ -1114,7 +1114,7 @@ func (g *gen) cases() {
 		if svc == 1 || g.chance(30) {
 			c.Service = g.f.Services[svc]
 		}
-		c.Claims = g.claims(c.Subject)
+		c.Properties = g.properties(c.Subject)
 		c.Context = g.context()
 		c.At = g.at()
 		c.Questions = g.questions(g.f.Services[svc])
@@ -1122,9 +1122,9 @@ func (g *gen) cases() {
 	}
 }
 
-// claims returns the claims of a case. preferred_username is always the subject: it is what the token names the subject
-// by, and what the runner of the engine sets. The other claims are each missing from some cases, and rarely null.
-func (g *gen) claims(subject string) map[string]any {
+// properties returns the properties of a case. preferred_username is always the subject: it is what the token names the subject
+// by, and what the runner of the engine sets. The other properties are each missing from some cases, and rarely null.
+func (g *gen) properties(subject string) map[string]any {
 	c := map[string]any{"preferred_username": subject}
 	if g.chance(75) {
 		c["department"] = pick(g, departments)
@@ -1151,7 +1151,7 @@ func (g *gen) claims(subject string) map[string]any {
 	if g.chance(60) {
 		c["team"] = pick(g, tags)
 	}
-	// The claims resource_from_claim looks up: a resource's name or id most of the time, one that no resource has now and
+	// The properties resource_from_claim looks up: a resource's name or id most of the time, one that no resource has now and
 	// then.
 	typ := g.syncTypeWithResources()
 	if g.chance(65) {

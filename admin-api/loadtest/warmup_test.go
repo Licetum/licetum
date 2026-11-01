@@ -132,7 +132,7 @@ func TestWarmUpWaitsForTheWholeList(t *testing.T) {
 	if strings.Join(names, ",") != want {
 		t.Errorf("phases = %q, want %q", names, want)
 	}
-	// Every request is asked as the PEP client, about subject 0, with the claims of subject 0 as the properties of the subject.
+	// Every request is asked as the PEP client, about subject 0, with the properties of subject 0 as the properties of the subject.
 	wantAsker := asker{"Bearer lct_test", subjectName(warmSubject), departmentName(warmSubject % p.Groups)}
 	for i, got := range api.askers {
 		if got != wantAsker {

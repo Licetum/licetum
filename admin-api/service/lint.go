@@ -68,8 +68,8 @@ func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport,
 		// a duplicate or a guard on an empty group is worth knowing when the synchronizer comes back.
 		if r.RoleID == nil && hasResourceTarget(r) && !synced[*r.TypeResourceID] {
 			lint.add(model.LintError, i18n.LintRuleTargetDead, &id, nil, nil, label)
-		} else if r.RoleID == nil && r.ResourceFromClaim != nil && g.LookupCut(r.ResourceFromClaim.LookupTypeResourceID, *r.TypeResourceID) {
-			// The type is there, but the claim is looked up in a type without resources, or the climb passes one: the
+		} else if r.RoleID == nil && r.ResourceFromProperty != nil && g.LookupCut(r.ResourceFromProperty.LookupTypeResourceID, *r.TypeResourceID) {
+			// The type is there, but the property is looked up in a type without resources, or the climb passes one: the
 			// rule finds nothing there (a denial keeps an absent anchor, see engine.TypeGraph.LookupCut).
 			lint.add(model.LintError, i18n.LintRuleLookupDead, &id, nil, nil, label)
 		}
@@ -142,10 +142,10 @@ func ruleLabel(r model.AssignmentRule) string {
 
 // hasResourceTarget reports whether a rule names resources (and so needs a synchronizer to take effect).
 func hasResourceTarget(r model.AssignmentRule) bool {
-	return r.ResourceID != nil || r.ResourceFromClaim != nil || len(r.ResourceWhere) > 0
+	return r.ResourceID != nil || r.ResourceFromProperty != nil || len(r.ResourceWhere) > 0
 }
 
-// everyoneRule reports whether a rule covers every subject: no subject, group or claim condition narrows it, and no guard
+// everyoneRule reports whether a rule covers every subject: no subject, group or property condition narrows it, and no guard
 // does either.
 func everyoneRule(r model.AssignmentRule) bool {
 	return r.Subject == nil && r.SubjectGroupID == nil && r.MemberOfGroupID == nil && len(r.Predicate) == 0 &&
@@ -167,11 +167,11 @@ func groupsOfRule(r model.AssignmentRule) []uuid.UUID {
 	return out
 }
 
-// claimCondition reports whether a condition reads a claim of the token (the default source).
+// claimCondition reports whether a condition reads a property of the token (the default source).
 func claimCondition(lists ...[]model.PredicateCondition) bool {
 	for _, conds := range lists {
 		for _, c := range conds {
-			if c.Source == "" || c.Source == model.SourceClaim {
+			if c.Source == "" || c.Source == model.SourceSubject {
 				return true
 			}
 		}
@@ -184,12 +184,12 @@ func claimCondition(lists ...[]model.PredicateCondition) bool {
 func ruleSignature(r model.AssignmentRule) string {
 	raw, _ := json.Marshal(struct {
 		Type, Role, Resource, Subject, Member, RequiresGroup any
-		Claim                                                any
+		Property                                             any
 		Where, Access, Predicate, Requires                   any
 		Effect, Exception, OnMissing                         any
 	}{
 		Type: r.TypeResourceID, Role: r.RoleID, Resource: r.ResourceID, Subject: r.Subject,
-		Member: r.MemberOfGroupID, RequiresGroup: r.RequiresGroupID, Claim: r.ResourceFromClaim,
+		Member: r.MemberOfGroupID, RequiresGroup: r.RequiresGroupID, Property: r.ResourceFromProperty,
 		Where: r.ResourceWhere, Access: r.Access, Predicate: r.Predicate, Requires: r.RequiresPredicate,
 		Effect: r.Effect, Exception: r.Exception, OnMissing: r.OnMissingAttribute,
 	})

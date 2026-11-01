@@ -84,7 +84,7 @@ func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) 
 	snapshotDecisions := func() []string {
 		t.Helper()
 		results, err := w.app.CheckAccess(ctx, uuid.MustParse(w.appSvc), hierarchySubject,
-			engine.NewEnv(engine.Claims{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
+			engine.NewEnv(engine.Properties{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +254,7 @@ func TestIntegrationADeletedSynchronizerCutsTheRoutesBelowItWhateverTheLowerSour
 				t.Helper()
 				queries = w.checkAccess(w.appSvc, true, question)[0]["explanation"].(map[string]any)["decision"].(string)
 				results, err := w.app.CheckAccess(ctx, uuid.MustParse(w.appSvc), hierarchySubject,
-					engine.NewEnv(engine.Claims{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
+					engine.NewEnv(engine.Properties{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -395,7 +395,7 @@ func TestIntegrationASynchronizationThatStartedBeforeTheSynchronizerWasDeletedDo
 
 // A resource_from_claim that looks a resource up in a type without a synchronizer, or climbs through one, finds nothing:
 // the rule list and the items of a role say its target does not take effect (target_valid) and the lint reports it, until
-// the synchronizer is there again. A claim looked up among the resources of a type that has them is not touched.
+// the synchronizer is there again. A property looked up among the resources of a type that has them is not touched.
 func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *testing.T) {
 	w := newWorld(t)
 	w.partBelowItem()
@@ -469,7 +469,7 @@ func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *tes
 
 // The denials that read the resources of a type without a synchronizer, or the rows that type left, keep an anchor that is no
 // resource (the tables dec06_denials_that_lose_their_type.yaml decide it): P1 of part names I1 of item as its parent, so a
-// denial by claim whose anchor is an item covers P1 once item has no resources, on the query path and on the snapshot path,
+// denial by property whose anchor is an item covers P1 once item has no resources, on the query path and on the snapshot path,
 // in the permission list and in the explanation. The same denial does not cover P3, which has no parent.
 func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T) {
 	w := newWorld(t)
@@ -480,7 +480,7 @@ func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T)
 	denial := w.rule("item", "", map[string]any{"effect": "deny", "access": []string{"*"}, "resource_from_claim": map[string]any{
 		"claim": "part_name", "lookup_type_resource_id": w.typeByName["part"], "match_by": "name"}})
 
-	claims := engine.Claims{"preferred_username": hierarchySubject, "part_name": "Part 1"}
+	claims := engine.Properties{"preferred_username": hierarchySubject, "part_name": "Part 1"}
 	asked := func(ids ...string) []model.CheckRequest {
 		var out []model.CheckRequest
 		for _, id := range ids {
@@ -498,7 +498,7 @@ func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T)
 		return results
 	}
 	// verify checks the answers about P1 and P3: P3 has no parent, so the denial never covers it; P1 is denied, by the item the
-	// claim finds while item has resources, and as an assumed denial anchored at no resource while it has none.
+	// property finds while item has resources, and as an assumed denial anchored at no resource while it has none.
 	verify := func(when string, results []model.CheckResult, p1 string, assumed bool) {
 		t.Helper()
 		if results[0].Explanation.Decision != p1 || results[1].Explanation.Decision != engine.DecisionAllowed {
@@ -527,10 +527,10 @@ func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T)
 	if got := ids(list, "part"); !slices.Equal(got, []string{"P3"}) {
 		t.Fatalf("the permission list names %v, want P3 alone", got)
 	}
-	// A request without the claim is not under the denial.
-	claims = engine.Claims{"preferred_username": hierarchySubject}
+	// A request without the property is not under the denial.
+	claims = engine.Properties{"preferred_username": hierarchySubject}
 	verify("without the claim", decide(engine.HigherConsistency), engine.DecisionAllowed, false)
-	claims = engine.Claims{"preferred_username": hierarchySubject, "part_name": "Part 1"}
+	claims = engine.Properties{"preferred_username": hierarchySubject, "part_name": "Part 1"}
 
 	w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
 	verify("with a synchronizer of item again", decide(engine.HigherConsistency), engine.DecisionDenied, false)

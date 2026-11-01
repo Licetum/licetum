@@ -271,15 +271,15 @@ func (n *policyNames) member(m model.GroupMember) model.PolicyGroupMember {
 // item converts an item of a role to the document.
 func (n *policyNames) item(p model.RolePermission) model.PolicyRoleItem {
 	return model.PolicyRoleItem{Type: n.typeName[p.TypeResourceID], ResourceID: p.ResourceID,
-		ResourceFromClaim: n.claim(p.ResourceFromClaim), ResourceWhere: p.ResourceWhere, Access: p.Access}
+		ResourceFromProperty: n.property(p.ResourceFromProperty), ResourceWhere: p.ResourceWhere, Access: p.Access}
 }
 
-// claim converts a resource_from_claim to the document: its lookup type is named.
-func (n *policyNames) claim(c *model.ResourceFromClaim) *model.PolicyResourceFromClaim {
+// property converts a resource_from_claim to the document: its lookup type is named.
+func (n *policyNames) property(c *model.ResourceFromProperty) *model.PolicyResourceFromProperty {
 	if c == nil {
 		return nil
 	}
-	return &model.PolicyResourceFromClaim{Claim: c.Claim, LookupType: n.typeName[c.LookupTypeResourceID], MatchBy: c.MatchBy}
+	return &model.PolicyResourceFromProperty{Property: c.Property, LookupType: n.typeName[c.LookupTypeResourceID], MatchBy: c.MatchBy}
 }
 
 // rule converts a rule to the document: the groups, the roles and the types are named, and a group subject is
@@ -290,7 +290,7 @@ func (n *policyNames) rule(r model.AssignmentRule) model.PolicyRule {
 		Exception: r.Exception, ValidFrom: utcPtr(r.ValidFrom), ExpiresAt: utcPtr(r.ExpiresAt),
 		OnMissingAttribute: r.OnMissingAttribute, RequiresPredicate: r.RequiresPredicate, SubjectType: r.SubjectType,
 		ResourceID: r.ResourceID, ResourceWhere: r.ResourceWhere, Access: r.Access, Predicate: r.Predicate,
-		ResourceFromClaim: n.claim(r.ResourceFromClaim),
+		ResourceFromProperty: n.property(r.ResourceFromProperty),
 	}
 	if r.RoleID != nil {
 		role := n.roleName[*r.RoleID]
@@ -572,18 +572,18 @@ func (im *importer) itemInput(it model.PolicyRoleItem) (model.RolePermissionInpu
 	if in.Access == nil {
 		in.Access = []string{}
 	}
-	if it.ResourceFromClaim != nil {
-		claim, err := im.claimInput(*it.ResourceFromClaim)
+	if it.ResourceFromProperty != nil {
+		property, err := im.claimInput(*it.ResourceFromProperty)
 		if err != nil {
 			return model.RolePermissionInput{}, err
 		}
-		in.ResourceFromClaim = claim
+		in.ResourceFromProperty = property
 	}
 	return in, nil
 }
 
 // claimInput turns a resource_from_claim of the document into its input.
-func (im *importer) claimInput(c model.PolicyResourceFromClaim) (*model.ResourceFromClaim, error) {
+func (im *importer) claimInput(c model.PolicyResourceFromProperty) (*model.ResourceFromProperty, error) {
 	lookup, err := im.typeRef(c.LookupType)
 	if err != nil {
 		return nil, err
@@ -592,7 +592,7 @@ func (im *importer) claimInput(c model.PolicyResourceFromClaim) (*model.Resource
 	if matchBy == "" {
 		matchBy = model.MatchByName
 	}
-	return &model.ResourceFromClaim{Claim: c.Claim, LookupTypeResourceID: lookup, MatchBy: matchBy}, nil
+	return &model.ResourceFromProperty{Property: c.Property, LookupTypeResourceID: lookup, MatchBy: matchBy}, nil
 }
 
 // groups creates the groups that the installation lacks, and replaces the memberships of the ones that differ. The
@@ -774,12 +774,12 @@ func (im *importer) ruleInput(w model.PolicyRule) (model.AssignmentRuleInput, er
 		}
 		in.TypeResourceID = &id
 	}
-	if w.ResourceFromClaim != nil {
-		claim, err := im.claimInput(*w.ResourceFromClaim)
+	if w.ResourceFromProperty != nil {
+		property, err := im.claimInput(*w.ResourceFromProperty)
 		if err != nil {
 			return in, err
 		}
-		in.ResourceFromClaim = claim
+		in.ResourceFromProperty = property
 	}
 	in.Subject = w.Subject
 	if w.SubjectGroup != nil {
@@ -827,8 +827,8 @@ func normalizeRule(r model.PolicyRule) model.PolicyRule {
 	}
 	out.ValidFrom = utcPtr(out.ValidFrom)
 	out.ExpiresAt = utcPtr(out.ExpiresAt)
-	if out.ResourceFromClaim != nil {
-		out.ResourceFromClaim = normalizeClaim(*out.ResourceFromClaim)
+	if out.ResourceFromProperty != nil {
+		out.ResourceFromProperty = normalizeClaim(*out.ResourceFromProperty)
 	}
 	out.Predicate = nilIfEmpty(out.Predicate)
 	out.RequiresPredicate = nilIfEmpty(out.RequiresPredicate)
@@ -839,8 +839,8 @@ func normalizeRule(r model.PolicyRule) model.PolicyRule {
 // normalizeItem gives an item of a role of the document the form of an exported item.
 func normalizeItem(it model.PolicyRoleItem) model.PolicyRoleItem {
 	out := it
-	if out.ResourceFromClaim != nil {
-		out.ResourceFromClaim = normalizeClaim(*out.ResourceFromClaim)
+	if out.ResourceFromProperty != nil {
+		out.ResourceFromProperty = normalizeClaim(*out.ResourceFromProperty)
 	}
 	out.ResourceWhere = nilIfEmpty(out.ResourceWhere)
 	if out.Access == nil {
@@ -860,7 +860,7 @@ func normalizeMember(m model.PolicyGroupMember) model.PolicyGroupMember {
 }
 
 // normalizeClaim makes the default match_by explicit.
-func normalizeClaim(c model.PolicyResourceFromClaim) *model.PolicyResourceFromClaim {
+func normalizeClaim(c model.PolicyResourceFromProperty) *model.PolicyResourceFromProperty {
 	if c.MatchBy == "" {
 		c.MatchBy = model.MatchByName
 	}

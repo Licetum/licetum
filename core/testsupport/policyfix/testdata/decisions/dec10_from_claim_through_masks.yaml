@@ -20,13 +20,13 @@ resources:
   - {type: folder, id: F1, name: Folder 1, parents: [{type: area, id: A1}], meta: {owner: dave}}
   - {type: folder, id: F2, name: Folder 2, parents: [{type: area, id: A2}], meta: {owner: erin}}
 rules:
-  - {name: divisions-above-owned-folders, subject: dave, type: division, access: [write], from_claim: {claim: username, lookup_type: folder, match_by: meta.owner}}
+  - {name: divisions-above-owned-folders, subject: dave, type: division, access: [write], from_property: {claim: username, lookup_type: folder, match_by: meta.owner}}
   - {name: read-all-divisions, subject: erin, type: division, access: [read]}
-  - {name: deny-division-above-blocked-folder, subject: erin, type: division, access: [read], deny: true, from_claim: {claim: blocked, lookup_type: folder, match_by: id}}
+  - {name: deny-division-above-blocked-folder, subject: erin, type: division, access: [read], deny: true, from_property: {claim: blocked, lookup_type: folder, match_by: id}}
 cases:
   - name: the division above the owned folder is an anchor although no level flows from it to the folder
     subject: dave
-    claims: {username: dave}
+    properties: {username: dave}
     questions:
       - {type: division, resource: D1, action: write, allowed: true, decision: allowed, granted_by: [divisions-above-owned-folders]}
       - {type: area, resource: A1, action: write, allowed: true, decision: allowed, granted_by: [divisions-above-owned-folders]}
@@ -34,7 +34,7 @@ cases:
       - {type: division, resource: D2, action: write, allowed: false, decision: no_access}
   - name: a denial anchored above the blocked folder stands on its division
     subject: erin
-    claims: {blocked: F2}
+    properties: {blocked: F2}
     questions:
       - {type: division, resource: D2, action: read, allowed: false, decision: denied, granted_by: [read-all-divisions], denials: [{rule: deny-division-above-blocked-folder}]}
       - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [read-all-divisions], denials: []}

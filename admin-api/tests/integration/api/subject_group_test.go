@@ -21,8 +21,8 @@ func TestSubjectGroupIsAnOwnedReferenceAndExportsByName(t *testing.T) {
 	if rule["subject"] != nil || rule["subject_group_id"] != group {
 		t.Fatalf("group reference: %v", rule)
 	}
-	expectIDs(t, w.permission(w.org, engine.Claims{"department": "sales"}), "branch", "B1")
-	expectIDs(t, w.permission(w.org, engine.Claims{"department": "other"}), "branch")
+	expectIDs(t, w.permission(w.org, engine.Properties{"department": "sales"}), "branch", "B1")
+	expectIDs(t, w.permission(w.org, engine.Properties{"department": "other"}), "branch")
 	status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{"subject": "group:" + group, "type_resource_id": w.branch, "access": []string{"read"}})
 	requireErrorCode(t, status, raw, http.StatusUnprocessableEntity, "subject_group_reserved")
 	w.expect(http.StatusUnprocessableEntity, "POST", "/assignment_rule", map[string]any{"subject": "alice", "subject_group_id": group, "type_resource_id": w.branch, "access": []string{"read"}})

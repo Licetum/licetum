@@ -1,7 +1,7 @@
 // Package authzenreq builds the requests of the AuthZEN API of a service (the OpenID AuthZEN Authorization API 1.0 as
 // core/server/authzen.go serves it) and decodes its answers, for the integration tests, the contracts runner and the load
 // test of the check API. It is the one place that knows the wire format: where the service and the type go in the path,
-// how the type as a whole is named, how freshness is asked for, where the claims of another person and the request
+// how the type as a whole is named, how freshness is asked for, where the properties of another person and the request
 // attributes go, and where a decision, an explanation or an error comes back. A change of that format is a change here.
 //
 // A request is a Request: the method, the path with its query, and the body to send as JSON. The caller adds the address of
@@ -177,7 +177,7 @@ func Semantic(semantic string) Option {
 	return func(s *spec) { s.semantic, s.used = semantic, s.used|featSemantic }
 }
 
-// WithProperties gives the claims of the person asked about, subject.properties: what a client application the service
+// WithProperties gives the properties of the person asked about, subject.properties: what a client application the service
 // trusts does to ask about somebody else. The map is copied.
 func WithProperties(claims map[string]any) Option {
 	return func(s *spec) {

@@ -484,7 +484,7 @@ const (
 )
 
 // normalizeMeta reduces the attributes a source reported to what rules can match: a string (numbers
-// and booleans are rendered like claim values) or a list of strings. NULLs, objects, invalid names and
+// and booleans are rendered like property values) or a list of strings. NULLs, objects, invalid names and
 // oversized values are dropped. Returns nil if nothing is left.
 func normalizeMeta(attrs map[string]any) map[string]any {
 	out := map[string]any{}

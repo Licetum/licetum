@@ -175,7 +175,7 @@ type AccessGroup struct {
 	Levels []string `json:"levels"`
 }
 
-// Group is a union of people; its members are subjects, predicates over claims, or other groups.
+// Group is a union of people; its members are subjects, predicates over properties, or other groups.
 type Group struct {
 	Service string   `json:"service,omitempty"`
 	Name    string   `json:"name"`
@@ -194,19 +194,19 @@ type Member struct {
 	ExpiresAt *time.Time                 `json:"expires_at,omitempty"`
 }
 
-// Target is what a permission covers: the whole type, one resource, the resource found from a claim, or the resources
+// Target is what a permission covers: the whole type, one resource, the resource found from a property, or the resources
 // whose attributes match.
 type Target struct {
-	Type      string                     `json:"type"`
-	Resource  string                     `json:"resource,omitempty"`
-	FromClaim *FromClaim                 `json:"from_claim,omitempty"`
-	Where     []model.PredicateCondition `json:"where,omitempty"`
+	Type         string                     `json:"type"`
+	Resource     string                     `json:"resource,omitempty"`
+	FromProperty *FromProperty              `json:"from_property,omitempty"`
+	Where        []model.PredicateCondition `json:"where,omitempty"`
 }
 
-// FromClaim is resource_from_claim: the value of Claim is looked up among the resources of LookupType by MatchBy (name,
+// FromProperty is resource_from_claim: the value of Property is looked up among the resources of LookupType by MatchBy (name,
 // id or meta.<attribute>).
-type FromClaim struct {
-	Claim      string `json:"claim"`
+type FromProperty struct {
+	Property   string `json:"claim"`
 	LookupType string `json:"lookup_type"`
 	MatchBy    string `json:"match_by,omitempty"` // default name
 }
@@ -249,12 +249,12 @@ type Rule struct {
 	ExpiresAt         *time.Time                 `json:"expires_at,omitempty"`
 }
 
-// Case is a set of questions asked by one subject with one set of claims and request attributes, at one time.
+// Case is a set of questions asked by one subject with one set of properties and request attributes, at one time.
 type Case struct {
 	SubjectType string         `json:"subject_type,omitempty"`
 	Name        string         `json:"name"`
 	Subject     string         `json:"subject"`
-	Claims      map[string]any `json:"claims,omitempty"`
+	Properties  map[string]any `json:"properties,omitempty"`
 	Context     map[string]any `json:"context,omitempty"`
 	At          *time.Time     `json:"at,omitempty"`
 	// Service is the service the questions are asked of (default: the first service).
@@ -507,21 +507,21 @@ func (f *Fixture) Validate() error {
 			return
 		}
 		n := 0
-		for _, set := range []bool{t.Resource != "", t.FromClaim != nil, len(t.Where) > 0} {
+		for _, set := range []bool{t.Resource != "", t.FromProperty != nil, len(t.Where) > 0} {
 			if set {
 				n++
 			}
 		}
 		if n > 1 {
-			bad("%s: at most one of resource, from_claim, where", where)
+			bad("%s: at most one of resource, from_property, where", where)
 		}
 		// A type whose synchronizer was deleted after the policy was written may keep a rule on its resources: a dead
 		// rule, which the admin API keeps and which covers nothing.
 		if n == 1 && !tt.Sync && !syncedBefore[t.Type] {
 			bad("%s: type %q has no synchronizer, only the whole type can be covered", where, t.Type)
 		}
-		if t.FromClaim != nil && types[t.FromClaim.LookupType] == nil {
-			bad("%s: unknown lookup type %q", where, t.FromClaim.LookupType)
+		if t.FromProperty != nil && types[t.FromProperty.LookupType] == nil {
+			bad("%s: unknown lookup type %q", where, t.FromProperty.LookupType)
 		}
 	}
 	roles := map[string]bool{}

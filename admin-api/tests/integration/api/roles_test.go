@@ -37,7 +37,7 @@ func TestRolePermissionsReachSubjectsThroughAssignments(t *testing.T) {
 		t.Fatalf("a role rule must not carry an inline permission: %v", grant)
 	}
 
-	inSales := engine.Claims{"department": "sales"}
+	inSales := engine.Properties{"department": "sales"}
 	expectIDs(t, w.permission(w.org, inSales), "branch", "B1")
 	expectIDs(t, w.permission(w.appSvc, inSales), "item", "I1", "I4")
 	expectIDs(t, w.permission(w.org, nil), "branch")
@@ -194,8 +194,8 @@ func TestRoleItemOnAPlatformPolicyNeedsWriteOnThePolicy(t *testing.T) {
 	}
 }
 
-// A type that a claim-based target uses as its lookup type cannot be deleted while the target exists.
-func TestLookupTypeOfAClaimTargetCannotBeDeleted(t *testing.T) {
+// A type that a property-based target uses as its lookup type cannot be deleted while the target exists.
+func TestLookupTypeOfAPropertyTargetCannotBeDeleted(t *testing.T) {
 	w := newWorld(t)
 	region := w.typeResource(w.org, "region", "")
 	rule := w.must("POST", "/assignment_rule", map[string]any{

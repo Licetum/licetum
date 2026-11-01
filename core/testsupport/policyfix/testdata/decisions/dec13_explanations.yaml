@@ -163,7 +163,7 @@ cases:
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
   - name: a rule that reads the request is named when it grants
     subject: ctx-user
-    claims: {preferred_username: ctx-user}
+    properties: {preferred_username: ctx-user}
     context: {ip: "10.1.2.3"}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [ctx-allow-branch], denials: []}
@@ -171,27 +171,27 @@ cases:
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
   - name: from outside the network the rule grants nothing
     subject: ctx-user
-    claims: {preferred_username: ctx-user}
+    properties: {preferred_username: ctx-user}
     context: {ip: "192.168.0.1"}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationRequestAttributesDecideAndAreCachedByValue
   - name: without the address the rule grants nothing
     subject: ctx-user
-    claims: {preferred_username: ctx-user}
+    properties: {preferred_username: ctx-user}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
   # from admin-api/tests/integration/api/phase1_test.go:TestSimulationAnswersForClaimsWithoutAToken (the test asks the
   # admin simulation, which decides like the check)
   - name: a claim that matches is answered with the rule that grants
     subject: dave
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [sim-sales-branch], denials: []}
   # from admin-api/tests/integration/api/phase1_test.go:TestSimulationAnswersForClaimsWithoutAToken
   - name: another department is granted nothing
     subject: dave
-    claims: {department: hr}
+    properties: {department: hr}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt

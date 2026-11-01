@@ -11,11 +11,11 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// PolicyClaims lists the claims and request attributes the policy of a service reads: the conditions of the enabled rules
-// that apply to its resource types (and to those above them) and of their guards, the claim-based targets of those rules
+// PolicyProperties lists the properties and request attributes the policy of a service reads: the conditions of the enabled rules
+// that apply to its resource types (and to those above them) and of their guards, the property-based targets of those rules
 // and of their roles, and the conditions of the group memberships (groups are shared by every service). It tells what a
 // PEP client has to put into subject.properties of its AuthZEN requests for the answers to be the real ones.
-func (a *App) PolicyClaims(ctx context.Context, serviceID uuid.UUID) ([]model.PolicyClaim, error) {
+func (a *App) PolicyProperties(ctx context.Context, serviceID uuid.UUID) ([]model.PolicyProperty, error) {
 	if _, err := a.GetExistingService(ctx, a.DB, serviceID); err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func (a *App) PolicyClaims(ctx context.Context, serviceID uuid.UUID) ([]model.Po
 	}
 	defer rows.Close()
 	type key struct{ source, name string }
-	byKey := map[key]*model.PolicyClaim{}
+	byKey := map[key]*model.PolicyProperty{}
 	for rows.Next() {
 		var kind, source, attr string
 		var n int
@@ -68,7 +68,7 @@ func (a *App) PolicyClaims(ctx context.Context, serviceID uuid.UUID) ([]model.Po
 		}
 		c := byKey[key{source, attr}]
 		if c == nil {
-			c = &model.PolicyClaim{Name: attr, Source: source}
+			c = &model.PolicyProperty{Name: attr, Source: source}
 			byKey[key{source, attr}] = c
 		}
 		switch kind {
@@ -83,11 +83,11 @@ func (a *App) PolicyClaims(ctx context.Context, serviceID uuid.UUID) ([]model.Po
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	out := make([]model.PolicyClaim, 0, len(byKey))
+	out := make([]model.PolicyProperty, 0, len(byKey))
 	for _, c := range byKey {
 		out = append(out, *c)
 	}
-	slices.SortFunc(out, func(x, y model.PolicyClaim) int {
+	slices.SortFunc(out, func(x, y model.PolicyProperty) int {
 		if x.Source != y.Source {
 			return strings.Compare(x.Source, y.Source)
 		}

@@ -24,9 +24,9 @@ const RuleActiveSQL = `ar.enabled
 // ScanAssignmentRule reads the assignmentRuleColumns columns plus any extra dest (if given).
 func ScanAssignmentRule(row pgx.Row, extra ...any) (*model.AssignmentRule, error) {
 	var r model.AssignmentRule
-	var fromClaim, predicate, requires, where []byte
+	var fromProperty, predicate, requires, where []byte
 	var memberOf, requiresGroup uuid.NullUUID
-	dest := append([]any{&r.ID, &r.RoleID, &r.TypeResourceID, &r.ResourceID, &fromClaim, &r.Access,
+	dest := append([]any{&r.ID, &r.RoleID, &r.TypeResourceID, &r.ResourceID, &fromProperty, &r.Access,
 		&r.Subject, &predicate, &memberOf, &r.Enabled, &r.Effect, &r.Exception, &r.ValidFrom, &r.ExpiresAt,
 		&r.Name, &r.Description, &r.OnMissingAttribute, &requires, &requiresGroup, &where, &r.SubjectType, &r.ServiceID, &r.SubjectGroupID}, extra...)
 	if err := row.Scan(dest...); err != nil {
@@ -34,9 +34,9 @@ func ScanAssignmentRule(row pgx.Row, extra ...any) (*model.AssignmentRule, error
 	}
 	r.MemberOfGroupID = NullUUID(memberOf)
 	r.RequiresGroupID = NullUUID(requiresGroup)
-	if fromClaim != nil && string(fromClaim) != "null" {
-		r.ResourceFromClaim = &model.ResourceFromClaim{}
-		if err := json.Unmarshal(fromClaim, r.ResourceFromClaim); err != nil {
+	if fromProperty != nil && string(fromProperty) != "null" {
+		r.ResourceFromProperty = &model.ResourceFromProperty{}
+		if err := json.Unmarshal(fromProperty, r.ResourceFromProperty); err != nil {
 			return nil, err
 		}
 	}
@@ -89,14 +89,14 @@ const RolePermissionColumns = `rp.id, rp.role_id, rp.type_resource_id, rp.resour
 // ScanRolePermission reads the rolePermissionColumns columns plus any extra dest (if given).
 func ScanRolePermission(row pgx.Row, extra ...any) (*model.RolePermission, error) {
 	var p model.RolePermission
-	var fromClaim, where []byte
-	dest := append([]any{&p.ID, &p.RoleID, &p.TypeResourceID, &p.ResourceID, &fromClaim, &p.Access, &where, &p.ServiceID}, extra...)
+	var fromProperty, where []byte
+	dest := append([]any{&p.ID, &p.RoleID, &p.TypeResourceID, &p.ResourceID, &fromProperty, &p.Access, &where, &p.ServiceID}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}
-	if fromClaim != nil && string(fromClaim) != "null" {
-		p.ResourceFromClaim = &model.ResourceFromClaim{}
-		if err := json.Unmarshal(fromClaim, p.ResourceFromClaim); err != nil {
+	if fromProperty != nil && string(fromProperty) != "null" {
+		p.ResourceFromProperty = &model.ResourceFromProperty{}
+		if err := json.Unmarshal(fromProperty, p.ResourceFromProperty); err != nil {
 			return nil, err
 		}
 	}

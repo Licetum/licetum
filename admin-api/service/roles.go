@@ -141,14 +141,14 @@ func (a *App) checkRolePermissionRefs(ctx context.Context, q db.Querier, owner u
 	if target.ServiceID != owner {
 		return apperr.Unprocessable(i18n.ServiceOwnershipMismatch)
 	}
-	if err := a.checkResourceTarget(ctx, q, in.TypeResourceID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere); err != nil {
+	if err := a.checkResourceTarget(ctx, q, in.TypeResourceID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere); err != nil {
 		return err
 	}
 	if err := a.checkAccessGroupRefs(ctx, q, in.TypeResourceID, in.Access); err != nil {
 		return err
 	}
-	if in.ResourceFromClaim != nil {
-		if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromClaim.LookupTypeResourceID); err != nil {
+	if in.ResourceFromProperty != nil {
+		if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromProperty.LookupTypeResourceID); err != nil {
 			return err
 		}
 	}
@@ -214,7 +214,7 @@ func (a *App) createRolePermission(ctx context.Context, roleID uuid.UUID, in *mo
 			INSERT INTO role_permission AS rp (service_id, id, role_id, type_resource_id, resource_id, resource_from_claim, access, resource_where)
 			VALUES ((SELECT service_id FROM role WHERE id=$1),COALESCE($7::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6::jsonb)
 			RETURNING `+engine.RolePermissionColumns,
-			roleID, in.TypeResourceID, in.ResourceID, fromClaimParam(in.ResourceFromClaim), in.Access, whereParam(in.ResourceWhere), id,
+			roleID, in.TypeResourceID, in.ResourceID, fromPropertyParam(in.ResourceFromProperty), in.Access, whereParam(in.ResourceWhere), id,
 		))
 		if db.IsPrimaryKeyViolation(err) {
 			return change{}, idTaken(id)
@@ -258,8 +258,8 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 			return nil, err
 		}
 		c.RolePermission = *p
-		if c.TargetValid && p.ResourceFromClaim != nil {
-			cut, err := graph.cut(ctx, a, p.ResourceFromClaim.LookupTypeResourceID, p.TypeResourceID)
+		if c.TargetValid && p.ResourceFromProperty != nil {
+			cut, err := graph.cut(ctx, a, p.ResourceFromProperty.LookupTypeResourceID, p.TypeResourceID)
 			if err != nil {
 				return nil, err
 			}
@@ -291,7 +291,7 @@ func (a *App) UpdateRolePermission(ctx context.Context, roleID, itemID uuid.UUID
 				type_resource_id = $3, resource_id = $4, resource_from_claim = $5::jsonb, access = $6, resource_where = $7::jsonb
 			WHERE rp.id = $1 AND rp.role_id = $2
 			RETURNING `+engine.RolePermissionColumns,
-			itemID, roleID, in.TypeResourceID, in.ResourceID, fromClaimParam(in.ResourceFromClaim), in.Access, whereParam(in.ResourceWhere),
+			itemID, roleID, in.TypeResourceID, in.ResourceID, fromPropertyParam(in.ResourceFromProperty), in.Access, whereParam(in.ResourceWhere),
 		))
 		if err != nil {
 			return change{}, err

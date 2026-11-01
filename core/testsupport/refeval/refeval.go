@@ -8,10 +8,10 @@
 // The semantics, as implemented here:
 //
 //   - Identity: the subject, and every group it belongs to. A membership names the subject, or has a predicate over the
-//     claims, the request context and the clock (an empty one, everybody, always holds), or nests another group; a group
+//     properties, the request context and the clock (an empty one, everybody, always holds), or nests another group; a group
 //     the subject matches directly is level 1 and nesting resolves through 16 groups, up to level 17 (maxNesting). Disabled memberships and
 //     memberships outside their validity window at the time of the case count for nothing.
-//   - Three-valued conditions: a condition on an attribute the request does not carry (a claim or a context attribute
+//   - Three-valued conditions: a condition on an attribute the request does not carry (a property or a context attribute
 //     that is absent or null) is unknown, whatever the operator, ne and not_in included. AND is the minimum and OR the
 //     maximum of no < unknown < yes, so an unknown membership makes the groups that nest it unknown.
 //   - Applicable rules: enabled, in their validity window (valid_from included, expires_at excluded), and whose target
@@ -21,9 +21,9 @@
 //     anchor: the whole type; the resource it names (also when that resource is not in the fixture: it then covers
 //     nothing for real but can still be the missing parent of an unresolved link); every resource whose attributes match
 //     its resource_where; the ancestors-or-self, of the rule's type, of every resource of the lookup type that matches the
-//     claim value (by name, id, or meta.<attribute>: equal, or a list holding it). A denial that cannot find all its
+//     property value (by name, id, or meta.<attribute>: equal, or a list holding it). A denial that cannot find all its
 //     anchors because a type it needs has no synchronizer (and so no resources) keeps one that is no resource, like the
-//     denial on a resource that is not there: a resource_from_claim denial with a claim in the request whose lookup type,
+//     denial on a resource that is not there: a resource_from_claim denial with a property in the request whose lookup type,
 //     rule type or a type on a route between them has none, and a resource_where denial on a type that has none.
 //   - Levels: '*' is every level, '@name' the levels of the access group of the target's type. The levels of an
 //     instance flow down as written: a point anchor reaches its descendants through the resource links, a whole-type
@@ -51,8 +51,8 @@
 //
 // The choices where the description leaves room, taken as the most literal reading:
 //
-//   - Claim values, context values and resource attributes are compared as their Python text (pyStr): a list claim is
-//     the text ['a', 'b'], not its items. The claim of a resource_from_claim is matched the same way.
+//   - Property values, context values and resource attributes are compared as their Python text (pyStr): a list property is
+//     the text ['a', 'b'], not its items. The property of a resource_from_claim is matched the same way.
 //   - A scalar value of in and not_in is a list of one item; eq, ne, regex and the numeric operators with a list value
 //     never hold (as in the engine and the Python version before it). Numeric operators and in_cidr are false (not
 //     unknown) on an attribute that is not a number or an address, parsed as it is, without trimming.
