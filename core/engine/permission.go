@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +30,7 @@ const (
 	// resultCacheFormat is the version of the cached result format: when the format or the decisions change, new
 	// keys do not overlap the old ones. The answers live in the memory of one process, so it only keeps apart the keys
 	// of two formats inside it; stale entries simply expire by TTL.
-	resultCacheFormat = "t9"
+	resultCacheFormat = "t10"
 )
 
 // PermissionResult — {type_resource_name: sync {resources} | not_sync {access}}.
@@ -79,7 +80,7 @@ func (a *App) GetPermission(ctx context.Context, serviceID uuid.UUID, subject st
 // on each type as a whole.
 func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, consistency Consistency) (*permissionData, error) {
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
-	key := fmt.Sprintf("authz:permission:%s:e%d:r%d:%s:%s:%s", resultCacheFormat, state.epoch, state.version, serviceID, subject,
+	key := fmt.Sprintf("authz:permission:%s:e%d:r%d:%s:st%x:%s:%s", resultCacheFormat, state.epoch, state.version, serviceID, env.subjectType(), subject,
 		a.requestFingerprint(ctx, state, env))
 	return cachedAnswer(ctx, a, key, state, consistency, a.metrics.permissionCache,
 		func(ctx context.Context) (computed[*permissionData], error) {
@@ -179,6 +180,12 @@ func (e Env) attribute(name string) (any, bool) {
 
 func fingerprint(attrs []string, env Env) string {
 	var b strings.Builder
+	// Length-frame the namespace so opaque type strings cannot move a field boundary.
+	typ := env.subjectType()
+	b.WriteString(strconv.Itoa(len(typ)))
+	b.WriteByte(':')
+	b.WriteString(typ)
+	b.WriteByte(0)
 	for _, attr := range attrs {
 		b.WriteString(attr)
 		b.WriteByte(0)
@@ -334,7 +341,7 @@ func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity
 
 	// Indexed path (formerly Grant): point rows with subject IN identity — fast even with a large
 	// number of point grants.
-	direct, err := a.LoadRules(ctx, ruleQuery+` AND (ar.subject = ANY($3) OR ar.subject_group_id=ANY($4)) ORDER BY ar.id`, typeIDs, now, identityList, groupIDs)
+	direct, err := a.LoadRules(ctx, ruleQuery+` AND (ar.subject = ANY($3) OR ar.subject_group_id=ANY($4)) AND (ar.subject_type IS NULL OR ar.subject_type=$5) ORDER BY ar.id`, typeIDs, now, identityList, groupIDs, env.subjectType())
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -375,7 +382,7 @@ func applicableFromSnapshot(snap *snapshot, relevant map[uuid.UUID]bool, identit
 	for s := range identity {
 		subjects = append(subjects, s)
 	}
-	direct, scanned := snap.applicable(relevant, subjects, now)
+	direct, scanned := snap.applicable(relevant, subjects, now, env.subjectType())
 
 	var out []model.AssignmentRule
 	missing := map[uuid.UUID]bool{}
@@ -454,10 +461,18 @@ func (a *App) ExpandRoles(ctx context.Context, rules []model.AssignmentRule, typ
 	return out, nil
 }
 
+// literalTypeMatches deliberately does not constrain group identities.
+func literalTypeMatches(rule model.AssignmentRule, typ string) bool {
+	return rule.SubjectGroupID != nil || rule.Subject == nil || rule.SubjectType == nil || *rule.SubjectType == typ
+}
+
 // ruleTruth is the outcome of the conditions of a rule for the caller: the target (a literal subject from the identity
 // set, every member of a group, or a predicate over the request), and the guards (the conditions of requires_predicate,
 // and membership of requires_group_id). An attribute the request does not carry makes the outcome unknown.
 func ruleTruth(rule model.AssignmentRule, identity identitySet, env Env) truth {
+	if !literalTypeMatches(rule, env.subjectType()) {
+		return no
+	}
 	var target truth
 	switch {
 	case rule.SubjectGroupID != nil:

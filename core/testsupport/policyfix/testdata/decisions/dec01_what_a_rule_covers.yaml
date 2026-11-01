@@ -18,7 +18,7 @@
 # division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
 # R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4. feature (org, no synchronizer); module <- division (org, no synchronizer); kiosk <- zone (org;
 # zone has no synchronizer, kiosk has: K1, K2, which have no parent since zone has no resources).
-contracts: [DEC01, DEC06]
+contracts: [DEC01, DEC06, DEC15]
 description: What a rule covers once it exists, through the hierarchy and on a type without resources.
 services: [org, app]
 types:
@@ -47,6 +47,8 @@ resources:
 groups:
   - name: sales
     members: [{predicate: [{attr: department, op: eq, value: sales}]}]
+  - name: typed-team
+    members: [{predicate: [{attr: typed_member, op: eq, value: yes}]}]
 rules:
   # The first preview: read on D1, as if created.
   - {name: before-read-D1, subject: alice-before, type: division, resource: D1, access: [read]}
@@ -65,6 +67,12 @@ rules:
   # Around the test: a whole-type grant on division, and one on the capability type zone.
   - {name: div-reader-read-division, subject: div-reader, type: division, access: [read]}
   - {name: zoner-read-zone, subject: zoner, type: zone, access: [read]}
+  # DEC15: matching uses the request identity, independently of properties.
+  - {name: typed-user, subject: typed-id, subject_type: user, type: feature, access: [typed-user]}
+  - {name: typed-service, subject: typed-id, subject_type: service, type: feature, access: [typed-service]}
+  - {name: typed-any, subject: typed-id, type: feature, access: [typed-any]}
+  - {name: typed-deny, subject: typed-id, subject_type: service, type: feature, access: [typed-any], deny: true}
+  - {name: typed-group, subject_group: typed-team, type: feature, access: [typed-group]}
 cases:
   # from admin-api/tests/integration/api/enablers_test.go:TestPreviewGrantSaysWhatARuleWouldDo
   - name: read on D1 covers D1 and everything under it
@@ -164,3 +172,35 @@ cases:
       - {type: kiosk, resource: K1, action: read, allowed: true, decision: allowed, granted_by: [zoner-read-zone]}
       - {type: kiosk, resource: K2, action: read, allowed: true, decision: allowed, granted_by: [zoner-read-zone]}
       - {type: kiosk, action: read, allowed: false, decision: no_access, granted_by: []}
+
+  - name: user type is matched outside properties
+    subject: typed-id
+    subject_type: user
+    claims: {type: service, subject_type: service, typed_member: yes}
+    questions:
+      - {type: feature, action: typed-user, allowed: true, decision: allowed, granted_by: [typed-user], denials: []}
+      - {type: feature, action: typed-service, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: feature, action: typed-any, allowed: true, decision: allowed, granted_by: [typed-any], denials: []}
+      - {type: feature, action: typed-group, allowed: true, decision: allowed, granted_by: [typed-group], denials: []}
+  - name: service type with the same id has separate grants and denial
+    subject: typed-id
+    subject_type: service
+    claims: {type: user, subject_type: user, typed_member: yes}
+    questions:
+      - {type: feature, action: typed-user, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: feature, action: typed-service, allowed: true, decision: allowed, granted_by: [typed-service], denials: []}
+      - {type: feature, action: typed-any, allowed: false, decision: denied, granted_by: [typed-any], denials: [{rule: typed-deny}]}
+      - {type: feature, action: typed-group, allowed: true, decision: allowed, granted_by: [typed-group], denials: []}
+  - name: null rule type also matches a custom request type
+    subject: typed-id
+    subject_type: robot
+    questions:
+      - {type: feature, action: typed-any, allowed: true, decision: allowed, granted_by: [typed-any], denials: []}
+      - {type: feature, action: typed-user, allowed: false, decision: no_access, granted_by: [], denials: []}
+  - name: a property named id cannot change the literal subject id
+    subject: different-id
+    subject_type: user
+    claims: {id: typed-id, type: user}
+    questions:
+      - {type: feature, action: typed-user, allowed: false, decision: no_access, granted_by: [], denials: []}
+      - {type: feature, action: typed-any, allowed: false, decision: no_access, granted_by: [], denials: []}

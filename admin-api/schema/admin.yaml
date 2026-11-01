@@ -903,7 +903,7 @@ components:
           description: "The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"
           type: object
         type:
-          description: "Subject type (not interpreted): 1 to 64 characters, and not group"
+          description: "Subject type used to match literal-subject rules: 1 to 64 characters, and not group"
           examples:
             - user
           type: string

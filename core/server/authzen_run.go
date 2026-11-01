@@ -145,10 +145,11 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 			continue
 		}
 		key := struct {
-			Subject string
-			Claims  engine.Claims
-			Attrs   model.RequestContext
-		}{Subject: e.sp.subject, Claims: e.sp.claims, Attrs: e.attrs}
+			Subject     string
+			SubjectType string
+			Claims      engine.Claims
+			Attrs       model.RequestContext
+		}{Subject: e.sp.subject, SubjectType: e.sp.typ, Claims: e.sp.claims, Attrs: e.attrs}
 		raw, err := json.Marshal(key)
 		if err != nil {
 			return nil, err
@@ -199,7 +200,7 @@ func (c *authzenCaller) decide(ctx context.Context, consistency engine.Consisten
 	for j, i := range idx {
 		group[j] = evals[i].req
 	}
-	env := c.app.NewEnv(first.sp.claims, first.attrs)
+	env := c.app.NewEnv(first.sp.claims, first.attrs).WithSubjectType(first.sp.typ)
 	results, err := c.app.CheckAccess(ctx, c.serviceID, first.sp.subject, env, group, explain, consistency)
 	if err != nil {
 		return err
@@ -401,7 +402,7 @@ func parseSearch(kind string, in searchInput) (*search, *apperr.Error) {
 
 // permissions reads what the speaker may do in the service.
 func (c *authzenCaller) permissions(ctx context.Context, sp speaker, attrs model.RequestContext, consistency engine.Consistency) (engine.PermissionResult, error) {
-	return c.app.GetPermission(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), consistency)
+	return c.app.GetPermission(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs).WithSubjectType(sp.typ), consistency)
 }
 
 // searchResources answers the resource search: one page of the resources of the asked type that the speaker may do the action
@@ -435,7 +436,7 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 	if s.started {
 		query.After = &s.after
 	}
-	page, err := c.app.SearchResources(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, s.attrs), query, consistency)
+	page, err := c.app.SearchResources(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, s.attrs).WithSubjectType(sp.typ), query, consistency)
 	if err != nil {
 		return nil, err
 	}
@@ -522,7 +523,7 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 	for i, l := range candidates {
 		questions[i] = model.CheckRequest{Type: res.Type, Action: l}
 	}
-	answers, err := c.app.CheckAccess(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), questions, false, consistency)
+	answers, err := c.app.CheckAccess(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs).WithSubjectType(sp.typ), questions, false, consistency)
 	if err != nil {
 		return nil, err
 	}
@@ -625,11 +626,11 @@ func (c *authzenCaller) decideKnown(ctx context.Context, consistency engine.Cons
 	eg.SetLimit(authzenScanWorkers)
 	for i, e := range batch {
 		eg.Go(func() error {
-			claims, err := subjectClaims("", e.ID, e.Properties)
+			claims, err := subjectClaims(e.Type, e.ID, e.Properties)
 			if err != nil {
 				return nil
 			}
-			answers, err := c.app.CheckAccess(ectx, c.serviceID, e.ID, c.app.NewEnv(claims, attrs), question, false, consistency)
+			answers, err := c.app.CheckAccess(ectx, c.serviceID, e.ID, c.app.NewEnv(claims, attrs).WithSubjectType(e.Type), question, false, consistency)
 			if err != nil {
 				return err
 			}

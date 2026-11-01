@@ -815,6 +815,10 @@ func (g *gen) rule(i int) policyfix.Rule {
 	switch x := g.rng.IntN(100); {
 	case x < 38:
 		r.Subject = pick(g, subjects)
+		if g.chance(40) {
+			typ := g.pickSubjectType()
+			r.SubjectType = &typ
+		}
 		if g.chance(8) {
 			r.Subject = outsider
 		}
@@ -1096,6 +1100,8 @@ func (g *gen) window() (from, to *time.Time) {
 
 // ---------- cases ----------
 
+func (g *gen) pickSubjectType() string { return pick(g, []string{"user", "service", "agent", "robot"}) }
+
 // cases writes 6-12 cases: the first asked of the first service, the second of the other one, the rest of either.
 func (g *gen) cases() {
 	for i := range g.between(6, 12) {
@@ -1103,7 +1109,7 @@ func (g *gen) cases() {
 		if i < 2 {
 			svc = i
 		}
-		c := policyfix.Case{Name: fmt.Sprintf("case-%02d", i), Subject: pick(g, subjects)}
+		c := policyfix.Case{Name: fmt.Sprintf("case-%02d", i), Subject: pick(g, subjects), SubjectType: g.pickSubjectType()}
 		// The first service is the default; it is named now and then.
 		if svc == 1 || g.chance(30) {
 			c.Service = g.f.Services[svc]

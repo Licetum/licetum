@@ -527,6 +527,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		switch {
 		case r.Subject != "":
 			in.Subject = ptr(r.Subject)
+			in.SubjectType = r.SubjectType
 		case r.SubjectGroup != "":
 			in.SubjectGroupID = ptr(groups[r.SubjectGroup])
 		case r.MemberOf != "":
@@ -634,7 +635,7 @@ func (l *Loaded) Ask(c *policyfix.Case) []Answer {
 // of the case is copied into the request: the fixture's own is not changed.
 func evaluationsOf(service string, c *policyfix.Case, questions []policyfix.Question) authzenreq.Request {
 	return authzenreq.Evaluations(service, c.Subject, questionsOf(questions),
-		authzenreq.Fresh(), authzenreq.Explain(), authzenreq.WithContext(c.Context))
+		authzenreq.Fresh(), authzenreq.Explain(), authzenreq.WithSubjectType(c.SubjectType), authzenreq.WithContext(c.Context))
 }
 
 // questionsOf are the questions of a case as evaluations: a question without a resource is about the type as a whole.

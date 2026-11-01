@@ -43,7 +43,7 @@ const (
 // AuthzenSubject is the subject of an evaluation or of a search.
 type AuthzenSubject struct {
 	_          struct{}       `additionalProperties:"true"`
-	Type       string         `json:"type" doc:"Subject type (not interpreted): 1 to 64 characters, and not group" example:"user"`
+	Type       string         `json:"type" doc:"Subject type used to match literal-subject rules: 1 to 64 characters, and not group" example:"user"`
 	ID         string         `json:"id" required:"false" doc:"Subject id: 1 to 256 characters, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it" example:"alice"`
 	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"`
 }

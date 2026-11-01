@@ -1,6 +1,6 @@
 # Decision tables
 
-The fixtures of the decision contracts (DEC01–DEC13 of `contracts.yaml`; the format is `core/testsupport/policyfix`). Each one
+The fixtures of the decision contracts (DEC01–DEC15 of `contracts.yaml`; the format is `core/testsupport/policyfix`). Each one
 is checked twice: by the engine through the AuthZEN API (`admin-api/tests/integration/contracts`, with the searches of
 every case cross-checked against the evaluations) and by the reference evaluator (`core/testsupport/refeval`).
 
@@ -86,3 +86,5 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies | dec09_deny_on_unknown_membership |
 | TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute | dec09_denial_from_a_network, dec09_missing_attribute (the value the PATCH stores is an admin write) |
 | TestIntegrationPointWriterCannotGiveItselfARoleWithAPlatformItem | not a decision test |
+
+DEC15 adds typed literal-subject rows to `dec01_what_a_rule_covers.yaml`: user, service and custom types, null-as-any, group identities and properties that cannot replace the identity.

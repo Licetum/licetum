@@ -113,7 +113,7 @@ func (a *App) SetClock(now func() time.Time) { a.clock = now }
 
 // NewEnv is the environment of a request decided by this App: the claims, the request attributes and the time of its clock.
 func (a *App) NewEnv(claims Claims, context map[string]any) Env {
-	return Env{Claims: claims, Context: context, Now: a.now()}
+	return Env{SubjectType: "user", Claims: claims, Context: context, Now: a.now()}
 }
 
 func New(pool *pgxpool.Pool, cfg *config.Config) *App {

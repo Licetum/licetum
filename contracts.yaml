@@ -117,7 +117,7 @@ contracts:
     oracle: decision tables and core/testsupport/refeval
     level: pg
     phase: P3
-    status: planned
+    status: active
 
   # ---------- ST: read model stores (core/readmodel/storetest against every adapter) ----------
   - id: ST01

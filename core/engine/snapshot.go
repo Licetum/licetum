@@ -91,6 +91,9 @@ func ruleBytes(r *model.AssignmentRule) int64 {
 	if r.Subject != nil {
 		n += int64(len(*r.Subject))
 	}
+	if r.SubjectType != nil {
+		n += int64(len(*r.SubjectType))
+	}
 	if r.Name != nil {
 		n += int64(len(*r.Name))
 	}
@@ -354,9 +357,9 @@ func (s *snapshot) liveMembers(now time.Time) []model.GroupMember {
 // applicable returns the rules in force at now that may target the caller and that live on one of the relevant types
 // (or are role assignments), in the order the queries gave them: the rules with a subject of the identity set first, by
 // id, then the scanned ones, by id.
-func (s *snapshot) applicable(relevant map[uuid.UUID]bool, subjects []string, now time.Time) (direct, scanned []model.AssignmentRule) {
+func (s *snapshot) applicable(relevant map[uuid.UUID]bool, subjects []string, now time.Time, subjectType string) (direct, scanned []model.AssignmentRule) {
 	keep := func(r *model.AssignmentRule) bool {
-		if !ruleActive(r, now) {
+		if !ruleActive(r, now) || !literalTypeMatches(*r, subjectType) {
 			return false
 		}
 		return r.RoleID != nil || (r.TypeResourceID != nil && relevant[*r.TypeResourceID])

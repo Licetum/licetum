@@ -97,7 +97,7 @@ func (l *Loaded) listed(c *policyfix.Case, s search) []string {
 	all := []string{}
 	page := ""
 	for range searchPages {
-		req := s.request(l.f.ServiceOf(c), c.Subject, authzenreq.Fresh(), authzenreq.WithContext(c.Context), authzenreq.Page(searchPage, page))
+		req := s.request(l.f.ServiceOf(c), c.Subject, authzenreq.Fresh(), authzenreq.WithSubjectType(c.SubjectType), authzenreq.WithContext(c.Context), authzenreq.Page(searchPage, page))
 		res := l.askOnce(req, token)
 		ids, next, err := s.decode(res.Status, res.Body)
 		if err != nil {

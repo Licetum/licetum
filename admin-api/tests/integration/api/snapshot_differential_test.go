@@ -151,6 +151,9 @@ func (g *policyGenerator) rule() string {
 	default:
 		rule["predicate"] = g.conditions()
 	}
+	if _, literal := rule["subject"]; literal && g.chance(40) {
+		rule["subject_type"] = g.pick("user", "service", "agent")
+	}
 	// effect
 	switch n := g.rng.Intn(100); {
 	case n < 22:
@@ -227,9 +230,10 @@ func (g *policyGenerator) setup() {
 }
 
 type diffCase struct {
-	subject string
-	claims  engine.Claims
-	context model.RequestContext
+	subjectType string
+	subject     string
+	claims      engine.Claims
+	context     model.RequestContext
 }
 
 func diffCases(rng *rand.Rand, n int) []diffCase {
@@ -253,7 +257,7 @@ func diffCases(rng *rand.Rand, n int) []diffCase {
 		case 1:
 			ctx = model.RequestContext{"ip": "8.8.8.8"}
 		}
-		out = append(out, diffCase{subject: subject, claims: claims, context: ctx})
+		out = append(out, diffCase{subjectType: []string{"user", "service", "agent"}[rng.Intn(3)], subject: subject, claims: claims, context: ctx})
 	}
 	return out
 }
@@ -337,7 +341,7 @@ func TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath(t *testing.T) {
 	compare := func(label string, cases []diffCase) {
 		t.Helper()
 		for _, c := range cases {
-			env := engine.NewEnv(c.claims, c.context)
+			env := engine.NewEnv(c.claims, c.context).WithSubjectType(c.subjectType)
 			for service, checks := range services {
 				id := uuid.MustParse(service)
 				want, err := legacy.GetPermission(ctx, id, c.subject, env, engine.MinimizeLatency)
@@ -400,7 +404,7 @@ func TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath(t *testing.T) {
 	warm := func() {
 		t.Helper()
 		for _, c := range cases {
-			env := engine.NewEnv(c.claims, c.context)
+			env := engine.NewEnv(c.claims, c.context).WithSubjectType(c.subjectType)
 			for service, checks := range services {
 				id := uuid.MustParse(service)
 				for _, a := range []*engine.App{legacy, fast} {

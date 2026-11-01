@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestSnapshotApplicableKeepsTheOrderOfTheQueries(t *testing.T) {
 	role := model.AssignmentRule{ID: uuid.MustParse("00000000-0000-0000-0000-000000000009"), RoleID: ptr(uuid.New()), Subject: ptr("alice"), Enabled: true}
 	add(role)
 
-	direct, scanned := snap.applicable(map[uuid.UUID]bool{typ: true}, []string{"alice", "group:g"}, now)
+	direct, scanned := snap.applicable(map[uuid.UUID]bool{typ: true}, []string{"alice", "group:g"}, now, "user")
 	// The rules of the subjects of the identity set, by id; then the scanned ones, by id (the order of the SQL).
 	if got, want := idsOf(direct), []string{
 		"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000003", "00000000-0000-0000-0000-000000000009",
@@ -132,5 +133,33 @@ func TestSnapshotLookupsOfServices(t *testing.T) {
 	}
 	if _, err := snap.service(uuid.New()); err == nil {
 		t.Error("an unknown id must be a not found")
+	}
+}
+
+func TestLiteralSubjectTypesAgreeWithSnapshotAndRuleTruth(t *testing.T) {
+	typ, group := uuid.New(), uuid.New()
+	now := time.Now()
+	snap := &snapshot{direct: map[string][]model.AssignmentRule{}}
+	for i, subjectType := range []*string{nil, ptr("user"), ptr("service")} {
+		r := ruleOn(fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1), typ, ptr("same"))
+		r.SubjectType = subjectType
+		snap.direct["same"] = append(snap.direct["same"], r)
+	}
+	grouped := ruleOn("00000000-0000-4000-8000-000000000004", typ, nil)
+	grouped.SubjectGroupID = &group
+	snap.direct[model.GroupSubject(group)] = []model.AssignmentRule{grouped}
+	identity := identitySet{"same": Yes, model.GroupSubject(group): Yes}
+	for _, subjectType := range []string{"user", "service", "robot"} {
+		env := NewEnv(Claims{"type": "spoofed", "id": "other"}, nil).WithSubjectType(subjectType)
+		direct, _ := snap.applicable(map[uuid.UUID]bool{typ: true}, []string{"same", model.GroupSubject(group)}, now, subjectType)
+		for _, r := range append(append([]model.AssignmentRule{}, snap.direct["same"]...), grouped) {
+			applies, _ := RuleApplies(r, identity, env)
+			if applies != slices.ContainsFunc(direct, func(candidate model.AssignmentRule) bool { return candidate.ID == r.ID }) {
+				t.Fatalf("%s: inconsistent rule %s", subjectType, r.ID)
+			}
+		}
+	}
+	if fingerprint(nil, NewEnv(nil, nil)) == fingerprint(nil, NewEnv(nil, nil).WithSubjectType("service")) {
+		t.Fatal("subject namespaces share a request fingerprint")
 	}
 }

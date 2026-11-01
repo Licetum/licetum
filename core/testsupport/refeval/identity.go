@@ -112,7 +112,11 @@ func (s *caseState) applies(r *policyfix.Rule) bool {
 	var t truth
 	switch {
 	case r.Subject != "":
-		t = truthOf(r.Subject == s.c.Subject)
+		typ := s.c.SubjectType
+		if typ == "" {
+			typ = "user"
+		}
+		t = truthOf(r.Subject == s.c.Subject && (r.SubjectType == nil || *r.SubjectType == typ))
 	case r.SubjectGroup != "":
 		t = s.groups[r.SubjectGroup]
 	case r.MemberOf != "":

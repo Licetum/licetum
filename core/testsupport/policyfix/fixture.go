@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 
@@ -226,6 +227,7 @@ type RoleItem struct {
 // Rule is an assignment rule: to whom (exactly one of Subject, SubjectGroup, Predicate/Everybody, MemberOf) it grants
 // or denies what (a Role, or an inline Target with Access).
 type Rule struct {
+	SubjectType *string `json:"subject_type,omitempty"`
 	// Name names the rule in explanations and in the expectations of cases; unique in the fixture.
 	Name         string                     `json:"name"`
 	Subject      string                     `json:"subject,omitempty"`
@@ -249,11 +251,12 @@ type Rule struct {
 
 // Case is a set of questions asked by one subject with one set of claims and request attributes, at one time.
 type Case struct {
-	Name    string         `json:"name"`
-	Subject string         `json:"subject"`
-	Claims  map[string]any `json:"claims,omitempty"`
-	Context map[string]any `json:"context,omitempty"`
-	At      *time.Time     `json:"at,omitempty"`
+	SubjectType string         `json:"subject_type,omitempty"`
+	Name        string         `json:"name"`
+	Subject     string         `json:"subject"`
+	Claims      map[string]any `json:"claims,omitempty"`
+	Context     map[string]any `json:"context,omitempty"`
+	At          *time.Time     `json:"at,omitempty"`
 	// Service is the service the questions are asked of (default: the first service).
 	Service   string     `json:"service,omitempty"`
 	Questions []Question `json:"questions"`
@@ -567,6 +570,13 @@ func (f *Fixture) Validate() error {
 			owner = types[r.Type].Service
 		}
 
+		if r.SubjectType != nil {
+			typ := *r.SubjectType
+			if r.Subject == "" || typ == "" || typ == "group" || utf8.RuneCountInString(typ) > 64 {
+				bad("rule %q: invalid literal subject type %q", r.Name, typ)
+			}
+		}
+
 		for _, g := range []string{r.SubjectGroup, r.MemberOf, r.RequiresGroup} {
 			if g != "" && !groups[g] {
 				bad("rule %q: unknown group %q", r.Name, g)
@@ -598,6 +608,9 @@ func (f *Fixture) Validate() error {
 		}
 	}
 	for _, c := range f.Cases {
+		if typ := c.SubjectType; typ != "" && (typ == "group" || utf8.RuneCountInString(typ) > 64) {
+			bad("case %q: invalid subject type", c.Name)
+		}
 		if c.Service != "" && !slices.Contains(f.Services, c.Service) {
 			bad("case %q: unknown service %q", c.Name, c.Service)
 		}

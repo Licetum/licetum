@@ -353,7 +353,7 @@ func (a *App) peopleReached(ctx context.Context, rules []*model.AssignmentRule) 
 	now := time.Now()
 	counted := make([]map[string]bool, len(rules))
 	for _, p := range people {
-		env := engine.Env{Claims: engine.Claims(p.entry.Properties), Now: now}
+		env := engine.Env{SubjectType: p.entry.Type, Claims: engine.Claims(p.entry.Properties), Now: now}
 		identity, _ := engine.IdentityOf(members, p.entry.ID, env)
 		for i, rule := range rules {
 			if !slices.Contains(ruleServices[i], p.service) {

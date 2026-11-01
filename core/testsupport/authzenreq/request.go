@@ -99,19 +99,20 @@ var featureNames = []struct {
 
 // spec is a request in the making: what the options asked for.
 type spec struct {
-	fresh      bool
-	revision   int64
-	attrs      map[string]any
-	properties map[string]any
-	semantic   string
-	limit      int
-	token      string
-	explain    bool
-	used       feature
+	subjectType string
+	fresh       bool
+	revision    int64
+	attrs       map[string]any
+	properties  map[string]any
+	semantic    string
+	limit       int
+	token       string
+	explain     bool
+	used        feature
 }
 
 func newSpec(opts []Option) *spec {
-	s := &spec{}
+	s := &spec{subjectType: SubjectType}
 	for _, o := range opts {
 		o(s)
 	}
@@ -142,6 +143,15 @@ func Fresh() Option {
 // returned for the write. Zero or less asks for nothing, so the revision of a cluster that has seen no write can be passed as is.
 func AtLeast(revision int64) Option {
 	return func(s *spec) { s.revision = max(revision, 0) }
+}
+
+// WithSubjectType selects the explicit namespace; empty keeps the default user type.
+func WithSubjectType(typ string) Option {
+	return func(s *spec) {
+		if typ != "" {
+			s.subjectType = typ
+		}
+	}
 }
 
 // WithContext adds attributes to the context of the request, the ones the rules read (conditions with source context).
@@ -224,7 +234,7 @@ func (s *spec) context() map[string]any {
 }
 
 func (s *spec) subject(id string) map[string]any {
-	out := map[string]any{"type": SubjectType, "id": id}
+	out := map[string]any{"type": s.subjectType, "id": id}
 	if len(s.properties) > 0 {
 		props := make(map[string]any, len(s.properties))
 		for k, v := range s.properties {
@@ -318,7 +328,7 @@ func SearchSubject(ref string, resource Resource, action string, opts ...Option)
 	s := newSpec(opts)
 	s.allow("SearchSubject", featPage)
 	body := map[string]any{
-		"subject":  map[string]any{"type": SubjectType},
+		"subject":  map[string]any{"type": s.subjectType},
 		"resource": resource.wire(),
 		"action":   map[string]any{"name": action},
 	}

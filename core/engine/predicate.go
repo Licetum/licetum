@@ -15,18 +15,29 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// Env is what a decision reads about one request besides the subject: the claims of its token, the attributes the
+// Env is what a decision reads about one request: the explicit subject type, its properties, the attributes the
 // request carries (its context) and the time of the decision. Conditions read them by their source (see
 // model.PredicateCondition).
 type Env struct {
-	Claims  Claims
-	Context Claims
-	Now     time.Time
+	SubjectType string
+	Claims      Claims
+	Context     Claims
+	Now         time.Time
 }
 
 // NewEnv returns the environment of a request at the current time.
 func NewEnv(claims Claims, context map[string]any) Env {
-	return Env{Claims: claims, Context: context, Now: time.Now()}
+	return Env{SubjectType: "user", Claims: claims, Context: context, Now: time.Now()}
+}
+
+// WithSubjectType returns a copy for the explicit request subject namespace.
+func (e Env) WithSubjectType(typ string) Env { e.SubjectType = typ; return e }
+
+func (e Env) subjectType() string {
+	if e.SubjectType == "" {
+		return "user"
+	}
+	return e.SubjectType
 }
 
 // truth is the outcome of a condition. Unknown is what a condition reads from an attribute the request does not
