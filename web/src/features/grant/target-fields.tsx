@@ -144,7 +144,7 @@ export function LevelsFields({
   );
 }
 
-/** The place: a service, a type, and which of its resources — all of them, chosen ones, by attribute, by the person's claim. */
+/** The place: a service, a type, and which of its resources — all of them, chosen ones, by attribute, by the person's property. */
 export function WhereFields({
   form,
   patch,
@@ -193,7 +193,7 @@ export function WhereFields({
               { label: t('grant.where.all'), value: 'all' },
               { label: t('grant.where.resources'), value: 'resources', disabled: !data.hasSource },
               { label: t('grant.where.byAttr'), value: 'where', disabled: !data.hasSource },
-              { label: t('grant.where.byClaim'), value: 'claim', disabled: !data.hasSource },
+              { label: t('grant.where.byProperty'), value: 'property', disabled: !data.hasSource },
             ]}
           />
           {!data.hasSource && !data.synchronizers.isPending && (
@@ -238,13 +238,13 @@ export function WhereFields({
               </Typography.Text>
             </>
           )}
-          {form.scope === 'claim' && (
+          {form.scope === 'property' && (
             <Flex gap={8} wrap>
               <Input
-                aria-label={t('grant.where.claim')}
-                placeholder={t('grant.where.claim')}
-                value={form.claim}
-                onChange={(e) => patch({ claim: e.target.value })}
+                aria-label={t('grant.where.property')}
+                placeholder={t('grant.where.property')}
+                value={form.property}
+                onChange={(e) => patch({ property: e.target.value })}
                 className="mono"
                 style={{ flex: 1, minWidth: 160 }}
               />
@@ -257,7 +257,7 @@ export function WhereFields({
                 style={{ flex: 1, minWidth: 160 }}
               />
               <Typography.Text type="secondary" style={{ fontSize: 12, width: '100%' }}>
-                {t('grant.where.byClaimHint')}
+                {t('grant.where.byPropertyHint')}
               </Typography.Text>
             </Flex>
           )}

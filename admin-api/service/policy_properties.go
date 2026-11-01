@@ -43,11 +43,11 @@ func (a *App) PolicyProperties(ctx context.Context, serviceID uuid.UUID) ([]mode
 			FROM rules r, jsonb_array_elements(r.predicate) c
 			UNION ALL SELECT 'rule', COALESCE(c->>'source', 'subject'), c->>'attr'
 			FROM rules r, jsonb_array_elements(r.requires_predicate) c
-			UNION ALL SELECT 'target', 'subject', r.resource_from_claim->>'claim'
-			FROM rules r WHERE r.resource_from_claim IS NOT NULL
-			UNION ALL SELECT 'target', 'subject', rp.resource_from_claim->>'claim'
+			UNION ALL SELECT 'target', 'subject', r.resource_from_property->>'property'
+			FROM rules r WHERE r.resource_from_property IS NOT NULL
+			UNION ALL SELECT 'target', 'subject', rp.resource_from_property->>'property'
 			FROM rules r JOIN role_permission rp ON rp.role_id = r.role_id AND rp.type_resource_id = ANY($1)
-			WHERE rp.resource_from_claim IS NOT NULL
+			WHERE rp.resource_from_property IS NOT NULL
 			UNION ALL SELECT 'membership', COALESCE(c->>'source', 'subject'), c->>'attr'
 			FROM group_member gm, jsonb_array_elements(gm.predicate) c WHERE gm.enabled
 		)

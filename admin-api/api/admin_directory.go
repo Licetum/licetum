@@ -107,7 +107,7 @@ func (h *adminHandlers) registerDirectory(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        base + "/{subject_type}/{subject_id}",
 		Summary:     "A person of the service",
-		Description: "The entry with its properties and the groups the person is in now, decided with the stored properties as claims.",
+		Description: "The entry with its properties and the groups the person is in now, decided with the stored properties as properties.",
 		Tags:        []string{"Subject"},
 		Errors:      []int{http.StatusNotFound},
 	}, requireWholeType(model.PlatformGroupMember, model.ActionRead)), func(ctx context.Context, in *DirectoryEntryPath) (*server.Out[*model.DirectoryEntryDetail], error) {

@@ -380,7 +380,7 @@ function TestEditor(props: {
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [subject, setSubject] = useState('');
-  const [claims, setClaims] = useState<{ k: string; v: string }[]>([]);
+  const [claims, setProperties] = useState<{ k: string; v: string }[]>([]);
   const [checks, setChecks] = useState<
     { type?: string; resource: string; action: string; expect: 'allow' | 'deny' }[]
   >([{ resource: '', action: 'read', expect: 'allow' }]);
@@ -404,7 +404,7 @@ function TestEditor(props: {
         if (open) {
           setName('');
           setSubject('');
-          setClaims([]);
+          setProperties([]);
           setChecks([{ resource: '', action: 'read', expect: 'allow' }]);
         }
       }}
@@ -457,7 +457,7 @@ function TestEditor(props: {
                         style={{ width: 180 }}
                         value={c.k}
                         onChange={(e) =>
-                          setClaims(
+                          setProperties(
                             claims.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)),
                           )
                         }
@@ -467,7 +467,7 @@ function TestEditor(props: {
                         style={{ width: 240 }}
                         value={c.v}
                         onChange={(e) =>
-                          setClaims(
+                          setProperties(
                             claims.map((x, j) => (j === i ? { ...x, v: e.target.value } : x)),
                           )
                         }
@@ -476,12 +476,15 @@ function TestEditor(props: {
                         type="text"
                         aria-label={t('cond.remove')}
                         icon={<X size={14} aria-hidden />}
-                        onClick={() => setClaims(claims.filter((_, j) => j !== i))}
+                        onClick={() => setProperties(claims.filter((_, j) => j !== i))}
                       />
                     </Flex>
                   ))}
                   <div>
-                    <Button size="small" onClick={() => setClaims([...claims, { k: '', v: '' }])}>
+                    <Button
+                      size="small"
+                      onClick={() => setProperties([...claims, { k: '', v: '' }])}
+                    >
                       {t('check.addAttr')}
                     </Button>
                   </div>

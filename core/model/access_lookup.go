@@ -13,7 +13,7 @@ type AccessLookup struct {
 	Resource *string       `json:"resource_id" doc:"The resource asked about; null for the type as a whole"`
 	Name     *string       `json:"name" doc:"Name of the resource; null for the type as a whole"`
 	Entries  []AccessEntry `json:"entries" nullable:"false" doc:"The rules that cover the resource, denials included"`
-	Dynamic  []AccessEntry `json:"dynamic" nullable:"false" doc:"Rules that find their resource from a claim of whoever asks: whether they reach this one depends on that person's claims"`
+	Dynamic  []AccessEntry `json:"dynamic" nullable:"false" doc:"Rules that find their resource from a property of whoever asks: whether they reach this one depends on that person's properties"`
 	People   AccessPeople  `json:"people" doc:"What is known of the people the entries reach"`
 }
 
@@ -28,7 +28,7 @@ type AccessPeople struct {
 type AccessEntry struct {
 	Rule          RuleRef       `json:"rule" doc:"The rule, as an explanation names it"`
 	Name          *string       `json:"name" doc:"The name of the rule; null when it has none"`
-	Via           string        `json:"via" enum:"resource,ancestor,type,attribute,claim" doc:"How the rule reaches the resource: anchored on it (resource), on an ancestor (ancestor), on its type or a higher one (type), on the resources whose attributes match (attribute), or found by a claim (claim)"`
+	Via           string        `json:"via" enum:"resource,ancestor,type,attribute,claim" doc:"How the rule reaches the resource: anchored on it (resource), on an ancestor (ancestor), on its type or a higher one (type), on the resources whose attributes match (attribute), or found by a property (property)"`
 	Levels        []string      `json:"levels" nullable:"false" doc:"The levels that reach the resource: what the rule gives, cut by what the links let flow down"`
 	Who           AccessWho     `json:"who" doc:"Whom the rule applies to"`
 	Role          *NamedID      `json:"role" doc:"The role the rule grants; null for an inline rule"`
@@ -54,7 +54,7 @@ type KnownPerson struct {
 
 // AccessWho is whom a rule applies to.
 type AccessWho struct {
-	Kind      string               `json:"kind" enum:"user,group,condition,everyone" doc:"A subject, a group, everyone whose claims satisfy conditions, or everyone who signs in"`
+	Kind      string               `json:"kind" enum:"user,group,condition,everyone" doc:"A subject, a group, everyone whose properties satisfy conditions, or everyone who signs in"`
 	Subject   *string              `json:"subject" doc:"The subject, for kind user"`
 	Group     *NamedID             `json:"group" doc:"The group, for kind group"`
 	Predicate []PredicateCondition `json:"predicate" nullable:"false" doc:"The conditions, for kind condition"`

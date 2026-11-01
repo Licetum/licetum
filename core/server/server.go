@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"reflect"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -120,20 +119,7 @@ func newHumaError(status int, msg string, errs ...error) *apperr.Error {
 // Huma also serves the component schemas of the document under /schemas by default; schemas says whether that stays on.
 func newAPI(mux *http.ServeMux, title string, tags []*huma.Tag, schemas bool) huma.API {
 	cfg := huma.DefaultConfig(title, Version)
-	// Keep the published component names during the mechanical Go rename; P3-32 changes the wire format.
-	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", func(t reflect.Type, hint string) string {
-		name := huma.DefaultSchemaNamer(t, hint)
-		switch name {
-		case "ResourceFromProperty":
-			return "ResourceFromClaim"
-		case "PolicyResourceFromProperty":
-			return "PolicyResourceFromClaim"
-		case "PolicyProperty":
-			return "PolicyClaim"
-		default:
-			return name
-		}
-	})
+
 	// No $schema field in responses and no Link headers: the response shapes are part of the API
 	// contract (kept from the legacy Python version).
 	cfg.CreateHooks = nil

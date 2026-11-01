@@ -77,7 +77,7 @@ func (g *policyGenerator) target(forRole bool) map[string]any {
 	switch g.rng.Intn(10) {
 	case 0, 1, 2: // the whole type
 	case 3:
-		out["resource_from_claim"] = map[string]any{"claim": "branch_name", "lookup_type_resource_id": g.w.typeByName["branch"], "match_by": "name"}
+		out["resource_from_property"] = map[string]any{"property": "branch_name", "lookup_type_resource_id": g.w.typeByName["branch"], "match_by": "name"}
 		if typeName == "project" || typeName == "item" {
 			out["type_resource_id"] = g.w.typeByName["branch"]
 		}

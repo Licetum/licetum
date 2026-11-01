@@ -87,8 +87,8 @@ export function describeWhere(
   if (rule.resource_id) {
     const name = resourceName?.(rule.type_resource_id, rule.resource_id);
     target = name ? `«${name}»` : rule.resource_id;
-  } else if (rule.resource_from_claim) {
-    target = t('rule.fromClaim', { claim: rule.resource_from_claim.claim });
+  } else if (rule.resource_from_property) {
+    target = t('rule.fromProperty', { property: rule.resource_from_property.property });
   } else if (rule.resource_where?.length) {
     target = t('rule.where', { cond: describeConditions(rule.resource_where) });
   } else {
@@ -142,7 +142,7 @@ export function ruleToInput(rule: Rule): AssignmentRuleInput {
     input.type_resource_id = rule.type_resource_id;
     input.access = rule.access ?? [];
     if (rule.resource_id) input.resource_id = rule.resource_id;
-    if (rule.resource_from_claim) input.resource_from_claim = rule.resource_from_claim;
+    if (rule.resource_from_property) input.resource_from_property = rule.resource_from_property;
     if (rule.resource_where?.length) input.resource_where = rule.resource_where;
   }
   return input;

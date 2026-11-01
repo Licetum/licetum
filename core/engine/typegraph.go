@@ -153,7 +153,7 @@ func (g *TypeGraph) IsSync(id uuid.UUID) bool {
 	return ok && !n.Deleted && n.Sync
 }
 
-// LookupCut says the anchors of a resource_from_claim rule of type target, looked up among the resources of type lookup,
+// LookupCut says the anchors of a resource_from_property rule of type target, looked up among the resources of type lookup,
 // cannot all be found: the lookup type or the rule's type has no live synchronizer, or a type on a route between them has
 // none, so that the climb from a matched resource meets a parent that is not there (climbTypes). A pair of types no climb
 // reaches has no anchor to lose.
@@ -236,7 +236,7 @@ func (g *TypeGraph) AncestorTypes(ids ...uuid.UUID) map[uuid.UUID]bool {
 }
 
 // TypesBetween returns the live types on some route of type links from lower up to upper, both included, whatever
-// levels flow along it (the walk of a resource_from_claim lookup climbs them: findAncestorsBatch). Nothing when upper is
+// levels flow along it (the walk of a resource_from_property lookup climbs them: findAncestorsBatch). Nothing when upper is
 // neither lower nor above it.
 func (g *TypeGraph) TypesBetween(lower, upper uuid.UUID) []uuid.UUID {
 	if lower == upper {

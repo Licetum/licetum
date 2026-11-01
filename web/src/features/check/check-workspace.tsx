@@ -70,7 +70,7 @@ export function CheckWorkspace() {
   const [mode, setMode] = useState<'one' | 'list'>(params.get('mode') === 'list' ? 'list' : 'one');
   const [serviceSlug, setServiceSlug] = useState(params.get('service') ?? '');
   const [subject, setSubject] = useState(params.get('subject') ?? '');
-  const [claims, setClaims] = useState<Pair[]>([]);
+  const [claims, setProperties] = useState<Pair[]>([]);
   const [context, setContext] = useState<Pair[]>([]);
   const [questions, setQuestions] = useState<Question[]>([
     question({
@@ -251,7 +251,7 @@ export function CheckWorkspace() {
           label={t('check.attrs')}
           hint={t('check.attrsHint')}
           pairs={claims}
-          onChange={setClaims}
+          onChange={setProperties}
           keyPlaceholder="department"
           valuePlaceholder="sales"
           addLabel={t('check.addAttr')}

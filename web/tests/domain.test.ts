@@ -27,7 +27,7 @@ const rule = (patch: Partial<Rule> = {}): Rule =>
     predicate: null,
     requires_group_id: null,
     requires_predicate: [],
-    resource_from_claim: null,
+    resource_from_property: null,
     resource_id: null,
     resource_where: null,
     role_id: null as unknown as string,

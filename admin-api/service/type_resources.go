@@ -254,11 +254,11 @@ func (a *App) DeleteTypeResource(ctx context.Context, serviceID, typeResourceID 
 			sql  string
 		}{
 			{"synchronizer", `SELECT 1 FROM synchronizer WHERE type_resource_id = $1 AND deleted_at IS NULL`},
-			// A type is also referenced as the lookup type of a property-based target (resource_from_claim).
+			// A type is also referenced as the lookup type of a property-based target (resource_from_property).
 			{"assignment_rule", `SELECT 1 FROM assignment_rule WHERE type_resource_id = $1
-				OR resource_from_claim->>'lookup_type_resource_id' = $1::text`},
+				OR resource_from_property->>'lookup_type_resource_id' = $1::text`},
 			{"role_permission", `SELECT 1 FROM role_permission WHERE type_resource_id = $1
-				OR resource_from_claim->>'lookup_type_resource_id' = $1::text`},
+				OR resource_from_property->>'lookup_type_resource_id' = $1::text`},
 			{"type_resource", `SELECT 1 FROM type_resource_parent p JOIN type_resource c ON c.id = p.type_resource_id
 				WHERE p.parent_id = $1 AND c.deleted_at IS NULL`},
 		}

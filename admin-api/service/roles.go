@@ -211,7 +211,7 @@ func (a *App) createRolePermission(ctx context.Context, roleID uuid.UUID, in *mo
 		serviceID := &owner.ServiceID
 
 		p, err = engine.ScanRolePermission(q.QueryRow(ctx, `
-			INSERT INTO role_permission AS rp (service_id, id, role_id, type_resource_id, resource_id, resource_from_claim, access, resource_where)
+			INSERT INTO role_permission AS rp (service_id, id, role_id, type_resource_id, resource_id, resource_from_property, access, resource_where)
 			VALUES ((SELECT service_id FROM role WHERE id=$1),COALESCE($7::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6::jsonb)
 			RETURNING `+engine.RolePermissionColumns,
 			roleID, in.TypeResourceID, in.ResourceID, fromPropertyParam(in.ResourceFromProperty), in.Access, whereParam(in.ResourceWhere), id,
@@ -237,7 +237,7 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 	}
 	rows, err := a.DB.Query(ctx, `
 		SELECT `+engine.RolePermissionColumns+`, s.name, t.name,
-		       (rp.resource_id IS NULL AND rp.resource_from_claim IS NULL AND rp.resource_where IS NULL)
+		       (rp.resource_id IS NULL AND rp.resource_from_property IS NULL AND rp.resource_where IS NULL)
 		       OR `+engine.LiveSynchronizerExists("t.id")+`
 		FROM role_permission rp
 		JOIN type_resource t ON t.id = rp.type_resource_id
@@ -288,7 +288,7 @@ func (a *App) UpdateRolePermission(ctx context.Context, roleID, itemID uuid.UUID
 
 		p, err = engine.ScanRolePermission(q.QueryRow(ctx, `
 			UPDATE role_permission AS rp SET
-				type_resource_id = $3, resource_id = $4, resource_from_claim = $5::jsonb, access = $6, resource_where = $7::jsonb
+				type_resource_id = $3, resource_id = $4, resource_from_property = $5::jsonb, access = $6, resource_where = $7::jsonb
 			WHERE rp.id = $1 AND rp.role_id = $2
 			RETURNING `+engine.RolePermissionColumns,
 			itemID, roleID, in.TypeResourceID, in.ResourceID, fromPropertyParam(in.ResourceFromProperty), in.Access, whereParam(in.ResourceWhere),

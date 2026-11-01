@@ -76,7 +76,7 @@ contracts:
     phase: P1
     status: active
   - id: DEC10
-    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_claim (resource_from_property after P3) matches by name, id and meta attributes and anchors at the matched resource's ancestors of the rule's type through the resource links, whatever the inherit masks.
+    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_property (resource_from_property after P3) matches by name, id and meta attributes and anchors at the matched resource's ancestors of the rule's type through the resource links, whatever the inherit masks.
     oracle: decision tables
     level: pg
     phase: P1

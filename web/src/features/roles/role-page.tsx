@@ -232,8 +232,8 @@ export function RolePage({ roleId }: { roleId: string }) {
                   render: (_, p) =>
                     p.resource_id ? (
                       <span className="mono">{p.resource_id}</span>
-                    ) : p.resource_from_claim ? (
-                      t('rule.fromClaim', { claim: p.resource_from_claim.claim })
+                    ) : p.resource_from_property ? (
+                      t('rule.fromProperty', { property: p.resource_from_property.property })
                     ) : p.resource_where?.length ? (
                       t('rule.where', { cond: describeConditions(p.resource_where) })
                     ) : (

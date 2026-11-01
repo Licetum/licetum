@@ -40,7 +40,7 @@ type Group struct {
 type GroupMemberInput struct {
 	_             struct{}             `additionalProperties:"true"`
 	MemberGroupID *uuid.UUID           `json:"member_group_id" format:"uuid" required:"false" doc:"Nest another group as a whole: its members become members of this group (mutually exclusive with predicate)"`
-	Predicate     []PredicateCondition `json:"predicate" required:"false" doc:"AND conditions over subject claims; an empty list matches any subject"`
+	Predicate     []PredicateCondition `json:"predicate" required:"false" doc:"AND conditions over subject properties; an empty list matches any subject"`
 	Enabled       *bool                `json:"enabled" required:"false" default:"true" doc:"Whether the rule is active"`
 	ValidFrom     *time.Time           `json:"valid_from" required:"false" nullable:"true" doc:"The membership starts at this moment (RFC 3339); omitted or null — right away"`
 	ExpiresAt     *time.Time           `json:"expires_at" required:"false" nullable:"true" doc:"The membership ends at this moment (RFC 3339); omitted or null — never"`
@@ -72,7 +72,7 @@ type GroupMember struct {
 	ID            uuid.UUID            `json:"id" format:"uuid" doc:"Rule id"`
 	GroupID       uuid.UUID            `json:"group_id" format:"uuid" doc:"Id of the group the subject or group belongs to"`
 	MemberGroupID *uuid.UUID           `json:"member_group_id" format:"uuid" doc:"Nested group"`
-	Predicate     []PredicateCondition `json:"predicate" doc:"AND conditions over subject claims"`
+	Predicate     []PredicateCondition `json:"predicate" doc:"AND conditions over subject properties"`
 	Enabled       bool                 `json:"enabled" doc:"Whether the rule is active"`
 	ValidFrom     *time.Time           `json:"valid_from" nullable:"true" doc:"The membership starts at this moment; null — right away"`
 	ExpiresAt     *time.Time           `json:"expires_at" nullable:"true" doc:"The membership ends at this moment; null — never"`

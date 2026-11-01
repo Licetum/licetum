@@ -189,8 +189,8 @@ func TestIntegrationHierarchyCascade(t *testing.T) {
 
 func TestIntegrationHierarchyResourceFromProperty(t *testing.T) {
 	w := newWorld(t)
-	w.grant(map[string]any{"type_resource_id": w.rrs, "resource_from_claim": map[string]any{
-		"claim": "department", "lookup_type_resource_id": w.branch, "match_by": "name",
+	w.grant(map[string]any{"type_resource_id": w.rrs, "resource_from_property": map[string]any{
+		"property": "department", "lookup_type_resource_id": w.branch, "match_by": "name",
 	}})
 
 	// branch B3 -> its rrs R2 -> everything under R2

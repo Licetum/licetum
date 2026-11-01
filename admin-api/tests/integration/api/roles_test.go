@@ -62,8 +62,8 @@ func TestRoleValidationAndBlocking(t *testing.T) {
 	requireErrorCode(t, status, raw, http.StatusUnprocessableEntity, "access_level_invalid")
 
 	status, raw = w.do(http.MethodPost, w.admin.URL+items, map[string]any{
-		"type_resource_id": w.branch, "resource_id": "B1", "resource_from_claim": map[string]any{
-			"claim": "branch", "lookup_type_resource_id": w.branch,
+		"type_resource_id": w.branch, "resource_id": "B1", "resource_from_property": map[string]any{
+			"property": "branch", "lookup_type_resource_id": w.branch,
 		}, "access": []string{"read"},
 	})
 	requireErrorCode(t, status, raw, http.StatusUnprocessableEntity, "resource_target_exclusive")
@@ -200,7 +200,7 @@ func TestLookupTypeOfAPropertyTargetCannotBeDeleted(t *testing.T) {
 	region := w.typeResource(w.org, "region", "")
 	rule := w.must("POST", "/assignment_rule", map[string]any{
 		"type_resource_id": w.branch, "access": []string{"read"}, "subject": hierarchySubject,
-		"resource_from_claim": map[string]any{"claim": "region", "lookup_type_resource_id": region, "match_by": "name"},
+		"resource_from_property": map[string]any{"property": "region", "lookup_type_resource_id": region, "match_by": "name"},
 	})["id"].(string)
 
 	status, raw := w.do(http.MethodDelete, w.admin.URL+w.typePath("region"), nil)

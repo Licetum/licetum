@@ -25,7 +25,7 @@ export type Cond = { id: string; source: CondSource; attr: string; op: CondOp; v
 
 export type WhoMode = 'group' | 'person' | 'condition' | 'everyone';
 type WhatMode = 'levels' | 'role';
-export type ScopeMode = 'all' | 'resources' | 'where' | 'claim';
+export type ScopeMode = 'all' | 'resources' | 'where' | 'property';
 
 export type GrantForm = {
   who: WhoMode;
@@ -45,7 +45,7 @@ export type GrantForm = {
   scope: ScopeMode;
   resourceIds: string[];
   where: Cond[];
-  claim: string;
+  property: string;
   matchBy: string;
 
   validFrom?: string;
@@ -73,7 +73,7 @@ export const emptyForm = (): GrantForm => ({
   scope: 'all',
   resourceIds: [],
   where: [],
-  claim: '',
+  property: '',
   matchBy: 'name',
   requires: [],
   name: '',
@@ -137,7 +137,7 @@ export function problemOf(f: GrantForm, ctx: { hasSource: boolean }): Problem | 
       return { key: 'grant.problem.resources' };
     if (f.scope === 'where' && (f.where.length === 0 || !f.where.every(condReady)))
       return { key: 'grant.problem.where' };
-    if (f.scope === 'claim' && !f.claim.trim()) return { key: 'grant.problem.claim' };
+    if (f.scope === 'property' && !f.property.trim()) return { key: 'grant.problem.property' };
     if (f.scope !== 'all' && !ctx.hasSource) return { key: 'grant.problem.source' };
   }
   if (f.validFrom && f.expiresAt && f.validFrom > f.expiresAt)
@@ -173,12 +173,12 @@ export function buildInputs(f: GrantForm, lookupTypeId?: string): AssignmentRule
   const target: AssignmentRuleInput = { ...base, type_resource_id: f.typeId, access };
   if (f.scope === 'resources') return f.resourceIds.map((id) => ({ ...target, resource_id: id }));
   if (f.scope === 'where') return [{ ...target, resource_where: f.where.map(toPredicate) }];
-  if (f.scope === 'claim') {
+  if (f.scope === 'property') {
     return [
       {
         ...target,
-        resource_from_claim: {
-          claim: f.claim.trim(),
+        resource_from_property: {
+          property: f.property.trim(),
           lookup_type_resource_id: lookupTypeId ?? f.typeId ?? '',
           match_by: f.matchBy || 'name',
         },
@@ -233,7 +233,10 @@ export function sentence(f: GrantForm, p: SentenceParts, t: TFunction): string {
               type: p.typeName ?? '…',
               cond: f.where.map((c) => `${c.attr} ${c.value}`).join(' · '),
             })
-          : t('grant.sentence.placeClaim', { type: p.typeName ?? '…', claim: f.claim || '…' });
+          : t('grant.sentence.placeProperty', {
+              type: p.typeName ?? '…',
+              property: f.property || '…',
+            });
 
   const verb = f.deny ? 'deny' : f.exception ? 'except' : 'allow';
   return t(`grant.sentence.${verb}`, { who, levels, place, term });

@@ -71,7 +71,7 @@ Every admin request carries `Authorization: Bearer <token>`, issued by the self-
 - listing needs `read` on at least one entity, and the response is filtered to the readable ones;
 - changing an entity needs `write` on it (the id comes from the path);
 - a rule's target, and a rule or a role item on a platform policy, needs more: the policy as a whole;
-- **creating needs `write` on the whole type**: a rule with neither `resource_id` nor `resource_from_claim`. A point
+- **creating needs `write` on the whole type**: a rule with neither `resource_id` nor `resource_from_property`. A point
   `write` on one entity does not allow creating new ones.
 
 `GET /platform/me` returns the caller's access per type (`whole_type` and the point `entries`) for the interface;

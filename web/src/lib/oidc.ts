@@ -142,7 +142,7 @@ async function tokenRequest(params: Record<string, string>, fetchImpl: Fetch): P
 }
 
 /** The claims of a JWT, read without verifying it. */
-function unverifiedClaims(token: string): Record<string, unknown> | null {
+function unverifiedProperties(token: string): Record<string, unknown> | null {
   try {
     const part = token.split('.')[1];
     return part
@@ -160,8 +160,8 @@ function unverifiedClaims(token: string): Record<string, unknown> | null {
  */
 function nonceMatches(idToken: string | undefined, nonce: string): boolean {
   if (!idToken) return true;
-  const claim = unverifiedClaims(idToken)?.nonce;
-  return typeof claim === 'string' && sameSecret(claim, nonce);
+  const property = unverifiedProperties(idToken)?.nonce;
+  return typeof property === 'string' && sameSecret(property, nonce);
 }
 
 /** Parses an answer of the token endpoint: the tokens, or the error it names. */

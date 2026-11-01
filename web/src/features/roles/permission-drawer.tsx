@@ -36,11 +36,11 @@ function formOf(item?: RolePermissionWithContext): GrantForm {
         value: Array.isArray(c.value) ? c.value.join(', ') : c.value,
       })),
     });
-  } else if (item.resource_from_claim) {
+  } else if (item.resource_from_property) {
     Object.assign(form, {
-      scope: 'claim',
-      claim: item.resource_from_claim.claim,
-      matchBy: item.resource_from_claim.match_by ?? 'name',
+      scope: 'property',
+      property: item.resource_from_property.property,
+      matchBy: item.resource_from_property.match_by ?? 'name',
     });
   }
   return form;
@@ -76,7 +76,7 @@ export function PermissionDrawer(props: {
     accessList.length === 0 ||
     (form.scope === 'resources' && form.resourceIds.length === 0) ||
     (form.scope === 'where' && form.where.length === 0) ||
-    (form.scope === 'claim' && !form.claim.trim());
+    (form.scope === 'property' && !form.property.trim());
 
   const submit = async () => {
     setError(null);
@@ -86,12 +86,12 @@ export function PermissionDrawer(props: {
         ? form.resourceIds.map((id) => ({ ...base, resource_id: id }))
         : form.scope === 'where'
           ? [{ ...base, resource_where: form.where.map(toPredicate) }]
-          : form.scope === 'claim'
+          : form.scope === 'property'
             ? [
                 {
                   ...base,
-                  resource_from_claim: {
-                    claim: form.claim.trim(),
+                  resource_from_property: {
+                    property: form.property.trim(),
                     lookup_type_resource_id: form.typeId!,
                     match_by: form.matchBy || 'name',
                   },

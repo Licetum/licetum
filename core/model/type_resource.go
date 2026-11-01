@@ -170,7 +170,7 @@ type Resource struct {
 	Name     string           `json:"name" doc:"Resource name" example:"Branch1"`
 	ParentID *string          `json:"parent_id" doc:"Parent resource id — for a resource type with a single parent type" example:"d1"`
 	Parents  []ResourceParent `json:"parents" required:"false" nullable:"false" doc:"Parents of the resource (a resource may have several, of different types)"`
-	Meta     map[string]any   `json:"meta" required:"false" nullable:"false" doc:"Attributes the source reported besides id, name and the parents: strings or arrays of strings. Rules can match a claim against them (match_by meta.<name>)"`
+	Meta     map[string]any   `json:"meta" required:"false" nullable:"false" doc:"Attributes the source reported besides id, name and the parents: strings or arrays of strings. Rules can match a property against them (match_by meta.<name>)"`
 	// Active is set in the answers of the admin API only (never by a source).
 	Active *bool `json:"active,omitempty" required:"false" doc:"false for a resource that disappeared from its source: it is kept, switched off, and listed only with include_inactive"`
 }

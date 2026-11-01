@@ -4,7 +4,7 @@
 # slot) name rows that are not there. A grant that needs those rows stops (an allow rule that finds no anchor covers
 # nothing), but a denial must not stop with them, or deleting a synchronizer would lift it:
 #
-#   - a resource_from_claim denial with a claim in the request keeps an anchor that is no resource, like the denial on a
+#   - a resource_from_property denial with a claim in the request keeps an anchor that is no resource, like the denial on a
 #     resource the local copy does not have, when its lookup type, its own type or a type on the route between them has no
 #     resources. It covers nothing for real, and everything with a link to a parent that is not there, below the rule's type
 #     or the type itself, falls under it (fail closed, DEC11), whether or not the claim matches anything;
@@ -36,24 +36,24 @@ resources:
 rules:
   # The rule's type has no resources, the lookup type has: the claim is looked up among the parts, and the anchor is an item.
   - {name: w1-parts, subject: w1, type: part, access: [read]}
-  - {name: w1-deny-item, subject: w1, type: item, access: ["*"], deny: true, from_property: {claim: part_name, lookup_type: part, match_by: name}}
+  - {name: w1-deny-item, subject: w1, type: item, access: ["*"], deny: true, from_property: {property: part_name, lookup_type: part, match_by: name}}
   # The same, with an exception below the anchor: the whole of part.
   - {name: w5-parts, subject: w5, type: part, access: [read]}
-  - {name: w5-deny-item, subject: w5, type: item, access: ["*"], deny: true, from_property: {claim: part_name, lookup_type: part, match_by: name}}
+  - {name: w5-deny-item, subject: w5, type: item, access: ["*"], deny: true, from_property: {property: part_name, lookup_type: part, match_by: name}}
   - {name: w5-except-parts, subject: w5, type: part, access: [read], exception: true}
   # The lookup type and the rule's type have resources; the climb from a part to a region passes item, which has none.
   - {name: w2-parts, subject: w2, type: part, access: [read]}
-  - {name: w2-deny-region, subject: w2, type: region, access: ["*"], deny: true, from_property: {claim: part_name, lookup_type: part, match_by: name}}
+  - {name: w2-deny-region, subject: w2, type: region, access: ["*"], deny: true, from_property: {property: part_name, lookup_type: part, match_by: name}}
   # The lookup type has no resources, the rule's type has.
   - {name: w3-chips, subject: w3, type: chip, access: [read]}
   # (the grant on the whole of zone reaches the chips through the type links, and is the one the denial below is aimed at)
   - {name: w3-zones, subject: w3, type: zone, access: [read]}
-  - {name: w3-deny-zone, subject: w3, type: zone, access: ["*"], deny: true, from_property: {claim: slot_name, lookup_type: slot, match_by: name}}
+  - {name: w3-deny-zone, subject: w3, type: zone, access: ["*"], deny: true, from_property: {property: slot_name, lookup_type: slot, match_by: name}}
   # A denial by attributes on a type without resources.
   - {name: w4-chips, subject: w4, type: chip, access: [read]}
   - {name: w4-deny-slot, subject: w4, type: slot, access: ["*"], deny: true, where: [{attr: tier, op: eq, value: gold}]}
   # An allow rule that finds no anchor covers nothing: only the denial above stays.
-  - {name: w6-allow-item, subject: w6, type: item, access: [read], from_property: {claim: part_name, lookup_type: part, match_by: name}}
+  - {name: w6-allow-item, subject: w6, type: item, access: [read], from_property: {property: part_name, lookup_type: part, match_by: name}}
   - {name: w6-chips, subject: w6, type: chip, access: [read]}
   - {name: w6-allow-slot, subject: w6, type: slot, access: [read], where: [{attr: tier, op: eq, value: gold}]}
 cases:

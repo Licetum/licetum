@@ -455,8 +455,8 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	e.must("POST", "/assignment_rule/", map[string]any{"type_resource_id": planogram, "access": []string{"write"},
 		"predicate": []any{map[string]any{"attr": "level", "op": "in", "value": []string{"5", "6"}}}})
 	e.must("POST", "/assignment_rule/", map[string]any{"type_resource_id": branch, "access": []string{"audit"},
-		"member_of_group_id":  managers,
-		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": branch}})
+		"member_of_group_id":     managers,
+		"resource_from_property": map[string]any{"property": "branch_name", "lookup_type_resource_id": branch}})
 
 	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "u1", "department": "sales", "branch_name": "Branch3"})
 	bob := e.token(jwt.MapClaims{"sub": "bob", "level": 5})
@@ -544,7 +544,7 @@ func TestIntegrationSchemaValidation(t *testing.T) {
 		t.Fatal("the response must not contain $schema")
 	}
 	e.must("POST", "/assignment_rule/", map[string]any{
-		"type_resource_id": typeID, "access": []string{"read"}, "resource_id": nil, "resource_from_claim": nil,
+		"type_resource_id": typeID, "access": []string{"read"}, "resource_id": nil, "resource_from_property": nil,
 		"subject": nil, "member_of_group_id": nil, "predicate": []any{}, "subjectValue": "extra-field",
 	})
 	e.must("POST", "/group/"+group["id"].(string)+"/member/", map[string]any{"member_group_id": nil, "predicate": []any{}, "enabled": true})

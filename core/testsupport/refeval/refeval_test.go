@@ -378,7 +378,7 @@ cases:
 `)
 }
 
-// A resource_from_claim finds the resources of the lookup type by name, id or attribute (a list attribute holds the
+// A resource_from_property finds the resources of the lookup type by name, id or attribute (a list attribute holds the
 // value) and anchors the rule on their ancestors-or-self of its type; a resource_where covers the matching resources and
 // what lies below them.
 func TestPropertyAndAttributeTargets(t *testing.T) {
@@ -396,10 +396,10 @@ resources:
   - {type: project, id: P3, parents: [{type: branch, id: B2}], meta: {owner: alice, flag: true}}
   - {type: task, id: T2, parents: [{type: project, id: P2}]}
 rules:
-  - {name: own, everybody: true, type: project, from_property: {claim: username, lookup_type: project, match_by: meta.owner}, access: [read]}
-  - {name: co-own, everybody: true, type: project, from_property: {claim: username, lookup_type: project, match_by: meta.owners}, access: [write]}
-  - {name: branch-of-project, everybody: true, type: branch, from_property: {claim: project, lookup_type: project, match_by: id}, access: [audit]}
-  - {name: by-name, everybody: true, type: branch, from_property: {claim: branch, lookup_type: branch}, access: [list]}
+  - {name: own, everybody: true, type: project, from_property: {property: username, lookup_type: project, match_by: meta.owner}, access: [read]}
+  - {name: co-own, everybody: true, type: project, from_property: {property: username, lookup_type: project, match_by: meta.owners}, access: [write]}
+  - {name: branch-of-project, everybody: true, type: branch, from_property: {property: project, lookup_type: project, match_by: id}, access: [audit]}
+  - {name: by-name, everybody: true, type: branch, from_property: {property: branch, lookup_type: branch}, access: [list]}
   - {name: big, subject: z, type: project, where: [{attr: tier, op: gt, value: "6"}], access: [read]}
   - {name: flagged, subject: z, type: project, where: [{attr: flag, op: eq, value: "True"}], access: [write]}
 cases:
@@ -523,18 +523,18 @@ rules:
   - {name: grant-leaf, subject: u, type: leaf, access: [read]}
   - {name: grant-other, subject: u, type: other, access: [read]}
   # The climb from a leaf to the root passes mid, which has no synchronizer.
-  - {name: deny-root-by-claim, subject: u, type: root, access: ["*"], deny: true, from_property: {claim: leaf_name, lookup_type: leaf}}
+  - {name: deny-root-by-claim, subject: u, type: root, access: ["*"], deny: true, from_property: {property: leaf_name, lookup_type: leaf}}
   # The claim is looked up in mid, which has none.
-  - {name: deny-by-claim-in-mid, subject: v, type: root, access: ["*"], deny: true, from_property: {claim: mid_name, lookup_type: mid}}
+  - {name: deny-by-claim-in-mid, subject: v, type: root, access: ["*"], deny: true, from_property: {property: mid_name, lookup_type: mid}}
   - {name: grant-v, subject: v, type: leaf, access: [read]}
   # The climb from other to root passes nothing: it finds R1 for real.
-  - {name: deny-root-from-other, subject: w, type: root, access: ["*"], deny: true, from_property: {claim: other_name, lookup_type: other}}
+  - {name: deny-root-from-other, subject: w, type: root, access: ["*"], deny: true, from_property: {property: other_name, lookup_type: other}}
   - {name: grant-w, subject: w, type: other, access: [read]}
   # An attribute match on a type without resources.
   - {name: deny-mid-by-tier, subject: x, type: mid, access: ["*"], deny: true, where: [{attr: tier, op: eq, value: gold}]}
   - {name: grant-x, subject: x, type: leaf, access: [read]}
   # An allow rule that finds no anchor grants nothing.
-  - {name: allow-by-claim-in-mid, subject: y, type: root, access: [read], from_property: {claim: mid_name, lookup_type: mid}}
+  - {name: allow-by-claim-in-mid, subject: y, type: root, access: [read], from_property: {property: mid_name, lookup_type: mid}}
 cases:
   - name: the climb passes a type without resources
     subject: u

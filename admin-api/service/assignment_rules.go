@@ -16,7 +16,7 @@ import (
 )
 
 // checkResourceTarget: a type without a synchronizer has no resources to point at — a permission on it
-// grants access to the type as a whole (no resource_id, no resource_from_claim and no resource_where), and
+// grants access to the type as a whole (no resource_id, no resource_from_property and no resource_where), and
 // the permission result lists such a type as not_sync. Used for inline rules and for the items of roles alike.
 func (a *App) checkResourceTarget(ctx context.Context, q db.Querier, typeResourceID uuid.UUID, resourceID *string,
 	fromProperty *model.ResourceFromProperty, where []model.PredicateCondition) error {
@@ -104,8 +104,8 @@ func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *mod
 	return serviceID, nil
 }
 
-// fromClaimParam: SQL NULL (not JSON null) for a missing resource_from_claim, otherwise the
-// check constraint "resource_id IS NULL OR resource_from_claim IS NULL" does not work.
+// fromClaimParam: SQL NULL (not JSON null) for a missing resource_from_property, otherwise the
+// check constraint "resource_id IS NULL OR resource_from_property IS NULL" does not work.
 func fromPropertyParam(v *model.ResourceFromProperty) *string {
 	if v == nil {
 		return nil
@@ -165,7 +165,7 @@ func (a *App) createAssignmentRule(ctx context.Context, in *model.AssignmentRule
 		}
 		r, err = engine.ScanAssignmentRule(q.QueryRow(ctx, `
 			INSERT INTO assignment_rule AS ar
-				(service_id,id, role_id, type_resource_id, resource_id, resource_from_claim, access, subject, predicate, member_of_group_id,
+				(service_id,id, role_id, type_resource_id, resource_id, resource_from_property, access, subject, predicate, member_of_group_id,
 				 enabled, effect, exception, valid_from, expires_at, name, description,
 				 on_missing_attribute, requires_predicate, requires_group_id, resource_where, subject_type,subject_group_id)
 			VALUES ($23,COALESCE($22::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15,
@@ -192,7 +192,7 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 	rows, err := a.DB.Query(ctx, `
 		SELECT `+engine.AssignmentRuleColumns+`, s.name, t.name, ro.name,
 		       ar.role_id IS NOT NULL
-		       OR (ar.resource_id IS NULL AND ar.resource_from_claim IS NULL AND ar.resource_where IS NULL)
+		       OR (ar.resource_id IS NULL AND ar.resource_from_property IS NULL AND ar.resource_where IS NULL)
 		       OR `+engine.LiveSynchronizerExists("t.id")+`
 		FROM assignment_rule ar
 		LEFT JOIN type_resource t ON t.id = ar.type_resource_id
@@ -226,7 +226,7 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 	return out, rows.Err()
 }
 
-// lookupGraph loads the type graph the first time a list needs it: the target of a resource_from_claim is valid only while the
+// lookupGraph loads the type graph the first time a list needs it: the target of a resource_from_property is valid only while the
 // types it looks in and climbs through have synchronizers (engine.TypeGraph.LookupCut), which the SQL of the list does not see.
 type lookupGraph struct{ g *engine.TypeGraph }
 
@@ -300,7 +300,7 @@ func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *mo
 
 		r, err = engine.ScanAssignmentRule(q.QueryRow(ctx, `
 			UPDATE assignment_rule AS ar SET
-				role_id = $2, type_resource_id = $3, resource_id = $4, resource_from_claim = $5::jsonb, access = $6,
+				role_id = $2, type_resource_id = $3, resource_id = $4, resource_from_property = $5::jsonb, access = $6,
 				subject = $7, predicate = $8::jsonb, member_of_group_id = $9, enabled = $10,
 				effect = $11, exception = $12, valid_from = $13, expires_at = $14, name = $15, description = $16,
 				on_missing_attribute = $17, requires_predicate = $18::jsonb, requires_group_id = $19,

@@ -274,7 +274,7 @@ func (n *policyNames) item(p model.RolePermission) model.PolicyRoleItem {
 		ResourceFromProperty: n.property(p.ResourceFromProperty), ResourceWhere: p.ResourceWhere, Access: p.Access}
 }
 
-// property converts a resource_from_claim to the document: its lookup type is named.
+// property converts a resource_from_property to the document: its lookup type is named.
 func (n *policyNames) property(c *model.ResourceFromProperty) *model.PolicyResourceFromProperty {
 	if c == nil {
 		return nil
@@ -573,7 +573,7 @@ func (im *importer) itemInput(it model.PolicyRoleItem) (model.RolePermissionInpu
 		in.Access = []string{}
 	}
 	if it.ResourceFromProperty != nil {
-		property, err := im.claimInput(*it.ResourceFromProperty)
+		property, err := im.propertyInput(*it.ResourceFromProperty)
 		if err != nil {
 			return model.RolePermissionInput{}, err
 		}
@@ -582,8 +582,8 @@ func (im *importer) itemInput(it model.PolicyRoleItem) (model.RolePermissionInpu
 	return in, nil
 }
 
-// claimInput turns a resource_from_claim of the document into its input.
-func (im *importer) claimInput(c model.PolicyResourceFromProperty) (*model.ResourceFromProperty, error) {
+// propertyInput turns a resource_from_property of the document into its input.
+func (im *importer) propertyInput(c model.PolicyResourceFromProperty) (*model.ResourceFromProperty, error) {
 	lookup, err := im.typeRef(c.LookupType)
 	if err != nil {
 		return nil, err
@@ -775,7 +775,7 @@ func (im *importer) ruleInput(w model.PolicyRule) (model.AssignmentRuleInput, er
 		in.TypeResourceID = &id
 	}
 	if w.ResourceFromProperty != nil {
-		property, err := im.claimInput(*w.ResourceFromProperty)
+		property, err := im.propertyInput(*w.ResourceFromProperty)
 		if err != nil {
 			return in, err
 		}
@@ -828,7 +828,7 @@ func normalizeRule(r model.PolicyRule) model.PolicyRule {
 	out.ValidFrom = utcPtr(out.ValidFrom)
 	out.ExpiresAt = utcPtr(out.ExpiresAt)
 	if out.ResourceFromProperty != nil {
-		out.ResourceFromProperty = normalizeClaim(*out.ResourceFromProperty)
+		out.ResourceFromProperty = normalizeProperty(*out.ResourceFromProperty)
 	}
 	out.Predicate = nilIfEmpty(out.Predicate)
 	out.RequiresPredicate = nilIfEmpty(out.RequiresPredicate)
@@ -840,7 +840,7 @@ func normalizeRule(r model.PolicyRule) model.PolicyRule {
 func normalizeItem(it model.PolicyRoleItem) model.PolicyRoleItem {
 	out := it
 	if out.ResourceFromProperty != nil {
-		out.ResourceFromProperty = normalizeClaim(*out.ResourceFromProperty)
+		out.ResourceFromProperty = normalizeProperty(*out.ResourceFromProperty)
 	}
 	out.ResourceWhere = nilIfEmpty(out.ResourceWhere)
 	if out.Access == nil {
@@ -859,8 +859,8 @@ func normalizeMember(m model.PolicyGroupMember) model.PolicyGroupMember {
 	return out
 }
 
-// normalizeClaim makes the default match_by explicit.
-func normalizeClaim(c model.PolicyResourceFromProperty) *model.PolicyResourceFromProperty {
+// normalizeProperty makes the default match_by explicit.
+func normalizeProperty(c model.PolicyResourceFromProperty) *model.PolicyResourceFromProperty {
 	if c.MatchBy == "" {
 		c.MatchBy = model.MatchByName
 	}

@@ -286,7 +286,7 @@
       "title": "这将产生的效果"
     },
     "problem": {
-      "claim": "请填写此人令牌中的声明名称。",
+      "property": "请填写此人令牌中的声明名称。",
       "condition": "请至少添加一个条件并填写完整。",
       "dates": "开始日期晚于结束日期。",
       "everyone": "请确认所有人都将获得此访问权限。",
@@ -307,7 +307,7 @@
       "forever": "无截止日期。",
       "from": "自 {{date}} 起。",
       "placeAll": "服务“{{service}}”中类型“{{type}}”的所有资源",
-      "placeClaim": "通过声明“{{claim}}”找到的类型“{{type}}”的资源",
+      "placeProperty": "通过声明“{{property}}”找到的类型“{{type}}”的资源",
       "placeResources_other": "类型“{{type}}”的 {{count}} 个资源（{{names}}…）",
       "placeWhere": "类型“{{type}}”中满足 {{cond}} 的资源",
       "role": "{{who}} 将获得角色“{{role}}”的权限。{{term}}",
@@ -343,9 +343,9 @@
       "attrPlaceholder": "kind",
       "byAttr": "按属性",
       "byAttrHint": "属性（按数据源报告的）满足全部条件的资源。",
-      "byClaim": "按此人的属性",
-      "byClaimHint": "资源按声明的值找到：每个人获得其自身值所指向资源的访问权限。",
-      "claim": "令牌的声明（例如 department）",
+      "byProperty": "按此人的属性",
+      "byPropertyHint": "资源按声明的值找到：每个人获得其自身值所指向资源的访问权限。",
+      "property": "令牌的声明（例如 department）",
       "label": "范围",
       "manyRules_other": "将为每个资源创建一条访问权限：{{count}} 条。",
       "matchBy": "匹配方式：name、id 或 meta.<属性>",
@@ -1087,7 +1087,7 @@
     "everyone": "所有人",
     "exception": "例外",
     "from": "自 {{date}} 起",
-    "fromClaim": "按声明“{{claim}}”确定的资源",
+    "fromProperty": "按声明“{{property}}”确定的资源",
     "guardGroup": "仅限组成员",
     "kind": {
       "condition": "按条件",
@@ -1343,7 +1343,7 @@
     "via": {
       "ancestor": "上层资源",
       "attribute": "按属性",
-      "claim": "通过声明找到",
+      "property": "通过声明找到",
       "resource": "此资源",
       "type": "整个类型"
     }

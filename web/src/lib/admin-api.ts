@@ -8,7 +8,7 @@ const num = (v: number | string | undefined): number | undefined => {
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : undefined;
 };
 
-/** The session for a token answer of the identity provider. The lifetime comes from expires_in (this server's clock), the exp claim is the fallback. */
+/** The session for a token answer of the identity provider. The lifetime comes from expires_in (this server's clock), the exp property is the fallback. */
 export function sessionFromTokens(t: TokenAnswer, previous?: Session): Session {
   const now = Date.now();
   const expiresIn = num(t.expires_in);

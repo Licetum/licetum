@@ -21,7 +21,7 @@ var adminTags = []*huma.Tag{
 	{Name: "Type resource", Description: "Resource types of a service. The parent (type_resource_parent_id) may belong to another service and defines the permission inheritance chain."},
 	{Name: "Resource", Description: "Concrete resources of a type and the synchronizers that fetch them from the owning service (SQL query or HTTP)."},
 	{Name: "Group", Description: "Service-owned groups of people: a rule refers to the group itself with subject_group_id."},
-	{Name: "Group member", Description: "Who belongs to a group: by a predicate over claims (the properties of the subject) or by nesting another group."},
+	{Name: "Group member", Description: "Who belongs to a group: by a predicate over properties (the properties of the subject) or by nesting another group."},
 	{Name: "Role", Description: "Global roles: named sets of permissions. A role is not a subject: an assignment rule grants it (role_id)."},
 	{Name: "Role permission", Description: "The items of a role: access levels on a target of a resource type."},
 	{Name: "AssignmentRule", Description: "Rules granting access to a resource type or a specific resource."},
@@ -362,7 +362,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}/access",
 		Summary:     "Who has access to a resource",
-		Description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target.",
+		Description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a property are listed apart. Needs read on all assignment rules, because it shows them whatever their target.",
 		Tags:        []string{"Resource"},
 	}, requireWholeType(model.PlatformAssignmentRule, model.ActionRead)), func(ctx context.Context, in *struct {
 		TypeResourcePath
@@ -380,7 +380,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 	})
 
 	const syncPath = "/service/{service_id}/type_resource/{type_resource_id}/resource/synchronizer"
-	const syncDescription = "Before saving, the source is checked by fetching the resource probe_resource_id: if it is not found or the source is unavailable — 424. The single-resource SQL query uses the :id parameter and must return the columns id, name, parent_id; an HTTP source must serve GET {url}/{id} and GET {url}, optionally with the configured headers. Every other column (SQL) or field (HTTP) of a resource becomes its attribute (meta: strings or lists of strings) that rules can match a claim against (resource_from_claim.match_by = meta.<name>). Secrets (the password in the DSN, header values) are returned masked as ********; sending the mask back in an update keeps the stored value."
+	const syncDescription = "Before saving, the source is checked by fetching the resource probe_resource_id: if it is not found or the source is unavailable — 424. The single-resource SQL query uses the :id parameter and must return the columns id, name, parent_id; an HTTP source must serve GET {url}/{id} and GET {url}, optionally with the configured headers. Every other column (SQL) or field (HTTP) of a resource becomes its attribute (meta: strings or lists of strings) that rules can match a property against (resource_from_property.match_by = meta.<name>). Secrets (the password in the DSN, header values) are returned masked as ********; sending the mask back in an update keeps the stored value."
 
 	server.Register(api, withPolicy(huma.Operation{
 		OperationID: "create_synchronizer",
@@ -551,7 +551,7 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	const memberDescription = "Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively."
+	const memberDescription = "Membership is defined either by a predicate (AND conditions over the properties of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively."
 
 	server.Register(api, withPolicy(huma.Operation{
 		OperationID: "create_group_member",
@@ -796,8 +796,8 @@ func (h *adminHandlers) checkPlatformTargets(ctx context.Context, typeIDs ...uui
 }
 
 const rolePermissionDescription = "An item grants access levels on a target of a resource type, the same way an inline rule does: " +
-	"the whole type (no resource_id and no resource_from_claim), a resource (resource_id) or a resource computed from a claim " +
-	"of the subject (resource_from_claim). A specific resource can only be targeted on a type with a synchronizer (400 otherwise). " +
+	"the whole type (no resource_id and no resource_from_property), a resource (resource_id) or a resource computed from a property " +
+	"of the subject (resource_from_property). A specific resource can only be targeted on a type with a synchronizer (400 otherwise). " +
 	"'*' is not allowed in a role: denying everything is possible only with an inline deny rule. " +
 	"An item on a platform policy (the self-service types) needs write on that policy as a whole, as creating a rule on it does."
 
@@ -805,19 +805,19 @@ const rolePermissionDescription = "An item grants access levels on a target of a
 
 const ruleDescription = `What it grants — either **role_id** (all permissions of a role; each item of the role keeps its own
 target and access levels) or an inline permission: **type_resource_id** with **access** (for example ["read","write"]),
-on a specific resource (**resource_id**), on a resource computed from a claim at check time (**resource_from_claim**)
+on a specific resource (**resource_id**), on a resource computed from a property at check time (**resource_from_property**)
 or on the whole type (neither). The grant cascades to all resources of child types, including types of other
 services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
 has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
 Who the rule applies to — choose **subject** (a specific subject), **subject_group_id** (the group itself),
-**predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group).
+**predicate** (AND conditions over the properties of the subject) or **member_of_group_id** (all members of a group).
 These selectors are mutually exclusive. An empty predicate applies to everyone. The literal subject prefix group: is reserved.
 
 **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
 exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
 
-The owning service is derived from the type or role and cannot be changed. Referenced groups and roles must belong to that service; a claim lookup type may belong to another service.`
+The owning service is derived from the type or role and cannot be changed. Referenced groups and roles must belong to that service; a property lookup type may belong to another service.`
 
 func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 	server.Register(api, withPolicy(huma.Operation{

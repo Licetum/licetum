@@ -34,7 +34,7 @@ export const flowSchema = z.object({
 });
 
 /** The claims of a JWT, for display. */
-export const jwtClaimsSchema = z.record(z.string(), z.unknown());
+export const jwtPropertiesSchema = z.record(z.string(), z.unknown());
 
 /** `?issuer=` of `/api/discover`: an http(s) address. */
 export const discoverQuerySchema = z.object({

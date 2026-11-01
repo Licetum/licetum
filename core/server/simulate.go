@@ -35,7 +35,7 @@ func RegisterSimulation(api huma.API, app *engine.App, cfg *config.Config, decor
 
 The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
 request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.`
-	const person = ` subject.id is the person simulated and subject.properties are their claims, taken as they are given.`
+	const person = ` subject.id is the person simulated and subject.properties are their properties, taken as they are given.`
 	const searchNote = `
 
 Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are

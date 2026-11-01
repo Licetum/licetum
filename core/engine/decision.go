@@ -32,7 +32,7 @@ import (
 //     under the denial's anchor — the engine fails closed where the hierarchy is not fully known.
 
 // Instance is one applicable rule anchored at one place: a whole type, or one resource. A rule with
-// resource_from_claim yields an Instance per resolved anchor.
+// resource_from_property yields an Instance per resolved anchor.
 type Instance struct {
 	Rule       *model.AssignmentRule
 	Deny       bool

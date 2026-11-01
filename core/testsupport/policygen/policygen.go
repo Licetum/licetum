@@ -12,7 +12,7 @@
 //     then above types that have one;
 //   - 15-40 resources with one or more parents (two of the same type now and then), resources whose source reports no
 //     parent, parents that do not exist (unresolved links, at least one of them above other resources), duplicate and
-//     missing names, and attributes (strings and lists) that resource_where and resource_from_claim read;
+//     missing names, and attributes (strings and lists) that resource_where and resource_from_property read;
 //   - now and then a type that had a synchronizer when the resources were first synchronized and the policy written, and
 //     lost it since (Fixture.Before): the rows it reported stay in the local copy, resources of the types below it still
 //     name them as parents (links to a parent that is not there), and rules, role items and property lookups still name its
@@ -911,7 +911,7 @@ func (g *gen) resourceID(typ string) string {
 	return pick(g, g.idsOf(typ))
 }
 
-// fromClaim returns a resource_from_claim on a type: the property is looked up among the resources of the type itself (the
+// fromClaim returns a resource_from_property on a type: the property is looked up among the resources of the type itself (the
 // owner pattern), of a type below it (the rule climbs up), of a type that lost its synchronizer, or of any type, by name
 // (match_by given or left out), id or an attribute. The cases carry properties that match some resources and properties that match none (see gen.properties).
 func (g *gen) fromProperty(typ string) *policyfix.FromProperty {
@@ -1151,7 +1151,7 @@ func (g *gen) properties(subject string) map[string]any {
 	if g.chance(60) {
 		c["team"] = pick(g, tags)
 	}
-	// The properties resource_from_claim looks up: a resource's name or id most of the time, one that no resource has now and
+	// The properties resource_from_property looks up: a resource's name or id most of the time, one that no resource has now and
 	// then.
 	typ := g.syncTypeWithResources()
 	if g.chance(65) {

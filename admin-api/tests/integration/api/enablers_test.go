@@ -418,7 +418,7 @@ func TestWhoHasAccessListsTheRulesAndThePeople(t *testing.T) {
 
 	// A rule that finds its resource by a property is listed apart.
 	dynamic := w.grant(map[string]any{"type_resource_id": w.branch, "subject": "walker", "access": []string{"read"},
-		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": w.branch}})
+		"resource_from_property": map[string]any{"property": "branch_name", "lookup_type_resource_id": w.branch}})
 	res = look("?resource_id=B1")
 	dyn := res["dynamic"].([]any)
 	if len(dyn) != 1 || dyn[0].(map[string]any)["rule"].(map[string]any)["rule_id"] != dynamic {
@@ -588,7 +588,7 @@ func TestPreviewGrantSaysWhatARuleWouldDo(t *testing.T) {
 
 	// A rule that finds its resource by a property cannot be counted.
 	res = preview(map[string]any{"type_resource_id": w.branch, "subject": "walker", "access": []string{"read"},
-		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": w.branch}})
+		"resource_from_property": map[string]any{"property": "branch_name", "lookup_type_resource_id": w.branch}})
 	if res["dynamic"] != true {
 		t.Fatalf("dynamic: %s", mustJSON(res))
 	}

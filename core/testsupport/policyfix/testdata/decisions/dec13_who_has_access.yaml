@@ -8,7 +8,7 @@
 # (TestKnownSubjectsAreNotedAndForgotten: his groups are [sales]).
 #
 # Around the test: a rule of one subject never appears in the explanation of another; a denial of read leaves write; a
-# question about the type as a whole counts only the rules anchored on the type itself; resource_from_claim by id; a claim
+# question about the type as a whole counts only the rules anchored on the type itself; resource_from_property by id; a claim
 # whose value names no resource, or no claim at all, finds no anchor.
 #
 # division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
@@ -42,9 +42,9 @@ rules:
   - {name: sales-write-branch, member_of: sales, type: branch, access: [write]}
   - {name: mallory-deny-B2, subject: mallory, type: branch, resource: B2, access: [read], deny: true}
   - {name: zed-read-D2, subject: zed, type: division, resource: D2, access: [read]}
-  - {name: walker-read-by-name, subject: walker, type: branch, from_property: {claim: branch_name, lookup_type: branch}, access: [read]}
-  # resource_from_claim by id.
-  - {name: walker-id-read-by-id, subject: walker-id, type: branch, from_property: {claim: branch_id, lookup_type: branch, match_by: id}, access: [read]}
+  - {name: walker-read-by-name, subject: walker, type: branch, from_property: {property: branch_name, lookup_type: branch}, access: [read]}
+  # resource_from_property by id.
+  - {name: walker-id-read-by-id, subject: walker-id, type: branch, from_property: {property: branch_id, lookup_type: branch, match_by: id}, access: [read]}
 cases:
   # from admin-api/tests/integration/api/enablers_test.go:TestWhoHasAccessListsTheRulesAndThePeople
   - name: alice reads B2 through the grant on an ancestor, and the denial of another person is not hers

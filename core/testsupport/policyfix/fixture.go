@@ -203,10 +203,10 @@ type Target struct {
 	Where        []model.PredicateCondition `json:"where,omitempty"`
 }
 
-// FromProperty is resource_from_claim: the value of Property is looked up among the resources of LookupType by MatchBy (name,
+// FromProperty is resource_from_property: the value of Property is looked up among the resources of LookupType by MatchBy (name,
 // id or meta.<attribute>).
 type FromProperty struct {
-	Property   string `json:"claim"`
+	Property   string `json:"property"`
 	LookupType string `json:"lookup_type"`
 	MatchBy    string `json:"match_by,omitempty"` // default name
 }

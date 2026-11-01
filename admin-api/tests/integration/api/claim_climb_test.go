@@ -2,7 +2,7 @@
 
 package api_test
 
-// Integration test of what a resource_from_claim lookup needs synchronized: every type its climb passes. Same
+// Integration test of what a resource_from_property lookup needs synchronized: every type its climb passes. Same
 // Testcontainers environment as hierarchy_test.go; the resources come from the fake HTTP source of core/testsupport.
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// A resource_from_claim rule finds its anchors by climbing the resource links from the matched resource up to the rule's
+// A resource_from_property rule finds its anchors by climbing the resource links from the matched resource up to the rule's
 // type, so the request must synchronize every type on the way (TypeGraph.TypesBetween in prepare), also one no level flows
 // through and no rule or question names. Without its data the link below it stays unresolved, the climb stops there and a
 // denial found that way has no anchor: it fails open.
@@ -67,7 +67,7 @@ func TestIntegrationPropertyLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 		"type_resource_id": types["zone"], "subject": "alice", "access": []string{"read"}})["id"].(string)
 	deny := e.must("POST", "/assignment_rule", map[string]any{
 		"type_resource_id": types["zone"], "subject": "alice", "access": []string{"read"}, "effect": "deny",
-		"resource_from_claim": map[string]any{"claim": "blocked", "lookup_type_resource_id": types["space"], "match_by": "id"},
+		"resource_from_property": map[string]any{"property": "blocked", "lookup_type_resource_id": types["space"], "match_by": "id"},
 	})["id"].(string)
 
 	typeIDs := []string{types["zone"], types["team"], types["squad"], types["space"]}

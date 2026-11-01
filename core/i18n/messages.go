@@ -63,7 +63,7 @@ const (
 	LintRuleTargetDead            Key = "lint_rule_target_dead"
 	LintRuleLookupDead            Key = "lint_rule_lookup_dead"
 	LintRuleEveryone              Key = "lint_rule_everyone"
-	LintDenyMissingClaim          Key = "lint_deny_missing_claim"
+	LintDenyMissingProperty       Key = "lint_deny_missing_claim"
 	LintGroupEmpty                Key = "lint_group_empty"
 	LintExceptionNothingToLift    Key = "lint_exception_nothing_to_lift"
 	LintResourceWhereEmpty        Key = "lint_resource_where_empty"
@@ -87,6 +87,7 @@ const (
 	ContextInvalid                Key = "context_invalid"
 	ResourceWhereAttrInvalid      Key = "resource_where_attr_invalid"
 	AccessEmpty                   Key = "access_empty"
+	ResourceTargetRetired         Key = "resource_target_retired"
 	ResourceTargetExclusive       Key = "resource_target_exclusive"
 	SubjectTargetExclusive        Key = "subject_target_exclusive"
 	ServiceUpdateEmpty            Key = "service_update_empty"
@@ -377,7 +378,7 @@ var catalog = map[Key]Text{
 		RU: "Правило %s выдаёт доступ всем, кто входит в систему",
 		ZH: "规则 %s 向所有登录用户授予访问权限",
 	},
-	LintDenyMissingClaim: {
+	LintDenyMissingProperty: {
 		EN: "Rule %s denies on a claim that a token may lack: a token without it is denied",
 		RU: "Правило %s запрещает по клейму, которого может не быть в токене: токен без него получает запрет",
 		ZH: "规则 %s 依据可能缺失于令牌中的声明拒绝：没有该声明的令牌会被拒绝",
@@ -517,10 +518,15 @@ var catalog = map[Key]Text{
 		RU: "Поле access должно содержать хотя бы один уровень доступа",
 		ZH: "字段 access 必须至少包含一个访问级别",
 	},
+	ResourceTargetRetired: {
+		EN: "Field %q has been replaced by %q",
+		RU: "Поле %q заменено на %q",
+		ZH: "字段 %q 已被 %q 替代",
+	},
 	ResourceTargetExclusive: {
-		EN: "Specify at most one of: resource_id or resource_from_claim",
-		RU: "Укажите не более одного из: resource_id или resource_from_claim",
-		ZH: "resource_id 和 resource_from_claim 最多只能指定一个",
+		EN: "Specify at most one of: resource_id or resource_from_property",
+		RU: "Укажите не более одного из: resource_id или resource_from_property",
+		ZH: "resource_id 和 resource_from_property 最多只能指定一个",
 	},
 	SubjectTargetExclusive: {
 		EN: "Specify at most one of: subject, subject_group_id, member_of_group_id or predicate",
@@ -528,9 +534,9 @@ var catalog = map[Key]Text{
 		ZH: "subject、subject_group_id、member_of_group_id 和 predicate 最多只能指定一个",
 	},
 	RoleAssignmentInlineExclusive: {
-		EN: "With role_id do not set type_resource_id, resource_id, resource_from_claim or access: the permissions come from the role",
-		RU: "С role_id нельзя задавать type_resource_id, resource_id, resource_from_claim и access: права берутся из роли",
-		ZH: "指定 role_id 时不能设置 type_resource_id、resource_id、resource_from_claim 或 access：权限来自角色",
+		EN: "With role_id do not set type_resource_id, resource_id, resource_from_property or access: the permissions come from the role",
+		RU: "С role_id нельзя задавать type_resource_id, resource_id, resource_from_property и access: права берутся из роли",
+		ZH: "指定 role_id 时不能设置 type_resource_id、resource_id、resource_from_property 或 access：权限来自角色",
 	},
 	AssignmentRuleTargetRequired: {
 		EN: "Specify role_id, or type_resource_id with access",
@@ -747,9 +753,9 @@ var catalog = map[Key]Text{
 		ZH: "未找到授权规则 %s",
 	},
 	AssignmentRuleNeedsSynchronizer: {
-		EN: "Resource type %s has no synchronizer and hence no resources: a rule or a role permission can only point at the type as a whole, without resource_id and resource_from_claim",
-		RU: "У типа ресурса %s нет синхронизатора, а значит и ресурсов: правило или пункт роли выдаются только на тип целиком, без resource_id и resource_from_claim",
-		ZH: "资源类型 %s 没有同步器，因此没有资源：规则或角色权限项只能授予整个类型，不能指定 resource_id 或 resource_from_claim",
+		EN: "Resource type %s has no synchronizer and hence no resources: a rule or a role permission can only point at the type as a whole, without resource_id and resource_from_property",
+		RU: "У типа ресурса %s нет синхронизатора, а значит и ресурсов: правило или пункт роли выдаются только на тип целиком, без resource_id и resource_from_property",
+		ZH: "资源类型 %s 没有同步器，因此没有资源：规则或角色权限项只能授予整个类型，不能指定 resource_id 或 resource_from_property",
 	},
 
 	AdminAuthNotConfigured: {

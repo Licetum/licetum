@@ -33,7 +33,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/policy/test",
 		Summary:     "Run policy tests",
-		Description: "Answers the scenarios as the simulation does, with the subjects' claims and request attributes, and the data as it is now. Each expectation says whether the answer must be allowed or must not be. The report names the rules that decided each answer, and the coverage: the rules in force that apply to the service's resource types, and those that no scenario reached. Nothing is stored by this call: the scenarios a service keeps are under /policy/scenarios.",
+		Description: "Answers the scenarios as the simulation does, with the subjects' properties and request attributes, and the data as it is now. Each expectation says whether the answer must be allowed or must not be. The report names the rules that decided each answer, and the coverage: the rules in force that apply to the service's resource types, and those that no scenario reached. Nothing is stored by this call: the scenarios a service keeps are under /policy/scenarios.",
 		Tags:        []string{"Policy"},
 	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *struct {
 		ServicePath
@@ -118,7 +118,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service/{service_id}/policy/properties",
 		Summary:     "The properties of the subject and the context attributes the policy of a service reads",
-		Description: "The claims and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in claim-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. The claims are the keys of subject.properties, the attributes the keys of context, that a PEP of the service has to send for the answers to be the real ones.",
+		Description: "The properties and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in property-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. The properties are the keys of subject.properties, the attributes the keys of context, that a PEP of the service has to send for the answers to be the real ones.",
 		Tags:        []string{"Policy"},
 	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *ServicePath) (*server.Out[[]model.PolicyProperty], error) {
 		out, err := h.app.PolicyProperties(ctx, in.ServiceID)
@@ -133,7 +133,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service/{service_id}/policy/lint",
 		Summary:     "Lint the policy of a service",
-		Description: "Finds the rules that decide nothing (disabled, outside their validity, naming a resource of a type without a synchronizer, guarding on a group without members), the rules that grant more than they seem to (to everyone who signs in, or denying on a claim a token may lack), the duplicates, and the entities nothing uses (roles, access groups). Each finding has a severity, a stable code and a message in the request language.",
+		Description: "Finds the rules that decide nothing (disabled, outside their validity, naming a resource of a type without a synchronizer, guarding on a group without members), the rules that grant more than they seem to (to everyone who signs in, or denying on a property a token may lack), the duplicates, and the entities nothing uses (roles, access groups). Each finding has a severity, a stable code and a message in the request language.",
 		Tags:        []string{"Policy"},
 	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *ServicePath) (*server.Out[*model.LintReport], error) {
 		out, err := h.app.Lint(ctx, in.ServiceID)

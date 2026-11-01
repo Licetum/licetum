@@ -208,7 +208,7 @@ func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 // createRules loads fixture rows with COPY and publishes the fixture transaction's
 // revision atomically. Measured writes still go through the real admin API.
 func createRules(ctx context.Context, e *env, p Profile, fx *fixture) error {
-	columns := []string{"id", "type_resource_id", "resource_id", "resource_from_claim", "access", "subject", "predicate",
+	columns := []string{"id", "type_resource_id", "resource_id", "resource_from_property", "access", "subject", "predicate",
 		"member_of_group_id", "enabled", "effect", "exception", "on_missing_attribute", "requires_predicate", "subject_group_id", "service_id"}
 	var n int64
 	err := support.RawPolicyTx(ctx, e.pool, func(tx pgx.Tx) error {

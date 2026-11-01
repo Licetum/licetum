@@ -22,7 +22,7 @@ type PolicyTestCheck struct {
 type PolicyTestCase struct {
 	Name       string            `json:"name" minLength:"1" maxLength:"200" doc:"What the scenario is about" example:"sales read the branches"`
 	Subject    string            `json:"subject" minLength:"1" doc:"The subject, named as the rules name it (preferred_username, or sub)" example:"alice"`
-	Properties map[string]any    `json:"claims,omitempty" doc:"The claims of the subject (subject.properties of an AuthZEN request)"`
+	Properties map[string]any    `json:"claims,omitempty" doc:"The properties of the subject (subject.properties of an AuthZEN request)"`
 	Context    RequestContext    `json:"context,omitempty" doc:"The attributes of the request"`
 	Checks     []PolicyTestCheck `json:"checks" minItems:"1" maxItems:"100" nullable:"false" doc:"The answers the scenario must get"`
 }
@@ -123,7 +123,7 @@ type PolicyGroup struct {
 // PolicyGroupMember is a membership: a predicate over the properties, or a group nested as a whole.
 type PolicyGroupMember struct {
 	Group     *string              `json:"group,omitempty" doc:"The name of a group nested as a whole; mutually exclusive with predicate"`
-	Predicate []PredicateCondition `json:"predicate,omitempty" doc:"AND conditions over the claims; an empty list matches any subject"`
+	Predicate []PredicateCondition `json:"predicate,omitempty" doc:"AND conditions over the properties; an empty list matches any subject"`
 	Enabled   *bool                `json:"enabled,omitempty" doc:"Whether the membership is active; absent — active"`
 	ValidFrom *time.Time           `json:"valid_from,omitempty" doc:"The membership starts at this moment"`
 	ExpiresAt *time.Time           `json:"expires_at,omitempty" doc:"The membership ends at this moment"`
@@ -139,14 +139,14 @@ type PolicyRole struct {
 type PolicyRoleItem struct {
 	Type                 string                      `json:"type" doc:"The resource type, as service/type" example:"org/branch"`
 	ResourceID           *string                     `json:"resource_id,omitempty" doc:"A resource of the type"`
-	ResourceFromProperty *PolicyResourceFromProperty `json:"resource_from_claim,omitempty" doc:"A resource computed from a claim of the subject"`
+	ResourceFromProperty *PolicyResourceFromProperty `json:"resource_from_property,omitempty" doc:"A resource computed from a property of the subject"`
 	ResourceWhere        []PredicateCondition        `json:"resource_where,omitempty" doc:"The resources whose attributes match"`
 	Access               []string                    `json:"access" nullable:"false" doc:"Access levels, or access groups as @name"`
 }
 
-// PolicyResourceFromProperty is resource_from_claim with the lookup type named.
+// PolicyResourceFromProperty is resource_from_property with the lookup type named.
 type PolicyResourceFromProperty struct {
-	Property   string `json:"claim" doc:"The claim whose value is looked up"`
+	Property   string `json:"property" doc:"The property whose value is looked up"`
 	LookupType string `json:"lookup_type" doc:"The resource type the value is looked up in, as service/type"`
 	MatchBy    string `json:"match_by,omitempty" doc:"name, id or meta.<attribute>; absent — name"`
 }
@@ -159,11 +159,11 @@ type PolicyRule struct {
 	Type                 *string                     `json:"type,omitempty" doc:"The resource type of the inline permission, as service/type; absent for a role rule"`
 	Role                 *string                     `json:"role,omitempty" doc:"The name of the role granted; absent for an inline rule"`
 	ResourceID           *string                     `json:"resource_id,omitempty" doc:"A resource of the type"`
-	ResourceFromProperty *PolicyResourceFromProperty `json:"resource_from_claim,omitempty" doc:"A resource computed from a claim of the subject"`
+	ResourceFromProperty *PolicyResourceFromProperty `json:"resource_from_property,omitempty" doc:"A resource computed from a property of the subject"`
 	ResourceWhere        []PredicateCondition        `json:"resource_where,omitempty" doc:"The resources whose attributes match"`
 	Access               []string                    `json:"access,omitempty" doc:"Access levels, or access groups as @name"`
 	Subject              *string                     `json:"subject,omitempty" doc:"A specific subject; group: is reserved"`
-	Predicate            []PredicateCondition        `json:"predicate,omitempty" doc:"AND conditions over the claims and the request"`
+	Predicate            []PredicateCondition        `json:"predicate,omitempty" doc:"AND conditions over the properties and the request"`
 	MemberOf             *string                     `json:"member_of,omitempty" doc:"The name of the group whose members the rule covers"`
 	Enabled              *bool                       `json:"enabled,omitempty" doc:"Whether the rule is active; absent — active"`
 	Effect               string                      `json:"effect,omitempty" enum:"allow,deny" doc:"allow or deny; absent — allow"`

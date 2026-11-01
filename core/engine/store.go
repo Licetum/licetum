@@ -11,7 +11,7 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-const AssignmentRuleColumns = `ar.id, ar.role_id, ar.type_resource_id, ar.resource_id, ar.resource_from_claim, ar.access,
+const AssignmentRuleColumns = `ar.id, ar.role_id, ar.type_resource_id, ar.resource_id, ar.resource_from_property, ar.access,
 	ar.subject, ar.predicate, ar.member_of_group_id, ar.enabled, ar.effect, ar.exception, ar.valid_from, ar.expires_at,
 	ar.name, ar.description, ar.on_missing_attribute, ar.requires_predicate, ar.requires_group_id, ar.resource_where,
 	ar.subject_type,ar.service_id,ar.subject_group_id`
@@ -83,7 +83,7 @@ func ScanGroupMember(row pgx.Row) (*model.GroupMember, error) {
 }
 
 // RolePermissionColumns are the columns scanRolePermission reads.
-const RolePermissionColumns = `rp.id, rp.role_id, rp.type_resource_id, rp.resource_id, rp.resource_from_claim, rp.access,
+const RolePermissionColumns = `rp.id, rp.role_id, rp.type_resource_id, rp.resource_id, rp.resource_from_property, rp.access,
 	rp.resource_where,rp.service_id`
 
 // ScanRolePermission reads the rolePermissionColumns columns plus any extra dest (if given).

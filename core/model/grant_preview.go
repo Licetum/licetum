@@ -7,7 +7,7 @@ type GrantPreview struct {
 	Types          []GrantPreviewType `json:"types" nullable:"false" doc:"The covered resources by type"`
 	Sample         []string           `json:"sample" nullable:"false" doc:"The names of the first covered resources"`
 	Capability     bool               `json:"capability" doc:"The rule is on a type without a source: it grants a permission without resources, so there is nothing to count"`
-	Dynamic        bool               `json:"dynamic" doc:"The rule finds its resource from a claim of whoever asks, so what it covers depends on the person: Resources does not count it"`
+	Dynamic        bool               `json:"dynamic" doc:"The rule finds its resource from a property of whoever asks, so what it covers depends on the person: Resources does not count it"`
 	Who            AccessWho          `json:"who" doc:"Whom the rule applies to"`
 	People         GrantPeople        `json:"people" doc:"The known subjects the rule would reach"`
 	Conflicts      []GrantConflict    `json:"conflicts" nullable:"false" doc:"Denials and exceptions in force that meet the rule: a denial above it or inside it narrows or cancels what it grants"`

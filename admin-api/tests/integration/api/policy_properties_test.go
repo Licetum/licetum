@@ -17,7 +17,7 @@ func TestPolicyPropertiesListWhatTheRulesRead(t *testing.T) {
 	w.grant(map[string]any{"type_resource_id": w.branch, "member_of_group_id": group, "access": []string{"read"}, "requires_predicate": []any{
 		map[string]any{"attr": "ip", "op": "in_cidr", "source": "context", "value": []string{"10.0.0.0/8"}}}})
 	w.grant(map[string]any{"type_resource_id": w.branch, "subject": "walker", "access": []string{"read"},
-		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": w.branch}})
+		"resource_from_property": map[string]any{"property": "branch_name", "lookup_type_resource_id": w.branch}})
 	// A rule on a type of another service does not belong to this one.
 	w.must("POST", "/service/"+w.appSvc+"/type_resource", map[string]any{"name": "other"})
 

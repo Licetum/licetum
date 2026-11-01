@@ -124,7 +124,7 @@ const conditionAttrSQL = `CASE WHEN c->>'source' = 'context' THEN 'context:' ELS
 const notNowSQL = `COALESCE(c->>'source', 'subject') <> 'now'`
 
 // RequestAttributes reads the attributes the rules look at: the conditions of the rules, of their guards and of the group
-// memberships, and the properties of the resource_from_claim specs (of rules and of role items).
+// memberships, and the properties of the resource_from_property specs (of rules and of role items).
 func (a *App) RequestAttributes(ctx context.Context) ([]string, error) {
 	return requestAttributes(ctx, a.DB)
 }
@@ -135,8 +135,8 @@ func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
 			SELECT `+conditionAttrSQL+` AS attr FROM assignment_rule, jsonb_array_elements(predicate) c WHERE `+notNowSQL+`
 			UNION ALL SELECT `+conditionAttrSQL+` FROM assignment_rule, jsonb_array_elements(requires_predicate) c WHERE `+notNowSQL+`
 			UNION ALL SELECT `+conditionAttrSQL+` FROM group_member, jsonb_array_elements(predicate) c WHERE `+notNowSQL+`
-			UNION ALL SELECT 'subject:' || (resource_from_claim->>'claim') FROM assignment_rule WHERE resource_from_claim IS NOT NULL
-			UNION ALL SELECT 'subject:' || (resource_from_claim->>'claim') FROM role_permission WHERE resource_from_claim IS NOT NULL
+			UNION ALL SELECT 'subject:' || (resource_from_property->>'property') FROM assignment_rule WHERE resource_from_property IS NOT NULL
+			UNION ALL SELECT 'subject:' || (resource_from_property->>'property') FROM role_permission WHERE resource_from_property IS NOT NULL
 		) x WHERE attr IS NOT NULL ORDER BY attr`)
 	if err != nil {
 		return nil, err
@@ -710,7 +710,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	}
 
 	// The types the applicable rules reach (the type itself, its descendants and the lookup type of
-	// resource_from_claim) are brought up to the state of their sources. From here on everything is SQL
+	// resource_from_property) are brought up to the state of their sources. From here on everything is SQL
 	// over the local copy: not a single live request per resource.
 	involved := map[uuid.UUID]bool{}
 	for _, name := range asked {
@@ -764,7 +764,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 func (p *Prepared) hasResources(typeID uuid.UUID) bool { return p.sourced[typeID] }
 
 // BuildInstances turns the applicable rules into instances anchored at whole types or at resources.
-// A rule on a resource that is not in the cache has no anchor and no effect; a rule with resource_from_claim
+// A rule on a resource that is not in the cache has no anchor and no effect; a rule with resource_from_property
 // yields one instance per ancestor found, and a rule with resource_where one per resource whose attributes match.
 // The lookups of all the rules run together, in parallel with the anchors of the rules that name a resource.
 // g is the type graph the lookups climb (see findAncestorsBatch); it also says which types have resources (IsSync):
@@ -779,7 +779,7 @@ func (a *App) BuildInstances(ctx context.Context, g *TypeGraph, rules []model.As
 func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool, sourced func(uuid.UUID) bool) ([]Instance, error) {
 	var refs []anchorRef
 	var lookups []ancestorLookup
-	claimValues := map[int]string{}
+	propertyValues := map[int]string{}
 	var groupTypes []uuid.UUID
 	type climb struct {
 		types []uuid.UUID
@@ -799,7 +799,7 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 			if !PyTruthy(value) {
 				continue
 			}
-			claimValues[i] = PyStr(value)
+			propertyValues[i] = PyStr(value)
 			pair := [2]uuid.UUID{spec.LookupTypeResourceID, *r.TypeResourceID}
 			c, ok := between[pair]
 			if !ok {
@@ -876,7 +876,7 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 				in := base
 				id := n.ID
 				in.AnchorRow, in.AnchorExt = &id, n.Ext
-				in.Note += fmt.Sprintf("; resource %s found by claim %s=%s", n.Ext, rule.ResourceFromProperty.Property, claimValues[i])
+				in.Note += fmt.Sprintf("; resource %s found by claim %s=%s", n.Ext, rule.ResourceFromProperty.Property, propertyValues[i])
 				out = append(out, in)
 			}
 			if base.Deny && cut[i] {
@@ -914,7 +914,7 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 	return out, nil
 }
 
-// climbTypes is TypesBetween(lower, upper) for the lookup of a resource_from_claim rule: the types the climb from a matched
+// climbTypes is TypesBetween(lower, upper) for the lookup of a resource_from_property rule: the types the climb from a matched
 // resource of the lookup type up to the rule's type may pass. Only types with resources count: a type without a live
 // synchronizer has none to match, to pass or to anchor at. It is nil when the lookup type or the rule's type has none,
 // and leaves out the types between without one, where the climb stops as at an unresolved link (findAncestorsBatch).

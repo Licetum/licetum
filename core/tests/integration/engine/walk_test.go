@@ -19,7 +19,7 @@ import (
 	support "github.com/licetum/licetum/core/testsupport"
 )
 
-// The anchors of a resource_from_claim rule are found by walking the resource links up from the matched resources
+// The anchors of a resource_from_property rule are found by walking the resource links up from the matched resources
 // (findAncestorsBatch, through BuildInstances). The fixture is a hierarchy of five levels with two side hierarchies that
 // lie on no route to the targets: division > region > branch > project > document, a project is also in a zone, and a
 // document also has a tag (tagset > tag). Some documents have two projects, and some projects are switched off.
@@ -58,7 +58,7 @@ type walkFixture struct {
 	all   []*walkResource
 }
 
-// walkScenario is one resource_from_claim rule: the resources of type lookup matching value, and their ancestors of
+// walkScenario is one resource_from_property rule: the resources of type lookup matching value, and their ancestors of
 // type target.
 type walkScenario struct {
 	name           string

@@ -58,7 +58,7 @@ roles:
   - name: regional
     items:
       - {type: branch, where: [{attr: region, op: eq, value: south}], access: [read]}
-      - {type: branch, from_property: {claim: home, lookup_type: branch, match_by: id}, access: [write]}
+      - {type: branch, from_property: {property: home, lookup_type: branch, match_by: id}, access: [write]}
   - {name: viewer, items: [{type: division, resource: D2, access: [read]}]}
   - {name: auditor, items: [{type: rrs, resource: R2, access: [audit]}]}
   - {name: part-a, items: [{type: branch, resource: B1, access: [read]}]}

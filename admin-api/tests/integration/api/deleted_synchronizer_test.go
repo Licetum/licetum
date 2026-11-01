@@ -393,15 +393,15 @@ func TestIntegrationASynchronizationThatStartedBeforeTheSynchronizerWasDeletedDo
 	}
 }
 
-// A resource_from_claim that looks a resource up in a type without a synchronizer, or climbs through one, finds nothing:
+// A resource_from_property that looks a resource up in a type without a synchronizer, or climbs through one, finds nothing:
 // the rule list and the items of a role say its target does not take effect (target_valid) and the lint reports it, until
 // the synchronizer is there again. A property looked up among the resources of a type that has them is not touched.
 func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *testing.T) {
 	w := newWorld(t)
 	w.partBelowItem()
 	claim := func(name, lookup string) map[string]any {
-		return map[string]any{"resource_from_claim": map[string]any{
-			"claim": name, "lookup_type_resource_id": w.typeByName[lookup], "match_by": "name"}}
+		return map[string]any{"resource_from_property": map[string]any{
+			"property": name, "lookup_type_resource_id": w.typeByName[lookup], "match_by": "name"}}
 	}
 	withEffect := func(m map[string]any) map[string]any { m["effect"] = "deny"; return m }
 	inItem := w.rule("branch", "", withEffect(claim("item_name", "item")))      // looks in item
@@ -409,7 +409,7 @@ func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *tes
 	inBranch := w.rule("branch", "", withEffect(claim("branch_name", "branch")))
 	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "by-item"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
-		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "resource_from_claim": claim("item_name", "item")["resource_from_claim"]})
+		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "resource_from_property": claim("item_name", "item")["resource_from_property"]})
 
 	valid := func() (rules map[string]bool, items []bool) {
 		t.Helper()
@@ -477,8 +477,8 @@ func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T)
 	w.partBelowItem()
 	w.source("part", "P3", "Part 3", "")
 	w.rule("part", "", nil)
-	denial := w.rule("item", "", map[string]any{"effect": "deny", "access": []string{"*"}, "resource_from_claim": map[string]any{
-		"claim": "part_name", "lookup_type_resource_id": w.typeByName["part"], "match_by": "name"}})
+	denial := w.rule("item", "", map[string]any{"effect": "deny", "access": []string{"*"}, "resource_from_property": map[string]any{
+		"property": "part_name", "lookup_type_resource_id": w.typeByName["part"], "match_by": "name"}})
 
 	claims := engine.Properties{"preferred_username": hierarchySubject, "part_name": "Part 1"}
 	asked := func(ids ...string) []model.CheckRequest {

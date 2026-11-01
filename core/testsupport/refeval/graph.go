@@ -252,7 +252,7 @@ func merge[K comparable](m map[K]levelSet, k K, levels levelSet) {
 	m[k] = levels
 }
 
-// lookupIsCut reports whether the anchors of a resource_from_claim rule of type target, looked up among the resources of
+// lookupIsCut reports whether the anchors of a resource_from_property rule of type target, looked up among the resources of
 // type lookup, cannot all be found: the lookup type or the rule's type has no synchronizer, or a type on a route between
 // them has none, so that the climb from a matched resource meets a parent that is not there. A pair of types the links do
 // not join (target is neither lookup nor above it) has no anchor to lose.

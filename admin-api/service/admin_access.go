@@ -24,11 +24,11 @@ SELECT NOT EXISTS (SELECT 1 FROM type_resource WHERE id = $1 AND deleted_at IS N
 	  AND ar.effect = 'allow' AND NOT ar.exception
 	  AND (
 	    (ar.role_id IS NULL AND ar.type_resource_id = $1 AND ar.resource_id IS NULL
-	       AND ar.resource_from_claim IS NULL AND ar.resource_where IS NULL AND 'write' = ANY(ar.access))
+	       AND ar.resource_from_property IS NULL AND ar.resource_where IS NULL AND 'write' = ANY(ar.access))
 	    OR (ar.role_id IS NOT NULL AND EXISTS (
 	       SELECT 1 FROM role_permission rp
 	       WHERE rp.role_id = ar.role_id AND rp.type_resource_id = $1 AND rp.resource_id IS NULL
-	         AND rp.resource_from_claim IS NULL AND rp.resource_where IS NULL AND 'write' = ANY(rp.access)))
+	         AND rp.resource_from_property IS NULL AND rp.resource_where IS NULL AND 'write' = ANY(rp.access)))
 	  )
 	  AND (
       (ar.subject IS NOT NULL)

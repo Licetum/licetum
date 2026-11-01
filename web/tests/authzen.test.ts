@@ -198,7 +198,7 @@ describe('the AuthZEN request builders of the integration and simulation pages',
     }
   });
 
-  it('TestContract_WEB03_ThePropertiesAreTheClaimsAndTheContextIsOnlyWhatWasGiven', () => {
+  it('TestContract_WEB03_ThePropertiesAreThePropertiesAndTheContextIsOnlyWhatWasGiven', () => {
     const request = evaluationRequest(rich);
     expect(request.subject).toEqual({
       type: 'user',

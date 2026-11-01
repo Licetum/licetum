@@ -77,8 +77,8 @@ func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport,
 		if r.Effect != model.EffectDeny && everyoneRule(r) {
 			lint.add(model.LintWarning, i18n.LintRuleEveryone, &id, nil, nil, label)
 		}
-		if r.Effect == model.EffectDeny && r.OnMissingAttribute == model.OnMissingApply && claimCondition(r.Predicate, r.RequiresPredicate) {
-			lint.add(model.LintInfo, i18n.LintDenyMissingClaim, &id, nil, nil, label)
+		if r.Effect == model.EffectDeny && r.OnMissingAttribute == model.OnMissingApply && propertyCondition(r.Predicate, r.RequiresPredicate) {
+			lint.add(model.LintInfo, i18n.LintDenyMissingProperty, &id, nil, nil, label)
 		}
 		for _, g := range groupsOfRule(r) {
 			if !withMembers[g] {
@@ -167,8 +167,8 @@ func groupsOfRule(r model.AssignmentRule) []uuid.UUID {
 	return out
 }
 
-// claimCondition reports whether a condition reads a property of the token (the default source).
-func claimCondition(lists ...[]model.PredicateCondition) bool {
+// propertyCondition reports whether a condition reads a property of the token (the default source).
+func propertyCondition(lists ...[]model.PredicateCondition) bool {
 	for _, conds := range lists {
 		for _, c := range conds {
 			if c.Source == "" || c.Source == model.SourceSubject {

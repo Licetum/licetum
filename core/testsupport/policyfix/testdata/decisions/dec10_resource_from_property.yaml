@@ -1,4 +1,4 @@
-# DEC10: resource_from_claim anchors a rule at the resources found from a claim: the claim's value (rendered like
+# DEC10: resource_from_property anchors a rule at the resources found from a property: the claim's value (rendered like
 # Python's str()) is looked up among the resources of the lookup type by name (the default), by id or by an attribute
 # (meta.<name>: equal to the value, or a list holding it); the anchors are the matched resources themselves when the lookup
 # type is the rule's type (the owner pattern), else their ancestors of the rule's type, possibly in another service. Every
@@ -42,20 +42,20 @@ resources:
   - {type: project, id: P5, name: Project 5, parents: [{type: branch, id: B1}], meta: {owner: carol}}
 rules:
   # The rules of TestIntegrationResourceAttributes, one subject per step of the test.
-  - {name: projects-of-owner, subject: owner-user, type: project, access: [read], from_property: {claim: username, lookup_type: project, match_by: meta.owner}}
-  - {name: projects-of-owners, subject: owners-user, type: project, access: [read], from_property: {claim: username, lookup_type: project, match_by: meta.owners}}
-  - {name: projects-of-owners-again, subject: user-1, type: project, access: [read], from_property: {claim: username, lookup_type: project, match_by: meta.owners}}
-  - {name: branches-of-owned-projects, subject: user-1, type: branch, access: [read], from_property: {claim: username, lookup_type: project, match_by: meta.owner}}
+  - {name: projects-of-owner, subject: owner-user, type: project, access: [read], from_property: {property: username, lookup_type: project, match_by: meta.owner}}
+  - {name: projects-of-owners, subject: owners-user, type: project, access: [read], from_property: {property: username, lookup_type: project, match_by: meta.owners}}
+  - {name: projects-of-owners-again, subject: user-1, type: project, access: [read], from_property: {property: username, lookup_type: project, match_by: meta.owners}}
+  - {name: branches-of-owned-projects, subject: user-1, type: branch, access: [read], from_property: {property: username, lookup_type: project, match_by: meta.owner}}
   # The rule of TestIntegrationHierarchyResourceFromClaim: the rrs above the branch the department claim names.
-  - {name: rrs-of-department, subject: dept-user, type: rrs, access: [read], from_property: {claim: department, lookup_type: branch, match_by: name}}
+  - {name: rrs-of-department, subject: dept-user, type: rrs, access: [read], from_property: {property: department, lookup_type: branch, match_by: name}}
   # By id, by the default (name), by a number rendered as text, from a type above the rule's type.
-  - {name: branch-by-id, subject: id-user, type: branch, access: [read], from_property: {claim: branch_id, lookup_type: branch, match_by: id}}
-  - {name: branch-by-name, subject: name-user, type: branch, access: [read], from_property: {claim: branch_name, lookup_type: branch}}
-  - {name: branch-by-number, subject: number-user, type: branch, access: [read], from_property: {claim: branch_no, lookup_type: branch, match_by: id}}
-  - {name: branch-by-division-name, subject: up-user, type: branch, access: [read], from_property: {claim: division_name, lookup_type: division, match_by: name}}
+  - {name: branch-by-id, subject: id-user, type: branch, access: [read], from_property: {property: branch_id, lookup_type: branch, match_by: id}}
+  - {name: branch-by-name, subject: name-user, type: branch, access: [read], from_property: {property: branch_name, lookup_type: branch}}
+  - {name: branch-by-number, subject: number-user, type: branch, access: [read], from_property: {property: branch_no, lookup_type: branch, match_by: id}}
+  - {name: branch-by-division-name, subject: up-user, type: branch, access: [read], from_property: {property: division_name, lookup_type: division, match_by: name}}
   # A denial anchored by a claim.
   - {name: read-all-branches, subject: deny-user, type: branch, access: [read]}
-  - {name: deny-blocked-branch, subject: deny-user, type: branch, access: [read], deny: true, from_property: {claim: blocked, lookup_type: branch, match_by: id}}
+  - {name: deny-blocked-branch, subject: deny-user, type: branch, access: [read], deny: true, from_property: {property: blocked, lookup_type: branch, match_by: id}}
 cases:
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationResourceAttributes
   - name: the owner pattern gives alice her projects

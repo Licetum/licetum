@@ -360,8 +360,8 @@ func TestIntegrationResourceAttributes(t *testing.T) {
 
 	// One rule: whoever the "username" property names as the owner gets access to that project.
 	byOwner := func(matchBy string) map[string]any {
-		return map[string]any{"resource_from_claim": map[string]any{
-			"claim": "username", "lookup_type_resource_id": w.typeByName["project"], "match_by": matchBy}}
+		return map[string]any{"resource_from_property": map[string]any{
+			"property": "username", "lookup_type_resource_id": w.typeByName["project"], "match_by": matchBy}}
 	}
 	rule := w.rule("project", "", byOwner("meta.owner"))
 	alice, bob := engine.Properties{"username": "alice"}, engine.Properties{"username": "bob"}
@@ -382,8 +382,8 @@ func TestIntegrationResourceAttributes(t *testing.T) {
 	expectIDs(t, w.permission(w.appSvc, engine.Properties{"username": "dave"}), "project", "P3")
 
 	// The anchor may lie above the matched resource: the branches of the owner's projects cascade down.
-	w.rule("branch", "", map[string]any{"resource_from_claim": map[string]any{
-		"claim": "username", "lookup_type_resource_id": w.typeByName["project"], "match_by": "meta.owner"}})
+	w.rule("branch", "", map[string]any{"resource_from_property": map[string]any{
+		"property": "username", "lookup_type_resource_id": w.typeByName["project"], "match_by": "meta.owner"}})
 	res := w.permission(w.org, bob)
 	expectIDs(t, res, "branch", "B1")
 	expectIDs(t, w.permission(w.appSvc, bob), "item", "I1")
@@ -391,7 +391,7 @@ func TestIntegrationResourceAttributes(t *testing.T) {
 	// An invalid attribute name is rejected.
 	status, raw = w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["project"], "subject": "u", "access": []string{"read"},
-		"resource_from_claim": map[string]any{"claim": "c", "lookup_type_resource_id": w.typeByName["project"], "match_by": "meta.bad name"}})
+		"resource_from_property": map[string]any{"property": "c", "lookup_type_resource_id": w.typeByName["project"], "match_by": "meta.bad name"}})
 	if status != http.StatusUnprocessableEntity {
 		t.Fatalf("a bad attribute name must be rejected: %d %s", status, raw)
 	}

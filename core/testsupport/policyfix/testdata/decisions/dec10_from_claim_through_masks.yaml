@@ -1,4 +1,4 @@
-# DEC10: the anchors of a resource_from_claim are the ancestors of the matched resource through the resource links,
+# DEC10: the anchors of a resource_from_property are the ancestors of the matched resource through the resource links,
 # whatever the inherit masks of the type links along the way: the masks say which levels flow down, not which resource
 # lies above which. Here no level flows from a division down to a folder (division -> area passes write, area -> folder
 # passes read), yet the division above the folder is its ancestor; the levels of the rule then flow down from that
@@ -20,9 +20,9 @@ resources:
   - {type: folder, id: F1, name: Folder 1, parents: [{type: area, id: A1}], meta: {owner: dave}}
   - {type: folder, id: F2, name: Folder 2, parents: [{type: area, id: A2}], meta: {owner: erin}}
 rules:
-  - {name: divisions-above-owned-folders, subject: dave, type: division, access: [write], from_property: {claim: username, lookup_type: folder, match_by: meta.owner}}
+  - {name: divisions-above-owned-folders, subject: dave, type: division, access: [write], from_property: {property: username, lookup_type: folder, match_by: meta.owner}}
   - {name: read-all-divisions, subject: erin, type: division, access: [read]}
-  - {name: deny-division-above-blocked-folder, subject: erin, type: division, access: [read], deny: true, from_property: {claim: blocked, lookup_type: folder, match_by: id}}
+  - {name: deny-division-above-blocked-folder, subject: erin, type: division, access: [read], deny: true, from_property: {property: blocked, lookup_type: folder, match_by: id}}
 cases:
   - name: the division above the owned folder is an anchor although no level flows from it to the folder
     subject: dave

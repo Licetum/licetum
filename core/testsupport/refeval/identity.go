@@ -157,7 +157,7 @@ func (s *caseState) addTarget(r *policyfix.Rule, t *policyfix.Target, access []s
 		}
 		// A denial whose lookup cannot reach all its anchors keeps one that is no resource of the fixture: it covers nothing for
 		// real, but can still be the missing parent of an unresolved link, as the denial on a resource that is not there.
-		if r.Deny && s.claimGiven(t) && s.g.lookupIsCut(t.FromProperty.LookupType, t.Type) {
+		if r.Deny && s.propertyGiven(t) && s.g.lookupIsCut(t.FromProperty.LookupType, t.Type) {
 			add(false, "")
 		}
 	case len(t.Where) > 0:
@@ -175,17 +175,17 @@ func (s *caseState) addTarget(r *policyfix.Rule, t *policyfix.Target, access []s
 	}
 }
 
-// claimGiven reports whether the request carries a property a resource_from_claim looks up: one that is present and not falsy
+// propertyGiven reports whether the request carries a property a resource_from_property looks up: one that is present and not falsy
 // (null, false, 0, an empty string or list), as Python's `if not value` reads it.
-func (s *caseState) claimGiven(t *policyfix.Target) bool {
+func (s *caseState) propertyGiven(t *policyfix.Target) bool {
 	return truthy(s.at.properties[t.FromProperty.Property])
 }
 
-// claimAnchors returns the anchors of a resource_from_claim target: the resources of the lookup type that match the
+// claimAnchors returns the anchors of a resource_from_property target: the resources of the lookup type that match the
 // property value (by name, id or attribute), each replaced by its ancestors-or-self of the target's type. A missing property, or
 // a match with no ancestor of that type, gives no anchor.
 func (s *caseState) propertyAnchors(t *policyfix.Target) []string {
-	if !s.claimGiven(t) {
+	if !s.propertyGiven(t) {
 		return nil
 	}
 	value := pyStr(s.at.properties[t.FromProperty.Property])
