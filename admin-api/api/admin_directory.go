@@ -21,7 +21,7 @@ type DirectoryEntryPath struct {
 // the memberships, as the registry it replaces was: whoever manages who belongs to a group may see and send who is known.
 func (h *adminHandlers) registerDirectory(api huma.API) {
 	const base = "/service/{service_id}/subjects"
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "put_directory",
 		Method:      http.MethodPut,
 		Path:        base,
@@ -29,7 +29,7 @@ func (h *adminHandlers) registerDirectory(api huma.API) {
 		Description: "Writes up to 1000 people of the service, each once: the application sends the people its PEPs ask about. An entry that is already as sent is left untouched (no new version, no new updated_at; only the time it was sent moves, at most hourly); a new one is created and a changed one replaced as a whole. The properties are stored as sent. A write takes no revision.",
 		Tags:        []string{"Subject"},
 		Errors:      []int{http.StatusNotFound, http.StatusUnprocessableEntity},
-	}, requireWholeType(model.PlatformGroupMember, model.ActionWrite)), func(ctx context.Context, in *struct {
+	}, []string{"dir:{owner}"}, "none"), requireWholeType(model.PlatformGroupMember, model.ActionWrite)), func(ctx context.Context, in *struct {
 		ServicePath
 		Body model.DirectoryPut
 	}) (*server.Out[*model.DirectoryWriteResult], error) {
@@ -80,7 +80,7 @@ func (h *adminHandlers) registerDirectory(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "put_directory_settings",
 		Method:      http.MethodPut,
 		Path:        base + "/settings",
@@ -88,7 +88,7 @@ func (h *adminHandlers) registerDirectory(api huma.API) {
 		Description: "retention_days is how long an entry that is not sent again is kept; the worker removes the others, hourly, in chunks. null keeps every entry until it is deleted (the default).",
 		Tags:        []string{"Subject"},
 		Errors:      []int{http.StatusNotFound, http.StatusUnprocessableEntity},
-	}, requireWholeType(model.PlatformGroupMember, model.ActionWrite)), func(ctx context.Context, in *struct {
+	}, []string{}, "none"), requireWholeType(model.PlatformGroupMember, model.ActionWrite)), func(ctx context.Context, in *struct {
 		ServicePath
 		Body model.DirectorySettings
 	}) (*server.Out[*model.DirectorySettings], error) {
@@ -118,7 +118,7 @@ func (h *adminHandlers) registerDirectory(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_directory_entry",
 		Method:      http.MethodDelete,
 		Path:        base + "/{subject_type}/{subject_id}",
@@ -126,7 +126,7 @@ func (h *adminHandlers) registerDirectory(api huma.API) {
 		Description: "Removes the entry. The person is in the directory again the next time the application sends them.",
 		Tags:        []string{"Subject"},
 		Errors:      []int{http.StatusNotFound},
-	}, requireWholeType(model.PlatformGroupMember, model.ActionWrite)), func(ctx context.Context, in *DirectoryEntryPath) (*server.Out[string], error) {
+	}, []string{"dir:{owner}"}, "none"), requireWholeType(model.PlatformGroupMember, model.ActionWrite)), func(ctx context.Context, in *DirectoryEntryPath) (*server.Out[string], error) {
 		if err := h.app.DeleteDirectoryEntry(ctx, in.ServiceID, in.SubjectType, in.SubjectID); err != nil {
 			return nil, err
 		}

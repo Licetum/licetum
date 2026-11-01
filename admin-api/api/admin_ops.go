@@ -71,7 +71,7 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "put_log_settings",
 		Method:      http.MethodPut,
 		Path:        "/settings/logs",
@@ -79,7 +79,7 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 		Description: "Replaces the structure of the process logs. The settings are checked the way the logger applies them, recorded in the change log, and applied to every replica within a few seconds, without a restart. The subject is written as a keyed hash by default; the salt is never returned.",
 		Tags:        []string{"Log settings"},
 		Errors:      []int{http.StatusUnprocessableEntity},
-	}, requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.LogSettings }) (*server.Out[model.LogSettings], error) {
+	}, []string{"settings"}, "none"), requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.LogSettings }) (*server.Out[model.LogSettings], error) {
 		out, err := h.app.PutLogSettings(ctx, in.Body)
 		if err != nil {
 			return nil, err
@@ -94,6 +94,7 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 // roles of P4: the right to read the memberships).
 func (h *adminHandlers) registerSimulation(api huma.API) {
 	server.RegisterSimulation(api, h.app.App, h.app.Cfg, func(op huma.Operation) huma.Operation {
+		op = withOutbox(op, nil, "none")
 		if op.OperationID == "simulate_search_subject" {
 			return withPolicy(op, requireWholeType(model.PlatformGroupMember, model.ActionRead))
 		}

@@ -49,7 +49,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_pep_client",
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/pep-clients",
@@ -57,7 +57,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		Description: "Registers a client of the service's AuthZEN API. A jwt client is a client application of a registered issuer: its access tokens are accepted when the issuer, the audience and the signature are right. An api_key client holds API keys that Licetum issues (POST …/keys). Operations default to evaluate; explain and the three searches have to be listed. The same client of an issuer in two services is two rows. The name, and the issuer with the client id, are unique within the service (422).",
 		Tags:        []string{"PEP"},
 		Errors:      []int{http.StatusNotFound, http.StatusUnprocessableEntity},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
+	}, []string{"pep"}, "none"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
 		ServicePath
 		Body model.PEPClientInput
 	}) (*server.Out[*model.PEPClient], error) {
@@ -86,7 +86,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_pep_client",
 		Method:      http.MethodPatch,
 		Path:        "/service/{service_id}/pep-clients/{client_id}",
@@ -94,7 +94,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		Description: "Changes the fields that are present. The kind does not change. Disabling a client takes effect on every PDP within the revocation delay, without deleting its keys.",
 		Tags:        []string{"PEP"},
 		Errors:      []int{http.StatusNotFound, http.StatusUnprocessableEntity},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
+	}, []string{"pep"}, "none"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
 		PEPClientPath
 		Body model.PEPClientPatch
 	}) (*server.Out[*model.PEPClient], error) {
@@ -108,7 +108,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_pep_client",
 		Method:      http.MethodDelete,
 		Path:        "/service/{service_id}/pep-clients/{client_id}",
@@ -116,7 +116,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		Description: "Deletes the client and revokes its keys. Its name and identity are free again.",
 		Tags:        []string{"PEP"},
 		Errors:      []int{http.StatusNotFound},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *PEPClientPath) (*server.Out[uuid.UUID], error) {
+	}, []string{"pep"}, "none"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *PEPClientPath) (*server.Out[uuid.UUID], error) {
 		if err := h.app.DeletePEPClient(ctx, in.ServiceID, in.ClientID); err != nil {
 			return nil, err
 		}
@@ -139,7 +139,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "issue_pep_key",
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/pep-clients/{client_id}/keys",
@@ -147,7 +147,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		Description: "Issues a key to an api_key client. The key is in this answer and nowhere else: Licetum keeps only its hash, so a lost key is revoked and issued again. A client has at most two active keys (409), so a key is rotated by issuing the new one, moving the PEP to it and revoking the old one.",
 		Tags:        []string{"PEP"},
 		Errors:      []int{http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *PEPClientPath) (*pepKeyOut, error) {
+	}, []string{"pep"}, "none"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *PEPClientPath) (*pepKeyOut, error) {
 		out, err := h.app.IssuePEPKey(ctx, in.ServiceID, in.ClientID)
 		if err != nil {
 			return nil, err
@@ -155,7 +155,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		return &pepKeyOut{CacheControl: "no-store", Body: *out}, nil
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "revoke_pep_key",
 		Method:      http.MethodDelete,
 		Path:        "/service/{service_id}/pep-clients/{client_id}/keys/{key_id}",
@@ -163,7 +163,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		Description: "Revokes the key. Every PDP refuses it within the revocation delay (the revision poll interval). A key that is revoked already stays so.",
 		Tags:        []string{"PEP"},
 		Errors:      []int{http.StatusNotFound},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *PEPKeyPath) (*server.Out[string], error) {
+	}, []string{"pep"}, "none"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *PEPKeyPath) (*server.Out[string], error) {
 		if err := h.app.RevokePEPKey(ctx, in.ServiceID, in.ClientID, in.KeyID); err != nil {
 			return nil, err
 		}
@@ -185,7 +185,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "put_pep_issuer",
 		Method:      http.MethodPut,
 		Path:        "/platform/pep-issuers",
@@ -193,7 +193,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		Description: "Creates the issuer, or replaces the settings of the one with this name. The iss of a token is compared exactly with the name. A token is accepted only with an aud that contains one of the audiences (or, with none listed, the audience of the PDP), a signature of an allowed algorithm (asymmetric only) and a valid exp and nbf (60 s of leeway). Needs write on the services as a whole.",
 		Tags:        []string{"PEP"},
 		Errors:      []int{http.StatusUnprocessableEntity},
-	}, requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.PEPIssuer }) (*server.Out[*model.PEPIssuer], error) {
+	}, []string{"pep"}, "none"), requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.PEPIssuer }) (*server.Out[*model.PEPIssuer], error) {
 		if err := validate(&in.Body); err != nil {
 			return nil, err
 		}
@@ -204,7 +204,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_pep_issuer",
 		Method:      http.MethodDelete,
 		Path:        "/platform/pep-issuers",
@@ -212,7 +212,7 @@ func (h *adminHandlers) registerPEP(api huma.API) {
 		Description: "Deletes an issuer that no client uses (409 while one does, a deleted client included). The name is a query parameter because it is a URL.",
 		Tags:        []string{"PEP"},
 		Errors:      []int{http.StatusNotFound, http.StatusConflict},
-	}, requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct {
+	}, []string{"pep"}, "none"), requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct {
 		Issuer string `query:"issuer" minLength:"1" maxLength:"2048" doc:"The issuer to delete (its iss)"`
 	}) (*server.Out[string], error) {
 		if err := h.app.DeletePEPIssuer(ctx, in.Issuer); err != nil {

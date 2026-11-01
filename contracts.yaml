@@ -341,7 +341,7 @@ contracts:
     oracle: the route table
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR06
     statement: An admin write takes at most a measured budget of round trips to PostgreSQL.
     oracle: the traced round trips

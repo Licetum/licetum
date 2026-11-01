@@ -28,14 +28,14 @@ type ScenarioPath struct {
 // of the policy as a document, and the import of a document. Reading any of them needs read on the service; an import
 // writes what its plan says, and each write needs the policy of the admin route that makes it.
 func (h *adminHandlers) registerPolicy(api huma.API) {
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "run_policy_tests",
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/policy/test",
 		Summary:     "Run policy tests",
 		Description: "Answers the scenarios as the simulation does, with the subjects' properties and request attributes, and the data as it is now. Each expectation says whether the answer must be allowed or must not be. The report names the rules that decided each answer, and the coverage: the rules in force that apply to the service's resource types, and those that no scenario reached. Nothing is stored by this call: the scenarios a service keeps are under /policy/scenarios.",
 		Tags:        []string{"Policy"},
-	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *struct {
+	}, nil, "none"), requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *struct {
 		ServicePath
 		Body model.PolicyTestInput
 	}) (*server.Out[*model.PolicyTestReport], error) {
@@ -61,7 +61,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_policy_scenario",
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/policy/scenarios",
@@ -69,7 +69,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		Description: "Keeps a scenario with the service. The name is unique within the service (409).",
 		Errors:      []int{http.StatusConflict},
 		Tags:        []string{"Policy"},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
+	}, nil, "none"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
 		ServicePath
 		Body model.PolicyTestCase
 	}) (*server.Out[*model.PolicyScenario], error) {
@@ -80,7 +80,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_policy_scenario",
 		Method:      http.MethodPut,
 		Path:        "/service/{service_id}/policy/scenarios/{scenario_id}",
@@ -88,7 +88,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		Description: "Replaces the scenario, its name included. The name stays unique within the service (409).",
 		Errors:      []int{http.StatusConflict},
 		Tags:        []string{"Policy"},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
+	}, nil, "none"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
 		ScenarioPath
 		Body model.PolicyTestCase
 	}) (*server.Out[*model.PolicyScenario], error) {
@@ -99,13 +99,13 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_policy_scenario",
 		Method:      http.MethodDelete,
 		Path:        "/service/{service_id}/policy/scenarios/{scenario_id}",
 		Summary:     "Delete a stored scenario",
 		Tags:        []string{"Policy"},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *ScenarioPath) (*server.Out[uuid.UUID], error) {
+	}, nil, "none"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *ScenarioPath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteScenario(ctx, in.ServiceID, in.ScenarioID)
 		if err != nil {
 			return nil, err
@@ -158,7 +158,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "import_policy",
 		Middlewares: huma.Middlewares{rejectPolicyV1},
 		Method:      http.MethodPost,
@@ -167,7 +167,7 @@ func (h *adminHandlers) registerPolicy(api huma.API) {
 		Description: "Makes the policy of the service match the document: missing groups, roles, access groups and rules are created, the ones that differ are rewritten, and nothing else is touched (with prune, the rules the document does not have are deleted too). Rules are matched by name, or by the id of a rule-<id> name. With dry_run, the plan is returned: the operations and what they do to each entity. Without it, the plan is applied in one transaction, as POST /batch applies it, and the caller needs the policy of every write.",
 		Errors:      []int{http.StatusConflict, http.StatusUnprocessableEntity},
 		Tags:        []string{"Policy"},
-	}, requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *struct {
+	}, []string{"{operations}"}, "operations"), requireResource(model.PlatformService, model.ActionRead, "service_id")), func(ctx context.Context, in *struct {
 		ServicePath
 		PolicyImportQuery
 		Body model.PolicyDocument
