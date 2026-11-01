@@ -83,7 +83,7 @@ type PEPCredential struct {
 }
 
 // PEPDirectoryData is what LoadPEPDirectory reads: the issuers, the enabled clients that are not deleted, the credentials of those
-// clients that are not revoked, and the revision of the pep scope. It is one snapshot.
+// clients that are not revoked, and the global epoch and revision. It is one snapshot.
 type PEPDirectoryData struct {
 	Epoch       int32
 	Revision    int64

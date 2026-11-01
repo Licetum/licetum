@@ -73,7 +73,8 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 			involved[id] = true
 		}
 	}
-	if _, err := a.EnsureSynced(ctx, g, engine.Keys(involved), false); err != nil {
+	g, _, err = a.EnsureSyncedGraph(ctx, g, engine.Keys(involved), false)
+	if err != nil {
 		return nil, err
 	}
 

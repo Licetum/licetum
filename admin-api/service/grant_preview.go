@@ -99,7 +99,8 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 			involved[id] = true
 		}
 	}
-	if _, err := a.EnsureSynced(ctx, g, engine.Keys(involved), false); err != nil {
+	g, _, err = a.EnsureSyncedGraph(ctx, g, engine.Keys(involved), false)
+	if err != nil {
 		return nil, err
 	}
 	synced, err := a.TypesWithSynchronizer(ctx, engine.Keys(involved))

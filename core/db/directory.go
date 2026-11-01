@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The subject directory (migration 00008, ADR 0001, 8.8): the people of a service, sent by the application or an editor. A write
+// The subject directory (schema v2, ADR 0001, 8.8): the people of a service, sent by the application or an editor. A write
 // takes one revision and a directory-stream entry when its content changes. It
 // takes no policy-history record because no decision reads the directory.
 

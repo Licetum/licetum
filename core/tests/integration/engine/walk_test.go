@@ -97,12 +97,13 @@ func newWalkFixture(tb testing.TB) *walkFixture {
 	}
 
 	fx := &walkFixture{pool: pool, app: engine.New(pool, &config.Config{Snapshot: config.Snapshot{MaxBytes: -1}}), types: map[string]uuid.UUID{}}
+	tb.Cleanup(fx.app.Close)
 	service := uuid.New()
 	mustExec(tb, pool, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'walk', '', '', 'walk')`, service)
 	for _, t := range walkTypes {
 		id := uuid.New()
 		fx.types[t.name] = id
-		mustExec(tb, pool, `INSERT INTO type_resource (id, service_id, name) VALUES ($1, $2, $3)`, id, service, t.name)
+		mustExec(tb, pool, `INSERT INTO type_resource (id, service_id, name, synced_at) VALUES ($1, $2, $3, now())`, id, service, t.name)
 		// The rows are written below, as a synchronization leaves them: a type has resources while it has a live synchronizer.
 		mustExec(tb, pool, `INSERT INTO synchronizer (type_resource_id, kind, config) VALUES ($1, 'SQL', '{}')`, id)
 		for _, p := range t.parents {
@@ -185,7 +186,7 @@ func newWalkFixture(tb testing.TB) *walkFixture {
 
 func mustExec(tb testing.TB, pool *pgxpool.Pool, sql string, args ...any) {
 	tb.Helper()
-	if _, err := pool.Exec(context.Background(), sql, args...); err != nil {
+	if _, err := support.RawExec(context.Background(), pool, sql, args...); err != nil {
 		tb.Fatal(err)
 	}
 }

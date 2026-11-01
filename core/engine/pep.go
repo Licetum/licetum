@@ -15,14 +15,14 @@ import (
 )
 
 // The PEP directory is what the check API authenticates a PEP with: the verifiers of the identity providers, the enabled clients
-// of each service and the credentials of the API keys. The process keeps it per revision of the pep scope. The revision comes from
+// of each service and the credentials of the API keys. The process keeps it at the global epoch and revision. The revision comes from
 // the view of the process (see cacheState), which the requests and WatchRevision renew like the policy revisions, so a warm request
 // touches no database. The directory is loaded again only when that revision moved, once for the requests that wait.
 
 // pepLoadTimeout bounds the load of the directory (one statement).
 const pepLoadTimeout = 10 * time.Second
 
-// PEPDirectory is the PEP directory as of one revision of the pep scope. The requests of the process share it: it is read-only
+// PEPDirectory is the PEP directory as of one global epoch and revision. The requests of the process share it: it is read-only
 // once loaded.
 type PEPDirectory struct {
 	epoch    int32
@@ -35,7 +35,7 @@ type PEPDirectory struct {
 	Credentials map[string]db.PEPCredential
 	// clients are the enabled clients by id, for the credentials.
 	clients map[uuid.UUID]db.PEPClient
-	// behind is when the process first saw a newer revision of the pep scope than this directory holds (Unix nanoseconds, 0 while
+	// behind is when the process first saw a newer global epoch and revision than this directory holds (Unix nanoseconds, 0 while
 	// the directory is current). It bounds how long a failing reload is covered by this directory (POLICY__MAX_STALENESS).
 	behind atomic.Int64
 }
@@ -85,7 +85,7 @@ func pepStaleLimit(t tuning) time.Duration {
 	return pepDefaultStaleLimit
 }
 
-// PEPDirectory returns the PEP directory of the process, as of the revision of the pep scope the process has read. It is loaded
+// PEPDirectory returns the PEP directory of the process, as of the global epoch and revision the process has read. It is loaded
 // again when that revision is newer than the one held. The directory follows the policy: when the view cannot confirm the revisions
 // (see cacheState), the directory is read from PostgreSQL and the read fails when PostgreSQL does. When a reload fails while the
 // view is confirmed, the last directory is served for at most pepStaleLimit after the process first saw the newer revision, so a

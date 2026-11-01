@@ -198,3 +198,84 @@ func TestDeletingAndReplacingASynchronizerResetItsAppliedGeneration(t *testing.T
 		t.Fatalf("replacement did not get its own first apply: %v %v %v", first, next, err)
 	}
 }
+
+// The point-lookup path must fence the same source generation as a full apply.
+func TestInlineFetchCannotApplyARetiredSourceGeneration(t *testing.T) {
+	for _, change := range []string{"delete", "configuration", "configuration-restored"} {
+		t.Run(change, func(t *testing.T) {
+			pool, typ := backoffType(t)
+			ctx := context.Background()
+			id := uuid.New()
+			var raw []byte
+			changed := make(chan error, 1)
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				sql := `UPDATE synchronizer SET deleted_at=now() WHERE id=$1`
+				if change != "delete" {
+					sql = `UPDATE synchronizer SET config=config || '{"url":"http://127.0.0.1:1/replacement"}'::jsonb WHERE id=$1`
+				}
+				_, err := support.RawExec(ctx, pool, sql, id)
+				if err == nil && change == "configuration-restored" {
+					_, err = support.RawExec(ctx, pool, `UPDATE synchronizer SET config=$2 WHERE id=$1`, id, raw)
+				}
+				changed <- err
+				_, _ = w.Write([]byte(`{"id":"retired","name":"Retired"}`))
+			}))
+			t.Cleanup(source.Close)
+			raw, _ = json.Marshal(map[string]any{"url": source.URL})
+			if _, err := support.RawExec(ctx, pool, `INSERT INTO synchronizer(id,type_resource_id,kind,config) VALUES($1,$2,'HTTP',$3);`, id, typ, raw); err != nil {
+				t.Fatal(err)
+			}
+			// Model an already completed generation: this read takes the point-fetch path.
+			if _, err := support.RawExec(ctx, pool, `UPDATE type_resource SET synced_at=now() WHERE id=$1`, typ); err != nil {
+				t.Fatal(err)
+			}
+			a := New(pool, &config.Config{})
+			t.Cleanup(a.Close)
+			_, err := a.GetResource(ctx, typ, "retired")
+			select {
+			case mutationErr := <-changed:
+				if mutationErr != nil {
+					t.Fatal(mutationErr)
+				}
+			default:
+				t.Fatalf("point source was not called: %v", err)
+			}
+			if !errors.Is(err, errSynchronizerChanged) {
+				t.Fatalf("retired inline fetch accepted: %v", err)
+			}
+			var count int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM resource_cache WHERE type_resource_id=$1`, typ).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("retired row applied: %d %v", count, err)
+			}
+		})
+	}
+}
+
+func TestResourceListsHideRetiredRowsBeforeFirstApply(t *testing.T) {
+	pool, typ := backoffType(t)
+	ctx := context.Background()
+	if _, err := support.RawExec(ctx, pool, `INSERT INTO synchronizer(type_resource_id,kind,config) VALUES($1,'HTTP','{"url":"http://127.0.0.1:1/unavailable"}')`, typ); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO resource_cache(type_resource_id,external_id,name,meta,active) VALUES($1,'retired','Retired','{}',true)`, typ); err != nil {
+		t.Fatal(err)
+	}
+	inTx(t, pool, func(ctx context.Context, tx pgx.Tx) error {
+		return markUnanswered(ctx, tx, typ, "first snapshot failed")
+	})
+	if _, err := pool.Exec(ctx, `UPDATE sync_state SET next_due_at=now()+interval '1 hour' WHERE type_resource_id=$1`, typ); err != nil {
+		t.Fatal(err)
+	}
+	a := New(pool, &config.Config{})
+	t.Cleanup(a.Close)
+	for _, includeInactive := range []bool{false, true} {
+		rows, err := a.ListResources(ctx, typ, includeInactive)
+		if err != nil || len(rows) != 0 {
+			t.Fatalf("retired generation visible (includeInactive=%v): %v %v", includeInactive, rows, err)
+		}
+	}
+	var retained int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM resource_cache WHERE type_resource_id=$1`, typ).Scan(&retained); err != nil || retained != 1 {
+		t.Fatalf("fixture rows must remain physically retained: %d %v", retained, err)
+	}
+}

@@ -3,7 +3,7 @@
 package cluster_test
 
 // F1: the fast read path. A warm request sends no query to PostgreSQL; what a cache miss costs
-// does not grow with the policy; a deleted service or a changed slug is seen by every replica within a second; the key
+// does not grow with the policy; a deleted service is seen by every replica within a second, and a slug change is refused; the key
 // set of the identity provider is fetched once per TTL, and a flood of bad tokens does not reach the provider.
 
 import (
@@ -162,18 +162,26 @@ func waitFor(timeout time.Duration, f func() bool) (time.Duration, bool) {
 	return time.Since(start), false
 }
 
-// F1-5: after the slug of a service changes or the service is deleted, every replica refuses the old slug within a second: they
-// follow the revision. A client of the renamed service is a valid credential that gives nothing on the old slug (the one 403); the
-// clients of a deleted service leave the directory with it, so their key is no credential any more (401).
-func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) {
+// F1-5: ADM11 refuses a slug change, so every replica keeps answering on the original slug.
+// Deletion still propagates within one second: the service's clients leave the PEP
+// directory and their keys cease to authenticate (401).
+func TestF1_5_ReplicasRespectImmutableSlugsAndDeletedServices(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		want int
 		do   func(c *harness.Cluster, p *harness.Policy)
 	}{
-		{"slug changed", http.StatusForbidden, func(c *harness.Cluster, p *harness.Policy) {
+		{"slug immutable", http.StatusOK, func(c *harness.Cluster, p *harness.Policy) {
 			payload := c.ServicePayload("org-renamed")
-			c.Must(http.MethodPatch, "/service/"+p.ServiceID, payload)
+			status, raw := c.AdminDo(http.MethodPatch, "/service/"+p.ServiceID, payload)
+			var refusal struct {
+				Extra struct {
+					Code string `json:"code"`
+				} `json:"extra"`
+			}
+			if err := json.Unmarshal(raw, &refusal); err != nil || status != http.StatusUnprocessableEntity || refusal.Extra.Code != "service_slug_immutable" {
+				c.T.Fatalf("slug change was not refused: %d %s (%v)", status, raw, err)
+			}
 		}},
 		{"service deleted", http.StatusUnauthorized, func(c *harness.Cluster, p *harness.Policy) {
 			// A service goes when it has no types left, and a type when nothing refers to it.
@@ -215,7 +223,7 @@ func TestF1_5_ReplicasFollowTheRevisionForSlugsAndDeletedServices(t *testing.T) 
 						return r.Send(c, harness.Branches(p.Slug, alice), alice).Status == tc.want
 					})
 					if !ok {
-						t.Errorf("replica %d still answers for the old slug after %v", r.Index, took)
+						t.Errorf("replica %d did not reach HTTP %d for the original slug after %v", r.Index, tc.want, took)
 					} else if since := time.Since(wrote); since > time.Second {
 						t.Errorf("replica %d answered %d %v after the write, want within 1s", r.Index, tc.want, since)
 					}

@@ -12,7 +12,7 @@ server named by `LICETUM_TEST_POSTGRES_URI`.
 | `harness/` | none | | the helpers the packages above share (not tests) |
 
 ```sh
-task go:test:integration   # tags integration: api/, cluster/, contracts/ (and core/tests/integration)
+task go:test:integration   # all packages, sequentially, including core/engine first-apply fencing
 task go:test:chaos         # tag chaos: chaos/ (slower, nightly in .github/workflows/chaos.yml)
 task go:vet:tags           # no services: compiles and vets all the tagged code (integration, chaos, multiregion), with and without -race
 ```

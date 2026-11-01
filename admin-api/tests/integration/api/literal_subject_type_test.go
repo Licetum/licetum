@@ -87,7 +87,7 @@ func TestLiteralSubjectTypesSeparateCachedDecisionsAndMixedBatches(t *testing.T)
 			evaluations = append(evaluations, item)
 		}
 	}
-	status, header, raw := w.doWithHeader(http.MethodPost, w.check.URL+"/service/org/access/v1/evaluations", map[string]any{"evaluations": evaluations}, "Authorization", "Bearer "+key)
+	status, header, raw := w.doWithHeader(http.MethodPost, w.check.URL+authzenreq.Evaluations(w.ref(w.org), "", nil).Path, map[string]any{"evaluations": evaluations}, "Authorization", "Bearer "+key)
 	out := authzenAnswer(t, status, header, raw)
 	if status != http.StatusOK || !equalBools(decisionsOf(t, out), true, false, false, true, false, false) {
 		t.Fatalf("mixed types: %d %v", status, out)

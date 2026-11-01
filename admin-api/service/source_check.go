@@ -43,7 +43,8 @@ func (a *App) TestSource(ctx context.Context, serviceID, typeResourceID uuid.UUI
 	}
 	// The parent types are brought up to date, or every parent would look missing.
 	if parents := engine.Keys(g.AncestorTypes(typeResourceID)); len(parents) > 0 {
-		if _, err := a.EnsureSynced(ctx, g, parents, false); err != nil {
+		g, _, err = a.EnsureSyncedGraph(ctx, g, parents, false)
+		if err != nil {
 			return nil, err
 		}
 	}

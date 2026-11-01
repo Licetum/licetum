@@ -84,9 +84,9 @@ rules:
   - {name: om-deny, subject: om, type: region, resource: north, access: [read], deny: true, requires_predicate: [{attr: country, op: eq, value: x, source: context}]}
   - {name: om2-allow, subject: om2, type: region, resource: north, access: [read]}
   - {name: om2-deny, subject: om2, type: region, resource: north, access: [read], deny: true, on_missing: skip, requires_predicate: [{attr: country, op: eq, value: x, source: context}]}
-  - {name: by-name, subject: fc, type: region, from_property: {subject: store_name, lookup_type: store}, access: [read]}
-  - {name: by-owner, subject: bob, type: store, from_property: {subject: preferred_username, lookup_type: store, match_by: meta.owner}, access: [write]}
-  - {name: by-id, subject: fcid, type: store, from_property: {subject: store_id, lookup_type: store, match_by: id}, access: [read]}
+  - {name: by-name, subject: fc, type: region, from_property: {property: store_name, lookup_type: store}, access: [read]}
+  - {name: by-owner, subject: bob, type: store, from_property: {property: preferred_username, lookup_type: store, match_by: meta.owner}, access: [write]}
+  - {name: by-id, subject: fcid, type: store, from_property: {property: store_id, lookup_type: store, match_by: id}, access: [read]}
   - {name: tagged, subject: wh, type: store, where: [{attr: tags, op: eq, value: b}], access: [read]}
   - {name: star-allow, subject: star, type: store, access: [read, write]}
   - {name: star-deny, subject: star, type: store, resource: s1, access: ["*"], deny: true}
@@ -258,7 +258,7 @@ cases:
     subject: om2
     questions:
       - {type: region, resource: north, action: read, allowed: true, granted_by: [om2-allow], denials: []}
-  - name: a resource found by the name in a claim
+  - name: a resource found by the name in a property
     subject: fc
     properties: {store_name: Store 2}
     questions:

@@ -283,7 +283,7 @@ What the spike found, and what the engine does about it:
 
 ```bash
 go test -race ./...                                       # unit tests
-go test -race -tags integration ./tests/integration/...   # integration tests
+go test -race -p 1 -tags integration ./...               # all tagged tests, including engine first-apply fencing
 task go:coverage                                          # coverage reports in reports/ (both modules)
 ```
 

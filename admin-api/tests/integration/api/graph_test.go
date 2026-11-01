@@ -358,6 +358,14 @@ func TestIntegrationResourceAttributes(t *testing.T) {
 		t.Fatalf("resource P3: %d %s", status, raw)
 	}
 
+	// A first point lookup must establish the full snapshot, not mark a single
+	// fetched row as a completed generation and hide its siblings.
+	var initialized bool
+	var resources int
+	if err := w.pool.QueryRow(context.Background(), `SELECT synced_at IS NOT NULL,(SELECT count(*) FROM resource_cache WHERE type_resource_id=$1) FROM type_resource WHERE id=$1`, w.typeByName["project"]).Scan(&initialized, &resources); err != nil || !initialized || resources != 3 {
+		t.Fatalf("first point lookup left an incomplete snapshot: initialized=%v resources=%d error=%v", initialized, resources, err)
+	}
+
 	// One rule: whoever the "username" property names as the owner gets access to that project.
 	byOwner := func(matchBy string) map[string]any {
 		return map[string]any{"resource_from_property": map[string]any{

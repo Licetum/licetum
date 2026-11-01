@@ -1127,6 +1127,18 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 		return nil, err
 	}
 	if sync != nil {
+		// A point fetch cannot establish a complete generation. Wait for the first
+		// full snapshot (including parents) before exposing individual resources.
+		if !g.IsSync(typeResourceID) {
+			ids := append([]uuid.UUID{typeResourceID}, Keys(g.AncestorTypes(typeResourceID))...)
+			g, _, err = a.EnsureSyncedGraph(ctx, g, ids, false)
+			if err != nil {
+				return nil, err
+			}
+			if !g.IsSync(typeResourceID) {
+				return nil, nil
+			}
+		}
 		// The backoff only spares a failing source: when the state cannot be read the source is asked, as it was before the
 		// state was consulted, instead of failing a read that the cache could answer.
 		states, err := loadSyncStates(ctx, a.DB, []uuid.UUID{typeResourceID})
@@ -1142,6 +1154,9 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 			// The inline write takes the lock of the component of the type, like a synchronization does, and has the same
 			// timeouts.
 			err := a.syncTx(ctx, ComponentKeys(g, []uuid.UUID{typeResourceID}), func(tx pgx.Tx) error {
+				if err := fenceSynchronizers(ctx, tx, []model.Synchronizer{*sync}); err != nil {
+					return err
+				}
 				touched := map[uuid.UUID]struct{}{}
 				if err := applyType(ctx, tx, typeResourceID, normalized, false, true, touched, &changed); err != nil {
 					return err
@@ -1181,11 +1196,13 @@ func (a *App) IsCovered(ctx context.Context, typeResourceID uuid.UUID, resourceI
 	if err != nil {
 		return false, err
 	}
+	ids := append([]uuid.UUID{typeResourceID}, Keys(g.AncestorTypes(typeResourceID))...)
+	g, _, err = a.EnsureSyncedGraph(ctx, g, ids, false)
+	if err != nil {
+		return false, err
+	}
 	if !g.IsSync(typeResourceID) {
 		return false, nil
-	}
-	if _, err := a.EnsureSynced(ctx, g, []uuid.UUID{typeResourceID}, false); err != nil {
-		return false, err
 	}
 	return Exists(ctx, a.DB, `
 		SELECT 1
@@ -1211,12 +1228,12 @@ func (a *App) ListResources(ctx context.Context, typeResourceID uuid.UUID, inclu
 	for id := range g.AncestorTypes(typeResourceID) {
 		typeIDs = append(typeIDs, id)
 	}
-	synced, err := a.EnsureSynced(ctx, g, typeIDs, false)
+	g, synced, err := a.EnsureSyncedGraph(ctx, g, typeIDs, false)
 	if err != nil {
 		return nil, err
 	}
 	out := []model.Resource{}
-	if !synced[typeResourceID] {
+	if !synced[typeResourceID] || !g.IsSync(typeResourceID) {
 		return out, nil
 	}
 	rows, err := a.DB.Query(ctx, `

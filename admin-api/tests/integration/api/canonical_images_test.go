@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
+	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/outbox"
 	support "github.com/licetum/licetum/core/testsupport"
@@ -313,4 +314,44 @@ func decodeCanonicalJSON(raw []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	return decoder.Decode(target)
+}
+
+func TestContract_WR03_InitialSeedPublishesEveryCreatedRow(t *testing.T) {
+	ctx := context.Background()
+	isolated := testInfrastructure.Isolate(ctx, t)
+	cfg := &config.Config{
+		DB:        config.Database{URI: isolated.URI, PoolSize: 3},
+		AdminAuth: config.AdminAuth{Issuer: "https://seed.example.test", Audience: "admin", JWKSURL: "https://seed.example.test/jwks", SubjectClaim: "preferred_username"},
+		Platform:  config.Platform{Name: "Licetum", URL: "https://seed.example.test/app", Icon: "https://seed.example.test/icon.png", AdminGroupName: "Platform administrator", AdminClaim: "preferred_username", AdminClaimValues: []string{"admin"}},
+	}
+	pool, err := db.Connect(ctx, cfg.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := db.MigrateUpTo(ctx, pool, db.LatestMigration()); err != nil {
+		t.Fatal(err)
+	}
+	e := &env{t: t, pool: pool, cfg: cfg}
+	seed := func() {
+		if err := db.SeedPlatform(ctx, pool, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verifyCanonicalWrite(t, e, seed)
+	var publications, services, history int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM outbox),(SELECT count(*) FROM service),(SELECT count(*) FROM change_log)`).Scan(&publications, &services, &history); err != nil {
+		t.Fatal(err)
+	}
+	if publications != 1 || services != 1 || history == 0 {
+		t.Fatalf("initial seed was not exercised: publications=%d services=%d history=%d", publications, services, history)
+	}
+	verifyCanonicalWrite(t, e, seed)
+	var after int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != publications {
+		t.Fatal("idempotent seed published another revision")
+	}
 }

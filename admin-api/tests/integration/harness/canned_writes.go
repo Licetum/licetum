@@ -1,5 +1,12 @@
 package harness
 
+import (
+	"encoding/json"
+	"strings"
+
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
+)
+
 // CannedWrite is a successful request template shared by WR03, WR05 and WR06.
 // Braced values are fixture parameters; the integration fixture resolves them.
 type CannedWrite struct {
@@ -60,9 +67,19 @@ var CannedWrites = []CannedWrite{
 	{OperationID: "update_service", Method: "PATCH", Path: "/service/{service_id}", Body: `{"name":"renamed","url":"{mock}/app","icon":"{mock}/icon.png"}`},
 	{OperationID: "update_synchronizer", Method: "PATCH", Path: "/service/{service_id}/type_resource/{type_resource_id}/resource/synchronizer/{synchronizer_id}", Body: `{"config":{"kind":"sql","dsn":"{dsn}","query":"SELECT id, name, parent_id FROM src_branch WHERE id = :id","list_query":"SELECT id, name, parent_id FROM src_branch"},"probe_resource_id":"B1","regions":["renamed"]}`},
 	{OperationID: "update_type_resource", Method: "PATCH", Path: "/service/{service_id}/type_resource/{type_resource_id}", Body: `{"name":"renamed"}`},
-	{OperationID: "simulate_evaluation", Method: "POST", Path: "/service/{service_id}/simulate/access/v1/evaluation", Body: `{"subject":{"type":"user","id":"alice"},"resource":{"type":"branch","id":"B1"},"action":{"name":"read"}}`},
-	{OperationID: "simulate_evaluations", Method: "POST", Path: "/service/{service_id}/simulate/access/v1/evaluations", Body: `{"evaluations":[{"subject":{"type":"user","id":"alice"},"resource":{"type":"branch","id":"B1"},"action":{"name":"read"}}]}`},
-	{OperationID: "simulate_search_resource", Method: "POST", Path: "/service/{service_id}/simulate/access/v1/search/resource", Body: `{"subject":{"type":"user","id":"alice"},"resource":{"type":"branch","id":"B1"},"action":{"name":"read"}}`},
-	{OperationID: "simulate_search_action", Method: "POST", Path: "/service/{service_id}/simulate/access/v1/search/action", Body: `{"subject":{"type":"user","id":"alice"},"resource":{"type":"branch","id":"B1"},"action":{"name":"read"}}`},
-	{OperationID: "simulate_search_subject", Method: "POST", Path: "/service/{service_id}/simulate/access/v1/search/subject", Body: `{"subject":{"type":"user","id":"alice"},"resource":{"type":"branch","id":"B1"},"action":{"name":"read"}}`},
+	cannedSimulation("simulate_evaluation", authzenreq.Evaluation("fixture", "alice", authzenreq.On("branch", "B1"), "read")),
+	cannedSimulation("simulate_evaluations", authzenreq.Evaluations("fixture", "alice", []authzenreq.Question{{Resource: authzenreq.On("branch", "B1"), Action: "read"}})),
+	cannedSimulation("simulate_search_resource", authzenreq.SearchResource("fixture", "alice", "branch", "read")),
+	cannedSimulation("simulate_search_action", authzenreq.SearchAction("fixture", "alice", authzenreq.On("branch", "B1"))),
+	cannedSimulation("simulate_search_subject", authzenreq.SearchSubject("fixture", authzenreq.On("branch", "B1"), "read")),
+}
+
+// The simulation uses the same AuthZEN request builders as the PDP tests.
+func cannedSimulation(operationID string, req authzenreq.Request) CannedWrite {
+	body, err := json.Marshal(req.Body)
+	if err != nil {
+		panic(err)
+	}
+	return CannedWrite{OperationID: operationID, Method: req.Method,
+		Path: strings.Replace(req.Path, "/service/fixture/", "/service/{service_id}/simulate/", 1), Body: string(body)}
 }

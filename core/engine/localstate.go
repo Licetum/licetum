@@ -250,7 +250,7 @@ const revisionRetry = 20 * time.Millisecond
 // the interval. It returns when ctx ends. Requests renew the view too, from the same singleflight, so the reading is never
 // done twice at once.
 //
-// The poll also carries the revision of the log settings (db.ScopeGlobal), so it runs in every process, with the local view or
+// The poll also carries log_settings.version alongside the global epoch and revision, so it runs in every process, with the local view or
 // without it (the worker, or SNAPSHOT__MAX_BYTES below zero): it is the only thing that polls for a settings change.
 func (a *App) WatchRevision(ctx context.Context) {
 	ticker := time.NewTicker(a.tuningOrDefault().revisionPoll)
