@@ -9,6 +9,7 @@ package i18n
 // keep working.
 const (
 	// generic
+	SubjectGroupReserved      Key = "subject_group_reserved"
 	RuleServiceRetarget       Key = "rule_service_retarget"
 	ServiceOwnershipMismatch  Key = "service_ownership_mismatch"
 	ServiceOwnershipImmutable Key = "service_ownership_immutable"
@@ -172,6 +173,7 @@ const (
 )
 
 var catalog = map[Key]Text{
+	SubjectGroupReserved:      {EN: "The group: subject prefix is reserved; use subject_group_id", RU: "Префикс субъекта group: зарезервирован; используйте subject_group_id", ZH: "group: 主体前缀为保留值；请使用 subject_group_id"},
 	RuleServiceRetarget:       {EN: "A rule cannot be retargeted into another service", RU: "Правило нельзя перенести в другой сервис", ZH: "不能将规则重新指向其他服务"},
 	ServiceOwnershipMismatch:  {EN: "Referenced entities must belong to the same service", RU: "Связанные сущности должны принадлежать одному сервису", ZH: "引用的实体必须属于同一服务"},
 	ServiceOwnershipImmutable: {EN: "The owning service cannot be changed", RU: "Сервис-владелец нельзя изменить", ZH: "不能更改所属服务"},
@@ -517,9 +519,9 @@ var catalog = map[Key]Text{
 		ZH: "resource_id 和 resource_from_claim 最多只能指定一个",
 	},
 	SubjectTargetExclusive: {
-		EN: "Specify at most one of: subject, member_of_group_id or predicate",
-		RU: "Укажите не более одного из: subject, member_of_group_id или predicate",
-		ZH: "subject、member_of_group_id 和 predicate 最多只能指定一个",
+		EN: "Specify at most one of: subject, subject_group_id, member_of_group_id or predicate",
+		RU: "Укажите не более одного из: subject, subject_group_id, member_of_group_id или predicate",
+		ZH: "subject、subject_group_id、member_of_group_id 和 predicate 最多只能指定一个",
 	},
 	RoleAssignmentInlineExclusive: {
 		EN: "With role_id do not set type_resource_id, resource_id, resource_from_claim or access: the permissions come from the role",

@@ -21,8 +21,8 @@ export function entityName(record: ChangeRecord, t: TFunction): string {
     return e.access.join(', ');
   if (record.entity === 'assignment_rule' && e) {
     // A rule without a name is told by whom it is for.
-    if (typeof e.subject === 'string' && e.subject)
-      return e.subject.startsWith('group:') ? t('rule.kind.group') : e.subject;
+    if (typeof e.subject_group_id === 'string' && e.subject_group_id) return t('rule.kind.group');
+    if (typeof e.subject === 'string' && e.subject) return e.subject;
   }
   if (record.entity === 'group_member' && e) {
     if (typeof e.member_group_id === 'string' && e.member_group_id)

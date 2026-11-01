@@ -338,7 +338,7 @@ func apiProblems(f *policyfix.Fixture) []string {
 				bad("rule %s: the subject %s would be taken for a group", r.Name, r.Subject)
 			}
 		case r.SubjectGroup != "":
-			in.Subject = ptr(model.GroupSubject(*id("group " + r.SubjectGroup)))
+			in.SubjectGroupID = id("group " + r.SubjectGroup)
 		case r.MemberOf != "":
 			in.MemberOfGroupID = id("group " + r.MemberOf)
 		}
@@ -768,8 +768,6 @@ func firstDifference(a, b string) string {
 	from := max(0, i-120)
 	return fmt.Sprintf("at %d:\n  …%s\n  …%s", i, a[from:min(len(a), i+120)], b[from:min(len(b), i+120)])
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // The checks below keep the conditions the generator writes within what the admin API takes, beyond the validation of the
 // inputs above: they are the values a condition compares with, parsed as the engine parses them.

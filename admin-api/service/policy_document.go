@@ -283,7 +283,7 @@ func (n *policyNames) claim(c *model.ResourceFromClaim) *model.PolicyResourceFro
 }
 
 // rule converts a rule to the document: the groups, the roles and the types are named, and a group subject is
-// group:<name>.
+// subject_group by name.
 func (n *policyNames) rule(r model.AssignmentRule) model.PolicyRule {
 	out := model.PolicyRule{
 		Name: ruleDocName(r), Description: r.Description, Enabled: boolPtr(r.Enabled), Effect: r.Effect,
@@ -307,15 +307,11 @@ func (n *policyNames) rule(r model.AssignmentRule) model.PolicyRule {
 		group := n.groupName[*r.RequiresGroupID]
 		out.RequiresGroup = &group
 	}
-	if r.Subject != nil {
-		subject := *r.Subject
-		if id, ok := strings.CutPrefix(subject, model.GroupSubjectPrefix); ok {
-			if gid, err := uuid.Parse(id); err == nil && n.groupName[gid] != "" {
-				subject = model.GroupSubjectPrefix + n.groupName[gid]
-			}
-		}
-		out.Subject = &subject
+	if r.SubjectGroupID != nil {
+		group := n.groupName[*r.SubjectGroupID]
+		out.SubjectGroup = &group
 	}
+	out.Subject = r.Subject
 	return out
 }
 
@@ -785,18 +781,13 @@ func (im *importer) ruleInput(w model.PolicyRule) (model.AssignmentRuleInput, er
 		}
 		in.ResourceFromClaim = claim
 	}
-	if w.Subject != nil {
-		subject := *w.Subject
-		if group, ok := strings.CutPrefix(subject, model.GroupSubjectPrefix); ok {
-			if _, notUUID := uuid.Parse(group); notUUID != nil {
-				id, err := im.groupRef(group)
-				if err != nil {
-					return in, err
-				}
-				subject = model.GroupSubjectPrefix + id.String()
-			}
+	in.Subject = w.Subject
+	if w.SubjectGroup != nil {
+		id, err := im.groupRef(*w.SubjectGroup)
+		if err != nil {
+			return in, err
 		}
-		in.Subject = &subject
+		in.SubjectGroupID = &id
 	}
 	if w.MemberOf != nil {
 		id, err := im.groupRef(*w.MemberOf)

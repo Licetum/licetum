@@ -228,7 +228,10 @@ func (a *App) loadSnapshot(ctx context.Context, revision, max int64) (*snapshot,
 			rowsOf.Close()
 			return nil, err
 		}
-		if r.Subject != nil {
+		if r.SubjectGroupID != nil {
+			key := model.GroupSubject(*r.SubjectGroupID)
+			snap.direct[key] = append(snap.direct[key], *r)
+		} else if r.Subject != nil {
 			snap.direct[*r.Subject] = append(snap.direct[*r.Subject], *r)
 		} else {
 			snap.scanned = append(snap.scanned, *r)

@@ -146,7 +146,10 @@ export function RolePage({ roleId }: { roleId: string }) {
         extra={
           <>
             {access.whole('assignment_rule', 'write') && (
-              <Button type="primary" onClick={() => grant.open({ roleId })}>
+              <Button
+                type="primary"
+                onClick={() => grant.open({ roleId, serviceId: role.service_id })}
+              >
                 {t('roles.grant')}
               </Button>
             )}

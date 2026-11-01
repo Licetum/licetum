@@ -153,6 +153,7 @@ type PolicyResourceFromClaim struct {
 
 // PolicyRule is an assignment rule of the service, with names instead of ids.
 type PolicyRule struct {
+	SubjectGroup       *string                  `json:"subject_group,omitempty" doc:"The name of the group itself as the subject"`
 	Name               string                   `json:"name" minLength:"1" maxLength:"200" doc:"The name: unique in the document. A rule without one has the name rule-<id>"`
 	Description        *string                  `json:"description,omitempty" doc:"What the rule is for"`
 	Type               *string                  `json:"type,omitempty" doc:"The resource type of the inline permission, as service/type; absent for a role rule"`
@@ -161,7 +162,7 @@ type PolicyRule struct {
 	ResourceFromClaim  *PolicyResourceFromClaim `json:"resource_from_claim,omitempty" doc:"A resource computed from a claim of the subject"`
 	ResourceWhere      []PredicateCondition     `json:"resource_where,omitempty" doc:"The resources whose attributes match"`
 	Access             []string                 `json:"access,omitempty" doc:"Access levels, or access groups as @name"`
-	Subject            *string                  `json:"subject,omitempty" doc:"A specific subject, or group:<id>"`
+	Subject            *string                  `json:"subject,omitempty" doc:"A specific subject; group: is reserved"`
 	Predicate          []PredicateCondition     `json:"predicate,omitempty" doc:"AND conditions over the claims and the request"`
 	MemberOf           *string                  `json:"member_of,omitempty" doc:"The name of the group whose members the rule covers"`
 	Enabled            *bool                    `json:"enabled,omitempty" doc:"Whether the rule is active; absent — active"`

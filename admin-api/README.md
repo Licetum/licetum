@@ -202,3 +202,7 @@ entities with the same names remain independent. The web create forms select the
 An assignment rule derives its immutable service from its target type or role. Its group references stay within that
 service, and its preview uses that service's subject directory. Retargeting into another service is refused; create a
 new rule there instead. A claim-based resource lookup may still name a type of another service during P3.
+
+A rule targeting a group itself uses `subject_group_id`, an owned foreign key, rather than a `subject` string beginning
+with `group:`. That literal prefix is reserved. Policy documents use `subject_group` with the group's name. Ordinary
+membership selectors continue to use `member_of_group_id`.

@@ -31,12 +31,11 @@ SELECT NOT EXISTS (SELECT 1 FROM type_resource WHERE id = $1 AND deleted_at IS N
 	         AND rp.resource_from_claim IS NULL AND rp.resource_where IS NULL AND 'write' = ANY(rp.access)))
 	  )
 	  AND (
-	    (ar.subject IS NOT NULL AND (ar.subject NOT LIKE 'group:%' OR EXISTS (
-	       SELECT 1 FROM group_member gm
-	       WHERE gm.group_id::text = substr(ar.subject, 7) AND gm.enabled
-	         AND (gm.valid_from IS NULL OR gm.valid_from <= now())
-	         AND (gm.expires_at IS NULL OR gm.expires_at > now()))))
-	    OR (ar.subject IS NULL AND ar.member_of_group_id IS NULL AND ar.predicate <> '[]'::jsonb)
+      (ar.subject IS NOT NULL)
+      OR (ar.subject_group_id IS NOT NULL AND EXISTS (
+       SELECT 1 FROM group_member gm WHERE gm.group_id=ar.subject_group_id AND gm.enabled
+       AND (gm.valid_from IS NULL OR gm.valid_from<=now()) AND (gm.expires_at IS NULL OR gm.expires_at>now())))
+      OR (ar.subject IS NULL AND ar.subject_group_id IS NULL AND ar.member_of_group_id IS NULL AND ar.predicate<>'[]'::jsonb)
 	    OR (ar.member_of_group_id IS NOT NULL AND EXISTS (
 	       SELECT 1 FROM group_member gm
 	       WHERE gm.group_id = ar.member_of_group_id AND gm.enabled

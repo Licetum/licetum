@@ -323,10 +323,14 @@ components:
           format: uuid
           type: string
         subject:
-          description: A specific subject or group (group:{uuid})
+          description: A specific subject; null when another subject selector is used
           type:
             - string
             - "null"
+        subject_group_id:
+          description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
+          format: uuid
+          type: string
         subject_kind:
           description: "The label of the subject: user, service, agent or group; null when there is none"
           type:
@@ -466,12 +470,16 @@ components:
           format: uuid
           type: string
         subject:
-          description: A specific subject or group (group:{uuid}); mutually exclusive with predicate and member_of_group_id
+          description: "A specific subject; group: is reserved. Mutually exclusive with subject_group_id, predicate and member_of_group_id"
           examples:
             - alice
           type:
             - string
             - "null"
+        subject_group_id:
+          description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
+          format: uuid
+          type: string
         subject_kind:
           description: "A label of the subject: user, service, agent or group. It classifies the rule; it does not change what matches"
           enum:
@@ -597,10 +605,14 @@ components:
             - string
             - "null"
         subject:
-          description: A specific subject or group (group:{uuid})
+          description: A specific subject; null when another subject selector is used
           type:
             - string
             - "null"
+        subject_group_id:
+          description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
+          format: uuid
+          type: string
         subject_kind:
           description: "The label of the subject: user, service, agent or group; null when there is none"
           type:
@@ -2378,7 +2390,10 @@ components:
           description: The name of the role granted; absent for an inline rule
           type: string
         subject:
-          description: A specific subject, or group:<id>
+          description: "A specific subject; group: is reserved"
+          type: string
+        subject_group:
+          description: The name of the group itself as the subject
           type: string
         subject_kind:
           description: A label of the subject
@@ -3617,9 +3632,9 @@ paths:
         services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
         has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
-        Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
-        the rule applies to everyone.
+        Who the rule applies to — choose **subject** (a specific subject), **subject_group_id** (the group itself),
+        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group).
+        These selectors are mutually exclusive. An empty predicate applies to everyone. The literal subject prefix group: is reserved.
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
         exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
@@ -3845,9 +3860,9 @@ paths:
         services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
         has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
-        Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
-        the rule applies to everyone.
+        Who the rule applies to — choose **subject** (a specific subject), **subject_group_id** (the group itself),
+        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group).
+        These selectors are mutually exclusive. An empty predicate applies to everyone. The literal subject prefix group: is reserved.
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
         exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
@@ -10407,7 +10422,7 @@ tags:
     name: Type resource
   - description: Concrete resources of a type and the synchronizers that fetch them from the owning service (SQL query or HTTP).
     name: Resource
-  - description: "Global groups of people: a group is a subject too (`group:<uuid>`), so it is granted permissions the same way as a user."
+  - description: "Service-owned groups of people: a rule refers to the group itself with subject_group_id."
     name: Group
   - description: "Who belongs to a group: by a predicate over claims (the properties of the subject) or by nesting another group."
     name: Group member

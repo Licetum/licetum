@@ -59,7 +59,7 @@ function useKnownPeople(serviceId: string | undefined) {
       return found;
     };
     for (const r of rules.data ?? []) {
-      if (r.subject && !r.subject.startsWith('group:')) touch(r.subject).rules++;
+      if (r.subject) touch(r.subject).rules++;
     }
     for (const [groupId, list] of members.byGroup) {
       for (const m of list) {
@@ -118,7 +118,7 @@ export function PeopleScreen() {
       .map((g) => {
         const list = members.byGroup.get(g.id) ?? [];
         const grants = (rules.data ?? []).filter(
-          (r) => r.member_of_group_id === g.id || r.subject === `group:${g.id}`,
+          (r) => r.member_of_group_id === g.id || r.subject_group_id === g.id,
         ).length;
         const nestedIn = [...members.byGroup.entries()]
           .filter(([, ms]) => ms.some((m) => m.member_group_id === g.id))

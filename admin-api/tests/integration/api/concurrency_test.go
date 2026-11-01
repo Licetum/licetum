@@ -124,7 +124,8 @@ func TestContract_WR04_ConcurrentRevocationsKeepTheLastAdministrator(t *testing.
 					if kind == "membership" || kind == "group" {
 						group := e.must("POST", "/group", map[string]any{"name": fmt.Sprintf("backup-%d-%d", round, n), "service_id": model.PlatformServiceID})["id"].(string)
 						member := e.must("POST", "/group/"+group+"/member", map[string]any{"predicate": []map[string]any{{"attr": "preferred_username", "op": "eq", "value": "admin"}}})["id"].(string)
-						body["subject"] = "group:" + group
+						delete(body, "subject")
+						body["subject_group_id"] = group
 						remove = append(remove, map[string]any{"op": "delete", "entity": "group_member", "id": member, "parent": group})
 						if kind == "group" {
 							remove = append(remove, map[string]any{"op": "delete", "entity": "group", "id": group})

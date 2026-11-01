@@ -87,7 +87,7 @@ func TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings(t *te
 		t.Errorf("restored %d memberships, want 2 (the claim values and the user)", report.Members)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assignment_rule WHERE enabled AND effect = 'allow' AND resource_id IS NULL
-		AND subject = $1`, model.GroupSubject(model.PlatformAdminGroupID)).Scan(&rules); err != nil {
+		AND subject_group_id = $1`, model.PlatformAdminGroupID).Scan(&rules); err != nil {
 		t.Fatal(err)
 	}
 	if rules != len(model.PlatformTypes) {

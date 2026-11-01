@@ -101,8 +101,8 @@ func (a *App) DeleteGroup(ctx context.Context, groupID uuid.UUID) (uuid.UUID, er
 
 		var blockedBy []string
 		inRules, err := engine.Exists(ctx, q,
-			`SELECT 1 FROM assignment_rule WHERE subject = $1 OR member_of_group_id = $2 OR requires_group_id = $2`,
-			model.GroupSubject(groupID), groupID)
+			`SELECT 1 FROM assignment_rule WHERE subject_group_id = $1 OR member_of_group_id = $1 OR requires_group_id = $1`,
+			groupID)
 		if err != nil {
 			return change{}, err
 		}

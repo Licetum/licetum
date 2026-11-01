@@ -51,8 +51,8 @@ export function describeWho(
       label: groupName(rule.member_of_group_id) ?? t('rule.unknownGroup'),
     };
   }
-  if (rule.subject?.startsWith('group:')) {
-    const id = rule.subject.slice('group:'.length);
+  if (hasId(rule.subject_group_id)) {
+    const id = rule.subject_group_id;
     return { kind: 'group', groupId: id, label: groupName(id) ?? t('rule.unknownGroup') };
   }
   if (rule.subject) return { kind: 'person', username: rule.subject, label: rule.subject };
@@ -132,6 +132,7 @@ export function ruleToInput(rule: Rule): AssignmentRuleInput {
   if (rule.effect === 'deny') input.on_missing_attribute = rule.on_missing_attribute;
   if (hasId(rule.member_of_group_id)) input.member_of_group_id = rule.member_of_group_id;
   if (rule.subject) input.subject = rule.subject;
+  if (hasId(rule.subject_group_id)) input.subject_group_id = rule.subject_group_id;
   if (rule.subject_kind)
     input.subject_kind = rule.subject_kind as AssignmentRuleInput['subject_kind'];
   if (rule.predicate?.length) input.predicate = rule.predicate;

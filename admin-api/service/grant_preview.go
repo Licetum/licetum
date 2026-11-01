@@ -18,7 +18,7 @@ const grantPreviewSample = 10
 func ruleFromInput(in *model.AssignmentRuleInput) model.AssignmentRule {
 	enabled := in.Enabled == nil || *in.Enabled
 	return model.AssignmentRule{
-		RoleID: in.RoleID, TypeResourceID: in.TypeResourceID, ResourceID: in.ResourceID,
+		SubjectGroupID: in.SubjectGroupID, RoleID: in.RoleID, TypeResourceID: in.TypeResourceID, ResourceID: in.ResourceID,
 		ResourceFromClaim: in.ResourceFromClaim, Access: in.Access, Subject: in.Subject, Predicate: in.Predicate,
 		MemberOfGroupID: in.MemberOfGroupID, Enabled: enabled, Effect: in.Effect, Exception: in.Exception,
 		ValidFrom: in.ValidFrom, ExpiresAt: in.ExpiresAt, Name: in.Name, Description: in.Description,
@@ -349,10 +349,9 @@ func (a *App) grantMeets(ctx context.Context, g *engine.TypeGraph, rule *model.A
 // whoKey names whom a rule applies to: a subject, a group, a set of conditions, or everyone.
 func whoKey(r *model.AssignmentRule) (kind, key string) {
 	switch {
+	case r.SubjectGroupID != nil:
+		return "group", r.SubjectGroupID.String()
 	case r.Subject != nil:
-		if id, ok := strings.CutPrefix(*r.Subject, model.GroupSubjectPrefix); ok {
-			return "group", id
-		}
 		return "user", *r.Subject
 	case r.MemberOfGroupID != nil:
 		return "group", r.MemberOfGroupID.String()

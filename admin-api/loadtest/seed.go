@@ -209,7 +209,7 @@ func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 // revision atomically. Measured writes still go through the real admin API.
 func createRules(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	columns := []string{"id", "type_resource_id", "resource_id", "resource_from_claim", "access", "subject", "predicate",
-		"member_of_group_id", "enabled", "effect", "exception", "on_missing_attribute", "requires_predicate", "service_id"}
+		"member_of_group_id", "enabled", "effect", "exception", "on_missing_attribute", "requires_predicate", "subject_group_id", "service_id"}
 	var n int64
 	err := support.RawPolicyTx(ctx, e.pool, func(tx pgx.Tx) error {
 		var err error
@@ -263,7 +263,7 @@ func ruleRow(in *model.AssignmentRuleInput) ([]any, error) {
 	}
 	return []any{
 		uuid.New(), in.TypeResourceID, in.ResourceID, claim, in.Access, in.Subject, rawPredicate,
-		in.MemberOfGroupID, true, effect, in.Exception, onMissing, []byte("[]"),
+		in.MemberOfGroupID, true, effect, in.Exception, onMissing, []byte("[]"), in.SubjectGroupID,
 	}, nil
 }
 

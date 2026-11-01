@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -149,7 +148,7 @@ func hasResourceTarget(r model.AssignmentRule) bool {
 // everyoneRule reports whether a rule covers every subject: no subject, group or claim condition narrows it, and no guard
 // does either.
 func everyoneRule(r model.AssignmentRule) bool {
-	return r.Subject == nil && r.MemberOfGroupID == nil && len(r.Predicate) == 0 &&
+	return r.Subject == nil && r.SubjectGroupID == nil && r.MemberOfGroupID == nil && len(r.Predicate) == 0 &&
 		len(r.RequiresPredicate) == 0 && r.RequiresGroupID == nil
 }
 
@@ -162,10 +161,8 @@ func groupsOfRule(r model.AssignmentRule) []uuid.UUID {
 	if r.RequiresGroupID != nil {
 		out = append(out, *r.RequiresGroupID)
 	}
-	if r.Subject != nil && strings.HasPrefix(*r.Subject, model.GroupSubjectPrefix) {
-		if id, err := uuid.Parse(strings.TrimPrefix(*r.Subject, model.GroupSubjectPrefix)); err == nil {
-			out = append(out, id)
-		}
+	if r.SubjectGroupID != nil {
+		out = append(out, *r.SubjectGroupID)
 	}
 	return out
 }

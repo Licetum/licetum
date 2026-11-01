@@ -265,13 +265,14 @@ func (r *ResourceFromClaim) UnmarshalJSON(data []byte) error {
 // with access, and optionally a target). To whom it is granted is one of three ways: subject, predicate
 // or member_of_group_id.
 type AssignmentRuleInput struct {
+	SubjectGroupID     *uuid.UUID           `json:"subject_group_id" format:"uuid" required:"false" doc:"The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id"`
 	_                  struct{}             `additionalProperties:"true"`
 	RoleID             *uuid.UUID           `json:"role_id" format:"uuid" required:"false" doc:"Id of a role: grants all its permissions. Mutually exclusive with the inline permission (type_resource_id, resource_id, resource_from_claim, access)"`
 	TypeResourceID     *uuid.UUID           `json:"type_resource_id" format:"uuid" required:"false" doc:"Id of the resource type the inline permission applies to (of any service); required without role_id"`
 	ResourceID         *string              `json:"resource_id" required:"false" doc:"Resource id; null means the rule covers the whole resource type (if resource_from_claim is not set either)"`
 	ResourceFromClaim  *ResourceFromClaim   `json:"resource_from_claim" required:"false" doc:"Compute resource_id dynamically from a claim of the subject; mutually exclusive with resource_id"`
 	Access             []string             `json:"access" minItems:"1" required:"false" doc:"Access levels of the inline permission (read, write, ...); required without role_id" example:"[\"read\",\"write\"]"`
-	Subject            *string              `json:"subject" required:"false" doc:"A specific subject or group (group:{uuid}); mutually exclusive with predicate and member_of_group_id" example:"alice"`
+	Subject            *string              `json:"subject" required:"false" doc:"A specific subject; group: is reserved. Mutually exclusive with subject_group_id, predicate and member_of_group_id" example:"alice"`
 	Predicate          []PredicateCondition `json:"predicate" required:"false" doc:"AND conditions over the claims and the request; mutually exclusive with subject and member_of_group_id"`
 	MemberOfGroupID    *uuid.UUID           `json:"member_of_group_id" format:"uuid" required:"false" doc:"The rule applies to everyone who is a member of this group; mutually exclusive with subject and predicate"`
 	Enabled            *bool                `json:"enabled" required:"false" default:"true" doc:"Whether the rule is active"`
@@ -360,8 +361,11 @@ func (a *AssignmentRuleInput) Validate() error {
 	if len(a.ResourceWhere) > 0 && (a.ResourceID != nil || a.ResourceFromClaim != nil) {
 		return apperr.Unprocessable(i18n.ResourceTargetExclusive)
 	}
+	if a.Subject != nil && strings.HasPrefix(*a.Subject, GroupSubjectPrefix) {
+		return apperr.Unprocessable(i18n.SubjectGroupReserved)
+	}
 	modes := 0
-	for _, set := range []bool{a.Subject != nil, a.MemberOfGroupID != nil, len(a.Predicate) > 0} {
+	for _, set := range []bool{a.Subject != nil, a.SubjectGroupID != nil, a.MemberOfGroupID != nil, len(a.Predicate) > 0} {
 		if set {
 			modes++
 		}
@@ -373,6 +377,7 @@ func (a *AssignmentRuleInput) Validate() error {
 }
 
 type AssignmentRule struct {
+	SubjectGroupID     *uuid.UUID           `json:"subject_group_id" format:"uuid" required:"false" doc:"The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id"`
 	ServiceID          uuid.UUID            `json:"service_id" format:"uuid" doc:"Owning service id"`
 	ID                 uuid.UUID            `json:"id" format:"uuid" doc:"Rule id"`
 	RoleID             *uuid.UUID           `json:"role_id" format:"uuid" doc:"Role whose permissions the rule grants; null for an inline rule"`
@@ -380,7 +385,7 @@ type AssignmentRule struct {
 	ResourceID         *string              `json:"resource_id" doc:"Resource id; null means the whole type"`
 	ResourceFromClaim  *ResourceFromClaim   `json:"resource_from_claim" doc:"Dynamic resource_id computed from a claim"`
 	Access             []string             `json:"access" doc:"Access levels of the inline permission; null for a role rule"`
-	Subject            *string              `json:"subject" doc:"A specific subject or group (group:{uuid})"`
+	Subject            *string              `json:"subject" doc:"A specific subject; null when another subject selector is used"`
 	Predicate          []PredicateCondition `json:"predicate" doc:"AND conditions over the claims and the request"`
 	MemberOfGroupID    *uuid.UUID           `json:"member_of_group_id" format:"uuid" doc:"Group whose members are granted access"`
 	Enabled            bool                 `json:"enabled" doc:"Whether the rule is active"`

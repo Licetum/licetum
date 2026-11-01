@@ -20,7 +20,7 @@ var adminTags = []*huma.Tag{
 	{Name: "Service", Description: "Client applications registered in Licetum. The slug of a service names it in the paths of the PDP."},
 	{Name: "Type resource", Description: "Resource types of a service. The parent (type_resource_parent_id) may belong to another service and defines the permission inheritance chain."},
 	{Name: "Resource", Description: "Concrete resources of a type and the synchronizers that fetch them from the owning service (SQL query or HTTP)."},
-	{Name: "Group", Description: "Global groups of people: a group is a subject too (`group:<uuid>`), so it is granted permissions the same way as a user."},
+	{Name: "Group", Description: "Service-owned groups of people: a rule refers to the group itself with subject_group_id."},
 	{Name: "Group member", Description: "Who belongs to a group: by a predicate over claims (the properties of the subject) or by nesting another group."},
 	{Name: "Role", Description: "Global roles: named sets of permissions. A role is not a subject: an assignment rule grants it (role_id)."},
 	{Name: "Role permission", Description: "The items of a role: access levels on a target of a resource type."},
@@ -810,9 +810,9 @@ or on the whole type (neither). The grant cascades to all resources of child typ
 services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
 has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
-Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-**predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
-the rule applies to everyone.
+Who the rule applies to — choose **subject** (a specific subject), **subject_group_id** (the group itself),
+**predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group).
+These selectors are mutually exclusive. An empty predicate applies to everyone. The literal subject prefix group: is reserved.
 
 **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
 exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.

@@ -341,11 +341,11 @@ func seedAdminGroup(ctx context.Context, tx pgx.Tx, p config.Platform) error {
 	// The group gets access to every platform type as a whole (resource_id = NULL).
 	for _, t := range model.PlatformTypes {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO assignment_rule (service_id,id, type_resource_id, resource_id, access, subject, predicate, enabled)
+			INSERT INTO assignment_rule (service_id,id, type_resource_id, resource_id, access, subject_group_id, predicate, enabled)
 			VALUES ((SELECT service_id FROM type_resource WHERE id=$2),$1, $2, NULL, $3, $4, '[]'::jsonb, true)
 			ON CONFLICT (id) DO NOTHING`,
 			model.PlatformAdminRuleID(t), model.PlatformTypeResourceID(t), adminAccess,
-			model.GroupSubject(model.PlatformAdminGroupID),
+			model.PlatformAdminGroupID,
 		); err != nil {
 			return err
 		}

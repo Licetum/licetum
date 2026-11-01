@@ -9,8 +9,7 @@ import (
 	"github.com/licetum/licetum/core/i18n"
 )
 
-// GroupSubjectPrefix: a group is a subject too — AssignmentRule.subject = "group:<uuid>" grants permissions
-// to the group through the same mechanism as to a regular user.
+// GroupSubjectPrefix names group identities inside the engine. The API uses subject_group_id.
 const GroupSubjectPrefix = "group:"
 
 func GroupSubject(groupID uuid.UUID) string {

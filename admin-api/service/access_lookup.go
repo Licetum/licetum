@@ -175,12 +175,8 @@ func (a *App) lookupNames(ctx context.Context, rules []model.AssignmentRule) (lo
 		if r.MemberOfGroupID != nil {
 			groupIDs = append(groupIDs, *r.MemberOfGroupID)
 		}
-		if r.Subject != nil {
-			if id, ok := strings.CutPrefix(*r.Subject, model.GroupSubjectPrefix); ok {
-				if gid, err := uuid.Parse(id); err == nil {
-					groupIDs = append(groupIDs, gid)
-				}
-			}
+		if r.SubjectGroupID != nil {
+			groupIDs = append(groupIDs, *r.SubjectGroupID)
 		}
 		if r.RoleID != nil {
 			roleIDs = append(roleIDs, *r.RoleID)
@@ -289,13 +285,9 @@ func whoOf(rule *model.AssignmentRule, names lookedUpNames) model.AccessWho {
 	who := model.AccessWho{Predicate: []model.PredicateCondition{}, Guarded: len(rule.RequiresPredicate) > 0 || rule.RequiresGroupID != nil}
 	group := func(id uuid.UUID) *model.NamedID { return &model.NamedID{ID: id, Name: names.groups[id]} }
 	switch {
+	case rule.SubjectGroupID != nil:
+		who.Kind, who.Group = "group", group(*rule.SubjectGroupID)
 	case rule.Subject != nil:
-		if id, ok := strings.CutPrefix(*rule.Subject, model.GroupSubjectPrefix); ok {
-			if gid, err := uuid.Parse(id); err == nil {
-				who.Kind, who.Group = "group", group(gid)
-				return who
-			}
-		}
 		who.Kind, who.Subject = "user", rule.Subject
 	case rule.MemberOfGroupID != nil:
 		who.Kind, who.Group = "group", group(*rule.MemberOfGroupID)

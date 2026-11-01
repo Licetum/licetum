@@ -528,7 +528,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		case r.Subject != "":
 			in.Subject = ptr(r.Subject)
 		case r.SubjectGroup != "":
-			in.Subject = ptr(model.GroupSubject(groups[r.SubjectGroup]))
+			in.SubjectGroupID = ptr(groups[r.SubjectGroup])
 		case r.MemberOf != "":
 			in.MemberOfGroupID = ptr(groups[r.MemberOf])
 		default:

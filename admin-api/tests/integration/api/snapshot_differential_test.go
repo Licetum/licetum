@@ -141,7 +141,7 @@ func (g *policyGenerator) rule() string {
 			rule["subject"] = fmt.Sprintf("user-%d", g.rng.Intn(6))
 			break
 		}
-		rule["subject"] = "group:" + g.groups[g.rng.Intn(len(g.groups))]
+		rule["subject_group_id"] = g.groups[g.rng.Intn(len(g.groups))]
 	case 6, 7:
 		if g.owner(rule) != g.w.org {
 			rule["predicate"] = g.conditions()

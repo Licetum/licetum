@@ -313,6 +313,15 @@ func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity
 		identityList = append(identityList, s)
 	}
 
+	var groupIDs []uuid.UUID
+	for _, identity := range identityList {
+		if value, ok := strings.CutPrefix(identity, model.GroupSubjectPrefix); ok {
+			if id, err := uuid.Parse(value); err == nil {
+				groupIDs = append(groupIDs, id)
+			}
+		}
+	}
+
 	// An inline rule lives on a relevant type that is not deleted; a role assignment is checked by the
 	// types of its items in expandRoles. A rule is in force at $2: RuleActiveSQL at the moment of the decision, which is
 	// the App's (see SetClock), as the snapshot has it.
@@ -325,13 +334,13 @@ func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity
 
 	// Indexed path (formerly Grant): point rows with subject IN identity — fast even with a large
 	// number of point grants.
-	direct, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject = ANY($3) ORDER BY ar.id`, typeIDs, now, identityList)
+	direct, err := a.LoadRules(ctx, ruleQuery+` AND (ar.subject = ANY($3) OR ar.subject_group_id=ANY($4)) ORDER BY ar.id`, typeIDs, now, identityList, groupIDs)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	// Rule path: a predicate over the request or member_of_group_id — scanned in full, since we cannot know in
 	// advance which rule matches which subject.
-	byRule, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject IS NULL ORDER BY ar.id`, typeIDs, now)
+	byRule, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject IS NULL AND ar.subject_group_id IS NULL ORDER BY ar.id`, typeIDs, now)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -451,6 +460,8 @@ func (a *App) ExpandRoles(ctx context.Context, rules []model.AssignmentRule, typ
 func ruleTruth(rule model.AssignmentRule, identity identitySet, env Env) truth {
 	var target truth
 	switch {
+	case rule.SubjectGroupID != nil:
+		target = identity[model.GroupSubject(*rule.SubjectGroupID)]
 	case rule.Subject != nil:
 		target = identity[*rule.Subject]
 	case rule.MemberOfGroupID != nil:
@@ -484,8 +495,8 @@ func RuleApplies(rule model.AssignmentRule, identity identitySet, env Env) (appl
 func RuleOrigin(rule model.AssignmentRule) string {
 	var who string
 	switch {
-	case rule.Subject != nil && strings.HasPrefix(*rule.Subject, model.GroupSubjectPrefix):
-		who = "group " + strings.TrimPrefix(*rule.Subject, model.GroupSubjectPrefix)
+	case rule.SubjectGroupID != nil:
+		who = "group " + rule.SubjectGroupID.String()
 	case rule.Subject != nil:
 		who = "subject " + *rule.Subject
 	case rule.MemberOfGroupID != nil:

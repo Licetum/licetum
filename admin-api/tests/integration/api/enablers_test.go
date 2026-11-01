@@ -241,7 +241,7 @@ func TestTheLastAdminAccessIsProtected(t *testing.T) {
 	requireErrorCode(t, status, raw, http.StatusConflict, "last_admin_access")
 	status, raw = e.do("PATCH", e.admin.URL+"/assignment_rule/"+adminRule, map[string]any{
 		"type_resource_id": model.PlatformTypeResourceID(model.PlatformAssignmentRule).String(),
-		"access":           []string{"read"}, "subject": "group:" + model.PlatformAdminGroupID.String(),
+		"access":           []string{"read"}, "subject_group_id": model.PlatformAdminGroupID.String(),
 	})
 	requireErrorCode(t, status, raw, http.StatusConflict, "last_admin_access")
 
