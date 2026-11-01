@@ -241,7 +241,7 @@ contracts:
     oracle: the records encoded, decoded again chunk by chunk
     level: unit
     phase: P3
-    status: planned
+    status: active
   - id: APP01
     statement: The applier never moves past a missing or mismatching entry; late, duplicate or reordered headers and chunks never produce a torn application; a missing chunk is read from another data center.
     oracle: injected log
