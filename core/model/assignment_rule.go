@@ -286,7 +286,7 @@ type AssignmentRuleInput struct {
 	RequiresPredicate  []PredicateCondition `json:"requires_predicate" required:"false" nullable:"false" doc:"A guard: conditions that must hold as well for the rule to apply, in addition to its subject, group or predicate"`
 	RequiresGroupID    *uuid.UUID           `json:"requires_group_id" required:"false" nullable:"true" format:"uuid" doc:"A guard: the subject must be a member of this group for the rule to apply"`
 	ResourceWhere      []PredicateCondition `json:"resource_where" required:"false" nullable:"true" doc:"Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions. Mutually exclusive with resource_id and resource_from_claim; needs a synchronizer"`
-	SubjectKind        *string              `json:"subject_kind" required:"false" nullable:"true" enum:"user,service,agent,group" doc:"A label of the subject: user, service, agent or group. It classifies the rule; it does not change what matches"`
+	SubjectType        *string              `json:"subject_type" required:"false" nullable:"true" doc:"Subject type for a literal subject; null matches any type. The type group is reserved"`
 }
 
 // Values of on_missing_attribute (see AssignmentRuleInput).
@@ -364,6 +364,15 @@ func (a *AssignmentRuleInput) Validate() error {
 	if a.Subject != nil && strings.HasPrefix(*a.Subject, GroupSubjectPrefix) {
 		return apperr.Unprocessable(i18n.SubjectGroupReserved)
 	}
+	if a.SubjectType != nil {
+		if a.Subject == nil {
+			return apperr.Unprocessable(i18n.SubjectTypeRequiresLiteral)
+		}
+		if err := checkSubjectType(*a.SubjectType); err != nil {
+			return apperr.Unprocessable(i18n.RuleSubjectTypeInvalid)
+		}
+	}
+
 	modes := 0
 	for _, set := range []bool{a.Subject != nil, a.SubjectGroupID != nil, a.MemberOfGroupID != nil, len(a.Predicate) > 0} {
 		if set {
@@ -399,7 +408,7 @@ type AssignmentRule struct {
 	RequiresPredicate  []PredicateCondition `json:"requires_predicate" nullable:"false" doc:"The guard conditions that must hold as well for the rule to apply"`
 	RequiresGroupID    *uuid.UUID           `json:"requires_group_id" format:"uuid" nullable:"true" doc:"The guard: the subject must be a member of this group; null when there is no such guard"`
 	ResourceWhere      []PredicateCondition `json:"resource_where" nullable:"true" doc:"The conditions over the resource attributes the rule covers; null for a rule on a resource id, on a claim or on the whole type"`
-	SubjectKind        *string              `json:"subject_kind" nullable:"true" doc:"The label of the subject: user, service, agent or group; null when there is none"`
+	SubjectType        *string              `json:"subject_type" nullable:"true" doc:"Subject type for a literal subject; null matches any type. The type group is reserved"`
 }
 
 // validateTarget checks the target of a permission (inline rule or role item): at most one of a resource id, a claim

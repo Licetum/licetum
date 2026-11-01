@@ -54,7 +54,7 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse | dec10_guards (the refused delete of the guard group is not a decision) |
 | TestIntegrationResourceWhereCoversTheResourcesWhoseAttributesMatch | dec10_resource_where (the refused targets are not decisions) |
 | TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences | dec12_access_groups, dec12_access_group_levels (levels changed under the rules through `before`; the protected references and the refused groups are not decisions) |
-| TestIntegrationSubjectKindIsStoredAndChecked | not a decision test |
+| TestIntegrationSubjectTypeIsStoredAndChecked | not a decision test |
 
 ### roles_test.go
 
@@ -74,7 +74,7 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationBatchRefusesAnIdAnotherEntityHas | not a decision test |
 | TestIntegrationPolicyImportRefusesARuleIdOfAnotherService | dec01_what_a_rule_covers (the rule that still decides after the refused import) |
 | TestIntegrationRoleItemsKeepTheirConditionsAndAccessGroupsThroughTheDocument | dec12_role_items_with_conditions (the document and its import are not decisions) |
-| TestIntegrationNestedGroupsAndSubjectKindsRoundTrip | not a decision test (the decision it relies on is in dec12_nested_groups_sixteen_levels) |
+| TestIntegrationNestedGroupsRoundTrip | not a decision test (the decision it relies on is in dec12_nested_groups_sixteen_levels) |
 | TestIntegrationResourceWhereMatchesListAttributes | dec10_resource_where_lists |
 
 ### escalation_test.go

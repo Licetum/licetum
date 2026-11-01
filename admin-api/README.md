@@ -206,3 +206,6 @@ new rule there instead. A claim-based resource lookup may still name a type of a
 A rule targeting a group itself uses `subject_group_id`, an owned foreign key, rather than a `subject` string beginning
 with `group:`. That literal prefix is reserved. Policy documents use `subject_group` with the group's name. Ordinary
 membership selectors continue to use `member_of_group_id`.
+
+The optional `subject_type` applies only beside a literal `subject`. Null matches any type; non-null values use the same
+1–64 character type namespace as AuthZEN, with `group` reserved. The old informational `subject_kind` label is removed.

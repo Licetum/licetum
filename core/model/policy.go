@@ -173,7 +173,7 @@ type PolicyRule struct {
 	OnMissingAttribute string                   `json:"on_missing_attribute,omitempty" enum:"skip,apply" doc:"What a denial does when an attribute is missing"`
 	RequiresPredicate  []PredicateCondition     `json:"requires_predicate,omitempty" doc:"Guard conditions"`
 	RequiresGroup      *string                  `json:"requires_group,omitempty" doc:"The name of a group the subject must belong to"`
-	SubjectKind        *string                  `json:"subject_kind,omitempty" enum:"user,service,agent,group" doc:"A label of the subject"`
+	SubjectType        *string                  `json:"subject_type,omitempty" doc:"Subject type for a literal subject; null matches any type. The type group is reserved"`
 }
 
 // PolicyPlanCounts counts what an import does to the entities of the document.

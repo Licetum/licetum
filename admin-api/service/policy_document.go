@@ -288,7 +288,7 @@ func (n *policyNames) rule(r model.AssignmentRule) model.PolicyRule {
 	out := model.PolicyRule{
 		Name: ruleDocName(r), Description: r.Description, Enabled: boolPtr(r.Enabled), Effect: r.Effect,
 		Exception: r.Exception, ValidFrom: utcPtr(r.ValidFrom), ExpiresAt: utcPtr(r.ExpiresAt),
-		OnMissingAttribute: r.OnMissingAttribute, RequiresPredicate: r.RequiresPredicate, SubjectKind: r.SubjectKind,
+		OnMissingAttribute: r.OnMissingAttribute, RequiresPredicate: r.RequiresPredicate, SubjectType: r.SubjectType,
 		ResourceID: r.ResourceID, ResourceWhere: r.ResourceWhere, Access: r.Access, Predicate: r.Predicate,
 		ResourceFromClaim: n.claim(r.ResourceFromClaim),
 	}
@@ -753,7 +753,7 @@ func (im *importer) ruleInput(w model.PolicyRule) (model.AssignmentRuleInput, er
 		Access: w.Access, Predicate: w.Predicate, Enabled: boolPtr(*w.Enabled), Effect: w.Effect,
 		Exception: w.Exception, ValidFrom: w.ValidFrom, ExpiresAt: w.ExpiresAt, Name: &name,
 		Description: w.Description, OnMissingAttribute: &onMissing, RequiresPredicate: w.RequiresPredicate,
-		ResourceID: w.ResourceID, ResourceWhere: w.ResourceWhere, SubjectKind: w.SubjectKind,
+		ResourceID: w.ResourceID, ResourceWhere: w.ResourceWhere, SubjectType: w.SubjectType,
 	}
 	if in.Predicate == nil {
 		in.Predicate = []model.PredicateCondition{}
@@ -803,7 +803,7 @@ func (im *importer) ruleInput(w model.PolicyRule) (model.AssignmentRuleInput, er
 		}
 		in.RequiresGroupID = &id
 	}
-	return in, nil
+	return in, in.Validate()
 }
 
 // normalizeRule gives a rule of the document the form that an exported rule has, so that the two compare equal when they

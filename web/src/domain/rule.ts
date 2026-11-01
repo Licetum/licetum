@@ -133,8 +133,7 @@ export function ruleToInput(rule: Rule): AssignmentRuleInput {
   if (hasId(rule.member_of_group_id)) input.member_of_group_id = rule.member_of_group_id;
   if (rule.subject) input.subject = rule.subject;
   if (hasId(rule.subject_group_id)) input.subject_group_id = rule.subject_group_id;
-  if (rule.subject_kind)
-    input.subject_kind = rule.subject_kind as AssignmentRuleInput['subject_kind'];
+  if (rule.subject && rule.subject_type) input.subject_type = rule.subject_type;
   if (rule.predicate?.length) input.predicate = rule.predicate;
   if (hasId(rule.requires_group_id)) input.requires_group_id = rule.requires_group_id;
   if (hasId(rule.role_id)) {

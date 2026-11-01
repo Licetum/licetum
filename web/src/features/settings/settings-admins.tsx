@@ -150,7 +150,7 @@ export function SettingsAdmins() {
         }),
         ...(who === 'group'
           ? { member_of_group_id: groupId }
-          : { subject: person.trim(), subject_kind: 'user' as const }),
+          : { subject: person.trim(), subject_type: 'user' as const }),
       };
       return {
         op: 'create' as const,

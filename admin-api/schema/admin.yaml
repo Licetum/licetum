@@ -331,8 +331,8 @@ components:
           description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
           format: uuid
           type: string
-        subject_kind:
-          description: "The label of the subject: user, service, agent or group; null when there is none"
+        subject_type:
+          description: Subject type for a literal subject; null matches any type. The type group is reserved
           type:
             - string
             - "null"
@@ -368,7 +368,7 @@ components:
         - requires_predicate
         - requires_group_id
         - resource_where
-        - subject_kind
+        - subject_type
       type: object
     AssignmentRuleInput:
       additionalProperties: true
@@ -480,13 +480,8 @@ components:
           description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
           format: uuid
           type: string
-        subject_kind:
-          description: "A label of the subject: user, service, agent or group. It classifies the rule; it does not change what matches"
-          enum:
-            - user
-            - service
-            - agent
-            - group
+        subject_type:
+          description: Subject type for a literal subject; null matches any type. The type group is reserved
           type:
             - string
             - "null"
@@ -613,8 +608,8 @@ components:
           description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
           format: uuid
           type: string
-        subject_kind:
-          description: "The label of the subject: user, service, agent or group; null when there is none"
+        subject_type:
+          description: Subject type for a literal subject; null matches any type. The type group is reserved
           type:
             - string
             - "null"
@@ -662,7 +657,7 @@ components:
         - requires_predicate
         - requires_group_id
         - resource_where
-        - subject_kind
+        - subject_type
       type: object
     AuthzenAction:
       additionalProperties: true
@@ -2395,13 +2390,8 @@ components:
         subject_group:
           description: The name of the group itself as the subject
           type: string
-        subject_kind:
-          description: A label of the subject
-          enum:
-            - user
-            - service
-            - agent
-            - group
+        subject_type:
+          description: Subject type for a literal subject; null matches any type. The type group is reserved
           type: string
         type:
           description: The resource type of the inline permission, as service/type; absent for a role rule

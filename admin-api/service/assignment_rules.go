@@ -146,7 +146,7 @@ func ruleArgs(in *model.AssignmentRuleInput, onMissing string) []any {
 		engine.ToNullUUID(in.RoleID), engine.ToNullUUID(in.TypeResourceID), in.ResourceID, fromClaimParam(in.ResourceFromClaim),
 		in.Access, in.Subject, engine.MustJSON(in.Predicate), engine.ToNullUUID(in.MemberOfGroupID), *in.Enabled,
 		in.Effect, in.Exception, in.ValidFrom, in.ExpiresAt, in.Name, in.Description,
-		onMissing, engine.MustJSON(in.RequiresPredicate), engine.ToNullUUID(in.RequiresGroupID), whereParam(in.ResourceWhere), in.SubjectKind, engine.ToNullUUID(in.SubjectGroupID),
+		onMissing, engine.MustJSON(in.RequiresPredicate), engine.ToNullUUID(in.RequiresGroupID), whereParam(in.ResourceWhere), in.SubjectType, engine.ToNullUUID(in.SubjectGroupID),
 	}
 }
 
@@ -167,7 +167,7 @@ func (a *App) createAssignmentRule(ctx context.Context, in *model.AssignmentRule
 			INSERT INTO assignment_rule AS ar
 				(service_id,id, role_id, type_resource_id, resource_id, resource_from_claim, access, subject, predicate, member_of_group_id,
 				 enabled, effect, exception, valid_from, expires_at, name, description,
-				 on_missing_attribute, requires_predicate, requires_group_id, resource_where, subject_kind,subject_group_id)
+				 on_missing_attribute, requires_predicate, requires_group_id, resource_where, subject_type,subject_group_id)
 			VALUES ($23,COALESCE($22::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15,
 				$16, $17::jsonb, $18, $19::jsonb, $20,$21)
 			RETURNING `+engine.AssignmentRuleColumns, append(ruleArgs(in, onMissingOf(in, nil)), id, *serviceID)...,
@@ -304,7 +304,7 @@ func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *mo
 				subject = $7, predicate = $8::jsonb, member_of_group_id = $9, enabled = $10,
 				effect = $11, exception = $12, valid_from = $13, expires_at = $14, name = $15, description = $16,
 				on_missing_attribute = $17, requires_predicate = $18::jsonb, requires_group_id = $19,
-				resource_where = $20::jsonb, subject_kind = $21,subject_group_id=$22
+				resource_where = $20::jsonb, subject_type = $21,subject_group_id=$22
 			WHERE ar.id = $1
 			RETURNING `+engine.AssignmentRuleColumns, append([]any{ruleID}, ruleArgs(in, onMissingOf(in, old))...)...,
 		))

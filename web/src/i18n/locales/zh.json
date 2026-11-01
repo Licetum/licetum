@@ -369,7 +369,10 @@
       "noGroups": "还没有组。请到“人员与组”中创建。",
       "person": "个人",
       "personHint": "此人在其令牌中的名称：用户名（preferred_username），或 sub。",
-      "personPlaceholder": "例如 alice"
+      "personPlaceholder": "例如 alice",
+      "subjectType": "主体类型",
+      "anySubjectType": "任意主体类型",
+      "subjectTypeHint": "留空表示匹配任意类型；否则必须与应用发送的 subject.type 一致。group 类型为保留值。"
     }
   },
   "grantDetail": {
@@ -389,7 +392,6 @@
       "title": "此访问权限已不存在"
     },
     "history": "此访问权限的历史",
-    "kind": "标记",
     "noHistory": "还没有记录。",
     "onMissing": {
       "apply": "缺少属性：拒绝生效",
@@ -404,7 +406,8 @@
     "termChanged": "期限已更改",
     "undoNote": "期限立即保存；10 秒内可以撤销。",
     "untilDate": "直到 {{date}}",
-    "untilPick": "直到某个日期"
+    "untilPick": "直到某个日期",
+    "subjectType": "主体类型"
   },
   "group": {
     "add": "添加",
@@ -1103,12 +1106,6 @@
       "expired": "已过期",
       "expiring_other": "{{count}} 天后到期",
       "scheduled": "尚未开始"
-    },
-    "subjectKind": {
-      "agent": "智能体",
-      "group": "组",
-      "service": "服务",
-      "user": "个人"
     },
     "title": "{{who}}：{{what}} — {{where}}",
     "unknownGroup": "（未知的组）",

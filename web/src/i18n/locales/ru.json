@@ -411,7 +411,10 @@
       "noGroups": "Групп пока нет. Создайте группу в «Люди и группы».",
       "person": "Человек",
       "personHint": "Так человек называется в токене: имя пользователя (preferred_username) или sub.",
-      "personPlaceholder": "Например alice"
+      "personPlaceholder": "Например alice",
+      "subjectType": "Тип субъекта",
+      "anySubjectType": "Любой тип субъекта",
+      "subjectTypeHint": "Оставьте пустым для любого типа. Иначе тип должен совпадать с subject.type, переданным приложением. Тип group зарезервирован."
     }
   },
   "grantDetail": {
@@ -431,7 +434,6 @@
       "title": "Этого доступа больше нет"
     },
     "history": "История этого доступа",
-    "kind": "Метка",
     "noHistory": "Записей пока нет.",
     "onMissing": {
       "apply": "Если атрибута нет: запрет действует",
@@ -446,7 +448,8 @@
     "termChanged": "Срок изменён",
     "undoNote": "Срок сохраняется сразу; отменить можно в течение 10 секунд.",
     "untilDate": "До {{date}}",
-    "untilPick": "До даты"
+    "untilPick": "До даты",
+    "subjectType": "Тип субъекта"
   },
   "group": {
     "add": "Добавить",
@@ -1208,12 +1211,6 @@
       "expiring_one": "Истекает через {{count}} день",
       "expiring_other": "Истекает через {{count}} дн.",
       "scheduled": "Ещё не начался"
-    },
-    "subjectKind": {
-      "agent": "агент",
-      "group": "группа",
-      "service": "сервис",
-      "user": "человек"
     },
     "title": "{{who}}: {{what}} — {{where}}",
     "unknownGroup": "(неизвестная группа)",

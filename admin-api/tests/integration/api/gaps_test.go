@@ -112,7 +112,7 @@ func TestIntegrationRoleItemsKeepTheirConditionsAndAccessGroupsThroughTheDocumen
 	}
 }
 
-func TestIntegrationNestedGroupsAndSubjectKindsRoundTrip(t *testing.T) {
+func TestIntegrationNestedGroupsRoundTrip(t *testing.T) {
 	w := newWorld(t)
 	inner := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "inner"})["id"].(string)
 	w.must("POST", "/group/"+inner+"/member", map[string]any{
@@ -120,7 +120,7 @@ func TestIntegrationNestedGroupsAndSubjectKindsRoundTrip(t *testing.T) {
 	outer := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "outer"})["id"].(string)
 	w.must("POST", "/group/"+outer+"/member", map[string]any{"member_group_id": inner})
 	w.must("POST", "/assignment_rule", map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1",
-		"access": []string{"read"}, "member_of_group_id": outer, "subject_kind": "service", "name": "outer-read"})
+		"access": []string{"read"}, "member_of_group_id": outer, "name": "outer-read"})
 
 	doc := w.exportPolicy()
 	nested := false
@@ -132,7 +132,7 @@ func TestIntegrationNestedGroupsAndSubjectKindsRoundTrip(t *testing.T) {
 	if !nested || len(doc.Groups) != 2 {
 		t.Fatalf("the nested group in the document: %+v", doc.Groups)
 	}
-	if len(doc.Rules) != 1 || doc.Rules[0].SubjectKind == nil || *doc.Rules[0].SubjectKind != "service" ||
+	if len(doc.Rules) != 1 || doc.Rules[0].SubjectType != nil ||
 		doc.Rules[0].MemberOf == nil || *doc.Rules[0].MemberOf != "outer" {
 		t.Fatalf("the rule in the document: %+v", doc.Rules)
 	}

@@ -31,6 +31,7 @@ export type GrantForm = {
   who: WhoMode;
   groupId?: string;
   person: string;
+  subjectType: string;
   whoConds: Cond[];
   everyoneConfirmed: boolean;
 
@@ -63,6 +64,7 @@ export type GrantForm = {
 export const emptyForm = (): GrantForm => ({
   who: 'group',
   person: '',
+  subjectType: '',
   whoConds: [],
   everyoneConfirmed: false,
   what: 'levels',
@@ -162,7 +164,7 @@ export function buildInputs(f: GrantForm, lookupTypeId?: string): AssignmentRule
   if (f.who === 'group') base.member_of_group_id = f.groupId;
   else if (f.who === 'person') {
     base.subject = f.person.trim();
-    base.subject_kind = 'user';
+    base.subject_type = f.subjectType.trim() || null;
   } else if (f.who === 'condition') base.predicate = f.whoConds.map(toPredicate);
 
   if (f.what === 'role') return [{ ...base, role_id: f.roleId }];

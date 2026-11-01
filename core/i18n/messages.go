@@ -9,13 +9,15 @@ package i18n
 // keep working.
 const (
 	// generic
-	SubjectGroupReserved      Key = "subject_group_reserved"
-	RuleServiceRetarget       Key = "rule_service_retarget"
-	ServiceOwnershipMismatch  Key = "service_ownership_mismatch"
-	ServiceOwnershipImmutable Key = "service_ownership_immutable"
-	InternalError             Key = "internal_error"
-	RouteNotFound             Key = "route_not_found"
-	ValidationFailed          Key = "validation_failed"
+	RuleSubjectTypeInvalid     Key = "rule_subject_type_invalid"
+	SubjectTypeRequiresLiteral Key = "subject_type_requires_literal"
+	SubjectGroupReserved       Key = "subject_group_reserved"
+	RuleServiceRetarget        Key = "rule_service_retarget"
+	ServiceOwnershipMismatch   Key = "service_ownership_mismatch"
+	ServiceOwnershipImmutable  Key = "service_ownership_immutable"
+	InternalError              Key = "internal_error"
+	RouteNotFound              Key = "route_not_found"
+	ValidationFailed           Key = "validation_failed"
 	// availability: the 503 answers of a process that is not ready, cannot trust its copy of the policy, is overloaded or ran
 	// out of time for a request
 	NotReady          Key = "not_ready"
@@ -173,10 +175,12 @@ const (
 )
 
 var catalog = map[Key]Text{
-	SubjectGroupReserved:      {EN: "The group: subject prefix is reserved; use subject_group_id", RU: "Префикс субъекта group: зарезервирован; используйте subject_group_id", ZH: "group: 主体前缀为保留值；请使用 subject_group_id"},
-	RuleServiceRetarget:       {EN: "A rule cannot be retargeted into another service", RU: "Правило нельзя перенести в другой сервис", ZH: "不能将规则重新指向其他服务"},
-	ServiceOwnershipMismatch:  {EN: "Referenced entities must belong to the same service", RU: "Связанные сущности должны принадлежать одному сервису", ZH: "引用的实体必须属于同一服务"},
-	ServiceOwnershipImmutable: {EN: "The owning service cannot be changed", RU: "Сервис-владелец нельзя изменить", ZH: "不能更改所属服务"},
+	RuleSubjectTypeInvalid:     {EN: "subject_type must be 1 to 64 characters, and not group", RU: "subject_type должен содержать от 1 до 64 символов и не быть group", ZH: "subject_type 必须为 1 到 64 个字符，且不能是 group"},
+	SubjectTypeRequiresLiteral: {EN: "subject_type is only valid with a literal subject", RU: "subject_type допустим только с конкретным subject", ZH: "subject_type 仅可与具体 subject 一起使用"},
+	SubjectGroupReserved:       {EN: "The group: subject prefix is reserved; use subject_group_id", RU: "Префикс субъекта group: зарезервирован; используйте subject_group_id", ZH: "group: 主体前缀为保留值；请使用 subject_group_id"},
+	RuleServiceRetarget:        {EN: "A rule cannot be retargeted into another service", RU: "Правило нельзя перенести в другой сервис", ZH: "不能将规则重新指向其他服务"},
+	ServiceOwnershipMismatch:   {EN: "Referenced entities must belong to the same service", RU: "Связанные сущности должны принадлежать одному сервису", ZH: "引用的实体必须属于同一服务"},
+	ServiceOwnershipImmutable:  {EN: "The owning service cannot be changed", RU: "Сервис-владелец нельзя изменить", ZH: "不能更改所属服务"},
 	InternalError: {
 		EN: "Internal server error",
 		RU: "Внутренняя ошибка сервера",

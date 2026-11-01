@@ -82,7 +82,7 @@ describe('the "give access" form', () => {
 
   it('a person or a condition replaces the group', () => {
     const [person] = buildInputs(form({ who: 'person', person: ' alice ' }));
-    expect(person).toMatchObject({ subject: 'alice', subject_kind: 'user' });
+    expect(person).toMatchObject({ subject: 'alice', subject_type: null });
     expect(person).not.toHaveProperty('member_of_group_id');
     const cond = { ...newCond(), attr: 'department', op: 'in' as const, value: 'sales, legal' };
     const [byCondition] = buildInputs(form({ who: 'condition', whoConds: [cond] }));

@@ -1,8 +1,6 @@
-# DEC12, nested groups (admin-api/tests/integration/api/gaps_test.go, TestIntegrationNestedGroupsAndSubjectKindsRoundTrip):
+# DEC12, nested groups (admin-api/tests/integration/api/gaps_test.go, TestIntegrationNestedGroupsRoundTrip):
 # inner holds everyone whose team is audit, outer holds the group inner, and a rule gives the members of outer read on B1.
-# The test checks that the policy document carries the nesting and the rule; the decision it relies on is that a member of
-# inner is a member of outer. The rule's subject_kind (service) is a label only: it takes no part in a decision, and the
-# fixture format has no field for it.
+# The policy document carries the nesting and the rule; a member of inner also belongs to outer.
 #
 # Around the test: the group itself as a subject of a rule (group:<id>) reaches the members of the groups nested into it;
 # a claim the token does not carry never makes a subject a member (DEC08), nor does another value; a chain of sixteen
@@ -62,7 +60,7 @@ rules:
   # The last group of the chain.
   - {name: level-16-read-B2, member_of: level-16, type: branch, resource: B2, access: [read]}
 cases:
-  # from admin-api/tests/integration/api/gaps_test.go:TestIntegrationNestedGroupsAndSubjectKindsRoundTrip
+  # from admin-api/tests/integration/api/gaps_test.go:TestIntegrationNestedGroupsRoundTrip
   - name: a member of the nested group is a member of the group that nests it
     subject: auditor
     claims: {team: audit}

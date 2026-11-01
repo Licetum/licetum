@@ -303,6 +303,17 @@ export function GrantDrawer() {
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {t('grant.who.personHint')}
                 </Typography.Text>
+                <Input
+                  aria-label={t('grant.who.subjectType')}
+                  placeholder={t('grant.who.anySubjectType')}
+                  maxLength={64}
+                  value={form.subjectType}
+                  onChange={(e) => patch({ subjectType: e.target.value })}
+                  className="mono"
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('grant.who.subjectTypeHint')}
+                </Typography.Text>
               </>
             )}
             {form.who === 'condition' && (

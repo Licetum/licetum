@@ -407,7 +407,10 @@
       "noGroups": "No groups yet. Create one in “People and groups”.",
       "person": "Person",
       "personHint": "How the person is named in their token: the username (preferred_username), or sub.",
-      "personPlaceholder": "For example alice"
+      "personPlaceholder": "For example alice",
+      "subjectType": "Subject type",
+      "anySubjectType": "Any subject type",
+      "subjectTypeHint": "Leave empty to match any type. Otherwise match subject.type sent by the application. The type group is reserved."
     }
   },
   "grantDetail": {
@@ -427,7 +430,6 @@
       "title": "This access no longer exists"
     },
     "history": "History of this access",
-    "kind": "Label",
     "noHistory": "No records yet.",
     "onMissing": {
       "apply": "A missing attribute: the denial applies",
@@ -442,7 +444,8 @@
     "termChanged": "Term changed",
     "undoNote": "The term is saved at once; you can undo for 10 seconds.",
     "untilDate": "Until {{date}}",
-    "untilPick": "Until a date"
+    "untilPick": "Until a date",
+    "subjectType": "Subject type"
   },
   "group": {
     "add": "Add",
@@ -1204,12 +1207,6 @@
       "expiring_one": "Expires in {{count}} day",
       "expiring_other": "Expires in {{count}} days",
       "scheduled": "Not started yet"
-    },
-    "subjectKind": {
-      "agent": "agent",
-      "group": "group",
-      "service": "service",
-      "user": "person"
     },
     "title": "{{who}}: {{what}} — {{where}}",
     "unknownGroup": "(unknown group)",

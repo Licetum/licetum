@@ -5,7 +5,7 @@ package api_test
 // Integration tests of the rule language of stage 3 through the HTTP API: request attributes (context) and the
 // answers that depend on them, the missing-attribute semantics of deny rules, the clock conditions, guards
 // (requires_predicate, requires_group_id), resource_where over the attributes the synchronizers report, access
-// groups and their references, and subject_kind. Same Testcontainers environment as hierarchy_test.go.
+// groups and their references, and subject_type. Same Testcontainers environment as hierarchy_test.go.
 
 import (
 	"encoding/json"
@@ -352,19 +352,41 @@ func TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences(t *testing.T
 	}
 }
 
-func TestIntegrationSubjectKindIsStoredAndChecked(t *testing.T) {
+func TestIntegrationSubjectTypeIsStoredAndChecked(t *testing.T) {
 	w := newWorld(t)
 	rule := w.must("POST", "/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "subject": "svc-reporter",
-		"access": []string{"read"}, "subject_kind": "service",
+		"access": []string{"read"}, "subject_type": "service",
 	})
-	if rule["subject_kind"] != "service" {
-		t.Fatalf("subject_kind: %v", rule["subject_kind"])
+	if rule["subject_type"] != "service" {
+		t.Fatalf("subject_type: %v", rule["subject_type"])
 	}
+	w.must("POST", "/assignment_rule", map[string]any{"type_resource_id": w.branch, "access": []string{"read"}, "subject": "robot-1", "subject_type": "robot"})
+	for _, selector := range []map[string]any{{"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}}, {}} {
+		selector["type_resource_id"] = w.branch
+		selector["access"] = []string{"read"}
+		selector["subject_type"] = "user"
+		w.expect(http.StatusUnprocessableEntity, "POST", "/assignment_rule", selector)
+	}
+
+	doc := w.exportPolicy()
+	found := false
+	for _, r := range doc.Rules {
+		if r.Subject != nil && *r.Subject == "svc-reporter" {
+			found = r.SubjectType != nil && *r.SubjectType == "service"
+		}
+	}
+	if !found {
+		t.Fatalf("subject type missing from policy: %+v", doc.Rules)
+	}
+	if plan := w.importPolicy(doc, true, false); len(plan.Operations) != 0 {
+		t.Fatalf("typed subject round trip: %+v", plan)
+	}
+
 	if status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "subject": "x",
-		"access": []string{"read"}, "subject_kind": "robot",
+		"access": []string{"read"}, "subject_type": "group",
 	}); status != http.StatusUnprocessableEntity {
-		t.Fatalf("unknown subject_kind: %d %s", status, raw)
+		t.Fatalf("reserved subject_type: %d %s", status, raw)
 	}
 }

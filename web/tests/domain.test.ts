@@ -35,7 +35,7 @@ const rule = (patch: Partial<Rule> = {}): Rule =>
     service_id: 's1',
     service_name: 'Docs',
     subject: 'alice',
-    subject_kind: 'user',
+    subject_type: 'user',
     target_valid: true,
     type_resource_id: 't1',
     type_resource_name: 'Document',

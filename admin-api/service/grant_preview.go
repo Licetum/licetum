@@ -23,7 +23,7 @@ func ruleFromInput(in *model.AssignmentRuleInput) model.AssignmentRule {
 		MemberOfGroupID: in.MemberOfGroupID, Enabled: enabled, Effect: in.Effect, Exception: in.Exception,
 		ValidFrom: in.ValidFrom, ExpiresAt: in.ExpiresAt, Name: in.Name, Description: in.Description,
 		OnMissingAttribute: onMissingOf(in, nil), RequiresPredicate: in.RequiresPredicate,
-		RequiresGroupID: in.RequiresGroupID, ResourceWhere: in.ResourceWhere, SubjectKind: in.SubjectKind,
+		RequiresGroupID: in.RequiresGroupID, ResourceWhere: in.ResourceWhere, SubjectType: in.SubjectType,
 	}
 }
 
