@@ -91,7 +91,7 @@ func nameTakenOnRace(err error, name string) error {
 
 func (a *App) CreateTypeResource(ctx context.Context, serviceID uuid.UUID, in *model.TypeResourceInput) (*model.TypeResource, error) {
 	var t *model.TypeResource
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		if _, err := a.GetExistingService(ctx, q, serviceID); err != nil {
 			return change{}, err
 		}
@@ -200,7 +200,7 @@ func (a *App) ListAllTypeResources(ctx context.Context) ([]model.TypeResourceWit
 
 func (a *App) UpdateTypeResource(ctx context.Context, serviceID, typeResourceID uuid.UUID, in *model.TypeResourceInput) (*model.TypeResource, error) {
 	var t *model.TypeResource
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingTypeResource(ctx, q, serviceID, typeResourceID)
 		if err != nil {
 			return change{}, err
@@ -240,7 +240,7 @@ func (a *App) UpdateTypeResource(ctx context.Context, serviceID, typeResourceID 
 }
 
 func (a *App) DeleteTypeResource(ctx context.Context, serviceID, typeResourceID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingTypeResource(ctx, q, serviceID, typeResourceID)
 		if err != nil {
 			return change{}, err

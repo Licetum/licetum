@@ -359,7 +359,7 @@ contracts:
     oracle: the state after the batch
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: HIS02
     statement: "Revert and rollback stay within one service. Records of the service's types, synchronizers and type links are reverted through the batch; one that cannot be restored exactly (a secret changed) is planned as partial, and the plan is applied only with allow_partial: true, otherwise 409 change_not_revertible names the records (ADR 0001, 8.7)."
     oracle: the change log of the service
@@ -377,7 +377,7 @@ contracts:
     oracle: status code
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: HIS05
     statement: A reader of the change feed ordered by (revision, seq) never skips a record.
     oracle: the records committed

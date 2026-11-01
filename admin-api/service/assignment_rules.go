@@ -141,7 +141,7 @@ func (a *App) CreateAssignmentRule(ctx context.Context, in *model.AssignmentRule
 // rules it deleted with the ids they had.
 func (a *App) createAssignmentRule(ctx context.Context, in *model.AssignmentRuleInput, id *uuid.UUID) (*model.AssignmentRule, error) {
 	var r *model.AssignmentRule
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		serviceID, err := a.checkAssignmentRuleRefs(ctx, q, in, true)
 		if err != nil {
 			return change{}, err
@@ -268,7 +268,7 @@ func equalPtr[T comparable](a, b *T) bool {
 
 func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *model.AssignmentRuleInput) (*model.AssignmentRule, error) {
 	var r *model.AssignmentRule
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingAssignmentRule(ctx, q, ruleID)
 		if err != nil {
 			return change{}, err
@@ -304,7 +304,7 @@ func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *mo
 }
 
 func (a *App) DeleteAssignmentRule(ctx context.Context, ruleID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingAssignmentRule(ctx, q, ruleID)
 		if err != nil {
 			return change{}, err

@@ -8,6 +8,7 @@ package api_test
 // environment as hierarchy_test.go.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -32,7 +33,7 @@ func (e *env) revert(id int64, dryRun bool) map[string]any {
 	return e.must("POST", "/changes/"+strconv.FormatInt(id, 10)+"/revert", map[string]any{"dry_run": dryRun})
 }
 
-func TestIntegrationBatchIsAtomicAndNamesTheFailingOperation(t *testing.T) {
+func TestContract_HIS01_BatchIsAtomicAndNamesTheFailingOperation(t *testing.T) {
 	w := newWorld(t)
 	role := "00000000-0000-4000-8000-0000000000a1"
 	status, raw := w.do("POST", w.admin.URL+"/batch", map[string]any{"operations": []map[string]any{
@@ -58,6 +59,17 @@ func TestIntegrationBatchIsAtomicAndNamesTheFailingOperation(t *testing.T) {
 	}})
 	if results := res["results"].([]any); len(results) != 3 || results[0].(map[string]any)["id"] != role {
 		t.Fatalf("results: %v", res)
+	}
+	var revision int64
+	if err := w.pool.QueryRow(context.Background(), `SELECT revision FROM change_log WHERE entity_id=$1 ORDER BY revision LIMIT 1`, role).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	var history, entries int
+	if err := w.pool.QueryRow(context.Background(), `SELECT (SELECT count(*) FROM change_log WHERE revision=$1),(SELECT count(*) FROM outbox WHERE revision=$1)`, revision).Scan(&history, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if history != 3 || entries != 1 {
+		t.Fatalf("batch spent more than one publication: history=%d outbox=%d", history, entries)
 	}
 	expectIDs(t, w.permission(w.org, nil), "branch", "B1")
 

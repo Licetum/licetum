@@ -12,25 +12,44 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/licetum/licetum/core/model"
 )
 
-func TestIntegrationBatchRefusesAnIdAnotherEntityHas(t *testing.T) {
+func TestContract_HIS04_BatchRefusesTakenIDsForEveryEntity(t *testing.T) {
 	w := newWorld(t)
-	taken := "00000000-0000-4000-8000-0000000000c1"
-	w.must("POST", "/batch", map[string]any{"operations": []map[string]any{
-		{"op": "create", "entity": "role", "id": taken, "body": map[string]any{"name": "first"}},
-	}})
-
-	status, raw := w.do("POST", w.admin.URL+"/batch", map[string]any{"operations": []map[string]any{
-		{"op": "create", "entity": "role", "body": map[string]any{"name": "other"}},
-		{"op": "create", "entity": "role", "id": taken, "body": map[string]any{"name": "second"}},
-	}})
-	if status != http.StatusConflict || !strings.Contains(string(raw), `"operation":1`) {
-		t.Fatalf("a given id of another role: %d %s", status, raw)
-	}
-	if strings.Contains(string(w.mustRaw("GET", "/role")), `"other"`) {
-		t.Fatal("the operation before the conflict was applied")
+	group := w.must("POST", "/group", map[string]any{"name": "id-owner"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"name": "id-owner"})["id"].(string)
+	for _, tc := range []struct {
+		entity, parent string
+		body           map[string]any
+	}{
+		{"group", "", map[string]any{"name": "taken-group"}},
+		{"role", "", map[string]any{"name": "taken-role"}},
+		{"assignment_rule", "", map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "subject": hierarchySubject, "access": []string{"read"}}},
+		{"access_group", w.typeByName["branch"], map[string]any{"name": "taken-access", "levels": []string{"read"}}},
+		{"group_member", group, map[string]any{"predicate": []map[string]any{{"attr": "sub", "op": "eq", "value": "alice"}}}},
+		{"role_permission", role, map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "access": []string{"read"}}},
+	} {
+		t.Run(tc.entity, func(t *testing.T) {
+			taken := uuid.NewString()
+			op := map[string]any{"op": "create", "entity": tc.entity, "id": taken, "body": tc.body}
+			if tc.parent != "" {
+				op["parent"] = tc.parent
+			}
+			w.must("POST", "/batch", map[string]any{"operations": []map[string]any{op}})
+			name := "must-rollback-" + tc.entity
+			status, raw := w.do("POST", w.admin.URL+"/batch", map[string]any{"operations": []map[string]any{
+				{"op": "create", "entity": "role", "body": map[string]any{"name": name}}, op,
+			}})
+			if status != http.StatusConflict || !strings.Contains(string(raw), `"operation":1`) {
+				t.Fatalf("taken %s id: %d %s", tc.entity, status, raw)
+			}
+			if strings.Contains(string(w.mustRaw("GET", "/role")), name) {
+				t.Fatal("operation before conflict leaked")
+			}
+		})
 	}
 }
 

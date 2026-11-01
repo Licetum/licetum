@@ -114,7 +114,7 @@ func (a *App) CreateAccessGroup(ctx context.Context, typeResourceID uuid.UUID, i
 // createAccessGroup creates a group with the given id, or with a new one when id is nil (see createAssignmentRule).
 func (a *App) createAccessGroup(ctx context.Context, typeResourceID uuid.UUID, in *model.AccessGroupInput, id *uuid.UUID) (*model.AccessGroup, error) {
 	var g *model.AccessGroup
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		if _, err := a.GetExistingTypeResourceAnyService(ctx, q, typeResourceID); err != nil {
 			return change{}, err
 		}
@@ -144,7 +144,7 @@ func (a *App) createAccessGroup(ctx context.Context, typeResourceID uuid.UUID, i
 
 func (a *App) UpdateAccessGroup(ctx context.Context, typeResourceID, groupID uuid.UUID, in *model.AccessGroupInput) (*model.AccessGroup, error) {
 	var g *model.AccessGroup
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingAccessGroup(ctx, q, typeResourceID, groupID)
 		if err != nil {
 			return change{}, err
@@ -177,7 +177,7 @@ func (a *App) UpdateAccessGroup(ctx context.Context, typeResourceID, groupID uui
 }
 
 func (a *App) DeleteAccessGroup(ctx context.Context, typeResourceID, groupID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingAccessGroup(ctx, q, typeResourceID, groupID)
 		if err != nil {
 			return change{}, err

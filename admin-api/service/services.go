@@ -17,7 +17,7 @@ import (
 
 func (a *App) CreateService(ctx context.Context, in *model.ServiceInput) (*model.ServiceResponse, error) {
 	var resp model.ServiceResponse
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		s, err := engine.ScanService(q.QueryRow(ctx, `
 			INSERT INTO service (name, slug, url, icon)
 			VALUES ($1, $2, $3, $4)
@@ -64,7 +64,7 @@ func (a *App) UpdateService(ctx context.Context, serviceID uuid.UUID, in *model.
 	}
 
 	var resp model.ServiceResponse
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingService(ctx, q, serviceID)
 		if err != nil {
 			return change{}, err
@@ -101,7 +101,7 @@ func (a *App) UpdateService(ctx context.Context, serviceID uuid.UUID, in *model.
 }
 
 func (a *App) DeleteService(ctx context.Context, serviceID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingService(ctx, q, serviceID)
 		if err != nil {
 			return change{}, err

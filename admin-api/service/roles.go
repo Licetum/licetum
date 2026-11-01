@@ -24,7 +24,7 @@ func (a *App) CreateRole(ctx context.Context, in *model.RoleInput) (*model.Role,
 // createRole creates a role with the given id, or with a new one when id is nil (see createAssignmentRule).
 func (a *App) createRole(ctx context.Context, in *model.RoleInput, id *uuid.UUID) (*model.Role, error) {
 	var r model.Role
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		err := q.QueryRow(ctx, `INSERT INTO role (id, name) VALUES (COALESCE($2::uuid, gen_random_uuid()), $1) RETURNING id, name`,
 			in.Name, id).Scan(&r.ID, &r.Name)
 		if db.IsPrimaryKeyViolation(err) {
@@ -58,7 +58,7 @@ func (a *App) ListRoles(ctx context.Context) ([]model.Role, error) {
 
 func (a *App) UpdateRole(ctx context.Context, roleID uuid.UUID, in *model.RoleInput) (*model.Role, error) {
 	var r model.Role
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingRole(ctx, q, roleID)
 		if err != nil {
 			return change{}, err
@@ -81,7 +81,7 @@ func (a *App) UpdateRole(ctx context.Context, roleID uuid.UUID, in *model.RoleIn
 
 // DeleteRole is not allowed while rules grant the role (409, extra.blocked_by). Its items go with it.
 func (a *App) DeleteRole(ctx context.Context, roleID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingRole(ctx, q, roleID)
 		if err != nil {
 			return change{}, err
@@ -183,7 +183,7 @@ func (a *App) CreateRolePermission(ctx context.Context, roleID uuid.UUID, in *mo
 // createRolePermission creates an item with the given id, or with a new one when id is nil (see createAssignmentRule).
 func (a *App) createRolePermission(ctx context.Context, roleID uuid.UUID, in *model.RolePermissionInput, id *uuid.UUID) (*model.RolePermission, error) {
 	var p *model.RolePermission
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		if _, err := a.GetExistingRole(ctx, q, roleID); err != nil {
 			return change{}, err
 		}
@@ -257,7 +257,7 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 
 func (a *App) UpdateRolePermission(ctx context.Context, roleID, itemID uuid.UUID, in *model.RolePermissionInput) (*model.RolePermission, error) {
 	var p *model.RolePermission
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingRolePermission(ctx, q, roleID, itemID)
 		if err != nil {
 			return change{}, err
@@ -290,7 +290,7 @@ func (a *App) UpdateRolePermission(ctx context.Context, roleID, itemID uuid.UUID
 }
 
 func (a *App) DeleteRolePermission(ctx context.Context, roleID, itemID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingRolePermission(ctx, q, roleID, itemID)
 		if err != nil {
 			return change{}, err

@@ -24,7 +24,7 @@ func (a *App) CreateGroup(ctx context.Context, in *model.GroupInput) (*model.Gro
 // createGroup creates a group with the given id, or with a new one when id is nil (see createAssignmentRule).
 func (a *App) createGroup(ctx context.Context, in *model.GroupInput, id *uuid.UUID) (*model.Group, error) {
 	var g model.Group
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		err := q.QueryRow(ctx, `INSERT INTO user_group (id, name) VALUES (COALESCE($2::uuid, gen_random_uuid()), $1) RETURNING id, name`,
 			in.Name, id).Scan(&g.ID, &g.Name)
 		if db.IsPrimaryKeyViolation(err) {
@@ -58,7 +58,7 @@ func (a *App) ListGroups(ctx context.Context) ([]model.Group, error) {
 
 func (a *App) UpdateGroup(ctx context.Context, groupID uuid.UUID, in *model.GroupInput) (*model.Group, error) {
 	var g model.Group
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingGroup(ctx, q, groupID)
 		if err != nil {
 			return change{}, err
@@ -80,7 +80,7 @@ func (a *App) UpdateGroup(ctx context.Context, groupID uuid.UUID, in *model.Grou
 }
 
 func (a *App) DeleteGroup(ctx context.Context, groupID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingGroup(ctx, q, groupID)
 		if err != nil {
 			return change{}, err
@@ -148,7 +148,7 @@ func (a *App) CreateGroupMember(ctx context.Context, groupID uuid.UUID, in *mode
 // createGroupMember creates a membership with the given id, or with a new one when id is nil (see createAssignmentRule).
 func (a *App) createGroupMember(ctx context.Context, groupID uuid.UUID, in *model.GroupMemberInput, id *uuid.UUID) (*model.GroupMember, error) {
 	var m *model.GroupMember
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		if _, err := a.GetExistingGroup(ctx, q, groupID); err != nil {
 			return change{}, err
 		}
@@ -200,7 +200,7 @@ func (a *App) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]model.
 
 func (a *App) UpdateGroupMember(ctx context.Context, groupID, memberID uuid.UUID, in *model.GroupMemberInput) (*model.GroupMember, error) {
 	var m *model.GroupMember
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingGroupMember(ctx, q, groupID, memberID)
 		if err != nil {
 			return change{}, err
@@ -227,7 +227,7 @@ func (a *App) UpdateGroupMember(ctx context.Context, groupID, memberID uuid.UUID
 }
 
 func (a *App) DeleteGroupMember(ctx context.Context, groupID, memberID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingGroupMember(ctx, q, groupID, memberID)
 		if err != nil {
 			return change{}, err

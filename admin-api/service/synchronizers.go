@@ -52,7 +52,7 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 
 	var out *model.Synchronizer
 	var move *engine.ClosureMove
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		// The probe only proves the source works; the resources reach the cache through the synchronization. The type
 		// becomes sync with this row, and the closure of the types below it follows in the same transaction (ChangeMode).
 		var s *model.Synchronizer
@@ -124,7 +124,7 @@ func (a *App) UpdateSynchronizer(ctx context.Context, serviceID, typeResourceID,
 	}
 
 	var out *model.Synchronizer
-	err = a.mutate(ctx, func(q db.Querier) (change, error) {
+	err = a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingSynchronizer(ctx, q, typeResourceID, synchronizerID)
 		if err != nil {
 			return change{}, err
@@ -152,7 +152,7 @@ func (a *App) UpdateSynchronizer(ctx context.Context, serviceID, typeResourceID,
 
 func (a *App) DeleteSynchronizer(ctx context.Context, serviceID, typeResourceID, synchronizerID uuid.UUID) (uuid.UUID, error) {
 	var move *engine.ClosureMove
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		if _, err := a.GetExistingTypeResource(ctx, q, serviceID, typeResourceID); err != nil {
 			return change{}, err
 		}
