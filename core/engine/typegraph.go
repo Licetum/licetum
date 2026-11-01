@@ -35,7 +35,7 @@ type TypeNode struct {
 	// SourceDeleted says the type has no live synchronizer but had one: the rows its synchronizer reported may still be in
 	// the local copy, and the closure of the types below it must not lead through them (see signature).
 	SourceDeleted bool
-	// Parents are the declared parent links (of any state of the parent type).
+	// Parents are the effective live parent links (of any state of the parent type).
 	Parents []typeEdge
 	// Implies is the transitive closure of the type's access level hierarchy: level -> levels it includes.
 	Implies map[string][]string
@@ -342,7 +342,7 @@ func loadTypeGraph(ctx context.Context, q db.Querier) (*TypeGraph, error) {
 	}
 	rows.Close()
 
-	edges, err := q.Query(ctx, `SELECT type_resource_id, parent_id, inherit FROM type_resource_parent`)
+	edges, err := q.Query(ctx, `SELECT type_resource_id, parent_id, eff_inherit FROM type_resource_parent WHERE eff_live`)
 	if err != nil {
 		return nil, err
 	}

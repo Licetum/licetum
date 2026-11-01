@@ -35,7 +35,7 @@ func (a *App) checkParents(ctx context.Context, q db.Querier, parents []model.Ty
 			WITH RECURSIVE ancestors(id) AS (
 				SELECT $1::uuid
 				UNION
-				SELECT p.parent_id FROM type_resource_parent p JOIN ancestors a ON p.type_resource_id = a.id
+				SELECT p.parent_id FROM type_resource_parent p JOIN ancestors a ON p.type_resource_id = a.id WHERE p.live
 			)
 			SELECT EXISTS (SELECT 1 FROM ancestors WHERE id = $2)`,
 			p.TypeResourceID, *selfID,
@@ -57,7 +57,8 @@ func replaceTypeParents(ctx context.Context, q db.Querier, typeID uuid.UUID, par
 	}
 	for _, p := range parents {
 		if _, err := q.Exec(ctx,
-			`INSERT INTO type_resource_parent (type_resource_id, parent_id, inherit) VALUES ($1, $2, $3)`,
+			`INSERT INTO type_resource_parent (type_resource_id,parent_id,identity_domain_id,inherit,live,eff_inherit,eff_live)
+ VALUES ($1,$2,(SELECT identity_domain_id FROM type_resource WHERE id=$1),$3,true,$3,true)`,
 			typeID, p.TypeResourceID, p.Inherit); err != nil {
 			return err
 		}
@@ -260,7 +261,7 @@ func (a *App) DeleteTypeResource(ctx context.Context, serviceID, typeResourceID 
 			{"role_permission", `SELECT 1 FROM role_permission WHERE type_resource_id = $1
 				OR resource_from_property->>'lookup_type_resource_id' = $1::text`},
 			{"type_resource", `SELECT 1 FROM type_resource_parent p JOIN type_resource c ON c.id = p.type_resource_id
-				WHERE p.parent_id = $1 AND c.deleted_at IS NULL`},
+				WHERE p.parent_id = $1 AND (p.live OR p.eff_live) AND c.deleted_at IS NULL`},
 		}
 		var blockedBy []string
 		for _, c := range checks {

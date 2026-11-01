@@ -56,7 +56,7 @@ func Project(ctx context.Context, q Reader, table string, key map[string]any) (I
 	case "type_resource":
 		expr += " || jsonb_build_object('mode',CASE WHEN EXISTS(SELECT 1 FROM synchronizer s WHERE s.type_resource_id=t.id AND s.deleted_at IS NULL) THEN 'sync' ELSE 'not_sync' END)"
 	case "type_resource_parent":
-		expr += " - ARRAY['desired_inherit','desired_present']"
+		expr += " - ARRAY['inherit','live']"
 	}
 	var raw []byte
 	sql := "SELECT " + expr + " FROM " + pgx.Identifier{table}.Sanitize() + " t WHERE " + strings.Join(where, " AND ")
@@ -87,7 +87,7 @@ func ServicesBelow(ctx context.Context, q Reader, owners []uuid.UUID) ([]uuid.UU
 	}
 	rows, err := q.Query(ctx, `WITH RECURSIVE below(id) AS (
  SELECT id FROM type_resource WHERE service_id=ANY($1::uuid[])
- UNION SELECT p.type_resource_id FROM type_resource_parent p JOIN below b ON p.parent_id=b.id
+ UNION SELECT p.type_resource_id FROM type_resource_parent p JOIN below b ON p.parent_id=b.id WHERE p.eff_live
 ) SELECT service_id FROM type_resource WHERE id IN(SELECT id FROM below)
 UNION SELECT unnest($1::uuid[]) ORDER BY service_id`, owners)
 	if err != nil {

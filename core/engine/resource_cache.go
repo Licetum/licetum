@@ -519,12 +519,12 @@ const rebuildClosureSQL = `
 		JOIN resource_cache par ON par.id = e.parent_id AND par.active AND par.type_resource_id <> ALL ($2::uuid[])
 		JOIN type_resource pt ON pt.id = par.type_resource_id AND pt.deleted_at IS NULL
 		JOIN type_resource_parent trp
-		    ON trp.type_resource_id = cur.type_resource_id AND trp.parent_id = e.parent_type_id
+		    ON trp.type_resource_id = cur.type_resource_id AND trp.parent_id = e.parent_type_id AND trp.eff_live
 		CROSS JOIN LATERAL (
 		    SELECT CASE
-		        WHEN up.mask IS NULL THEN trp.inherit
-		        WHEN trp.inherit IS NULL THEN up.mask
-		        ELSE ARRAY(SELECT m FROM unnest(up.mask) m WHERE m = ANY (trp.inherit) ORDER BY m)
+		        WHEN up.mask IS NULL THEN trp.eff_inherit
+		        WHEN trp.eff_inherit IS NULL THEN up.mask
+		        ELSE ARRAY(SELECT m FROM unnest(up.mask) m WHERE m = ANY (trp.eff_inherit) ORDER BY m)
 		    END AS m
 		) nm
 		WHERE nm.m IS NULL OR cardinality(nm.m) > 0
@@ -707,7 +707,7 @@ func ancestorWalkSQL(match string) string {
 			UNION
 			SELECT up.idx, up.target_type, up.allowed, par.id, par.type_resource_id, par.external_id, par.name
 			FROM up
-			JOIN type_resource_parent trp ON trp.type_resource_id = up.type_id AND trp.parent_id = ANY (up.allowed)
+			JOIN type_resource_parent trp ON trp.type_resource_id = up.type_id AND trp.parent_id = ANY (up.allowed) AND trp.eff_live
 			JOIN resource_edge e ON e.child_id = up.id AND e.parent_type_id = trp.parent_id AND e.parent_id IS NOT NULL
 			JOIN resource_cache par ON par.id = e.parent_id AND par.active
 			WHERE up.type_id <> up.target_type

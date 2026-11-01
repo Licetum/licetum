@@ -256,8 +256,8 @@ func (a *App) LoadTypeParents(ctx context.Context, q db.Querier, types []*model.
 		byID[t.ID] = t
 	}
 	rows, err := q.Query(ctx,
-		`SELECT type_resource_id, parent_id, inherit FROM type_resource_parent
-		 WHERE type_resource_id = ANY($1) ORDER BY parent_id`, ids)
+		`SELECT type_resource_id, parent_id, eff_inherit FROM type_resource_parent
+		 WHERE type_resource_id = ANY($1) AND eff_live ORDER BY parent_id`, ids)
 	if err != nil {
 		return err
 	}
