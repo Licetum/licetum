@@ -113,6 +113,15 @@ func resourceIDOf(r *model.AuthzenResource) *string {
 // so the result ends with it. A question that cannot be decided has err set and no decision; anything else that goes
 // wrong fails the whole request.
 func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consistency, items []model.AuthzenEvaluationRequest, defaults model.AuthzenEvaluationsRequest, explain bool, semantic string) ([]evaluation, error) {
+	if reader, ok := c.app.(interface {
+		CurrentReadContext(context.Context) (context.Context, error)
+	}); c.simulated && ok {
+		fresh, err := reader.CurrentReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = fresh
+	}
 	evals := make([]evaluation, len(items))
 	if semantic != model.AuthzenExecuteAll {
 		for i, item := range items {
@@ -401,6 +410,15 @@ func (c *authzenCaller) permissions(ctx context.Context, sp speaker, attrs model
 // the scan budget stopped is shorter than its limit and still carries a next_token. There is no total: it would need the
 // whole result.
 func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenResourceSearchResponse, error) {
+	if reader, ok := c.app.(interface {
+		CurrentReadContext(context.Context) (context.Context, error)
+	}); c.simulated && ok {
+		fresh, err := reader.CurrentReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = fresh
+	}
 	s, aerr := parseSearch("resource", in)
 	if aerr != nil {
 		return nil, aerr
@@ -433,6 +451,15 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 }
 
 func (c *authzenCaller) searchActions(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenActionSearchResponse, error) {
+	if reader, ok := c.app.(interface {
+		CurrentReadContext(context.Context) (context.Context, error)
+	}); c.simulated && ok {
+		fresh, err := reader.CurrentReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = fresh
+	}
 	s, aerr := parseSearch("action", in)
 	if aerr != nil {
 		return nil, aerr
@@ -512,6 +539,15 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 // resource (ADR 0001, 7.6). The directory is what the application sent; a person who is not in it is never found, and an empty
 // directory gives an empty result. Only a PEP client with the search_subject operation may ask: the answer names other people.
 func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenSubjectSearchResponse, error) {
+	if reader, ok := c.app.(interface {
+		CurrentReadContext(context.Context) (context.Context, error)
+	}); c.simulated && ok {
+		fresh, err := reader.CurrentReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = fresh
+	}
 	s, aerr := parseSearch("subject", in)
 	if aerr != nil {
 		return nil, aerr

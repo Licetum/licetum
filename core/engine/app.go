@@ -171,7 +171,6 @@ func (a *App) AfterWrite(ctx context.Context, revision int64, epochs ...int32) {
 			t.setRevision(revision)
 		}
 	}
-	a.invalidateView()
 	if err := a.invalidatePlatformSync(ctx); err != nil {
 		slog.ErrorContext(ctx, "failed to make the platform types due for synchronization", "error", err)
 	}

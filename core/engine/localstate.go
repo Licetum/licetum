@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/licetum/licetum/core/db"
 )
 
 // The revision of the policy and the revisions of the data of the services live in PostgreSQL (revision_state), next to
@@ -17,8 +19,7 @@ import (
 // answer in memory touches no PostgreSQL, and a write made through another replica reaches the process
 // within the poll interval.
 //
-// A view is replaced as a whole and never changed. A write made through this process (AfterWrite) and a change of the
-// resource data it made (the synchronizations) invalidate the view, so the next request reads the revisions again and sees them.
+// A view is replaced as a whole and never changed. Policy writes are observed by polling; a synchronization may still renew its local view.
 // A request that asks for at least revision N (WithMinRevision) renews a view older than N before it is answered.
 
 // localView is the revision, the data versions and the snapshot of that revision, as of readAt.
@@ -97,6 +98,17 @@ func (a *App) NoteReadRevision(ctx context.Context) {
 	if state := a.cacheState(ctx); state.ok {
 		t.noteReadPosition(state.epoch, state.version)
 	}
+}
+
+// CurrentReadContext lets admin tools read their writes immediately while other
+// readers follow the ordinary poll interval. The revision comes from PostgreSQL,
+// rather than the process's possibly older view.
+func (a *App) CurrentReadContext(ctx context.Context) (context.Context, error) {
+	revision, err := db.LoadRevisions(ctx, a.DB)
+	if err != nil {
+		return nil, err
+	}
+	return WithMinRevision(ctx, revision.Revision), nil
 }
 
 // policySnapshot is the snapshot of the current view, nil when the policy is not kept in memory (or the revisions could not be

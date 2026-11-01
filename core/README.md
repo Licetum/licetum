@@ -203,9 +203,9 @@ settings above), so a deployment has one region of PostgreSQL with the processes
 says how far that goes. A standby for availability is fine (Patroni, CloudNativePG, a managed service): the processes see only the
 primary's address, and after a promotion `licetum failover` raises the revisions.
 
-A client that must see a write it has just made passes the `X-Authz-Revision` of the write as `context.licetum.min_revision`: the
-PDP waits for its revision for up to `REVISION__WAIT_MAX`, then computes the answer from the data and does not keep it. Otherwise a write
-made through another process is seen within `REVISION__POLL_INTERVAL`.
+A client that must see a write it has just made passes the `Licetum-Revision` of the write as `context.licetum.min_revision`: the
+PDP waits for its revision for up to `REVISION__WAIT_MAX`, then computes the answer from the data and does not keep it. Other readers, including those in the process that made the write, see it within `REVISION__POLL_INTERVAL`.
+Admin simulation, access lookup, grant preview, policy tests and lint request the current database revision to see writes immediately.
 
 ### Migrations
 
@@ -368,3 +368,4 @@ Dependencies: `huma/v2` (HTTP, validation, OpenAPI, on top of `net/http`), `pgx/
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+

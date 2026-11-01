@@ -15,6 +15,10 @@ import (
 // claims and request attributes, the rules and the data as they are now. It reports which expectations hold, and which
 // of the rules in force decided an answer at all (the coverage): a rule that no scenario reaches is one nothing checks.
 func (a *App) RunPolicyTests(ctx context.Context, serviceID uuid.UUID, in *model.PolicyTestInput) (*model.PolicyTestReport, error) {
+	ctx, err := a.CurrentReadContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	report := &model.PolicyTestReport{Cases: []model.PolicyTestCaseResult{}}
 	decided := map[string]bool{}
 	for _, c := range in.Cases {

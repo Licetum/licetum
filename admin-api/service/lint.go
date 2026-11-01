@@ -16,6 +16,10 @@ import (
 // and entities nothing uses. It reads the policy as it is written and the data as it is now. Every finding names what
 // it is about, and its message is in the language of the request.
 func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport, error) {
+	ctx, err := a.CurrentReadContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rules, err := a.serviceRulesAll(ctx, serviceID)
 	if err != nil {
 		return nil, err

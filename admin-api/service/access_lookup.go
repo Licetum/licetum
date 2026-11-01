@@ -25,6 +25,10 @@ const accessPeopleSample = 20
 // decision uses (coversOf), so what is listed is what a decision would weigh. Rules that find their resource from a
 // claim cannot be placed without a token and are listed apart.
 func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.UUID, resourceID *string) (*model.AccessLookup, error) {
+	ctx, err := a.CurrentReadContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := a.GetExistingTypeResource(ctx, a.DB, serviceID, typeResourceID); err != nil {
 		return nil, err
 	}
