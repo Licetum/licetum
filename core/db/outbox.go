@@ -51,7 +51,11 @@ SELECT r.revision,r.epoch,$1,clock_timestamp(),$2,$3,$4::jsonb,$5,$6,$7 FROM r R
 // TakeRevision is the last write of a revision-only transaction. Payload chunks
 // are copied before taking the revision row; only history, NOTIFY and COMMIT follow it.
 func TakeRevision(ctx context.Context, tx pgx.Tx, entry outbox.Entry) (Position, error) {
-	return finishPolicy(ctx, tx, entry, nil)
+	p, err := finishPolicy(ctx, tx, entry, nil)
+	if err == nil {
+		notePublication(ctx, p)
+	}
+	return p, err
 }
 
 func prepareEntry(ctx context.Context, tx pgx.Tx, entry outbox.Entry) ([]any, error) {

@@ -15,10 +15,11 @@ import (
 )
 
 // The subject directory of a service (ADR 0001, 8.8): the people it sent, to pick members from, to show whom a rule reaches and
-// to answer a subject search. A write takes no revision and no change record: no decision reads the directory.
+// to answer a subject search. A changing batch takes one revision on its directory stream; an unchanged sending takes none.
 
 // PutDirectory writes the people of the service. An entry that is already as sent is not touched.
 func (a *App) PutDirectory(ctx context.Context, serviceID uuid.UUID, in *model.DirectoryPut) (*model.DirectoryWriteResult, error) {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	if err := a.requireLiveService(ctx, serviceID); err != nil {
 		return nil, err
 	}
@@ -30,6 +31,7 @@ func (a *App) PutDirectory(ctx context.Context, serviceID uuid.UUID, in *model.D
 	if err != nil {
 		return nil, err
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	return &model.DirectoryWriteResult{Created: written.Created, Updated: written.Updated, Unchanged: written.Unchanged}, nil
 }
 
@@ -107,10 +109,15 @@ func (a *App) groupsOf(ctx context.Context, subject string, claims map[string]an
 
 // DeleteDirectoryEntry removes a person from the directory of the service. They are in it again the next time they are sent.
 func (a *App) DeleteDirectoryEntry(ctx context.Context, serviceID uuid.UUID, subjectType, subjectID string) error {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	if err := a.requireLiveService(ctx, serviceID); err != nil {
 		return err
 	}
-	return directoryError(db.DeleteDirectoryEntry(ctx, a.DB, serviceID, subjectType, subjectID), subjectType, subjectID)
+	err := directoryError(db.DeleteDirectoryEntry(ctx, a.DB, serviceID, subjectType, subjectID), subjectType, subjectID)
+	if err == nil {
+		a.NoteCommittedPosition(ctx, *position)
+	}
+	return err
 }
 
 // GetDirectorySettings returns the settings of the directory of the service.
@@ -127,12 +134,14 @@ func (a *App) GetDirectorySettings(ctx context.Context, serviceID uuid.UUID) (*m
 
 // PutDirectorySettings replaces the settings of the directory of the service.
 func (a *App) PutDirectorySettings(ctx context.Context, serviceID uuid.UUID, in *model.DirectorySettings) (*model.DirectorySettings, error) {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	if err := a.requireLiveService(ctx, serviceID); err != nil {
 		return nil, err
 	}
 	if err := db.PutDirectorySettings(ctx, a.DB, serviceID, db.DirectorySettings{RetentionDays: in.RetentionDays}); err != nil {
 		return nil, err
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	return in, nil
 }
 
