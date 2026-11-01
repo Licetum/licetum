@@ -247,7 +247,7 @@ source that fails) is in PostgreSQL, so every process and every restart sees the
   that can be applied together).
 - The database role of the PDP pods needs `SELECT` on everything, `INSERT`/`UPDATE` on the DBOS tables (schema `SYNC__DBOS_SCHEMA`),
   and no `INSERT`, `UPDATE` or `DELETE` on `resource_cache`, `resource_edge`, `resource_ancestor` and `sync_state`. The table
-  `sync_job` of the previous release stays in the schema, unused.
+  engine of the previous release and its job objects are absent from schema v2.
 
 Metrics: `licetum_sync_jobs{state}`, `licetum_sync_queue_age_seconds` (read from the database at every scrape, so it grows in
 the PDP and admin processes when every worker is down), `licetum_sync_job_seconds`, `licetum_sync_jobs_finished_total{state}`,

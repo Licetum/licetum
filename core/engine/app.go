@@ -157,7 +157,7 @@ func (a *App) Close() {
 }
 
 // AfterWrite is called once a write that can change a decision has committed, with the revision the write took
-// (db.BumpRevision, in the write's own transaction): it is the revision of the write for the caller (Licetum-Revision),
+// (db.TakeRevision, in the write's own transaction): it is the revision of the write for the caller (Licetum-Revision),
 // it makes this process read the revisions again at once, and it makes the types of the platform itself due for synchronization (the
 // entities they are made of were just written, and a write must show at once; the data of the other services is not
 // touched: a change of a type or of a synchronizer changes its structure signature instead).

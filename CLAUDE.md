@@ -97,19 +97,18 @@ format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite 
 (the Licetum service within itself, its policy types, their sources, the admin group) is seeded by `db.SeedPlatform`, run by
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
 Step 2e of P2 (no Redis, no read-replica routing, no table synchronization engine) added **no migration**, and nothing that P2 stopped using was dropped (ADR 0001, 11.1 and 11.6.2).
-**Schema left behind for P3**, to be dropped with the other leftovers when schema v2 lands: the table engine's `sync_job` with `sync_job_token_seq` and the indexes
-`sync_job_active`, `sync_job_claim` and `sync_job_created` (nothing reads or writes them since the table engine was deleted; rows an old worker left queued are never run);
-`known_subject` (replaced by the subject directory); `delegated_call`; the OAuth columns and `trusted_clients` of `service` (NULL or empty, unread). `sync_demand` and
-`sync_executor` are still used (`ensure`, the DBOS heartbeat) and go in P5 with `ensure`.
+**Schema v2 removes the retired objects:** `authz_change`, `delegated_call`, `known_subject`, the table engine's `sync_job` and its sequences and indexes,
+and the OAuth columns and `trusted_clients` of `service`. `sync_demand`, `sync_executor` and `sync_state.invalidated_at` remain in use until P4/P5.
+No released v0.1 database is upgraded by this chain; development databases are recreated.
 
 Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `background.go`, `tuning.go`, `keysets.go`; the key sets in `core/pepauth/jwks.go`;
 settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`; the numbers are in `core/README.md`):
-- **The revision lives in PostgreSQL** (`revision_state`, migration `00002`, `db.BumpRevision` / `db.LoadRevisions`, `core/db/revision.go`):
-  scope `rules` numbers every write that can change a decision (rules, memberships, groups, roles and items, access groups, services, types,
-  synchronizers), scope `data:<service id>` numbers the resource data of a service. A write bumps `rules` **in its own transaction**
-  (`mutate`, once per batch in `RunBatch`, `RestoreAdminAccess`, the seed), a synchronization that changed data bumps `data:<service>` in the
-  transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
-  `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision` of an admin write, `Licetum-Revision` of a PDP answer), invalidates the view and makes the platform types due. Answer keys are `authz:permission:t9:r<rules>:…` / `authz:check:t5:r<rules>:…`.
+- **The global position lives in PostgreSQL** (`revision_state`, `db.TakeRevision`, `db.PolicyTx`, `db.LoadLocalVersions`): the only row is `global`,
+  with an epoch and revision. Every published admin, directory, PEP and data-changing synchronization transaction takes its revision last and writes an outbox header
+  in that same transaction. Compound policy writes take one revision and ordered history records. `Licetum-Revision` carries `<epoch>.<revision>`.
+  `App.AfterWrite` records the request position and makes platform sources due without invalidating the view; admin reads ask for the current global position.
+  P3 answer keys use the global position, so even publications that name no affected decision services invalidate cached answers when the position is observed.
+  Per-service precision returns with P5.
 - The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
   (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
   (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
@@ -432,26 +431,23 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
 
 - **Subject directory** (`subject_directory`, `subject_directory_seen`, `subject_directory_settings`, migration `00008`; `core/db/directory.go`,
   `admin-api/service/directory.go`, `admin-api/api/admin_directory.go`; ADR 0001, 8.8): the people of a **service**, sent on purpose by its
-  application or an editor. It replaces `known_subject` (global, filled by every token; the registry is removed in the second step of the
-  directory step). Six routes under `/service/{id}/subjects`: `PUT` (up to 1000 people, each once; `{type?, id, name?, properties?}`, the
+  application or an editor. It replaces the retired global known-subject registry, whose table is absent from schema v2. Six routes under `/service/{id}/subjects`: `PUT` (up to 1000 people, each once; `{type?, id, name?, properties?}`, the
   properties stored as sent within 100 entries and 16 KiB), `GET` (list: `type`, `search`, `limit`, `offset`, with a total, ordered by type
   and then bytewise by id), `GET|DELETE …/{type}/{id}` (an id with `/` goes percent-encoded; the entry comes with the groups the stored
   properties put the person in), `GET|PUT …/settings` (`retention_days`, null: forever, the default). The id of a person is kept exactly
   as sent and never starts with `group:`. The upsert writes only a row whose name or properties differ (`UpsertDirectory`, `IS DISTINCT
-  FROM`): an unchanged batch touches no row of `subject_directory` and takes **no revision** (no decision reads the directory); the time
+  FROM`): an unchanged batch touches no row of `subject_directory` and takes **no revision**; the time
   an entry was last sent is kept apart in `subject_directory_seen` and refreshed at most hourly. The worker's retention (`RunRetention`,
   `db.PruneDirectory`, 10 000-row chunks) deletes the entries not sent within their service's `retention_days`; every worker runs it hourly
-  and there is no lock: a chunk takes its rows with `FOR UPDATE SKIP LOCKED` (the same for the `known_subject` prune), so overlapping runs
+  and there is no lock: a chunk takes its rows with `FOR UPDATE SKIP LOCKED`, so overlapping runs
   divide the work and never wait for each other (a cross-worker once-per-interval guarantee is a P5 task of the writer's leader). Until the roles of the
   service (P4) the routes are governed by the platform policy `group_member` (whole type). The key of a scan is (type, id) bytewise
   (`DirectoryAfter`, index `ix_subject_directory_scan`). Tests: `directory_test.go` in `admin-api/tests/integration/api` (DIR02, DIR04) and
   in `core/tests/integration/db`.
-  **The registry of known subjects is gone.** `known_subject` (global, filled by every verified token, `SUBJECTS__ENABLED`/`SUBJECTS__RETENTION_DAYS`,
-  `NoteSubject`, `/subject`) was removed in favour of the directory: nothing writes the table any more, and `RunRetention` drops what the previous
-  release left in it after a fixed 90 days (no setting; the table goes with the schema of P3). The directory feeds the AuthZEN subject search
+  **The registry of known subjects is gone.** Its table and fixed ninety-day prune are removed. The directory feeds the AuthZEN subject search
   (below), the people a rule reaches (`peopleReached`, `service/access_lookup.go`) and the person page. `peopleReached` tries each rule on the
-  people of the directories of **the services of the rule's types** (the type it targets, the type its claim is looked up in, the types of the
-  items of the role it grants; `servicesOfRules`), decided with the stored properties as claims: a service with an empty directory has no people, the
+  people of the directories of **the services of the rule's types** (the type it targets, the type its property is looked up in, the types of the
+  items of the role it grants; `servicesOfRules`), decided with the stored subject properties: a service with an empty directory has no people, the
   directory of another service is not counted, a person of two of a rule's services is counted once (DIR03); at most `engine.EvaluationLimit`
   (5000) people are tried (`limited`). The administrators of the platform are no longer noted when they sign in: they appear in the rules and
   memberships that name them, or in the directory of the platform service if somebody sends them there.
@@ -525,8 +521,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
 3. `ensure` (`engine/sync_jobs.go`) makes sure the types the rules reach are synchronized; **the check path never writes the
    graph**. State is in PostgreSQL: `sync_state` (per type: the digest `format`/`data_hash`/`graph_sig` of the last
    synchronization, `applied_at`, `next_due_at` = the throttle of 30 s or the end of the backoff, `attempts`, `last_error`); the jobs
-   are DBOS workflows on the queue `licetum-sync` (the `sync_job` table of the previous engine is no longer used: its rows are never
-   run, P3 drops it). One query reads the states of the involved types, and each
+   are DBOS workflows on the queue `licetum-sync`; the previous table engine is removed from schema v2. One query reads the states of the involved types, and each
    type falls in one case: no data under the current structure (never synchronized, or the type graph above it or its
    synchronizer changed: `structureOf`) or a platform type that a write made due → the request enqueues the job and
    **waits** for it up to `SYNC__REQUEST_WAIT` (5 s), then answers from what exists (the type contributes no resources, the

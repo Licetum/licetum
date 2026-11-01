@@ -84,12 +84,12 @@ func TestPEPWritesMoveTheGlobalRevision(t *testing.T) {
 	ctx := context.Background()
 	client := apiKeyClient(t, pool, service, "gateway")
 
-	before, err := db.LoadRevisions(ctx, pool)
+	before, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	support.IssueTestAPIKey(t, pool, client.ID)
-	after, err := db.LoadRevisions(ctx, pool)
+	after, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,10 +101,10 @@ func TestPEPWritesMoveTheGlobalRevision(t *testing.T) {
 	}
 
 	// A policy write moves the same global revision as a PEP write.
-	if _, err := db.BumpRevision(ctx, pool, db.ScopeGlobal); err != nil {
+	if _, err := support.AdvanceRevision(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	again, err := db.LoadRevisions(ctx, pool)
+	again, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestPEPClientAndKeysAreReachedThroughTheirServiceOnly(t *testing.T) {
 		t.Fatalf("keys = %v, %v", keys, err)
 	}
 
-	revisions, err := db.LoadRevisions(ctx, pool)
+	revisions, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestPEPClientAndKeysAreReachedThroughTheirServiceOnly(t *testing.T) {
 	if _, err := db.ModifyPEPClient(ctx, pool, service, client.ID, func(c *db.PEPClient) error { c.Name = "renamed"; return stop }); !errors.Is(err, stop) {
 		t.Fatalf("an error of the change = %v", err)
 	}
-	revisions, err = db.LoadRevisions(ctx, pool)
+	revisions, err = db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}

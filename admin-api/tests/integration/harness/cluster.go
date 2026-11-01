@@ -261,7 +261,7 @@ func serve(t testing.TB, h http.Handler) *httptest.Server {
 // Revision is the revision of the rules in the database, as the replicas will read it.
 func (c *Cluster) Revision() int64 {
 	c.T.Helper()
-	rev, err := db.LoadRevisions(context.Background(), c.Pool)
+	rev, err := db.LoadLocalVersions(context.Background(), c.Pool)
 	if err != nil {
 		c.T.Fatalf("read the revisions: %v", err)
 	}
@@ -271,7 +271,7 @@ func (c *Cluster) Revision() int64 {
 // DataRevision is the revision of the resource data of a service in the database.
 func (c *Cluster) DataRevision(serviceID string) int64 {
 	c.T.Helper()
-	rev, err := db.LoadRevisions(context.Background(), c.Pool)
+	rev, err := db.LoadLocalVersions(context.Background(), c.Pool)
 	if err != nil {
 		c.T.Fatalf("read the revisions: %v", err)
 	}

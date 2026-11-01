@@ -36,7 +36,7 @@ func TestPEPKeyRotationPublishesTheGlobalPositionAndPEPStreamOnly(t *testing.T) 
 	e := setup(t)
 	service := e.newService("rotation-position")
 	client := e.must("POST", "/service/"+service+"/pep-clients", map[string]any{"name": "rotating", "kind": "api_key"})["id"].(string)
-	before, err := db.LoadRevisions(context.Background(), e.pool)
+	before, err := db.LoadLocalVersions(context.Background(), e.pool)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -137,7 +137,7 @@ func TestIntegrationPropertyLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 
 	revisions := func() (orgData, squadsData int64) {
 		t.Helper()
-		rev, err := db.LoadRevisions(ctx, e.pool)
+		rev, err := db.LoadLocalVersions(ctx, e.pool)
 		if err != nil {
 			t.Fatal(err)
 		}

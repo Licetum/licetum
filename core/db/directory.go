@@ -15,7 +15,8 @@ import (
 )
 
 // The subject directory (migration 00008, ADR 0001, 8.8): the people of a service, sent by the application or an editor. A write
-// takes no revision and no change record: no decision reads the directory.
+// takes one revision and a directory-stream entry when its content changes. It
+// takes no policy-history record because no decision reads the directory.
 
 // DirectoryEntry is a person of a service as the directory holds it.
 type DirectoryEntry struct {

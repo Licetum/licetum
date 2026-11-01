@@ -42,7 +42,7 @@ type cacheState struct {
 
 // readCacheState reads the revisions from PostgreSQL, in one statement. An error leaves the state not ok.
 func (a *App) readCacheState(ctx context.Context) cacheState {
-	rev, err := db.LoadRevisions(ctx, a.DB)
+	rev, err := db.LoadLocalVersions(ctx, a.DB)
 	if err != nil {
 		logDependency(ctx, slog.LevelWarn, "failed to read the revision of the policy", err)
 		return cacheState{}

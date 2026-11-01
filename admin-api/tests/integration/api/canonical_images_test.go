@@ -77,8 +77,6 @@ func canonicalSnapshot(t *testing.T, e *env) map[string]canonicalRow {
 		}
 		image := "to_jsonb(t)"
 		switch table {
-		case "service":
-			image += " - ARRAY['authorization_url','token_url','jwks_url','issuer','client_id','client_secret','trusted_clients']"
 		case "synchronizer":
 			image += " - ARRAY['kind','config']"
 		case "log_settings":

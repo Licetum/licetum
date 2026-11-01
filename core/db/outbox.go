@@ -40,7 +40,7 @@ type Change struct {
 	Services  []uuid.UUID
 }
 
-// Position is a global commit position. Revisions are gap-free within an epoch.
+// Position is a global commit position. LocalVersions are gap-free within an epoch.
 type Position struct {
 	Epoch    int32 `json:"epoch"`
 	Revision int64 `json:"revision"`

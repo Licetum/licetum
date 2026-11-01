@@ -22,7 +22,7 @@ import (
 func TestContract_WR01_ConcurrentWritersAndSnapshotsSeeGapFreePrefix(t *testing.T) {
 	pool, _ := newPEPPool(t)
 	ctx := context.Background()
-	base, err := db.LoadRevisions(ctx, pool)
+	base, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestContract_WR01_RollbackReturnsRevisionAndNotifyIsCommitOnly(t *testing.T
 		t.Fatal(err)
 	}
 	defer func() { _, _ = listener.Exec(ctx, `UNLISTEN licetum_outbox`) }()
-	base, err := db.LoadRevisions(ctx, pool)
+	base, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}

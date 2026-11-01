@@ -129,7 +129,7 @@ func readSeedState(ctx context.Context, t *testing.T, uri string) seedState {
 			t.Fatalf("%s: %v", query, err)
 		}
 	}
-	rev, err := db.LoadRevisions(ctx, pool)
+	rev, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}

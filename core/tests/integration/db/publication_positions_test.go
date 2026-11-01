@@ -20,7 +20,7 @@ func TestContract_PUB02_PolicyBindingsAndDirectoryInterleaveWithoutPositionGaps(
 	pool, service := newPEPPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	before, err := db.LoadRevisions(ctx, pool)
+	before, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestContract_PUB02_PolicyBindingsAndDirectoryInterleaveWithoutPositionGaps(
 	if count != writes || empty != writes/3 || policy != writes/3 || directory != writes/3 {
 		t.Fatalf("publications: total %d empty %d policy %d directory %d", count, empty, policy, directory)
 	}
-	after, err := db.LoadRevisions(ctx, pool)
+	after, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}

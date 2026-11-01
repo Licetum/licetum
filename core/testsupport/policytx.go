@@ -2,6 +2,7 @@ package support
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 
 	"github.com/jackc/pgx/v5"
@@ -43,4 +44,20 @@ func RawExec(ctx context.Context, pool *pgxpool.Pool, sql string, args ...any) (
 	var tag pgconn.CommandTag
 	err := RawPolicyTx(ctx, pool, func(tx pgx.Tx) error { var err error; tag, err = tx.Exec(ctx, sql, args...); return err })
 	return tag, err
+}
+
+// AdvanceRevision is a fixture-only publication with no projected images. Tests
+// use it when they need a new position independently of a policy mutation.
+func AdvanceRevision(ctx context.Context, q db.Querier) (int64, error) {
+	var position db.Position
+	var err error
+	switch writer := q.(type) {
+	case pgx.Tx:
+		position, err = db.TakeRevision(ctx, writer, outbox.Entry{})
+	case *pgxpool.Pool:
+		err = db.InTx(ctx, writer, func(tx pgx.Tx) error { position, err = db.TakeRevision(ctx, tx, outbox.Entry{}); return err })
+	default:
+		return 0, fmt.Errorf("fixture publication requires a transaction or pool")
+	}
+	return position.Revision, err
 }

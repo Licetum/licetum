@@ -20,7 +20,7 @@ func TestContract_HIS05_ConcurrentFollowerNeverSkipsOrRepeatsRecords(t *testing.
 	e := setup(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	base, err := db.LoadRevisions(ctx, e.pool)
+	base, err := db.LoadLocalVersions(ctx, e.pool)
 	if err != nil {
 		t.Fatal(err)
 	}

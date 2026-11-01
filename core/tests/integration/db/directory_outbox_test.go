@@ -13,7 +13,7 @@ import (
 func TestDirectoryPublishesOnlyContentChanges(t *testing.T) {
 	pool, service := newPEPPool(t)
 	ctx := context.Background()
-	before, err := db.LoadRevisions(ctx, pool)
+	before, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestDirectoryPublishesOnlyContentChanges(t *testing.T) {
 	if _, err := db.UpsertDirectory(ctx, pool, service, []db.DirectoryEntry{entry}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := db.LoadRevisions(ctx, pool)
+	after, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestDirectoryPublishesOnlyContentChanges(t *testing.T) {
 	if _, err := db.UpsertDirectory(ctx, pool, service, []db.DirectoryEntry{entry}); err != nil {
 		t.Fatal(err)
 	}
-	unchanged, err := db.LoadRevisions(ctx, pool)
+	unchanged, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestDirectoryPublishesOnlyContentChanges(t *testing.T) {
 	if err := db.DeleteDirectoryEntry(ctx, pool, service, "user", "alice"); err != nil {
 		t.Fatal(err)
 	}
-	deleted, err := db.LoadRevisions(ctx, pool)
+	deleted, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestDirectoryPublishesOnlyContentChanges(t *testing.T) {
 	if n, err := db.PruneDirectory(ctx, pool, 100); err != nil || n != 0 {
 		t.Fatal("empty retention failed", err)
 	}
-	last, err := db.LoadRevisions(ctx, pool)
+	last, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -36,7 +36,6 @@ import (
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
-	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
 	support "github.com/licetum/licetum/core/testsupport"
@@ -260,7 +259,7 @@ func (l *Loaded) changeToTheFixture() {
 					return err
 				}
 			}
-			_, err := db.BumpRevision(ctx, tx, db.ScopeGlobal)
+			_, err := support.AdvanceRevision(ctx, tx)
 			return err
 		})
 		if err != nil {

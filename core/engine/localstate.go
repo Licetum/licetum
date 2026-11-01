@@ -104,7 +104,7 @@ func (a *App) NoteReadRevision(ctx context.Context) {
 // readers follow the ordinary poll interval. The revision comes from PostgreSQL,
 // rather than the process's possibly older view.
 func (a *App) CurrentReadContext(ctx context.Context) (context.Context, error) {
-	revision, err := db.LoadRevisions(ctx, a.DB)
+	revision, err := db.LoadLocalVersions(ctx, a.DB)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +318,7 @@ func (a *App) readView(ctx context.Context) *localView {
 	v := &localView{state: state, snap: snap, readAt: time.Now(), epoch: epoch}
 	if prev := a.local.view.Load(); prev != nil && state.epoch == prev.state.epoch && state.version < prev.state.version {
 		// The revision went backwards: the database this process reads is not the one it read before (a failover to a replica that
-		// had not received the last writes, or a restore). Revisions it used for other content may be used again, so what is
+		// had not received the last writes, or a restore). LocalVersions it used for other content may be used again, so what is
 		// kept under them in this process is dropped; `licetum failover` raises the revisions above everything seen.
 		if a.metrics != nil {
 			a.metrics.revisionRegress.Inc()

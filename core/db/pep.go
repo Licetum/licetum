@@ -17,8 +17,9 @@ import (
 )
 
 // The PEP directory: the identity providers whose tokens a PEP presents, the clients of the services that call the PEP API and
-// the API keys issued to them (migration 00006). Every write runs in its own transaction with the bump of the pep scope, so the
-// directory read at a revision holds every write up to it. No write touches the rules scope: a PEP change decides nothing.
+// the API keys issued to them. Every changed write runs through PolicyTx with one
+// global revision and a PEP-stream publication. It names no affected decision service;
+// P3 still keys cached answers by the global position.
 
 // The kinds of a client (pep_client.kind).
 const (

@@ -57,13 +57,12 @@ func TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings(t *te
 		model.PlatformServiceID).Scan(&policies); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM service WHERE id = $1 AND authorization_url IS NULL AND token_url IS NULL
-		AND jwks_url IS NULL AND issuer IS NULL AND client_id IS NULL AND client_secret IS NULL`,
-		model.PlatformServiceID).Scan(&oauth); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='service'
+   AND column_name IN ('authorization_url','token_url','jwks_url','issuer','client_id','client_secret','trusted_clients')`).Scan(&oauth); err != nil {
 		t.Fatal(err)
 	}
-	if policies != len(model.PlatformTypes) || oauth != 1 {
-		t.Fatalf("the seed made %d of %d policies, and the platform service without an OAuth client is %d", policies, len(model.PlatformTypes), oauth)
+	if policies != len(model.PlatformTypes) || oauth != 0 {
+		t.Fatalf("the seed made %d of %d policies, and the service has %d retired OAuth columns", policies, len(model.PlatformTypes), oauth)
 	}
 	var attr string
 	if err := pool.QueryRow(ctx, `SELECT predicate->0->>'attr' FROM group_member WHERE id = $1`, model.PlatformAdminGroupMemberID).Scan(&attr); err != nil {

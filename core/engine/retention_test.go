@@ -7,24 +7,38 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/licetum/licetum/core/db"
 )
 
-// The rows of the retired registry that another worker is deleting are skipped: the retention does not wait for the
+// Directory rows another worker is deleting are skipped: retention does not wait for the
 // transaction that holds them, and takes them once it has ended.
-func TestRetentionOfKnownSubjectsSkipsTheRowsAnotherWorkerHoldsWithoutWaiting(t *testing.T) {
-	pool, _ := backoffType(t)
+func TestDirectoryRetentionSkipsTheRowsAnotherWorkerHoldsWithoutWaiting(t *testing.T) {
+	pool, typ := backoffType(t)
 	ctx := context.Background()
-	for i := range 10 {
-		if _, err := pool.Exec(ctx, `INSERT INTO known_subject (subject, last_seen) VALUES ($1, now() - interval '200 days')`, fmt.Sprintf("u%02d", i)); err != nil {
-			t.Fatal(err)
-		}
+	var service uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT service_id FROM type_resource WHERE id=$1`, typ).Scan(&service); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO known_subject (subject) VALUES ('recent')`); err != nil {
+	days := 90
+	if err := db.PutDirectorySettings(ctx, pool, service, db.DirectorySettings{RetentionDays: &days}); err != nil {
+		t.Fatal(err)
+	}
+	entries := []db.DirectoryEntry{{Type: "user", ID: "recent"}}
+	for i := range 10 {
+		entries = append(entries, db.DirectoryEntry{Type: "user", ID: fmt.Sprintf("u%02d", i)})
+	}
+	if _, err := db.UpsertDirectory(ctx, pool, service, entries); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE subject_directory_seen SET seen_at=now()-interval '200 days' WHERE subject_id LIKE 'u%'`); err != nil {
 		t.Fatal(err)
 	}
 	count := func() (n int) {
 		t.Helper()
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM known_subject`).Scan(&n); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM subject_directory`).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
@@ -36,7 +50,7 @@ func TestRetentionOfKnownSubjectsSkipsTheRowsAnotherWorkerHoldsWithoutWaiting(t 
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM known_subject WHERE subject < 'u04' FOR UPDATE`); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM subject_directory WHERE subject_id LIKE 'u%' AND subject_id < 'u04' FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
 

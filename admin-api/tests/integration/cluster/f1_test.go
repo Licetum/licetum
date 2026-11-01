@@ -23,7 +23,6 @@ import (
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
-	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
@@ -117,7 +116,7 @@ func missCost(t *testing.T, n int) (queries int, ops map[string]int) {
 	r.Warm(c, harness.Branches(p.Slug, alice), alice)
 
 	insertRules(t, c, p.Branch, n)
-	rev, err := db.BumpRevision(context.Background(), c.Pool, db.ScopeGlobal)
+	rev, err := support.AdvanceRevision(context.Background(), c.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}

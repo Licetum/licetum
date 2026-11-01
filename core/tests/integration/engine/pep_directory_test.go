@@ -112,7 +112,7 @@ func TestPEPDirectoryChecksTheExpiryOfAKeyAgainstTheClock(t *testing.T) {
 	if _, err := support.RawExec(ctx, fx.pool, `UPDATE pep_credential SET expires_at = now() + interval '1 hour' WHERE key_id = $1`, keyID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.BumpRevision(ctx, fx.pool, db.ScopeGlobal); err != nil {
+	if _, err := support.AdvanceRevision(ctx, fx.pool); err != nil {
 		t.Fatal(err)
 	}
 	fx.app.AfterPEPWrite()
@@ -156,7 +156,7 @@ func TestPEPDirectoryIsNotLoadedAgainForARulesWrite(t *testing.T) {
 	support.IssueTestAPIKey(t, fx.pool, gateway.ID)
 	before := fx.directory(t, ctx)
 
-	rev, err := db.BumpRevision(ctx, fx.pool, db.ScopeGlobal)
+	rev, err := support.AdvanceRevision(ctx, fx.pool)
 	if err != nil {
 		t.Fatal(err)
 	}

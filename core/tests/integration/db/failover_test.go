@@ -15,7 +15,7 @@ import (
 func TestFailoverPublishesAnAtomicEpochBoundary(t *testing.T) {
 	pool, _ := newPEPPool(t)
 	ctx := context.Background()
-	before, err := db.LoadRevisions(ctx, pool)
+	before, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestFailoverPublishesAnAtomicEpochBoundary(t *testing.T) {
 	}); !errors.Is(err, aborted) {
 		t.Fatal(err)
 	}
-	unchanged, err := db.LoadRevisions(ctx, pool)
+	unchanged, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil || unchanged != before {
 		t.Fatalf("rollback: %+v %v", unchanged, err)
 	}
