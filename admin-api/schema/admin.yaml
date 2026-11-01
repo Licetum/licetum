@@ -4451,7 +4451,7 @@ paths:
         - Group
   /group/{group_id}:
     delete:
-      description: Not allowed while the group is referenced by rules or memberships (409, extra.blocked_by).
+      description: Deletes the group and its membership entries. Not allowed while rules or another group reference it (409, extra.blocked_by).
       operationId: delete_group
       parameters:
         - description: Group id

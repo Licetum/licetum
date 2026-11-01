@@ -277,6 +277,9 @@ func (a *App) DeleteTypeResource(ctx context.Context, serviceID, typeResourceID 
 			return change{}, apperr.BlockedBy(blockedBy, i18n.TypeResourceDeleteBlocked, typeResourceID)
 		}
 
+		if _, err := q.Exec(ctx, `DELETE FROM type_resource_parent WHERE type_resource_id=$1`, typeResourceID); err != nil {
+			return change{}, err
+		}
 		if _, err := q.Exec(ctx, `UPDATE type_resource SET deleted_at = now() WHERE id = $1`, typeResourceID); err != nil {
 			return change{}, err
 		}

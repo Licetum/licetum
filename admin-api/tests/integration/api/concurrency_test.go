@@ -67,9 +67,12 @@ func TestContract_WR04_DeleteRacingUseNeverLeavesDanglingPolicy(t *testing.T) {
 				case "group":
 					id = e.must("POST", "/group", map[string]any{"name": fmt.Sprintf("race-%d", round), "service_id": model.PlatformServiceID})["id"].(string)
 					removePath = "/group/" + id
-					createPath = removePath + "/member"
-					body = map[string]any{"predicate": []map[string]any{{"attr": "sub", "op": "eq", "value": "alice"}}}
-					checkSQL = `SELECT count(*) FROM group_member m LEFT JOIN user_group g ON g.id=m.group_id WHERE m.group_id=$1 AND g.id IS NULL`
+					// An incoming reference must block deletion. Owned memberships
+					// now cascade; their concurrent creation has a separate test below.
+					holder := e.must("POST", "/group", map[string]any{"name": fmt.Sprintf("holder-%d", round), "service_id": model.PlatformServiceID})["id"].(string)
+					createPath = "/group/" + holder + "/member"
+					body = map[string]any{"member_group_id": id}
+					checkSQL = `SELECT count(*) FROM group_member m LEFT JOIN user_group g ON g.id=m.member_group_id WHERE m.member_group_id=$1 AND g.id IS NULL`
 				case "type":
 					id = e.must("POST", "/service/"+service+"/type_resource", map[string]any{"name": fmt.Sprintf("parent-%d", round)})["id"].(string)
 					removePath = "/service/" + service + "/type_resource/" + id
@@ -196,6 +199,34 @@ func TestContract_WR04_ConcurrentLinksCannotCloseATypeCycle(t *testing.T) {
 		}
 		if success != 1 {
 			t.Fatalf("both halves of a type cycle committed: %+v", results)
+		}
+	}
+}
+
+// An owned membership may commit before its parent's delete and then cascade.
+// This is a valid serial order; a membership may never survive the deleted group.
+func TestContract_WR04_ConcurrentGroupDeleteCascadesOwnedMemberships(t *testing.T) {
+	e := setup(t)
+	for round := range 5 {
+		id := e.must("POST", "/group", map[string]any{"name": fmt.Sprintf("cascade-race-%d", round), "service_id": model.PlatformServiceID})["id"].(string)
+		path := "/group/" + id
+		results := concurrentPair(func() (int, []byte) { return e.do("DELETE", e.admin.URL+path, nil) }, func() (int, []byte) {
+			return e.do("POST", e.admin.URL+path+"/member", map[string]any{"predicate": []any{}})
+		})
+		if results[0].status != http.StatusOK {
+			t.Fatalf("delete: %d %s", results[0].status, results[0].body)
+		}
+		switch results[1].status {
+		case http.StatusOK, http.StatusNotFound, http.StatusForbidden:
+		default:
+			t.Fatalf("create: %d %s", results[1].status, results[1].body)
+		}
+		var remaining int
+		if err := e.pool.QueryRow(context.Background(), `SELECT count(*) FROM group_member WHERE group_id=$1`, id).Scan(&remaining); err != nil {
+			t.Fatal(err)
+		}
+		if remaining != 0 {
+			t.Fatalf("deleted group retained %d owned memberships", remaining)
 		}
 	}
 }

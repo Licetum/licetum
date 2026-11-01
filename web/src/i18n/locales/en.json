@@ -462,7 +462,7 @@
       "action": "Delete the group",
       "blocked": "Can’t delete the group: it is in use",
       "blockedBy": "It is used by: {{what}}. Remove those first.",
-      "body": "It must not be used by any access or other group.",
+      "body": "Its membership entries will be deleted too. It must not be used by any access rule or other group.",
       "title": "Delete the group “{{name}}”?"
     },
     "empty": {
@@ -523,7 +523,11 @@
       "role_permission": "role permission",
       "service": "service",
       "synchronizer": "source",
-      "type_resource": "resource type"
+      "type_resource": "resource type",
+      "pep_client": "PEP client",
+      "pep_credential": "PEP key",
+      "pep_issuer": "PEP issuer",
+      "pep_issuer_keys": "PEP issuer key cache"
     },
     "field": "Field",
     "filter": {

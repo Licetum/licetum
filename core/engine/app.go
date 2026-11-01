@@ -256,8 +256,8 @@ func (a *App) LoadTypeParents(ctx context.Context, q db.Querier, types []*model.
 		byID[t.ID] = t
 	}
 	rows, err := q.Query(ctx,
-		`SELECT type_resource_id, parent_id, eff_inherit FROM type_resource_parent
-		 WHERE type_resource_id = ANY($1) AND eff_live ORDER BY parent_id`, ids)
+		`SELECT type_resource_id, parent_id, eff_inherit, eff_live, to_jsonb(p)-ARRAY['inherit','live'] FROM type_resource_parent p
+		 WHERE type_resource_id = ANY($1) ORDER BY parent_id`, ids)
 	if err != nil {
 		return err
 	}
@@ -265,11 +265,19 @@ func (a *App) LoadTypeParents(ctx context.Context, q db.Querier, types []*model.
 	for rows.Next() {
 		var child uuid.UUID
 		var p model.TypeParent
-		if err := rows.Scan(&child, &p.TypeResourceID, &p.Inherit); err != nil {
+		var live bool
+		var canonical json.RawMessage
+		if err := rows.Scan(&child, &p.TypeResourceID, &p.Inherit, &live, &canonical); err != nil {
 			return err
 		}
 		t := byID[child]
-		t.Parents = append(t.Parents, p)
+		if t.CanonicalParents == nil {
+			t.CanonicalParents = map[uuid.UUID]json.RawMessage{}
+		}
+		t.CanonicalParents[p.TypeResourceID] = canonical
+		if live {
+			t.Parents = append(t.Parents, p)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return err

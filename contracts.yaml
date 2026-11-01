@@ -329,7 +329,7 @@ contracts:
     oracle: a diff of the tables around the operation
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR04
     statement: Concurrent writes cannot together remove the last platform admin, create a cycle of types, or delete an entity in use.
     oracle: the final state

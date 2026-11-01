@@ -1,9 +1,12 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -64,7 +67,11 @@ func ProjectChanges(ctx context.Context, q outbox.Reader, changes []Change) (out
 			if err != nil {
 				return entry, err
 			}
-			touched[t.Table+string(key)] = t
+			identity := t.Table + string(key)
+			if first, ok := touched[identity]; ok && first.BeforeKnown {
+				t.BeforeKnown, t.BeforeFields = true, first.BeforeFields
+			}
+			touched[identity] = t
 		}
 	}
 	names := make([]string, 0, len(touched))
@@ -94,7 +101,10 @@ func ProjectChanges(ctx context.Context, q outbox.Reader, changes []Change) (out
 				return entry, err
 			}
 		}
-		entry.Policy[stream] = append(entry.Policy[stream], image)
+		entry.Streams = append(entry.Streams, stream)
+		if !unchangedImage(t, image) {
+			entry.Policy[stream] = append(entry.Policy[stream], image)
+		}
 		if (stream == outbox.Catalog || len(stream) > 4 && stream[:4] == "svc:") && t.ServiceID != nil {
 			owners = append(owners, *t.ServiceID)
 		}
@@ -115,4 +125,66 @@ func FinishChanges(ctx context.Context, tx pgx.Tx, changes []Change) (Position, 
 		return Position{}, err
 	}
 	return finishPolicy(ctx, tx, entry, changes)
+}
+
+// unchangedImage compares the final image with fields read before the first
+// mutation, without mistaking API-only fields for stored columns. Hidden mutable
+// fields must be supplied by their writer, or BeforeKnown must remain false.
+func unchangedImage(t Touched, image outbox.Image) bool {
+	if !t.BeforeKnown {
+		return false
+	}
+	after, err := imageFields(image.Row)
+	if err != nil {
+		return false
+	}
+	if len(t.BeforeFields) == 0 || string(t.BeforeFields) == "null" {
+		return after["deleted"] == true
+	}
+	if after["deleted"] == true {
+		return false
+	}
+	before, err := imageFields(t.BeforeFields)
+	if err != nil {
+		return false
+	}
+	compared := 0
+	for key, old := range before {
+		next, ok := after[key]
+		if !ok {
+			continue
+		}
+		if !canonicalValueEqual(key, old, next) {
+			return false
+		}
+		compared++
+	}
+	return compared > 0
+}
+
+func canonicalValueEqual(column string, a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	switch column {
+	case "valid_from", "expires_at", "created_at", "updated_at", "fetched_at", "deleted_at", "synced_at", "revoked_at":
+	default:
+		return false
+	}
+	x, xok := a.(string)
+	y, yok := b.(string)
+	if xok && yok {
+		tx, ex := time.Parse(time.RFC3339Nano, x)
+		ty, ey := time.Parse(time.RFC3339Nano, y)
+		return ex == nil && ey == nil && tx.Equal(ty)
+	}
+	return false
+}
+
+func imageFields(raw json.RawMessage) (map[string]any, error) {
+	var fields map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	err := decoder.Decode(&fields)
+	return fields, err
 }

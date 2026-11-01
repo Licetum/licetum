@@ -140,7 +140,7 @@ func (a *App) UpdateSynchronizer(ctx context.Context, serviceID, typeResourceID,
 		s.Config = s.Config.Masked()
 		out = s
 		return change{entity: "synchronizer", entityID: synchronizerID, serviceID: &serviceID, action: actionUpdate,
-			before: old.Config.Masked(), after: s}, nil
+			before: maskedSynchronizer(old), after: s}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -191,4 +191,10 @@ func regionsFor(regions, current []string) []string {
 		return regionsOrEmpty(current)
 	}
 	return regions
+}
+
+func maskedSynchronizer(s *model.Synchronizer) model.Synchronizer {
+	result := *s
+	result.Config = result.Config.Masked()
+	return result
 }

@@ -110,7 +110,7 @@ func (a *App) DeleteGroup(ctx context.Context, groupID uuid.UUID) (uuid.UUID, er
 			blockedBy = append(blockedBy, "assignment_rule")
 		}
 		inMembers, err := engine.Exists(ctx, q,
-			`SELECT 1 FROM group_member WHERE group_id = $1 OR member_group_id = $1`, groupID)
+			`SELECT 1 FROM group_member WHERE member_group_id = $1`, groupID)
 		if err != nil {
 			return change{}, err
 		}
@@ -121,6 +121,9 @@ func (a *App) DeleteGroup(ctx context.Context, groupID uuid.UUID) (uuid.UUID, er
 			return change{}, apperr.BlockedBy(blockedBy, i18n.GroupDeleteBlocked, groupID)
 		}
 
+		if err := recordMemberDeletes(ctx, q, groupID); err != nil {
+			return change{}, err
+		}
 		if _, err := q.Exec(ctx, `DELETE FROM user_group WHERE id = $1`, groupID); err != nil {
 			return change{}, err
 		}
@@ -264,4 +267,31 @@ func (a *App) DeleteGroupMember(ctx context.Context, groupID, memberID uuid.UUID
 		return uuid.Nil, err
 	}
 	return memberID, nil
+}
+
+// recordMemberDeletes audits and projects the memberships removed by the group FK.
+func recordMemberDeletes(ctx context.Context, q db.Querier, groupID uuid.UUID) error {
+	rows, err := q.Query(ctx, `SELECT `+engine.GroupMemberColumns+` FROM group_member WHERE group_id=$1 ORDER BY id`, groupID)
+	if err != nil {
+		return err
+	}
+	var members []*model.GroupMember
+	for rows.Next() {
+		member, err := engine.ScanGroupMember(rows)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		members = append(members, member)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, member := range members {
+		if err := recordChange(ctx, q, change{entity: "group_member", entityID: member.ID, serviceID: &member.ServiceID, action: actionDelete, before: member}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

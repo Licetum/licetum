@@ -184,7 +184,6 @@
   "Nest another group as a whole: its members become members of this group (mutually exclusive with predicate)": "将另一个用户组整体嵌套进来：其成员成为本组成员（与 predicate 互斥）",
   "Nested group": "嵌套的用户组",
   "Not allowed while rules grant the role (409, extra.blocked_by). Its permission items are deleted with it.": "仍有规则授予该角色时不允许删除（409，extra.blocked_by）。其权限项将一并删除。",
-  "Not allowed while the group is referenced by rules or memberships (409, extra.blocked_by).": "当规则或成员关系仍引用该用户组时不允许删除（409，extra.blocked_by）。",
   "Permission item id": "权限项 id",
   "Permissions of a role": "角色的权限项",
   "Rename a group": "重命名用户组",
@@ -667,5 +666,6 @@
   "Service slug: lowercase Latin letters, digits, '-' and '_', unique across all services, including deleted ones. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID": "服务 slug：由小写拉丁字母、数字、连字符和下划线组成，在所有服务（包括已删除的服务）中唯一。PDP 在路径 /service/<slug>/access/v1/... 中使用它；slug 不是 UUID",
   "Immutable service slug: sending the current value is accepted; changing it is rejected with 422": "服务 slug 不可更改：接受当前值，更改时返回 422",
   "Whether the rule's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse. An unapplied or deleted source makes that target inactive. Denials may still apply below unresolved links": "规则目标能否生效：具体资源和属性查找需要每个读取或遍历的类型具有已应用的数据和有效同步器。首次应用前或源删除后该目标无效。拒绝规则仍可能在未解析链接下生效",
-  "Whether the item's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse": "角色权限目标能否生效：具体资源和属性查找需要每个读取或遍历的类型具有已应用的数据和有效同步器"
+  "Whether the item's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse": "角色权限目标能否生效：具体资源和属性查找需要每个读取或遍历的类型具有已应用的数据和有效同步器",
+  "Deletes the group and its membership entries. Not allowed while rules or another group reference it (409, extra.blocked_by).": "删除用户组及其成员关系条目。若规则或其他组仍引用此组则禁止删除（409，extra.blocked_by）。"
 }

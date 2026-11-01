@@ -15,10 +15,15 @@ import (
 )
 
 type Touched struct {
-	Table     string
-	Key       map[string]any
-	ServiceID *uuid.UUID
-	Deleted   bool
+	// BeforeFields contains the canonical fields available from the locked before
+	// read. BeforeKnown with no fields means the row did not exist. The first
+	// before state wins when a compound write touches a row repeatedly.
+	BeforeFields json.RawMessage
+	BeforeKnown  bool
+	Table        string
+	Key          map[string]any
+	ServiceID    *uuid.UUID
+	Deleted      bool
 }
 
 // Change keeps the history representation distinct from canonical database images.

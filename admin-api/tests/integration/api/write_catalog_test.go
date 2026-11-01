@@ -49,11 +49,12 @@ func arrangeCannedWrite(t *testing.T, operation string) *cannedFixture {
 	key := w.must("POST", "/service/"+w.org+"/pep-clients/"+client+"/keys", map[string]any{})
 	f.params["key_id"] = fmt.Sprint(key["key_id"])
 	w.must("PUT", "/platform/pep-issuers", w.pepIssuerBody("existing-issuer"))
+	if operation == "delete_pep_issuer" {
+		w.exec(`INSERT INTO pep_issuer_keys(issuer,key_set,digest,fetched_at) VALUES($1,'{"keys":[]}',decode(repeat('00',32),'hex'),now())`, w.mock.URL+"/existing-issuer")
+	}
 	w.must("PUT", "/service/"+w.org+"/subjects", map[string]any{"subjects": []any{map[string]any{"id": "existing", "name": "Existing"}}})
 	put("scenario_id", "/service/"+w.org+"/policy/scenarios", map[string]any{"name": "existing", "subject": "alice", "checks": []any{map[string]any{"type": "branch", "action": "read", "expect": "deny"}}})
 	switch operation {
-	case "delete_group":
-		w.must("DELETE", "/group/"+group+"/member/"+f.params["member_id"], nil)
 	case "delete_service":
 		f.owner = w.newService("empty")
 		f.params["service_id"] = f.owner

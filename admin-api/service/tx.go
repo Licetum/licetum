@@ -26,13 +26,14 @@ const (
 
 // change is one record of the change log: the entity a write touched, and what it was and what it became.
 type change struct {
-	move      *engine.ClosureMove
-	entity    string
-	entityID  uuid.UUID
-	serviceID *uuid.UUID // the service the entity belongs to; nil for the platform-wide entities
-	action    string
-	before    any // nil for a create
-	after     any // nil for a delete
+	beforeFields any // canonical mutable fields when the API before DTO normalizes values
+	move         *engine.ClosureMove
+	entity       string
+	entityID     uuid.UUID
+	serviceID    *uuid.UUID // the service the entity belongs to; nil for the platform-wide entities
+	action       string
+	before       any // nil for a create
+	after        any // nil for a delete
 }
 
 // batchKey marks a context whose writes all run in one transaction (see RunBatch).
@@ -146,28 +147,49 @@ func publicationChanges(ctx context.Context, changes []change) ([]db.Change, err
 		if before != nil {
 			change.Before = json.RawMessage(*before)
 		}
+		if table != "log_settings" {
+			change.Touched[0].BeforeKnown = true
+			if before != nil {
+				change.Touched[0].BeforeFields = json.RawMessage(*before)
+			}
+			if c.beforeFields != nil {
+				raw, err := json.Marshal(c.beforeFields)
+				if err != nil {
+					return nil, err
+				}
+				change.Touched[0].BeforeFields = raw
+			}
+		}
 		if after != nil {
 			change.After = json.RawMessage(*after)
 		}
 		if table == "type_resource" {
 			parents := map[uuid.UUID]bool{}
-			for i, v := range []any{c.before, c.after} {
-				raw, err := json.Marshal(v)
-				if err != nil {
-					return nil, err
-				}
-				var row struct {
-					Parents []model.TypeParent `json:"parents"`
-				}
-				if err := json.Unmarshal(raw, &row); err != nil {
-					return nil, err
-				}
-				for _, p := range row.Parents {
-					parents[p.TypeResourceID] = i == 1
-				}
+			beforeParents := map[uuid.UUID]json.RawMessage{}
+			if old, ok := c.before.(*model.TypeResource); ok && old != nil {
+				beforeParents = old.CanonicalParents
+			}
+			for parent := range beforeParents {
+				parents[parent] = false
+			}
+			raw, err := json.Marshal(c.after)
+			if err != nil {
+				return nil, err
+			}
+			var next struct {
+				Parents []model.TypeParent `json:"parents"`
+			}
+			if err := json.Unmarshal(raw, &next); err != nil {
+				return nil, err
+			}
+			for _, p := range next.Parents {
+				parents[p.TypeResourceID] = true
 			}
 			for parent, present := range parents {
-				change.Touched = append(change.Touched, db.Touched{Table: "type_resource_parent", Key: map[string]any{"type_resource_id": c.entityID, "parent_id": parent}, ServiceID: owner, Deleted: !present})
+				change.Touched = append(change.Touched, db.Touched{
+					Table: "type_resource_parent", Key: map[string]any{"type_resource_id": c.entityID, "parent_id": parent},
+					ServiceID: owner, Deleted: !present, BeforeKnown: true, BeforeFields: beforeParents[parent],
+				})
 			}
 		}
 		if c.move != nil {

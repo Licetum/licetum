@@ -184,7 +184,6 @@
   "Nest another group as a whole: its members become members of this group (mutually exclusive with predicate)": "Вложить другую группу целиком: её члены становятся членами этой группы (взаимоисключимо с predicate)",
   "Nested group": "Вложенная группа",
   "Not allowed while rules grant the role (409, extra.blocked_by). Its permission items are deleted with it.": "Нельзя, пока роль выдают правила (409, extra.blocked_by). Её пункты удаляются вместе с ней.",
-  "Not allowed while the group is referenced by rules or memberships (409, extra.blocked_by).": "Нельзя, пока группа упоминается в правилах или членствах (409, extra.blocked_by).",
   "Permission item id": "Id пункта роли",
   "Permissions of a role": "Пункты роли",
   "Rename a group": "Переименовать группу",
@@ -667,5 +666,6 @@
   "Service slug: lowercase Latin letters, digits, '-' and '_', unique across all services, including deleted ones. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID": "Slug сервиса: строчные латинские буквы, цифры, дефис и подчёркивание; уникален среди всех сервисов, включая удалённые. PDP использует его в путях /service/<slug>/access/v1/...; это не UUID",
   "Immutable service slug: sending the current value is accepted; changing it is rejected with 422": "Неизменяемый slug сервиса: текущее значение принимается, изменение отклоняется с кодом 422",
   "Whether the rule's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse. An unapplied or deleted source makes that target inactive. Denials may still apply below unresolved links": "Может ли цель правила действовать: для конкретных ресурсов и поиска по свойствам нужны применённые данные и действующий синхронизатор каждого читаемого или проходимого типа. До первого применения или после удаления источника цель не действует. Запреты могут по-прежнему действовать ниже неразрешённых связей",
-  "Whether the item's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse": "Может ли цель пункта роли действовать: для конкретных ресурсов и поиска по свойствам нужны применённые данные и действующий синхронизатор каждого читаемого или проходимого типа"
+  "Whether the item's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse": "Может ли цель пункта роли действовать: для конкретных ресурсов и поиска по свойствам нужны применённые данные и действующий синхронизатор каждого читаемого или проходимого типа",
+  "Deletes the group and its membership entries. Not allowed while rules or another group reference it (409, extra.blocked_by).": "Удаляет группу и её записи членства. Запрещено, пока на неё ссылаются правила или другая группа (409, extra.blocked_by)."
 }

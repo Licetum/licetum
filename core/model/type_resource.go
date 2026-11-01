@@ -133,12 +133,13 @@ func ImpliedClosure(implies map[string][]string) map[string][]string {
 
 // TypeResource is a row of the type_resource table (soft-deleted rows excluded).
 type TypeResource struct {
-	ID                   uuid.UUID           `json:"id" format:"uuid" doc:"Resource type id"`
-	ServiceID            uuid.UUID           `json:"service_id" format:"uuid" doc:"Service id"`
-	Name                 string              `json:"name" doc:"Resource type name"`
-	Parents              []TypeParent        `json:"parents" nullable:"false" doc:"Parent resource types"`
-	TypeResourceParentID *uuid.UUID          `json:"type_resource_parent_id" format:"uuid" deprecated:"true" doc:"Deprecated: the parent id when the type has exactly one parent, otherwise null"`
-	AccessImplies        map[string][]string `json:"access_implies" nullable:"false" doc:"Access level hierarchy of this type"`
+	CanonicalParents     map[uuid.UUID]json.RawMessage `json:"-"`
+	ID                   uuid.UUID                     `json:"id" format:"uuid" doc:"Resource type id"`
+	ServiceID            uuid.UUID                     `json:"service_id" format:"uuid" doc:"Service id"`
+	Name                 string                        `json:"name" doc:"Resource type name"`
+	Parents              []TypeParent                  `json:"parents" nullable:"false" doc:"Parent resource types"`
+	TypeResourceParentID *uuid.UUID                    `json:"type_resource_parent_id" format:"uuid" deprecated:"true" doc:"Deprecated: the parent id when the type has exactly one parent, otherwise null"`
+	AccessImplies        map[string][]string           `json:"access_implies" nullable:"false" doc:"Access level hierarchy of this type"`
 }
 
 // ParentTypeIDs lists the ids of the parent types.

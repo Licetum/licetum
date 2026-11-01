@@ -424,7 +424,7 @@
       "action": "删除组",
       "blocked": "无法删除组：它正在被使用",
       "blockedBy": "它被以下内容使用：{{what}}。请先移除它们。",
-      "body": "它不能被任何访问权限或其他组使用。",
+      "body": "其成员关系条目也将被删除。访问规则或其他组不得引用此组。",
       "title": "删除组“{{name}}”？"
     },
     "empty": {
@@ -485,7 +485,11 @@
       "role_permission": "角色权限",
       "service": "服务",
       "synchronizer": "数据源",
-      "type_resource": "资源类型"
+      "type_resource": "资源类型",
+      "pep_client": "PEP 客户端",
+      "pep_credential": "PEP 密钥",
+      "pep_issuer": "PEP 签发者",
+      "pep_issuer_keys": "PEP 签发者密钥缓存"
     },
     "field": "字段",
     "filter": {

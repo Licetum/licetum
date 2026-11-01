@@ -29,6 +29,10 @@ const ENTITIES = [
   'synchronizer',
   'service',
   'log_settings',
+  'pep_client',
+  'pep_credential',
+  'pep_issuer',
+  'pep_issuer_keys',
 ];
 
 export function HistoryScreen() {

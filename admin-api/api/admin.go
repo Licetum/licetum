@@ -541,7 +541,7 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		Method:      http.MethodDelete,
 		Path:        "/group/{group_id}",
 		Summary:     "Delete a group",
-		Description: "Not allowed while the group is referenced by rules or memberships (409, extra.blocked_by).",
+		Description: "Deletes the group and its membership entries. Not allowed while rules or another group reference it (409, extra.blocked_by).",
 		Tags:        []string{"Group"},
 		Errors:      []int{http.StatusConflict},
 	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformGroup, model.ActionWrite, "group_id")), func(ctx context.Context, in *GroupPath) (*server.Out[uuid.UUID], error) {

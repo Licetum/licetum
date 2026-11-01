@@ -95,6 +95,20 @@ func runPEPMutation(ctx context.Context, pool *pgxpool.Pool, m pepMutation, writ
 				credentials = append(credentials, image)
 			}
 		}
+		var issuerKeys *outbox.Image
+		if m.table == "pep_issuer" && m.action == "delete" {
+			image, err := outbox.Project(ctx, tx, "pep_issuer_keys", m.key())
+			if err != nil {
+				return nil, err
+			}
+			var row map[string]any
+			if err := json.Unmarshal(image.Row, &row); err != nil {
+				return nil, err
+			}
+			if row["deleted"] != true {
+				issuerKeys = &image
+			}
+		}
 		wrapped := &pepMutationTx{Tx: tx}
 		if err := write(wrapped); err != nil {
 			return nil, err
@@ -111,6 +125,17 @@ func runPEPMutation(ctx context.Context, pool *pgxpool.Pool, m pepMutation, writ
 			return nil, err
 		}
 		changes := []Change{main}
+		if issuerKeys != nil {
+			next, err := outbox.Project(ctx, tx, issuerKeys.Table, issuerKeys.Key)
+			if err != nil {
+				return nil, err
+			}
+			c, err := pepChange(ctx, issuerKeys.Table, issuerKeys.Key, nil, "delete", issuerKeys.Row, next.Row)
+			if err != nil {
+				return nil, err
+			}
+			changes = append(changes, c)
+		}
 		for _, old := range credentials {
 			next, err := outbox.Project(ctx, tx, old.Table, old.Key)
 			if err != nil {
@@ -159,5 +184,8 @@ func pepChange(ctx context.Context, table string, key map[string]any, owner *uui
 	if v, ok := key["id"].(uuid.UUID); ok {
 		id = &v
 	}
-	return Change{Entity: table, ID: id, ServiceID: owner, Actor: publicationActor(ctx), Action: action, Before: old, After: next, Touched: []Touched{{Table: table, Key: key, ServiceID: owner, Deleted: action == "delete"}}}, nil
+	if missing {
+		before = nil
+	}
+	return Change{Entity: table, ID: id, ServiceID: owner, Actor: publicationActor(ctx), Action: action, Before: old, After: next, Touched: []Touched{{BeforeKnown: true, BeforeFields: before, Table: table, Key: key, ServiceID: owner, Deleted: action == "delete"}}}, nil
 }
