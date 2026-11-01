@@ -72,5 +72,5 @@ type RolePermissionWithContext struct {
 	RolePermission
 	ServiceName      string `json:"service_name" doc:"Name of the service that owns the resource type"`
 	TypeResourceName string `json:"type_resource_name" doc:"Resource type name"`
-	TargetValid      bool   `json:"target_valid" doc:"Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer, or that looks a resource up in, or climbs through, such a type (see AssignmentRule.target_valid)"`
+	TargetValid      bool   `json:"target_valid" doc:"Whether the item's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse"`
 }

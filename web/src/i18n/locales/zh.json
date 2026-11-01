@@ -378,7 +378,7 @@
   "grantDetail": {
     "allHistory": "完整历史 →",
     "check": "检查访问…",
-    "deadNote": "该访问权限指向一个没有数据源的类型的资源，因此无法生效。请连接数据源或删除该访问权限。",
+    "deadNote": "此目标读取或遍历的每个类型都需要数据源和首次成功应用的同步。",
     "description": "说明",
     "disabledNote": "此访问权限已停用：启用之前它对任何人都不生效。",
     "duplicate": "复制",
@@ -1101,7 +1101,7 @@
     "status": {
       "active": "有效",
       "dead": "不起作用",
-      "deadHint": "该规则指向一个没有数据源的类型的资源，因此无法生效。",
+      "deadHint": "此目标读取或遍历的每个类型都需要数据源和首次成功应用的同步。",
       "disabled": "已停用",
       "expired": "已过期",
       "expiring_other": "{{count}} 天后到期",

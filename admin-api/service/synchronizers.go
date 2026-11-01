@@ -15,12 +15,10 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// hasSynchronizer reports whether the type has a live synchronizer. The type's mode depends on it:
-// with one it is sync (the type has resources), without one it is not_sync (access to the type as a
-// whole, a "capability").
-func (a *App) hasSynchronizer(ctx context.Context, q db.Querier, typeResourceID uuid.UUID) (bool, error) {
+// hasLiveSynchronizer checks configuration, independently of whether its first data has been applied.
+func (a *App) hasLiveSynchronizer(ctx context.Context, q db.Querier, typeResourceID uuid.UUID) (bool, error) {
 	var ok bool
-	err := q.QueryRow(ctx, `SELECT `+engine.LiveSynchronizerExists("$1"), typeResourceID).Scan(&ok)
+	err := q.QueryRow(ctx, `SELECT `+model.LiveSynchronizerSQL("$1"), typeResourceID).Scan(&ok)
 	return ok, err
 }
 
@@ -40,7 +38,7 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 	}
 
 	// A type has one source (uq_synchronizer_live_type): say so before probing the new one.
-	if has, err := a.hasSynchronizer(ctx, a.DB, typeResourceID); err != nil {
+	if has, err := a.hasLiveSynchronizer(ctx, a.DB, typeResourceID); err != nil {
 		return nil, err
 	} else if has {
 		return nil, apperr.Conflict(i18n.SynchronizerExists, typeResourceID)
@@ -54,7 +52,7 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 	var move *engine.ClosureMove
 	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		// The probe only proves the source works; the resources reach the cache through the synchronization. The type
-		// becomes sync with this row, and the closure of the types below it follows in the same transaction (ChangeMode).
+		// stays not_sync until its first data is applied; ChangeMode clears the prior source generation.
 		var s *model.Synchronizer
 		var err error
 		move, err = a.ChangeMode(ctx, q, typeResourceID, func() error {

@@ -28,11 +28,11 @@ type TypeNode struct {
 	ServiceName string
 	Name        string
 	Deleted     bool
-	// Sync says the type has a live synchronizer: it is a sync type, and its resources are the ones that synchronizer
+	// Sync says the type has applied data and a live synchronizer: it is a sync type, and its resources are the ones that synchronizer
 	// reported. A type without one is not_sync and has no resources, whatever rows a deleted synchronizer left in the local
 	// copy (they stay there, as the rows a source stops reporting do, see IsSync).
 	Sync bool
-	// SourceDeleted says the type has no live synchronizer but had one: the rows its synchronizer reported may still be in
+	// SourceDeleted says the type has no applied generation and had a retired source: its old rows may still be in
 	// the local copy, and the closure of the types below it must not lead through them (see signature).
 	SourceDeleted bool
 	// Parents are the effective live parent links (of any state of the parent type).
@@ -144,7 +144,7 @@ func (g *TypeGraph) live(id uuid.UUID) bool {
 	return ok && !n.Deleted
 }
 
-// IsSync reports whether a type has resources: it is live and has a live synchronizer. This is what every decision reads
+// IsSync reports whether a type has applied resources: it is live, has a first applied snapshot and a live synchronizer. This is what every decision reads
 // about the resources of a type: a resource of a type that is not sync is not there (a question about it is
 // resource_not_found, a rule on it anchors nothing, a cascade does not reach it and a link to it is unresolved), even when
 // the local copy still holds it because the synchronizer of its type was deleted.
@@ -298,18 +298,11 @@ func (a *App) LoadTypeGraph(ctx context.Context) (*TypeGraph, error) {
 	return loadTypeGraph(ctx, a.DB)
 }
 
-// LiveSynchronizerExists is the single SQL definition of a type's mode: a type with a live (not deleted) synchronizer is
-// sync, otherwise it is not_sync. typeIDExpr is the SQL expression of the type id being checked. The engine reads it once
-// per type graph (TypeNode.Sync); the admin API reads it where it lists or checks the targets of rules.
-func LiveSynchronizerExists(typeIDExpr string) string {
-	return `EXISTS (SELECT 1 FROM synchronizer s WHERE s.type_resource_id = ` + typeIDExpr + ` AND s.deleted_at IS NULL)`
-}
-
 // loadTypeGraph reads the type graph through q (the pool, or a transaction).
 func loadTypeGraph(ctx context.Context, q db.Querier) (*TypeGraph, error) {
 	rows, err := q.Query(ctx, `
 		SELECT t.id, t.service_id, s.name, t.name, t.deleted_at IS NOT NULL, t.access_implies,
-		       `+LiveSynchronizerExists("t.id")+`,
+		       `+model.TypeModeSQL("t")+`,
 		       EXISTS (SELECT 1 FROM synchronizer s WHERE s.type_resource_id = t.id AND s.deleted_at IS NOT NULL)
 		FROM type_resource t JOIN service s ON s.id = t.service_id`)
 	if err != nil {

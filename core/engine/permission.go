@@ -739,6 +739,25 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		return nil, err
 	}
 	synced := res.Synced
+
+	// A first apply may have established a mode while this request waited for its job.
+	// Read the committed mode before interpreting the rows that were just applied.
+	for _, id := range involvedIDs {
+		if synced[id] && !g.IsSync(id) {
+			g, err = a.LoadTypeGraph(ctx)
+			if err != nil {
+				return nil, err
+			}
+			p.Graph = g
+			p.syncTypes = map[uuid.UUID]bool{}
+			for _, own := range p.serviceType {
+				if g.IsSync(own) {
+					p.syncTypes[own] = true
+				}
+			}
+			break
+		}
+	}
 	if res.Pending {
 		// The data of some type is not there yet: the answer is made of what exists and is not kept for long.
 		if t := TraceFrom(ctx); t != nil {

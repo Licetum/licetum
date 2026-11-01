@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/licetum/licetum/core/model"
 )
 
 // Reader is deliberately independent of db, whose transaction writer uses this package.
@@ -54,7 +56,7 @@ func Project(ctx context.Context, q Reader, table string, key map[string]any) (I
 	case "log_settings":
 		expr += " - 'salt'"
 	case "type_resource":
-		expr += " || jsonb_build_object('mode',CASE WHEN EXISTS(SELECT 1 FROM synchronizer s WHERE s.type_resource_id=t.id AND s.deleted_at IS NULL) THEN 'sync' ELSE 'not_sync' END)"
+		expr += " || jsonb_build_object('mode',CASE WHEN " + model.TypeModeSQL("t") + " THEN 'sync' ELSE 'not_sync' END)"
 	case "type_resource_parent":
 		expr += " - ARRAY['inherit','live']"
 	}

@@ -23,7 +23,7 @@ func (a *App) checkResourceTarget(ctx context.Context, q db.Querier, typeResourc
 	if resourceID == nil && fromProperty == nil && len(where) == 0 {
 		return nil
 	}
-	ok, err := a.hasSynchronizer(ctx, q, typeResourceID)
+	ok, err := a.hasLiveSynchronizer(ctx, q, typeResourceID)
 	if err != nil || ok {
 		return err
 	}
@@ -193,7 +193,7 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 		SELECT `+engine.AssignmentRuleColumns+`, s.name, t.name, ro.name,
 		       ar.role_id IS NOT NULL
 		       OR (ar.resource_id IS NULL AND ar.resource_from_property IS NULL AND ar.resource_where IS NULL)
-		       OR `+engine.LiveSynchronizerExists("t.id")+`
+		       OR `+model.TypeModeSQL("t")+`
 		FROM assignment_rule ar
 		LEFT JOIN type_resource t ON t.id = ar.type_resource_id
 		JOIN service s ON s.id = ar.service_id

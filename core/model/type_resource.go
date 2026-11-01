@@ -188,7 +188,7 @@ type ResourceRefresh struct {
 	Inactive  int `json:"inactive" doc:"Resources kept but switched off because the source no longer reports them"`
 }
 
-// A type's mode is derived, not stored: a type is sync when a live (not deleted) synchronizer
+// A type's mode is derived: it is sync after its first applied snapshot while a live synchronizer
 // points at it — it has resources, and the permission result lists them — otherwise it is not_sync, a
 // "permission without resources" (a capability such as advanced_working_mode): a rule with
 // resource_id = NULL grants access to the type as a whole.

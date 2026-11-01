@@ -272,19 +272,30 @@ func (e *cachedEntry[T]) expiry() int64 { return e.Exp }
 
 func (e *cachedEntry[T]) holdTime() int64 { return e.Hold }
 
-// publishData writes the header-only P3 data entry after every entity/fence write.
-func publishData(ctx context.Context, tx pgx.Tx, g *TypeGraph, typeIDs []uuid.UUID) error {
-	if len(typeIDs) == 0 {
+// publishData publishes changed data streams and first-applied type images after all entity/fence writes.
+func publishData(ctx context.Context, tx pgx.Tx, g *TypeGraph, typeIDs []uuid.UUID, catalogTypes ...uuid.UUID) error {
+	if len(typeIDs) == 0 && len(catalogTypes) == 0 {
 		return nil
 	}
-	services := dataAffectedServices(g, typeIDs)
+	services := dataAffectedServices(g, slices.Concat(typeIDs, catalogTypes))
 	streams := make([]string, 0, len(typeIDs))
 	for _, id := range typeIDs {
 		streams = append(streams, outbox.Data(id))
 	}
+	policy := map[string][]outbox.Image{}
+	if len(catalogTypes) > 0 {
+		streams = append(streams, outbox.Catalog)
+		for _, id := range catalogTypes {
+			image, err := outbox.Project(ctx, tx, "type_resource", map[string]any{"id": id})
+			if err != nil {
+				return err
+			}
+			policy[outbox.Catalog] = append(policy[outbox.Catalog], image)
+		}
+	}
 	slices.Sort(streams)
 	streams = slices.Compact(streams)
-	_, err := db.TakeRevision(ctx, tx, outbox.Entry{Kind: outbox.Change, Services: services, Streams: streams})
+	_, err := db.TakeRevision(ctx, tx, outbox.Entry{Kind: outbox.Change, Services: services, Streams: streams, Policy: policy})
 	return err
 }
 func dataAffectedServices(g *TypeGraph, typeIDs []uuid.UUID) []uuid.UUID {

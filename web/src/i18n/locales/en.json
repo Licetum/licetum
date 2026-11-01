@@ -416,7 +416,7 @@
   "grantDetail": {
     "allHistory": "Whole history →",
     "check": "Check access…",
-    "deadNote": "The access points at a resource of a type that has no source, so it can’t take effect. Connect a source or delete the access.",
+    "deadNote": "This target needs a source and a successfully applied first synchronization for every type it reads or traverses.",
     "description": "Description",
     "disabledNote": "This access is disabled: it applies to nobody until you enable it.",
     "duplicate": "Duplicate",
@@ -1199,7 +1199,7 @@
     "status": {
       "active": "Active",
       "dead": "Has no effect",
-      "deadHint": "The rule points at a resource of a type that has no source, so it can’t apply.",
+      "deadHint": "This target needs a source and a successfully applied first synchronization for every type it reads or traverses.",
       "disabled": "Disabled",
       "expired": "Expired",
       "expiring_few": "Expires in {{count}} days",

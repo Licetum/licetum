@@ -133,6 +133,16 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 		if err != nil {
 			return res, err
 		}
+		for _, id := range ids {
+			if st, ok := states[id]; ok && st.usable() && !g.IsSync(id) {
+				g, err = a.LoadTypeGraph(ctx)
+				if err != nil {
+					return res, err
+				}
+				break
+			}
+		}
+
 		var block, async []uuid.UUID
 		res.Pending = false
 		for _, s := range syncs {

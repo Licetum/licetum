@@ -221,7 +221,7 @@ func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) 
 		t.Fatalf("the preview of a rule on D1 counts no resource of item nor of part: %v", types)
 	}
 
-	// A synchronizer created again finds the rows: the resources are back, and so is the route to P1.
+	// The first apply of the replacement source restores its resources and the route to P1.
 	w.must("POST", w.typePath("item")+"/resource/synchronizer", itemSource())
 	if got := decisions(w.checkAccess(w.appSvc, true, questions...)); !slices.Equal(got, allowed) {
 		t.Fatalf("with a synchronizer again, the query path: %v", got)
@@ -318,17 +318,32 @@ func TestIntegrationADeletedSynchronizerCutsTheRoutesBelowItWhateverTheLowerSour
 				t.Fatalf("without a synchronizer of item, P1 gets nothing from D1: %s on the query path, %s on the snapshot path", q, s)
 			}
 
-			// And the routes come back with the synchronizer, before anything is synchronized.
+			// The replacement starts unapplied: no old route is restored just by creating it.
+			w.stopWorker()
 			before = dataRevision()
 			w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
-			if got, want := ancestors(), []string{"B1", "D1", "I1", "P1", "R1"}; !slices.Equal(got, want) {
-				t.Fatalf("after the synchronizer of item was created again, the ancestors of P1 %v, want %v", got, want)
+			if got := ancestors(); !slices.Equal(got, []string{"P1"}) {
+				t.Fatalf("unapplied replacement restored old routes: %v", got)
 			}
 			if got := dataRevision(); got <= before {
-				t.Fatalf("the data revision of the service of part did not move: %d, was %d", got, before)
+				t.Fatalf("replacement catalog revision did not move: %d, was %d", got, before)
+			}
+			if variant == "no worker runs" {
+				w.exec(`ALTER TABLE src_part RENAME TO src_part_off`)
+			}
+			w.worker(nil, engine.SyncHooks{})
+			graph, err := w.app.LoadTypeGraph(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.app.EnsureSynced(ctx, graph, []uuid.UUID{uuid.MustParse(w.item)}, true); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := ancestors(), []string{"B1", "D1", "I1", "P1", "R1"}; !slices.Equal(got, want) {
+				t.Fatalf("first apply did not restore routes below item: %v, want %v", got, want)
 			}
 			if q, s := decisions(); q != engine.DecisionAllowed || s != engine.DecisionAllowed {
-				t.Fatalf("with a synchronizer of item again: %s, %s", q, s)
+				t.Fatalf("after the replacement's first apply: %s, %s", q, s)
 			}
 		})
 	}
@@ -460,11 +475,24 @@ func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *tes
 		}
 	}
 
+	synchronize := func() {
+		ctx := context.Background()
+		g, err := w.app.LoadTypeGraph(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.app.EnsureSynced(ctx, g, []uuid.UUID{uuid.MustParse(w.item), uuid.MustParse(w.branch), uuid.MustParse(w.typeByName["part"]), uuid.MustParse(w.division), uuid.MustParse(w.rrs)}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	synchronize()
 	expect("while item has its synchronizer", false, false, false, false)
 	w.must(http.MethodDelete, w.typePath("item")+"/resource/synchronizer/"+w.syncs["item"], nil)
 	expect("without a synchronizer of item", true, true, false, true)
 	w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
-	expect("with a synchronizer of item again", false, false, false, false)
+	expect("replacement before its first apply", true, true, false, true)
+	synchronize()
+	expect("with a replacement applied", false, false, false, false)
 }
 
 // The denials that read the resources of a type without a synchronizer, or the rows that type left, keep an anchor that is no

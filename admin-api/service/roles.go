@@ -238,7 +238,7 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 	rows, err := a.DB.Query(ctx, `
 		SELECT `+engine.RolePermissionColumns+`, s.name, t.name,
 		       (rp.resource_id IS NULL AND rp.resource_from_property IS NULL AND rp.resource_where IS NULL)
-		       OR `+engine.LiveSynchronizerExists("t.id")+`
+		       OR `+model.TypeModeSQL("t")+`
 		FROM role_permission rp
 		JOIN type_resource t ON t.id = rp.type_resource_id
 		JOIN service s ON s.id = t.service_id

@@ -171,6 +171,9 @@ func publicationChanges(ctx context.Context, changes []change) ([]db.Change, err
 			}
 		}
 		if c.move != nil {
+			for _, id := range c.move.CatalogTypes {
+				change.Touched = append(change.Touched, db.Touched{Table: "type_resource", Key: map[string]any{"id": id}, ServiceID: owner})
+			}
 			change.Services = c.move.Services
 			for _, id := range c.move.Types {
 				change.Streams = append(change.Streams, outbox.Data(id))

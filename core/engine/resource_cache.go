@@ -551,7 +551,7 @@ const rebuildClosureSQL = `
 // parameter of a query (x <> ALL), and a nil slice would be sent as NULL, which nothing is unequal to.
 func typesWithoutResources(ctx context.Context, tx db.Querier) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `SELECT t.id FROM type_resource t WHERE t.deleted_at IS NULL AND NOT `+
-		LiveSynchronizerExists("t.id")+` ORDER BY t.id`)
+		model.TypeModeSQL("t")+` ORDER BY t.id`)
 	if err != nil {
 		return nil, err
 	}
