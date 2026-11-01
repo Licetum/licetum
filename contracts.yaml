@@ -721,7 +721,7 @@ contracts:
     oracle: status codes
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: ADM12
     statement: Only callers whose roles in S include directory_writer (a machine client of the admin IdP, or an editor of S through the role closure of ADR 0001, 8.2) write the directory of S, at a limited rate and without the admin_write lock; an unchanged batch takes no revision, directory_writer allows nothing else, and a role of one service cannot read the directory of another.
     oracle: status codes and lock waits

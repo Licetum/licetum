@@ -1151,7 +1151,8 @@
       "policy": "策略",
       "sources": "数据源",
       "types": "资源类型"
-    }
+    },
+    "slugImmutable": "slug 不可更改或重复使用，即使服务已删除。"
   },
   "services": {
     "col": {

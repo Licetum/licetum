@@ -69,6 +69,9 @@ func (a *App) UpdateService(ctx context.Context, serviceID uuid.UUID, in *model.
 		if err != nil {
 			return change{}, err
 		}
+		if in.Slug != nil && *in.Slug != old.Slug {
+			return change{}, apperr.Unprocessable(i18n.ServiceSlugImmutable)
+		}
 		// COALESCE: nil PATCH fields keep their current value.
 		s, err := engine.ScanService(q.QueryRow(ctx, `
 			UPDATE service SET

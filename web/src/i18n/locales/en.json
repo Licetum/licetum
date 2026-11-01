@@ -1252,7 +1252,8 @@
       "policy": "Policy",
       "sources": "Sources",
       "types": "Resource types"
-    }
+    },
+    "slugImmutable": "The slug cannot be changed or reused, even after deletion."
   },
   "services": {
     "col": {

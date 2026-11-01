@@ -95,6 +95,7 @@ const (
 	GroupMemberExclusive          Key = "role_member_exclusive"
 	RoleAssignmentInlineExclusive Key = "role_assignment_inline_exclusive"
 	AssignmentRuleTargetRequired  Key = "assignment_rule_target_required"
+	ServiceSlugImmutable          Key = "service_slug_immutable"
 	ServiceSlugInvalid            Key = "service_slug_invalid"
 	ServiceSlugTaken              Key = "service_slug_taken"
 	SynchronizerRegionsInvalid    Key = "synchronizer_regions_invalid"
@@ -741,6 +742,11 @@ var catalog = map[Key]Text{
 		EN: "Role permission %s not found",
 		RU: "Пункт роли %s не найден",
 		ZH: "未找到角色权限项 %s",
+	},
+	ServiceSlugImmutable: {
+		EN: "A service slug cannot be changed after creation",
+		RU: "Slug сервиса нельзя изменить после создания",
+		ZH: "服务创建后不能更改 slug",
 	},
 	ServiceSlugTaken: {
 		EN: "A service with slug %q already exists",

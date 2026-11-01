@@ -158,7 +158,10 @@ export function ServiceOverview() {
           >
             <Descriptions.Item label={t('service.name')}>{service.name}</Descriptions.Item>
             <Descriptions.Item label={t('service.slug')}>
-              <IdChip value={service.slug} />
+              <Flex vertical gap={4}>
+                <IdChip value={service.slug} />
+                <Typography.Text type="secondary">{t('service.slugImmutable')}</Typography.Text>
+              </Flex>
             </Descriptions.Item>
             <Descriptions.Item label={t('service.appUrl')}>{service.url ?? '—'}</Descriptions.Item>
             <Descriptions.Item label={t('service.iconUrl')}>

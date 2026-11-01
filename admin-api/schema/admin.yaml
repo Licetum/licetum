@@ -3049,7 +3049,7 @@ components:
             - filials
           type: string
         slug:
-          description: "Service slug: lowercase Latin letters, digits, '-' and '_', unique among live services. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID"
+          description: "Service slug: lowercase Latin letters, digits, '-' and '_', unique across all services, including deleted ones. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID"
           examples:
             - filials
           maxLength: 64
@@ -3111,7 +3111,7 @@ components:
             - string
             - "null"
         slug:
-          description: Service slug (see POST /service)
+          description: "Immutable service slug: sending the current value is accepted; changing it is rejected with 422"
           maxLength: 64
           pattern: ^[a-z0-9][a-z0-9_-]*$
           type:

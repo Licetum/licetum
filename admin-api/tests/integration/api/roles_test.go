@@ -13,6 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // A role is a set of permissions: its items reach a subject through the assignment rule that grants the role.
@@ -150,15 +151,16 @@ func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	status, header, body := e.permissionRaw(orders, alice)
 	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 
-	e.must("PATCH", "/service/"+orders, map[string]any{"slug": "orders-v2"})
-	// Polling observes the catalog change within the configured freshness bound.
-	waitFor(t, "the renamed slug to reach the PDP", func() bool { status, _, _ := e.permissionRaw("orders", alice); return status == http.StatusForbidden })
-	// The old slug then names no service; the existing credential gets the same refusal.
-	status, header, body = e.permissionRaw("orders", alice)
-	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
-	if status, _ := e.permission("orders-v2", alice); status != http.StatusOK {
-		t.Fatalf("the new slug: %d", status)
+	status, raw = e.do(http.MethodPatch, e.admin.URL+"/service/"+orders, map[string]any{"slug": "orders-v2"})
+	requireErrorCode(t, status, raw, http.StatusUnprocessableEntity, "service_slug_immutable")
+	e.must("PATCH", "/service/"+orders, map[string]any{"slug": "orders"})
+	if status, _ := e.permission("orders", alice); status != http.StatusOK {
+		t.Fatalf("unchanged slug: %d", status)
 	}
+	original := authzenreq.SearchResource("orders", "alice", "branch", "read")
+	credential, _ := e.callers.Prepare(original.Path, alice, original.Body)
+	status, header, body = e.askWithHeader(authzenreq.SearchResource("orders-v2", "alice", "branch", "read"), credential)
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 }
 
 // An item on a platform policy grants access to the platform itself: it needs write on that policy as a
