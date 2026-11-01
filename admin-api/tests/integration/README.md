@@ -28,7 +28,7 @@ parents, inherit masks and `access_implies`, an http synchronizer per type with 
 parents, by the name of the parent type, and the attributes; a parent no resource has is an unresolved link), and the policy through
 `POST /batch`. `Loaded.Ask(case)` asks the questions of a case through `POST /service/{slug}/access/v1/evaluations` under the lever `harness.Higher()` with
 `explain` (requests built by `core/testsupport/authzenreq`, the explanation read from `context.reason_admin`; an evaluation the API
-could not decide is a failure, not a denial), as the case's subject (`subject.id`, which is `preferred_username`) with its claims as `subject.properties` and the
+could not decide is a failure, not a denial), as the case's subject (`subject.id`, which is `preferred_username`) with its properties as `subject.properties` and the
 request attributes in the context, at the case's time: the replica's clock (`engine.App.SetClock`) is the time of the case, so the
 validity windows and the conditions on the hour are decided then. The answers name the rules of the fixture. `contracts.Compare`
 lists every difference from the expectations; `Loaded.ReplaceRules` swaps the policy (and the resources) on the same types, for the
@@ -100,7 +100,7 @@ Name a test after the acceptance criterion it proves (`TestF3_4_…`) and say in
 | test | what it proves |
 |---|---|
 | `cluster/f1_test.go` `TestF1_1`, `_3`, `_5`, `_6`, `_7`, `_8` | no query for a warm request; a miss costs the same few queries for 1 000 and for 100 000 rules; slugs and deleted services follow the revision within a second; one key set fetch per TTL, none for bad tokens, one refetch per rotation |
-| `api/snapshot_differential_test.go` `TestF1_11` | random policies (validity windows, claim-based and attribute-based rules, roles, nested groups, conditions, denials, exceptions) give the same answers and explanations from the snapshot and from the queries, also after changes and after windows have passed. `LICETUM_DIFF_SEED` repeats a run |
+| `api/snapshot_differential_test.go` `TestF1_11` | random policies (validity windows, property-based and attribute-based rules, roles, nested groups, conditions, denials, exceptions) give the same answers and explanations from the snapshot and from the queries, also after changes and after windows have passed. `LICETUM_DIFF_SEED` repeats a run |
 | `chaos/f1_test.go` `TestF1_4` | a warm request ignores 150 ms on PostgreSQL |
 
 The replicas follow the revision with a delay of up to `REVISION__POLL_INTERVAL`: `Replica.Permission` asks for at least the revision
@@ -113,12 +113,12 @@ a time (`-p 1`) when they share one PostgreSQL server (`LICETUM_TEST_POSTGRES_UR
 |---|---|
 | `cluster/f2_test.go` `TestF2_1`, `_2` | a write and its revision commit together (a failed write or batch leaves it, a batch is +1), and the revisions of 20 concurrent writers are strictly increasing without gaps |
 | `TestF2_3`, `_4`, `_5` | `context.licetum.min_revision` gives read-your-writes on every replica (100 iterations); an answer for a revision the replica cannot confirm is computed from the data and not kept; a deny rule reaches every replica within a second without any revision asked for |
-| `TestF2_6` | 50 synchronizations of service A leave every answer of service B a hit, while A's follow its data |
+| `TestF2_6_*` | P3 global revisions invalidate every service after a data-changing synchronization; CONS04 restores per-service precision in P5 |
 | `TestF2_10` | the poller costs 4 statements a second at rest |
 | `chaos/f2_test.go` `TestF2_7` | a revision bump under 1 500 hot keys at 600 rps: no failure, the pool never over its size |
 
 Not covered: a read replica that lags by two seconds (F2-3, F2-4 in full): the tests of the replica went with its routing and the contract CONS01 (P5)
-brings them back; F2-11 (stage 2, scoped bumps) is a separate pull request.
+brings them back. Per-service precision is intentionally deferred to CONS04 in P5.
 
 ## Synchronization (F3)
 
@@ -140,7 +140,7 @@ brings them back; F2-11 (stage 2, scoped bumps) is a separate pull request.
 
 | test | what it proves |
 |---|---|
-| `core/tests/integration/db` `TestF5_10_*` | five `migrate` runs started together on an empty database apply each migration once and seed once (repeated over fresh schemas); `migrate` waits for the lock held by another run (deterministic); the schema version equals the latest embedded migration |
+| `core/tests/integration/db` `TestContract_OPS04_*`, `TestContract_OPS08_*`, `TestF5_10_*` | five PostgreSQL migration runs apply once; a v0.1.x database is refused without mutation; lock, version and readiness checks use the v2 table |
 | `cluster/f5_test.go` `TestF5_1_*` | `/readyz` is 503 with PostgreSQL cut or the schema older than the binary and 200 otherwise (also with a *newer* schema), `/healthz` stays 200, the result is reused for a second |
 | `TestF5_3_*`, `TestF5_8_*` | a draining replica is not ready, serves, and asks for `Connection: close`; above `HTTP__MAX_INFLIGHT` the rest get 503 with `Retry-After` while the probes and the metrics are answered; a request past `HTTP__REQUEST_TIMEOUT` is answered 503 `request_timeout` |
 | `TestF5_9_*` | a pool never holds more than `DB__POOL_SIZE + DB__MAX_OVERFLOW` connections under more concurrent users than connections, and the pool metrics say that acquires waited |
@@ -150,7 +150,7 @@ brings them back; F2-11 (stage 2, scoped bumps) is a separate pull request.
 Not covered here: F5-8 at three times the sustainable rate (a load test: `admin-api/loadtest`).
 
 P3 deliberately removes the old-release compatibility check: schema v2 has no upgrade from v0.1.x. Development
-databases are recreated while P3 migrations are written; see [the migration workflow](../../../CONTRIBUTING.md#migrations-during-p3).
+databases are recreated while P3 migrations are written; see [the migration workflow](../../../CONTRIBUTING.md#schema-v2-migrations).
 
 ### Failover and a far region (F6)
 
@@ -184,3 +184,26 @@ max_client_conn = 2000
 default_pool_size = 60
 max_prepared_statements = 200
 ```
+
+## P3 schema-v2 contracts
+
+The old F scenarios remain where they protect runtime behavior. Publication and history guarantees are named contracts in `contracts.yaml`:
+
+| Contract | Oracle and tests |
+|---|---|
+| PUB02 | gap-free interleaved policy, binding and directory positions (`core/tests/integration/db/publication_positions_test.go`) |
+| PUB05 | independent compressed chunks, raw-stream digest and corruption limits (`core/outbox/codec_test.go`) |
+| WR01 | atomic final revision, payload, history and notification; commit-only visibility (`core/tests/integration/db/outbox_test.go`) |
+| WR02 | deferred mandatory publication for raw writes, cascades, TRUNCATE and replica mode (`core/tests/integration/db/mandatory_outbox_test.go`) |
+| WR03 | independent covered-table diff around every canned write, including net-zero and cascade cases (`api/canonical_images_test.go`) |
+| WR04 | serialized reference invariants, last-admin preservation and concurrent cascades (`api/concurrency_test.go`) |
+| WR05 | every non-GET route declares and produces its exact kind, streams and affected services (`api/write_catalog_test.go`) |
+| WR06 | request and transaction round trips stay within measured maxima (`api/write_roundtrips_test.go`, adjacent JSON and table) |
+| HIS01, HIS04 | atomic batches and taken-ID refusal (`api/batch_test.go`, `api/gaps_test.go`) |
+| HIS05 | a concurrent follower neither skips nor repeats `(revision, seq)` records (`api/history_feed_test.go`) |
+| ADM11 | immutable, never-reused service slugs (`api/immutable_service_identity_test.go` and core DB trigger tests) |
+| OPS04, OPS08 | concurrent PostgreSQL migrations and an untouched refused v0.1.x database (`core/tests/integration/db`) |
+
+OPS04 covers PostgreSQL in P3; P6 adds CQL. DEC15 adds literal `subject_type` matching across engine, reference evaluator, scenarios and searches.
+The shared requests live in `harness/canned_writes.go`. The v2 initializer is checked in both `public` and a custom schema,
+including Down/Up, all initial records and function ACLs; [the fold evidence](../../../core/tests/integration/db/schema_v2_equivalence.md) records an empty complete dump diff.

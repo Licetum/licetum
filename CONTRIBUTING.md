@@ -110,27 +110,24 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 - Add a new numbered Goose migration for schema changes. Do not rewrite an already-applied migration.
 - Run `task generate` after changing an API schema and verify that `task check` passes.
 
-### Migrations during P3
+### Schema-v2 migrations
 
-P3 builds schema v2 on fresh databases; there is no upgrade from v0.1.x. The expand/contract compatibility rule is
-suspended until the first v2 release, when it resumes for subsequent releases within v2. The CI job that ran the old
-release against the new schema has been removed deliberately. If **Previous release on the new schema** is a required
-status check on the epic or stage branches, remove that requirement from branch protection too.
+Schema v2 is a fresh-database boundary. The released v0.1.x schema and public API have no upgrade path. `migrate` refuses a legacy
+`goose_db_version` on its search path before any write; `goose_db_version_v2` owns v2 history. For disposable local development data:
 
-While the P3 migrations are written, recreate local development databases after pulling schema changes:
-
-```bash
-docker compose down -v  # deletes the local development data; never use against production
+```sh
+docker compose down -v
 docker compose up
 ```
 
-Intermediate P3 commits are not deployable upgrades. Add schema-only numbered migrations on empty databases; the
-stage later folds them into the schema-v2 `00001_init.sql`, with a separate goose version table and an explicit
-refusal of v0.1.x databases. See [ADR 0001, P3 decisions](docs/adr/0001-regional-pdp.md#1171-p3-decisions).
+The temporary P3 chain has been folded into `core/db/migrations/00001_init.sql` with [recorded schema equivalence](core/tests/integration/db/schema_v2_equivalence.md).
+From this point, add new numbered Goose files for schema changes and never rewrite an applied initializer or migration. Keep compatible-release changes in expand/contract steps;
+this rule does not create a v0.1.x upgrade path. The previous-release compatibility job is removed. Remove its old required status check from branch protection if configured.
+See [the approved P3 decisions](docs/adr/0001-regional-pdp.md#1171-p3-decisions).
 
 `licetum migrate` takes an advisory lock, so several runs started together apply each migration once. It needs a
 connection that lasts for the whole run; behind PgBouncer in transaction mode, point `DB__MIGRATE_URI` at PostgreSQL
-itself. Readiness of a running older binary does not establish compatibility with P3's intermediate schema.
+itself. Readiness requires the schema version expected by the running binary; it does not establish v0.1.x compatibility.
 
 ### Interface changes
 
@@ -190,8 +187,8 @@ ghcr.io/licetum/licetum/web:1.2.3
 Stable releases also update the `latest` tag. Pre-releases such as `v1.2.3-rc.1` publish only
 SemVer tags and do not update `latest`.
 
-Use clear, descriptive commit messages in the imperative mood. There is no requirement to use a
-specific commit-message format, but unrelated changes should not be combined into one commit.
+Use clear conventional commit subjects for P3 and release-noted work (`feat`, `fix`, `refactor`, `docs`, `test`), with `!` for breaking changes so git-cliff records them.
+P3 task subjects end with their issue number and every commit is signed off. Keep unrelated changes in separate commits.
 
 ## License
 

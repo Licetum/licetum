@@ -48,7 +48,7 @@ The address is set with `-addr :9000`, or with `PDP__ADDR` (the PDP) or `HTTP__A
 ## AuthZEN
 
 The PDP implements the [OpenID AuthZEN Authorization API 1.0](https://openid.net/specs/authorization-api-1_0.html)
-for every service, under `/service/{id or slug}/access/v1/`: `evaluation`, `evaluations` (with
+for every service, under `/service/{slug}/access/v1/`: `evaluation`, `evaluations` (with
 `options.evaluations_semantic`), `search/subject`, `search/resource` and `search/action`. The Policy Decision Point of
 a service is `<PDP__PUBLIC_URL>/service/<slug>`; its metadata is at
 `/.well-known/authzen-configuration/service/{slug}` (served only when `PDP__PUBLIC_URL` is set).
@@ -56,9 +56,9 @@ a service is `<PDP__PUBLIC_URL>/service/<slug>`; its metadata is at
 - The resource type is a resource type of the service, the resource id its id in the external system (`*`: the type as a whole),
   the action an access level. `context` holds the attributes of the request the rules read; `{"licetum": {"explain": true}}` returns
   the explanation in `context.reason_admin`. The `licetum` object is the only place of the settings of the request.
-- The caller is a PEP client of the service. The subject is the person of its application, named in the body; their claims are
-  `subject.properties` (at most 100 claims and 16 KiB; `preferred_username` defaults to `subject.id`). Nothing about a call is recorded.
-  The only freshness a caller can ask for is `{"licetum": {"min_revision": "<revision of a write>"}}` in the context.
+- The caller is a PEP client of the service. The subject is the person of its application, named in the body; their properties are
+  `subject.properties` (at most 100 properties and 16 KiB; `preferred_username` defaults to `subject.id`). Nothing about a call is recorded.
+  The only freshness a caller can ask for is `{"licetum": {"min_revision": "<epoch>.<revision>"}}` in the context.
 - The subject search is for PEP clients with the `search_subject` operation and decides the people of the subject directory of the service (what its application sent to `PUT /service/{id}/subjects`), with their stored properties.
 - A request that is not valid is a 400; a missing or invalid credential a 401 (the token of a person is not one); an operation the caller lacks, or a service it has no client of, a 403. Errors keep
   Licetum's usual JSON body (`{"detail": …, "extra": {"code": …}}`), which carries the message the specification asks for.
@@ -66,7 +66,7 @@ a service is `<PDP__PUBLIC_URL>/service/<slug>`; its metadata is at
 ## Full stack
 
 `task dev` (= `docker compose up`) from the repository root starts PostgreSQL, a local Dex OIDC provider,
-the migration, the PDP, the admin API and the web interface. Open `http://localhost:3000` and sign in as
+the migration, the PDP, the synchronization worker, the admin API and the web interface. Open `http://localhost:3000` and sign in as
 `admin@example.com` with password `password`. These credentials and the Dex client are for development only; set the
 `ADMIN_AUTH__*` variables of the admin API and the `OIDC_*` variables of the web interface in `.env` to use another identity
 provider.
@@ -90,7 +90,7 @@ lists accept a JSON array or a comma-separated string.
 | `CACHE__` | `CACHE__ANSWER_L1_SIZE`: answers kept in memory, default 50 000 |
 | `BACKGROUND__` | `BACKGROUND__WORKERS` (default 16) and `BACKGROUND__QUEUE` (default 1024): the cache writes and refreshes done after a request is answered; a full queue drops the work |
 | `ADMIN_AUTH__` | how administrators authenticate to the admin API: one OpenID Connect provider. `ADMIN_AUTH__ISSUER` (the `iss` of the tokens, compared exactly), `ADMIN_AUTH__AUDIENCE` (required: a value the `aud` of every token must contain), `ADMIN_AUTH__JWKS_URL` (where its keys are read) and `ADMIN_AUTH__SUBJECT_CLAIM` (the claim that names the administrator, default `preferred_username`, then `sub`). The admin API refuses to start without the first three; the seed of the self-service and `restore-admin` need only these. The web interface is the OIDC client of the provider (`OIDC_*`, see `web/README.md`) |
-| `PLATFORM__` | the self-service: its name, URL and icon (`PLATFORM__NAME`, `PLATFORM__URL`, `PLATFORM__ICON`) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, default `ADMIN_AUTH__SUBJECT_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`). The OAuth client it used to carry (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISSUER`, `__CLIENT_ID`, `__CLIENT_SECRET`) is gone: they are ignored, and logged at start-up when still set |
+| `PLATFORM__` | the self-service: its name, URL and icon (`PLATFORM__NAME`, `PLATFORM__URL`, `PLATFORM__ICON`) and the platform admin group (`PLATFORM__ADMIN_GROUP_NAME`, `PLATFORM__ADMIN_CLAIM`, default `ADMIN_AUTH__SUBJECT_CLAIM`, `PLATFORM__ADMIN_CLAIM_VALUES`). The former service OAuth client settings are removed; there is no deprecated-setting warning catalog |
 | `SYNC__` | `SYNC__DBOS_SCHEMA`, `SYNC__DBOS_POOL_SIZE` (connections of the DBOS client of each process, default 20, at least 3, outside `DB__POOL_SIZE`; the process runs at most (size - 1) / 2 enqueues at once, since a duplicate enqueue takes two connections and the listener keeps one), and the synchronization pipeline, see [Synchronization worker](#synchronization-worker) |
 | `SUBJECTS__` | gone: the registry of known subjects was replaced by the subject directory of each service (retention per service, set through `PUT /service/{id}/subjects/settings`). `SUBJECTS__ENABLED` and `SUBJECTS__RETENTION_DAYS` are ignored, and logged at start-up when still set. The retention of the directories runs in the **worker** only (`licetum worker`). |
 | `DELEGATION__`, `CORS__` | gone: the calls on behalf of a person and their audit, and the CORS of the admin API (the browser reaches it through the web interface's server), no longer exist. The settings are ignored, and logged at start-up when still set |
@@ -108,14 +108,13 @@ lists accept a JSON array or a comma-separated string.
 A request to the PDP that finds its answer in memory sends no query to PostgreSQL. The pieces, all per process:
 
 - **The policy snapshot** (`engine/snapshot.go`): the services, the type graph, the memberships, the rules, the role items
-  and the access groups, built in one read-only transaction for one revision of the policy (`revision_state`, scope `rules`) and
+  and the access groups, built in one read-only transaction for one global epoch/revision pair (`revision_state`, the only row is `global`) and
   replaced as a whole when the revision moves. The validity windows of rules and memberships are compared with the clock
   at every request, never built into the snapshot. A policy that does not fit `SNAPSHOT__MAX_BYTES` is not copied: the
   queries read it (`licetum_snapshot_fallback_total`), as does the internal lever for the freshest answer (`engine.WithConsistency`: set by the process that serves the request, never by the caller; the only freshness a caller can ask for is `min_revision`).
-- **The view** (`engine/localstate.go`): the revision of the rules and of the data of each service as read from PostgreSQL
-  (one statement), with the snapshot of that revision. It is renewed every `REVISION__POLL_INTERVAL` (`WatchRevision`, and
-  the requests), and at once after a write made through the process or a request that asks (`min_revision`) for a newer
-  revision. When the revisions cannot be read the last view is served as it is, marked degraded, for as long as
+- **The view** (`engine/localstate.go`): the global epoch/revision and its snapshot, read from PostgreSQL in one statement.
+  It is renewed every `REVISION__POLL_INTERVAL` and when `min_revision` asks for a newer pair. `AfterWrite` does not invalidate it;
+  admin authentication and tools request the current database position to see their writes immediately. A new epoch clears old-position answers. When the revisions cannot be read the last view is served as it is, marked degraded, for as long as
   `POLICY__MAX_STALENESS` allows (no limit by default), and answers are kept in memory only. The revision and the data change in
   one transaction, so a process never sees a revision before its data.
 - **Answers** are kept in memory only (`CACHE__ANSWER_L1_SIZE` entries), each until it stops being current: at most a minute, or the next moment a rule, a role assignment or a membership starts or stops being in force. A process that restarts, or a second pod, computes what it does not find, bounded by `COMPUTE__CONCURRENCY`.
@@ -130,9 +129,7 @@ The PDP serves its probes and `/metrics` on the ops listener, `PDP__OPS_ADDR` (d
 listener (`PDP__ADDR`) serves the AuthZEN API only. The probes below are on the ops port:
 
 - `GET /healthz` is liveness: 200 while the process answers, whatever its dependencies do. Use it for the liveness probe.
-- `GET /readyz` is readiness: 200 when PostgreSQL answers within a second, the schema of the database is **at least** the version
-  of the binary (a newer schema is fine: during a rolling update the pods of the previous release stay in service on the schema
-  the new release has migrated) and the copy of the policy is loaded (a policy too large for `SNAPSHOT__MAX_BYTES` is not copied by
+- `GET /readyz` is readiness: 200 when PostgreSQL answers within a second, the schema of the database is **equal to** the version expected by the binary and the copy of the policy is loaded (a policy too large for `SNAPSHOT__MAX_BYTES` is not copied by
   decision, and does not hold readiness back); 503 `not_ready` with the reason (`database`, `schema`, `snapshot`, `draining`)
   otherwise. The result of the database check is reused for a second. The worker answers `/readyz` too (database and schema only).
 - The metric `licetum_degraded{component="postgres"}` is 1 while the process cannot confirm its copy of the policy against
@@ -201,7 +198,7 @@ Every process reads the policy, the revision, the type graph and the closure fro
 to it. A PDP does not route its reads to a standby: `DB__READ_URI` and the lag settings are gone (see the table of removed
 settings above), so a deployment has one region of PostgreSQL with the processes next to it; [`docs/deployment.md`](../docs/deployment.md)
 says how far that goes. A standby for availability is fine (Patroni, CloudNativePG, a managed service): the processes see only the
-primary's address, and after a promotion `licetum failover` raises the revisions.
+primary's address. After a promotion, `licetum failover` atomically increments the epoch, jumps the global revision and appends `epoch_start`; processes discard old-epoch answers.
 
 A client that must see a write it has just made passes the `Licetum-Revision` of the write as `context.licetum.min_revision`: the
 PDP waits for its revision for up to `REVISION__WAIT_MAX`, then computes the answer from the data and does not keep it. Other readers, including those in the process that made the write, see it within `REVISION__POLL_INTERVAL`.
@@ -210,9 +207,10 @@ Admin simulation, access lookup, grant preview, policy tests and lint request th
 ### Migrations
 
 `licetum migrate` takes an advisory lock, so several runs started together (one per pod) apply each migration once; the seed of the
-self-service runs under another one. During P3, development databases are recreated as schema v2 is built;
-there is no upgrade from v0.1.x, and expand/contract compatibility resumes after the first v2 release. See
-[CONTRIBUTING.md](../CONTRIBUTING.md#migrations-during-p3).
+self-service runs under another one. The single `db/migrations/00001_init.sql` installs schema v2 and versions are stored in `goose_db_version_v2`.
+There is no upgrade from v0.1.x: the legacy table is refused before any write. Install a new database; recreate disposable development volumes with `docker compose down -v`.
+New schema changes add numbered files without rewriting applied migrations. See
+[CONTRIBUTING.md](../CONTRIBUTING.md#schema-v2-migrations).
 
 ## Synchronization worker
 
@@ -321,7 +319,8 @@ config/            environment variables
 logx/              structured logs, their settings can change at run time
 apperr/            API errors → {"detail": ..., "extra": {"type": ..., "code": ...}}
 i18n/              supported languages, Accept-Language negotiation, the error message catalog
-db/                pgx pool, goose migrations (embedded SQL in db/migrations), the platform seed
+db/                pgx, PolicyTx/TakeRevision, v2 migrations and platform seed
+outbox/            canonical row streams, tombstones and the ADR 0002 codec
 synchronizer/      resource source adapters (SQL and HTTP)
 model/             request and response structs and their validation (the pydantic equivalent)
 engine/            business logic: permission computation (permission.go), decisions (decision.go), synchronization
@@ -426,3 +425,20 @@ These settings are ignored silently when still set. Remove them from deployment 
 | `DB__LAG_INTERVAL` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
 | `REDIS__URI` | there is no Redis any more: the process keeps its answers in memory and no setting names a Redis server |
 | `REDIS__HOT_TIMEOUT` | there is no Redis any more: the process keeps its answers in memory and no setting names a Redis server |
+
+## Schema-v2 publication boundary
+
+`revision_state` contains only `global` with epoch and revision. `PolicyTx` serializes admin invariants with `admin_write` before mutation;
+its P4 binding recheck hook is reserved. `TakeRevision` runs last and atomically publishes the header, ordered history and notification before commit.
+Covered-table ALWAYS triggers require a same-transaction outbox row, including cascades and TRUNCATE. Seed and restore-admin use audited system writers.
+
+Canonical streams are `catalog`, `svc:<owner UUID>`, `pep`, `settings`, `dir:<service UUID>` and data partition headers `data:<type UUID>`.
+The outbox excludes private source configuration and `LOG__SUBJECT_SALT`. P3 uses the global position for all cached answers, so a publication
+invalidates old-position answers even when its affected-service list is empty; P5 restores per-service precision.
+
+A type becomes `sync` only after its first accepted full source apply (`synced_at` plus a live source). Creating a source alone leaves it `not_sync`.
+The first apply publishes its canonical type image with the data header. Desired and effective parent links move together in P3; readers use effective links.
+Identity domains, exported flags, buckets and refresh-interval columns are internal schema metadata in P3.
+
+[The route and image contracts](../docs/outbox-write-routes.md) cover every admin write. WR06 records measured round-trip budgets;
+[the schema-fold evidence](tests/integration/db/schema_v2_equivalence.md) records the unchanged schema and function ACLs.

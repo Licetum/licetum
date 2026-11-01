@@ -96,3 +96,13 @@ against a running stack: the backend has its own integration tests (`task go:tes
   would each start from the old address.
 - Ant Design 6: `Drawer size` (not `width`), `Alert title` (not `message`), notification `title`/`actions`, `Descriptions
   styles.label`. The editable `Typography.Text` hangs in a page title — use `components/editable-title.tsx`.
+
+## Policy editing with schema v2
+
+Groups and roles select an owning service when created and keep it on edits. Rules keep the owner derived from their target or role.
+Service slugs are read-only and are never reused after deletion. Group identities use the explicit group selector; literal subjects can carry a matching subject type.
+The check page and stored scenarios use subject `properties` and a subject type (default `user`). Dynamic targets select a property through `resource_from_property`.
+Policy import/export uses `licetum.policy/v2`; old v1 documents are refused.
+
+History follows `(revision, seq)`, including cascade entries and PEP changes. Deleting a group removes its owned memberships, while rules and references from other groups block deletion.
+The UI continues to use platform authorization in P3; service binding administration and additional schema metadata controls arrive in P4/P5.

@@ -168,7 +168,7 @@ reachable. `deploy/helm/test.sh` checks that the network policy of the profile n
 
 Schema v2 is a fresh-database boundary. **There is no upgrade from Licetum v0.1.x.** Install it into a new PostgreSQL database.
 `migrate` checks for the legacy `goose_db_version` on its search path before any write, reports the installed migration version and refuses to continue.
-V2 migrations use `goose_db_version_v2`. For disposable Compose development databases, run `docker compose down -v` before starting the stack again; this deletes the old development data.
+The initial v2 schema is the single `core/db/migrations/00001_init.sql`; v2 migrations use `goose_db_version_v2`. For disposable Compose development databases, run `docker compose down -v` before starting the stack again; this deletes the old development data.
 
 1. **Migrations** run once, by the `migrate` Job of `helm upgrade` (a hook; the migrations take an advisory
    lock, so a second run waits). Later schema-v2 changes add numbered migrations; applied files are never rewritten.

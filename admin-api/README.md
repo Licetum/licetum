@@ -94,7 +94,7 @@ It needs the database variables. The seed never does this on purpose.
 ## The subject directory
 
 The people of a service, as its application sends them: `PUT /service/{id}/subjects` takes up to 1000 people per call (`type`,
-`id`, `name`, `properties`), an unchanged entry is left untouched and a write takes no revision. The directory lets the
+`id`, `name`, `properties`), an unchanged entry is left untouched without a revision. Changed content takes one global revision and a directory-stream header. The directory lets the
 interface tell which groups a person is in and whom a rule reaches (the people of the directories of the services of the rule's
 types), and answers the AuthZEN subject search. `GET /service/{id}/subjects` lists it (`type`, `search`, `limit`, `offset`),
 `GET` and `DELETE /service/{id}/subjects/{type}/{id}` read and remove one person, and `GET`/`PUT /service/{id}/subjects/settings`
@@ -149,7 +149,7 @@ What a step measures:
   the documents a person may read), and `evaluation`, `evaluations10` and `evaluations100` (one, ten and a hundred questions
   about a person). The mix is set with `-mix name=weight,...`. Every request is asked as one PEP client of the service, the way
   a service's own backend asks: the seeding makes the client (kind `api_key`, every operation) and issues its one API key, which
-  is the bearer of every request; the person a question is about is the `subject` of the body, and the claims the rules read
+  is the bearer of every request; the person a question is about is the `subject` of the body, and the properties the rules read
   (the `department` that picks the groups) are its `properties`. No token of a person is involved, and no identity provider. The
   PDPs read the client and its key from the database; the rate limit of a client (`PEP__RATE_LIMIT`) is switched off for them.
   The arrivals are an open model: a slow server does not lower the rate, it shows as late answers and as `dropped` arrivals,
@@ -201,7 +201,7 @@ entities with the same names remain independent. The web create forms select the
 
 An assignment rule derives its immutable service from its target type or role. Its group references stay within that
 service, and its preview uses that service's subject directory. Retargeting into another service is refused; create a
-new rule there instead. A claim-based resource lookup may still name a type of another service during P3.
+new rule there instead. A property-based resource lookup may still name a type of another service during P3.
 
 A rule targeting a group itself uses `subject_group_id`, an owned foreign key, rather than a `subject` string beginning
 with `group:`. That literal prefix is reserved. Policy documents use `subject_group` with the group's name. Ordinary
@@ -209,3 +209,22 @@ membership selectors continue to use `member_of_group_id`.
 
 The optional `subject_type` applies only beside a literal `subject`. Null matches any type; non-null values use the same
 1–64 character type namespace as AuthZEN, with `group` reserved. The old informational `subject_kind` label is removed.
+
+## Transactions, history and policy documents
+
+Admin policy writes use `PolicyTx` and the `admin_write` lock before invariant reads. A batch publishes one global revision and canonical outbox entry;
+its history records are ordered by `(revision, seq)`. Cascaded role items and owned group memberships are recorded too. The response position is
+`Licetum-Revision: <epoch>.<revision>`. History followers use both `after_revision` and `after_seq`; revert names a revision and reverses its records together.
+The canonical outbox uses stored rows rather than the API's undo bodies; unchanged net rows produce no image.
+
+Groups and roles require an owning `service_id` on creation; members, items and rules inherit or derive ownership, enforced by composite foreign keys.
+Ownership cannot move on update. Group and role routes remain global in P3, with service filters. Service slugs are immutable and never reused, including after deletion.
+A group selector uses `subject_group_id`; `group:<uuid>` is reserved as an internal identity. Literal-subject rules can use nullable `subject_type`
+(NULL matches any request type). Request subjects and policy scenarios default to type `user`; other selector kinds do not carry `subject_type`.
+
+Policy documents use `licetum.policy/v2`; v1 imports are explicitly refused. Scenarios use `properties` and optional `subject_type`.
+Predicates read `source: "subject"` (the default), `context` or `now`. Dynamic targets use `resource_from_property` with a `property` key;
+`resource_where` reads resource attributes without a source. The old `claim` source and target fields are unsupported.
+
+Schema v2 installs into a new database and uses `goose_db_version_v2`. There is no upgrade from v0.1.x, and its public API is removed.
+The runtime API is AuthZEN 1.0; this version in `/access/v1/` is independent of the removed release's API. See the root README for disposable-volume recreation.

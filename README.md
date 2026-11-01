@@ -51,7 +51,7 @@ The PDP speaks the [OpenID AuthZEN Authorization API 1.0](https://openid.net/spe
 scoped to a service: the path names the service by its slug. A consumer is a policy enforcement point (PEP). An
 administrator registers it as a *PEP client* of the service, and it authenticates with an API key that Licetum issues or
 with an access token of an identity provider the administrator registered. The PEP names the person it asks about and
-vouches for their claims, as the `subject` of the question:
+vouches for their properties, as the `subject` of the question:
 
 ```http
 POST /service/orders/access/v1/evaluation
@@ -108,11 +108,11 @@ searches list the levels on a resource and the people who may use it.
   lifts it for the resources it covers.
 - **Hierarchies across services.** A permission on a parent resource reaches the resources below it, even
   when the parent and the children belong to different services.
-- **Groups and roles.** Groups say *who*: they can be nested, and membership can come from token claims such
+- **Groups and roles.** Groups say *who*: they can be nested, and membership can come from subject properties such
   as `department`. Roles say *what*: named sets of access levels that are granted to a user, a group or
-  everyone who matches some claims.
+  everyone who matches some properties.
 - **Attribute-based rules.** A rule can match resources by the attributes their source publishes, such as an
-  `owner` field, and conditions can read token claims, request context or the time of day.
+  `owner` field, and conditions can read subject properties, request context or the time of day.
 - **Time-bound access.** Start and expiry dates on rules and group memberships support temporary access.
 - **Policy as code.** Lint a service's policy, run test scenarios against it, export it as a
   `licetum.policy/v2` document, and import it with a dry run first.
@@ -125,6 +125,8 @@ searches list the levels on a resource and the people who may use it.
 - **Service developers** make one call instead of building a permissions endpoint for each consumer.
 - **Access administrators** grant and revoke access in one place and can see why a person has it.
 - **Security reviewers** get answers that can be explained and a change history that can be audited.
+
+Groups and roles belong to one service, with immutable ownership. Group identities use `subject_group_id`. Literal-subject rules can match `subject_type` (NULL means any type); request subjects default to `user`. Conditions read subject properties, and dynamic resource targets use `resource_from_property`.
 
 ## Quick start
 
@@ -150,13 +152,17 @@ To run the Go binaries without Docker, see the guides for the [core](core/README
 [admin API](admin-api/README.md). Each can print its OpenAPI specification without a server:
 `licetum openapi pdp` for the PDP, `licetum-admin openapi admin` for the admin API.
 
+## Upgrading
+
+The released v0.1.0 public API is removed. Runtime clients use AuthZEN 1.0 and policy documents use `licetum.policy/v2`; v1 policy documents are not imported.
+
 Schema v2 installs into a **new PostgreSQL database**. There is no upgrade from Licetum v0.1.x: `migrate` refuses its legacy version table before writing anything. Schema v2 records migrations in `goose_db_version_v2`.
 
 For disposable development volumes, run `docker compose down -v` before starting the stack again. This removes the old development data.
 
 ## What Licetum is not
 
-- It is not an identity provider. The service that asks names the person and vouches for their claims; administrators
+- It is not an identity provider. The service that asks names the person and vouches for their properties; administrators
   sign in through your OIDC provider.
 - It is not a business database. Source services keep their records and remain responsible for CRUD.
 - It is not a database RLS extension. Licetum provides allowed IDs or decisions. Your service applies them to
