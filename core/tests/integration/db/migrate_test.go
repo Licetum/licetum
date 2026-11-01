@@ -117,13 +117,13 @@ func readSeedState(ctx context.Context, t *testing.T, uri string) seedState {
 	defer pool.Close()
 	var s seedState
 	for query, dest := range map[string]*int{
-		`SELECT count(*) FROM service`:                                              &s.services,
-		`SELECT count(*) FROM user_group`:                                           &s.groups,
-		`SELECT count(*) FROM group_member`:                                         &s.members,
-		`SELECT count(*) FROM type_resource`:                                        &s.policies,
-		`SELECT count(*) FROM assignment_rule`:                                      &s.rules,
-		`SELECT count(*) FROM goose_db_version WHERE is_applied AND version_id > 0`: &s.appliedMigrations,
-		`SELECT count(*) FROM goose_db_version WHERE version_id > 0`:                &s.versionRows,
+		`SELECT count(*) FROM service`:                                                 &s.services,
+		`SELECT count(*) FROM user_group`:                                              &s.groups,
+		`SELECT count(*) FROM group_member`:                                            &s.members,
+		`SELECT count(*) FROM type_resource`:                                           &s.policies,
+		`SELECT count(*) FROM assignment_rule`:                                         &s.rules,
+		`SELECT count(*) FROM goose_db_version_v2 WHERE is_applied AND version_id > 0`: &s.appliedMigrations,
+		`SELECT count(*) FROM goose_db_version_v2 WHERE version_id > 0`:                &s.versionRows,
 	} {
 		if err := pool.QueryRow(ctx, query).Scan(dest); err != nil {
 			t.Fatalf("%s: %v", query, err)
@@ -159,11 +159,12 @@ func freshSchemaURI(ctx context.Context, t *testing.T, uri, schema string) strin
 	return u.String()
 }
 
-// TestF5_10_ParallelMigrateRunsApplyEachMigrationOnce starts five `migrate` runs at the same moment on an empty database,
+// The PostgreSQL half of OPS04 is proved in P3; P6 adds the CQL-store variant.
+// TestContract_OPS04_ParallelPostgresMigrationsApplyEachMigrationOnce starts five `migrate` runs at the same moment on an empty database,
 // as the pods of a release do: every run finishes without an error, each migration is applied by exactly one of them, and
 // the seed of the self-service is made once (one admin group, one set of policies, the revision bumped once). Without the
 // lock the runs collide only now and then, so the scenario is repeated.
-func TestF5_10_ParallelMigrateRunsApplyEachMigrationOnce(t *testing.T) {
+func TestContract_OPS04_ParallelPostgresMigrationsApplyEachMigrationOnce(t *testing.T) {
 	ctx := context.Background()
 	infrastructure, err := support.Start(ctx)
 	if err != nil {

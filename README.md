@@ -150,6 +150,10 @@ To run the Go binaries without Docker, see the guides for the [core](core/README
 [admin API](admin-api/README.md). Each can print its OpenAPI specification without a server:
 `licetum openapi pdp` for the PDP, `licetum-admin openapi admin` for the admin API.
 
+Schema v2 installs into a **new PostgreSQL database**. There is no upgrade from Licetum v0.1.x: `migrate` refuses its legacy version table before writing anything. Schema v2 records migrations in `goose_db_version_v2`.
+
+For disposable development volumes, run `docker compose down -v` before starting the stack again. This removes the old development data.
+
 ## What Licetum is not
 
 - It is not an identity provider. The service that asks names the person and vouches for their claims; administrators

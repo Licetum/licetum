@@ -166,9 +166,13 @@ reachable. `deploy/helm/test.sh` checks that the network policy of the profile n
 
 ## Upgrading
 
+Schema v2 is a fresh-database boundary. **There is no upgrade from Licetum v0.1.x.** Install it into a new PostgreSQL database.
+`migrate` checks for the legacy `goose_db_version` on its search path before any write, reports the installed migration version and refuses to continue.
+V2 migrations use `goose_db_version_v2`. For disposable Compose development databases, run `docker compose down -v` before starting the stack again; this deletes the old development data.
+
 1. **Migrations** run once, by the `migrate` Job of `helm upgrade` (a hook; the migrations take an advisory
-   lock, so a second run waits). Every migration works with the previous release (expand/contract, `CONTRIBUTING.md`).
-2. A new PDP pod is **not ready** until the schema its pool reads is at least the one of the release.
+   lock, so a second run waits). Later schema-v2 changes add numbered migrations; applied files are never rewritten.
+2. A PDP pod is **not ready** unless the schema version its pool reads matches the version expected by its binary.
 3. Roll out the admin and the worker, then the PDP pods. A rolling update of the PDP pods loses no
    request: `maxUnavailable: 0`, readiness, a `preStop` sleep of `shutdown.drain`, the drain of the process and
    `terminationGracePeriodSeconds` of `2 x drain + timeout + 10`.
@@ -181,8 +185,8 @@ before the PDP pods are upgraded; the chart's own probes and ServiceMonitor alre
 
 ### Upgrading to this release
 
-This release removes Redis, the routing of reads to a replica and the table synchronization engine. Nothing has to be migrated, but
-the configuration and the monitoring need a clean-up:
+This release installs schema v2 into a new database and removes the retired Redis, replica-routing and table-engine configuration.
+In addition to the database boundary above, clean up configuration and monitoring:
 
 - **Delete** `REDIS__URI` and `REDIS__HOT_TIMEOUT`, `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL`,
   `SYNC__ENGINE`, `SYNC__FETCH_TTL`, `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT` and `WORKER__REGION` from the environment, and the

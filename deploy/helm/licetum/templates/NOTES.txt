@@ -9,3 +9,7 @@ Licetum {{ .Chart.AppVersion }} is installed{{ with .Values.region }} in the reg
 {{- end }}
 
 The ConfigMap and the Secret of the release are Helm hooks (the migration Job needs them first): `helm uninstall` leaves them behind.
+
+Schema v2 requires a new PostgreSQL database. There is no upgrade from Licetum v0.1.x;
+migrate refuses its legacy version table before writing anything and keeps v2 versions in goose_db_version_v2.
+For disposable Compose development databases, recreate the old volumes with docker compose down -v (deletes development data).

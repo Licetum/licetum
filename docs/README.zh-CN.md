@@ -123,6 +123,10 @@ task dev
 
 如果要在不使用 Docker 的情况下运行 Go 二进制文件，请参阅 [core](../core/README.md) 和 [admin API](../admin-api/README.md) 指南。两者都可以在不启动服务的情况下输出 OpenAPI 规范：`licetum openapi pdp` 输出 PDP 的规范，`licetum-admin openapi admin` 输出管理 API 的规范。
 
+Schema v2 必须安装到**新的 PostgreSQL 数据库**。不支持从 Licetum v0.1.x 升级：`migrate` 检测到旧版本表后会在写入任何内容前退出。Schema v2 使用独立的 `goose_db_version_v2` 记录迁移版本。
+
+对于可丢弃的开发数据卷，请先运行 `docker compose down -v`，再重新启动服务栈。此命令会删除旧的开发数据。
+
 ## Licetum 不是什么
 
 - 它不是身份提供方。发起询问的服务指明具体的人并为其 claims 担保；管理员通过您的 OIDC 提供方登录。

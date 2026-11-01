@@ -788,7 +788,7 @@ contracts:
     oracle: the schema versions
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: OPS05
     statement: A PDP in CQL mode connects only to the nodes of its data center and has no PostgreSQL credentials.
     oracle: the sockets of the process (/proc/net/tcp)
@@ -812,7 +812,7 @@ contracts:
     oracle: the error and the untouched database
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: OPS09
     statement: The subject-hash salt is in no outbox entry, checkpoint or regional row, and every process hashes a subject to the same value from the same LOG__SUBJECT_SALT. Phase P5 covers the outbox and the decision log, P6 the checkpoints and the regional rows.
     oracle: the replicated state and the decision log

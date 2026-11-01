@@ -39,7 +39,7 @@ const migrateLockTries = 600
 // The lock belongs to the connection that took it, so a run needs a connection that stays the same for its whole
 // duration: PostgreSQL itself, or PgBouncer in session mode, not in transaction mode (see config.Database.MigrateURI).
 func newProvider(sqlDB *sql.DB, migrations fs.FS, locked bool) (*goose.Provider, error) {
-	var options []goose.ProviderOption
+	options := []goose.ProviderOption{goose.WithTableName("goose_db_version_v2")}
 	if locked {
 		locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, migrateLockTries))
 		if err != nil {
@@ -73,17 +73,38 @@ var latestMigration = sync.OnceValue(func() int64 {
 // LatestMigration is the version of the schema this binary was built for: the highest embedded migration.
 func LatestMigration() int64 { return latestMigration() }
 
+// rejectLegacySchema runs before constructing a goose provider or taking any
+// write lock. Unqualified lookup deliberately follows the configured search path.
+func rejectLegacySchema(ctx context.Context, q Querier) error {
+	var exists bool
+	if err := q.QueryRow(ctx, `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		return fmt.Errorf("inspect legacy schema: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	const guidance = "Licetum v0.1.x has no upgrade path to schema v2; install schema v2 into a new database. Recreate development databases with docker compose down -v"
+	var version int64
+	if err := q.QueryRow(ctx, `SELECT COALESCE(max(version_id),0) FROM goose_db_version WHERE is_applied`).Scan(&version); err != nil {
+		return fmt.Errorf("%s (legacy migration version could not be read: %w)", guidance, err)
+	}
+	return fmt.Errorf("%s (installed migration version %d)", guidance, version)
+}
+
 // SchemaVersion is the version of the schema the database is at: the highest migration applied. A database that was
 // never migrated has no version table, which is an error.
 func SchemaVersion(ctx context.Context, q Querier) (int64, error) {
 	var version int64
-	err := q.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&version)
+	err := q.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version_v2 WHERE is_applied`).Scan(&version)
 	return version, err
 }
 
 // MigrateUpTo applies the migrations up to and including version, without seeding the self-service. It
 // lets a test bring a database to the schema of an earlier release, fill it, and migrate it on.
 func MigrateUpTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
+	if err := rejectLegacySchema(ctx, pool); err != nil {
+		return err
+	}
 	migrations, err := migrationsFS()
 	if err != nil {
 		return err
@@ -105,6 +126,9 @@ func MigrateUpTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
 // MigrateDownTo rolls the schema back to version (the migrations above it are reverted). Tests use it to check
 // that the down migrations still reach the schema of the previous release.
 func MigrateDownTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
+	if err := rejectLegacySchema(ctx, pool); err != nil {
+		return err
+	}
 	migrations, err := migrationsFS()
 	if err != nil {
 		return err
@@ -151,6 +175,9 @@ func RunMigrate(ctx context.Context, cfg *config.Config) error {
 
 // Migrate applies every embedded migration (goose) and then idempotently seeds the self-service.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) error {
+	if err := rejectLegacySchema(ctx, pool); err != nil {
+		return err
+	}
 	migrations, err := migrationsFS()
 	if err != nil {
 		return err

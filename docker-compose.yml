@@ -1,6 +1,9 @@
 # Development stack: sources are mounted into the containers, the Go apps are rebuilt by air and the
 # web interface runs the Next.js dev server — edits are picked up without rebuilding images.
 # For production, build the `runtime` target of core/Dockerfile (the PDP) or admin-api/Dockerfile (the admin API) (a single static binary).
+# Schema v2 requires a new database; there is no upgrade from Licetum v0.1.x.
+# For disposable development volumes: docker compose down -v, then docker compose up.
+# The down -v command removes the old development data.
 include:
   - infra/postgres.compose.yml
   - infra/dex.compose.yml
