@@ -114,3 +114,8 @@ Test-event counts include parent tests and subtests; they are not counts of uniq
 The inline-fetch and retained-row regressions were also run against the previous code (`38e15a0`) with identical new
 regression tests. All four expected failures reproduced there; the corrected core suite passes them. Those baseline
 failures are deliberate regression evidence, not failures of the final implementation.
+
+The [P3 pre-merge measurements](../admin-api/loadtest/notebook/results/p3-premerge/README.md) now include P3-04, P3-18 and the
+validated final code. All three medium runs sustain the committed 80 requests/s reference rate with zero errors, drops or oracle
+mismatches, and pass the unchanged budgets. Overall p99 is 83.541 ms, 87.121 ms and 90.645 ms respectively, below 100 ms.
+The final report commit changes only evidence and this documentation; the validated Go/web/SQL code is unchanged.
