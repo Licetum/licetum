@@ -78,10 +78,9 @@ executor: any worker may ask any source.
 
 ### The administration far from the database
 
-The admin API writes to PostgreSQL and reads it for every request (a person who has just saved a rule must see it). A write is six
-round trips at most (`chaos/f6_test.go` keeps it so); the authorization of the request and the refresh of the policy after a write add
-more. With 150 ms to the database an admin write takes about a second, and a page of the interface several. It works, but run the
-administration next to the database: that is the supported placement.
+The admin API writes to PostgreSQL and reads it for every request (a person who has just saved a rule must see it).
+[WR06 records measured budgets for each route](../admin-api/tests/integration/api/write_roundtrips.md), including authorization and the write transaction.
+Each database call pays the network round trip; graph changes cost more than simple policy writes. Run the administration next to the database: that is the supported placement.
 
 ### Limits per client
 

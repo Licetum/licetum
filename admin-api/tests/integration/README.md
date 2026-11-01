@@ -160,7 +160,7 @@ These need no read replica (the PDP no longer reads a replica; `scripts/pg-repli
 |---|---|
 | `TestF6_10_*` | while a cell works, the sockets of the process go only to the cell's own endpoints (`/proc/net/tcp`), and nothing connects to the decoys standing for a neighbouring cell |
 | `TestF6_11_*` (`cluster/failover_test.go`) | after a promotion that lost the last writes, `licetum failover` makes the regions drop what they kept under the reused revisions (the test shows the stale answer without it) |
-| `chaos/f6_test.go` `TestF6_7_*` | an admin write with 150 ms to the primary costs at most six round trips |
+| `api/write_roundtrips_test.go` `TestContract_WR06_*` | every admin write route stays within its measured PostgreSQL request and transaction budgets; a batch counts once |
 
 ### Through PgBouncer (F5-9)
 

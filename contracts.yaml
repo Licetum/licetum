@@ -347,7 +347,7 @@ contracts:
     oracle: the traced round trips
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR07
     statement: A synchronization never waits for an admin transaction longer than its commit (lock order).
     oracle: timings under contention

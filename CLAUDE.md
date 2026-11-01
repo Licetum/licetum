@@ -170,8 +170,9 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` is stored but not enforced: any executor may ask a source until regions are
   enforced again; `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
   `docs/deployment.md`, the Compose environment `admin-api/tests/multiregion` (tag `multiregion`, `task go:test:multiregion`, `multiregion.yml`, switched off until P7 per ADR 0001 §10.7).
-  An admin write is six round trips to the primary at most (`mutate` sends the change record and the revision bump as one batch; `checkAssignmentRuleRefs` reads
-  the type once and returns its service): `chaos/f6_test.go` `TestF6_7_*` keeps it so, since the admin API of a far region pays the link for each.
+  WR06 measures every admin write route with a pgx tracer (a batch counts once); the request and write-transaction maxima are in
+  `admin-api/tests/integration/api/write_roundtrips.json`, with evidence in `write_roundtrips.md`. Compound writes and inline ChangeMode have separate budgets.
+  The former fixed six-trip chaos assertion is replaced by this measured contract; the admin API of a far region pays the link for each call.
 - The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
   `snapshot.ttl`, ...): a policy that does not fit, the lever `consistency=higher` and the admin simulations use it. Change one, change the other;
   `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` (random policies, both paths, answers and explanations) keeps them equal.

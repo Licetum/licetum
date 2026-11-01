@@ -783,7 +783,7 @@ While a transaction holds the revision row, it only inserts (`outbox`, `change_l
 
 **Batches and bindings.** A `POST …/batch` is one `PolicyTx`: one revision, one outbox entry, and `change_log` rows with `seq` 1…n. A change of an admin binding is an admin write (the last-admin invariant applies). Bindings are not projected, so the outbox entry has `streams = {}`.
 
-**Round trips.** Today an admin write costs at most 6 (`TestF6_7`, `admin-api/tests/integration/chaos/f6_test.go:193`). v2 adds one, the batch of step 2. `change_log` and `NOTIFY` ride in the final batch. About 7 is expected; WR06 measures the count of every write route and the budget is set from that measurement. A structural write pays one more round trip for the enqueue, and WR06 counts it separately.
+**Round trips.** About 7 was the design estimate; WR06 sets each route budget from measurements, not that estimate. The [measured table](../../admin-api/tests/integration/api/write_roundtrips.md) records whole-request and explicit write-transaction calls, with `pgx.Batch` counted once. `change_log` and `NOTIFY` ride in the final batch. Compound routes and the P3 inline `ChangeMode` writes are measured separately. The structural enqueue added in P5 must be counted separately too.
 
 **Writes that do not take `admin_write`.** These have no invariants, so they take only the revision row, as their last statement:
 

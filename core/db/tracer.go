@@ -93,7 +93,8 @@ type queryStart struct {
 	operation string
 }
 
-func (t *Tracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+func (t *Tracer) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	traceRoundTrip(ctx, conn, data.SQL)
 	if t.echo {
 		slog.DebugContext(ctx, "sql", "query", data.SQL, "args", data.Args)
 	}
@@ -118,7 +119,8 @@ type batchKey struct{}
 
 type batchState struct{ last time.Time }
 
-func (t *Tracer) TraceBatchStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+func (t *Tracer) TraceBatchStart(ctx context.Context, conn *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+	traceRoundTrip(ctx, conn, "")
 	if t.observer.Load() == nil {
 		return ctx
 	}
@@ -141,7 +143,8 @@ func (t *Tracer) TraceBatchQuery(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 
 func (t *Tracer) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}
 
-func (t *Tracer) TraceCopyFromStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceCopyFromStartData) context.Context {
+func (t *Tracer) TraceCopyFromStart(ctx context.Context, conn *pgx.Conn, _ pgx.TraceCopyFromStartData) context.Context {
+	traceRoundTrip(ctx, conn, "")
 	if t.observer.Load() == nil {
 		return ctx
 	}

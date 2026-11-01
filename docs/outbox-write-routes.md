@@ -51,3 +51,10 @@ Deleting a group removes and audits its own membership entries. Rules and incomi
 references from other groups still block the deletion. Deleting a type removes
 its outgoing parent rows in the same transaction. Issuer-key cache rows removed
 by a PEP issuer cascade are included in that issuer's publication.
+
+WR06 uses an opt-in context counter in the pgx tracer. It records each pgx batch
+once while leaving existing statement metrics unchanged. The adjacent
+[budget table](../admin-api/tests/integration/api/write_roundtrips.md) contains
+measured request and transaction counts, the reproduction commands, and the
+one-off Toxiproxy cross-check. The contract rejects a route without a measured
+budget and fails when a request exceeds its recorded maximum.
