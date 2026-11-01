@@ -101,7 +101,7 @@ lists accept a JSON array or a comma-separated string.
 | `POLICY__MAX_STALENESS` | how long a process goes on answering from its copy of the policy when it cannot confirm it against PostgreSQL; beyond it requests fail closed (503 `policy_unavailable`). Default `0`: **no limit** — the process answers for as long as PostgreSQL is unreachable and does not see a revocation made meanwhile; set it where that is not acceptable |
 | `SHUTDOWN__DRAIN`, `SHUTDOWN__TIMEOUT` | on SIGTERM: how long the process is not ready but serves (default `10s`) and how long it waits for the requests in progress (default `30s`) |
 | `LOG__LEVEL` | `debug` for debug logs |
-| removed settings | `REDIS__URI`, `REDIS__HOT_TIMEOUT` (there is no Redis: answers are kept in memory), `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL` (a process reads the one PostgreSQL named by `DB__URI`), `SYNC__ENGINE` (DBOS is the only synchronization engine), `SYNC__FETCH_TTL` and the synchronizer's `cache_ttl` (a source's list is not kept between synchronizations), `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT`, `WORKER__REGION`. They are ignored, and logged at start-up with the reason when still set (`config.DeprecatedCatalog`); [Upgrading](../docs/deployment.md#upgrading-to-this-release) says what replaced each |
+| removed settings | `REDIS__URI`, `REDIS__HOT_TIMEOUT` (there is no Redis: answers are kept in memory), `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL` (a process reads the one PostgreSQL named by `DB__URI`), `SYNC__ENGINE` (DBOS is the only synchronization engine), `SYNC__FETCH_TTL` and the synchronizer's `cache_ttl` (a source's list is not kept between synchronizations), `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT`, `WORKER__REGION`. They are ignored silently; [Upgrading](../docs/deployment.md#upgrading-to-this-release) says what replaced each |
 
 ## Synchronization pipeline
 
@@ -388,3 +388,41 @@ retention and is not deleted. `licetum_outbox_rows` and `licetum_outbox_oldest_a
 The DBOS system tables must be in schema `dbos` of the application database. `SYNC__DBOS_URI` may select a different host,
 port or pooler, but must name the same database as `DB__URI`; startup warns about a mismatch. DBOS owns its table DDL.
 `SYNC__DBOS_SCHEMA` defaults to `dbos`; isolated tests use a schema of their own in that same database.
+
+### Removed settings
+
+These settings are ignored silently when still set. Remove them from deployment configuration.
+
+| Setting | Replacement or reason |
+|---|---|
+| `SYNC__LOCK_TTL` | the Redis lock of the synchronization is gone; a synchronization is one job under a lease, timed by SYNC__LEASE, and this setting has not been read since the lock was removed |
+| `SYNC__LOCK_WAIT` | the Redis lock of the synchronization is gone; a synchronization is one job under a lease, timed by SYNC__LEASE, and this setting has not been read since the lock was removed |
+| `HTTP__PUBLIC_URL` | renamed PDP__PUBLIC_URL, which the pdp command requires; HTTP__PUBLIC_URL is not read |
+| `PLATFORM__AUTHORIZATION_URL` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__TOKEN_URL` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__JWKS_URL` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__ISSUER` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__CLIENT_ID` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__CLIENT_SECRET` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `SUBJECTS__ENABLED` | the registry of known subjects is gone; each service has a subject directory with its own retention (PUT /service/{id}/subjects/settings) |
+| `SUBJECTS__RETENTION_DAYS` | the registry of known subjects is gone; each service has a subject directory with its own retention (PUT /service/{id}/subjects/settings) |
+| `AUTH__STATE_SECRET` | the PDP keeps no sign-in state: per-service OAuth was removed and administrators sign in through ADMIN_AUTH__* |
+| `AUTH__STATE_TTL` | the PDP keeps no sign-in state: per-service OAuth was removed and administrators sign in through ADMIN_AUTH__* |
+| `AUTH__TOKEN_L1_SIZE` | the PDP no longer verifies the token of a person against a service, so it keeps no cache of them; PEP clients authenticate with API keys or the tokens of a registered pep_issuer (AUTH__JWKS_TTL and AUTH__JWKS_MIN_REFRESH still apply to their key sets) |
+| `AUTH__INVALID_TOKEN_TTL` | the PDP no longer verifies the token of a person against a service, so it keeps no cache of them; PEP clients authenticate with API keys or the tokens of a registered pep_issuer (AUTH__JWKS_TTL and AUTH__JWKS_MIN_REFRESH still apply to their key sets) |
+| `DELEGATION__AUDIT_RETENTION_DAYS` | calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request |
+| `DELEGATION__AUDIT_MODE` | calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request |
+| `DELEGATION__AUDIT_BUFFER` | calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request |
+| `CORS__ALLOW_ORIGINS` | the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server |
+| `CORS__ALLOW_CREDENTIALS` | the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server |
+| `CORS__ALLOW_METHODS` | the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server |
+| `CORS__ALLOW_HEADERS` | the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server |
+| `SYNC__ENGINE` | DBOS is the only synchronization engine; a value of postgres no longer selects the sync_job table |
+| `WORKER__REGION` | a source with regions may be asked by any executor until regions are enforced again; the worker no longer filters the jobs by region |
+| `SYNC__FETCH_TTL` | the list a source returned is no longer kept between synchronizations, so a synchronizer's cache_ttl is ignored too; every synchronization asks the source, spaced by the backoff of sync_state and by SYNC__FRESH_MIN_INTERVAL for a fresh one |
+| `DB__READ_URI` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
+| `DB__MAX_REPLICA_LAG` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
+| `DB__LAG_ACTION` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
+| `DB__LAG_INTERVAL` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
+| `REDIS__URI` | there is no Redis any more: the process keeps its answers in memory and no setting names a Redis server |
+| `REDIS__HOT_TIMEOUT` | there is no Redis any more: the process keeps its answers in memory and no setting names a Redis server |
