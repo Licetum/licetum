@@ -317,7 +317,7 @@ contracts:
     oracle: the outbox and revision_state
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR02
     statement: "A transaction that changed rows of a covered policy table (ADR 0001, 4.7), or truncated one, without an outbox row fails at COMMIT (raw SQL, cascades, the seed and restore-admin included). Only tuples actually changed count, so a statement that changed no row does not; the resource tables get the same check in P5. A bypass is not claimed impossible: REC01 reports it."
     oracle: the commit result
