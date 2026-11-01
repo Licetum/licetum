@@ -44,7 +44,12 @@ func main() {
 	// The process logs through logx; its format, fields and sampling come from the stored settings (see cli.Serve).
 	logOptions := logx.DefaultOptions(logLevel)
 	logOptions.Salt = os.Getenv("LOG__SUBJECT_SALT")
-	logs, logErr := logx.New(os.Stdout, logOptions)
+	logOutput := os.Stdout
+	// Machine-readable commands reserve stdout for their result.
+	if len(os.Args) > 1 && os.Args[1] == "openapi" {
+		logOutput = os.Stderr
+	}
+	logs, logErr := logx.New(logOutput, logOptions)
 	if logErr != nil {
 		fmt.Fprintln(os.Stderr, "logging:", logErr)
 		os.Exit(1)
