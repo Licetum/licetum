@@ -15,9 +15,9 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// ChangeIDPath names a record of the change log.
-type ChangeIDPath struct {
-	ChangeID int64 `path:"change_id" minimum:"1" doc:"Id of the change record (see GET /changes)"`
+// ChangeRevisionPath names a record of the change log.
+type ChangeRevisionPath struct {
+	Revision int64 `path:"revision" minimum:"1" doc:"The global revision to revert (see GET /changes)"`
 }
 
 // registerBatch registers the batch executor and the history of the policy: reverting one change, and rolling back
@@ -49,16 +49,16 @@ func (h *adminHandlers) registerBatch(api huma.API) {
 	server.Register(api, withPolicy(huma.Operation{
 		OperationID: "revert_change",
 		Method:      http.MethodPost,
-		Path:        "/changes/{change_id}/revert",
-		Summary:     "Revert one change",
-		Description: "Puts the entity of one record of the change log back as it was before the change: a create is deleted, a delete is created again with its id (and, for a role, its items), an update is written back with its previous body. The revert is a change of its own, in the log. Only the entities a batch writes can be reverted (409 otherwise). With dry_run, the operation is returned and nothing is applied.",
+		Path:        "/changes/{revision}/revert",
+		Summary:     "Revert one revision",
+		Description: "Reverts every record of the revision, newest sequence first, in one transaction. An unsupported entity makes the whole revert fail with 409. With dry_run, return the plan without applying it.",
 		Errors:      []int{http.StatusConflict, http.StatusNotFound, http.StatusUnprocessableEntity},
 		Tags:        []string{"Batch"},
 	}, signedIn()), func(ctx context.Context, in *struct {
-		ChangeIDPath
+		ChangeRevisionPath
 		Body model.RevertInput
 	}) (*server.Out[model.RevertResponse], error) {
-		ops, err := h.app.PlanRevert(ctx, in.ChangeID)
+		ops, err := h.app.PlanRevert(ctx, in.Revision)
 		if err != nil {
 			return nil, err
 		}

@@ -81,7 +81,9 @@ export function HistoryScreen() {
     });
   }, [all, svc, kind, actor, period]);
 
-  const selected = selectedParam ? all.find((r) => String(r.id) === selectedParam) : undefined;
+  const selected = selectedParam
+    ? all.find((r) => `${r.revision}.${r.seq}` === selectedParam)
+    : undefined;
   const shown = filtered.slice(0, limit);
 
   const groupedByDay = useMemo(() => {
@@ -107,7 +109,9 @@ export function HistoryScreen() {
     setPlanError(null);
     try {
       const result =
-        mode === 'one' ? await revert.planOne(record.id) : await revert.planTo(record.id);
+        mode === 'one'
+          ? await revert.planOne(record.revision)
+          : await revert.planTo(record.revision);
       setPlan({
         record,
         operations: (result as { operations: BatchOperation[] }).operations ?? [],
@@ -234,10 +238,10 @@ export function HistoryScreen() {
               </div>
               {g.items.map((r) => (
                 <button
-                  key={r.id}
+                  key={`${r.revision}.${r.seq}`}
                   type="button"
                   role="listitem"
-                  onClick={() => setSelected(String(r.id))}
+                  onClick={() => setSelected(`${r.revision}.${r.seq}`)}
                   style={{
                     all: 'unset',
                     boxSizing: 'border-box',
@@ -260,7 +264,9 @@ export function HistoryScreen() {
                       · {serviceName(r.service_id) || t('history.platformWide')}
                     </span>
                   </span>
-                  <span style={{ color: 'var(--licetum-muted)', fontSize: 12 }}>#{r.id}</span>
+                  <span style={{ color: 'var(--licetum-muted)', fontSize: 12 }}>
+                    #{r.revision}.{r.seq}
+                  </span>
                 </button>
               ))}
             </div>
@@ -287,7 +293,8 @@ export function HistoryScreen() {
           <Flex vertical gap={16}>
             <Typography.Text type="secondary">
               {formatDateTime(selected.at, lang)} ·{' '}
-              {serviceName(selected.service_id) || t('history.platformWide')} · #{selected.id}
+              {serviceName(selected.service_id) || t('history.platformWide')} · #{selected.revision}
+              .{selected.seq}
             </Typography.Text>
             <Diff record={selected} />
             {raw && (
@@ -329,7 +336,7 @@ export function HistoryScreen() {
               <Button
                 onClick={() => {
                   const url = new URL(window.location.href);
-                  url.searchParams.set('change', String(selected.id));
+                  url.searchParams.set('change', `${selected.revision}.${selected.seq}`);
                   void navigator.clipboard?.writeText(url.toString());
                 }}
               >
@@ -362,8 +369,8 @@ export function HistoryScreen() {
           if (!plan) return;
           const ok =
             plan.mode === 'one'
-              ? await revert.applyOne(plan.record.id)
-              : await revert.applyTo(plan.record.id);
+              ? await revert.applyOne(plan.record.revision)
+              : await revert.applyTo(plan.record.revision);
           if (ok) {
             setPlan(null);
             setSelected(null);

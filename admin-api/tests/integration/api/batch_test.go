@@ -24,7 +24,7 @@ func (e *env) lastChangeID() int64 {
 	if len(recs) == 0 {
 		return 0
 	}
-	return int64(recs[len(recs)-1]["id"].(float64))
+	return int64(recs[len(recs)-1]["revision"].(float64))
 }
 
 // revert performs POST /changes/{id}/revert and returns the answer.
@@ -118,7 +118,7 @@ func TestIntegrationRevertUndoesOneChangeOfTheLog(t *testing.T) {
 
 	// A change to a service is not a batch entity: it cannot be reverted, and the answer says so.
 	services := w.changes("?entity=service&limit=500")
-	serviceChange := int64(services[0]["id"].(float64))
+	serviceChange := int64(services[0]["revision"].(float64))
 	if status, raw := w.do("POST", w.admin.URL+"/changes/"+strconv.FormatInt(serviceChange, 10)+"/revert",
 		map[string]any{}); status != http.StatusConflict {
 		t.Fatalf("revert of a service change: %d %s", status, raw)
@@ -184,7 +184,7 @@ func TestIntegrationChangeFeedWaitsForTheNextRecord(t *testing.T) {
 	w := newWorld(t)
 	last := w.lastChangeID()
 	started := time.Now()
-	status, raw := w.do("GET", w.admin.URL+"/changes?after="+strconv.FormatInt(last, 10)+"&wait=1", nil)
+	status, raw := w.do("GET", w.admin.URL+"/changes?after_seq=2147483647&after_revision="+strconv.FormatInt(last, 10)+"&wait=1", nil)
 	if status != http.StatusOK || strings.TrimSpace(string(raw)) != "[]" || time.Since(started) < 900*time.Millisecond {
 		t.Fatalf("a wait with nothing to read: %d %s after %v", status, raw, time.Since(started))
 	}
@@ -192,7 +192,7 @@ func TestIntegrationChangeFeedWaitsForTheNextRecord(t *testing.T) {
 	// A record written while a client waits is delivered to it.
 	answered := make(chan []byte, 1)
 	go func() {
-		_, body := w.do("GET", w.admin.URL+"/changes?after="+strconv.FormatInt(last, 10)+"&wait=10", nil)
+		_, body := w.do("GET", w.admin.URL+"/changes?after_seq=2147483647&after_revision="+strconv.FormatInt(last, 10)+"&wait=10", nil)
 		answered <- body
 	}()
 	time.Sleep(300 * time.Millisecond)

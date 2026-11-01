@@ -102,3 +102,12 @@ func ProjectChanges(ctx context.Context, q outbox.Reader, changes []Change) (out
 	entry.Services, err = outbox.ServicesBelow(ctx, q, owners)
 	return entry, err
 }
+
+// FinishChanges finalizes a transaction whose lock is already held by its writer.
+func FinishChanges(ctx context.Context, tx pgx.Tx, changes []Change) (Position, error) {
+	entry, err := ProjectChanges(ctx, tx, changes)
+	if err != nil {
+		return Position{}, err
+	}
+	return finishPolicy(ctx, tx, entry, changes)
+}

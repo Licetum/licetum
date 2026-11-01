@@ -465,7 +465,7 @@
   "history": {
     "after": "之后",
     "before": "之前",
-    "cannotRevert": "无法撤销此更改（之后的更改可能依赖它）。",
+    "cannotRevert": "无法撤销此修订（后续更改可能依赖它）。",
     "copyLink": "复制链接",
     "count": "{{shown}} / {{total}} 条记录",
     "empty": {
@@ -512,13 +512,13 @@
       "today": "今天",
       "week": "最近 7 天"
     },
-    "planNote": "撤销本身也是一次更改，会出现在历史中。",
+    "planNote": "撤销会创建一项新修订，并出现在历史中。",
     "platformWide": "整个平台",
-    "revert": "撤销此更改",
-    "revertBody": "该实体将恢复到此更改之前的样子：",
+    "revert": "撤销此修订",
+    "revertBody": "将一并撤销此修订中的所有更改：",
     "revertConfirm": "撤销",
     "revertFailed": "无法撤销",
-    "revertTitle": "撤销此更改？",
+    "revertTitle": "撤销整个修订？",
     "reverted": "已撤销",
     "rollbackBody_other": "此记录之后的 {{count}} 项更改将在一个事务中按从新到旧的顺序撤销：",
     "rollbackConfirm": "回退",

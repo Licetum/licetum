@@ -148,7 +148,7 @@ func TestChangeLogRecordsEveryWriteWithItsActorAndMasksSecrets(t *testing.T) {
 	if got := e.changes("?entity=group"); len(got) != 3 {
 		t.Fatalf("filter by entity: %d records", len(got))
 	}
-	if got := e.changes("?after=" + jsonNumber(changes[1]["id"])); len(got) != len(changes)-2 {
+	if got := e.changes("?after_seq=2147483647&after_revision=" + jsonNumber(changes[1]["revision"])); len(got) != len(changes)-2 {
 		t.Fatalf("records after a position: %d of %d", len(got), len(changes))
 	}
 }

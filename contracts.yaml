@@ -383,7 +383,7 @@ contracts:
     oracle: the records committed
     level: pg
     phase: P3
-    status: planned
+    status: active
 
   # ---------- SYN: synchronization of sources ----------
   - id: SYN01

@@ -148,7 +148,7 @@ func TestF4_6_WaitersOfTheChangeLogShareOnePoller(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			out, err := w.app.WaitChanges(ctx, service.ChangeFilter{After: 1 << 40, Limit: 10}, 3*time.Second)
+			out, err := w.app.WaitChanges(ctx, service.ChangeFilter{AfterSeq: 2147483647, AfterRevision: 1 << 40, Limit: 10}, 3*time.Second)
 			if err != nil {
 				t.Error(err)
 			}
@@ -172,7 +172,7 @@ func TestF4_6_AWaiterSeesARecordThatComesWhileItWaits(t *testing.T) {
 	w := newWorld(t)
 	done := make(chan []string, 1)
 	go func() {
-		out, _ := w.app.WaitChanges(context.Background(), service.ChangeFilter{After: w.lastChange(), Limit: 10}, 10*time.Second)
+		out, _ := w.app.WaitChanges(context.Background(), service.ChangeFilter{AfterSeq: 2147483647, AfterRevision: w.lastChange(), Limit: 10}, 10*time.Second)
 		ids := []string{}
 		for _, c := range out {
 			ids = append(ids, c.Entity)
@@ -193,7 +193,7 @@ func TestF4_6_AWaiterSeesARecordThatComesWhileItWaits(t *testing.T) {
 
 func (w *world) lastChange() int64 {
 	var id int64
-	if err := w.pool.QueryRow(context.Background(), `SELECT COALESCE(max(id), 0) FROM authz_change`).Scan(&id); err != nil {
+	if err := w.pool.QueryRow(context.Background(), `SELECT COALESCE(max(revision), 0) FROM change_log`).Scan(&id); err != nil {
 		w.t.Fatal(err)
 	}
 	return id

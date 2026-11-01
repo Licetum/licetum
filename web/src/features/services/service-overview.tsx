@@ -208,7 +208,7 @@ export function ServiceOverview() {
           ) : (
             recent.map((r) => (
               <div
-                key={r.id}
+                key={`${r.revision}.${r.seq}`}
                 style={{
                   padding: '6px 0',
                   borderBottom: '1px solid var(--licetum-border)',

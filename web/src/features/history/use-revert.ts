@@ -29,8 +29,8 @@ export function useRevert() {
 
   /** The plan of the revert, without applying it. */
   const planOne = useCallback(
-    async (changeId: number) =>
-      (await revert.mutateAsync({ changeId, data: { dry_run: true } })).data,
+    async (revision: number) =>
+      (await revert.mutateAsync({ revision, data: { dry_run: true } })).data,
     [revert],
   );
   const planTo = useCallback(
@@ -39,9 +39,9 @@ export function useRevert() {
   );
 
   const applyOne = useCallback(
-    async (changeId: number) => {
+    async (revision: number) => {
       try {
-        await revert.mutateAsync({ changeId, data: { dry_run: false } });
+        await revert.mutateAsync({ revision, data: { dry_run: false } });
         await refresh();
         notification.success({
           title: t('history.reverted'),

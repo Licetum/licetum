@@ -503,7 +503,7 @@
   "history": {
     "after": "After",
     "before": "Before",
-    "cannotRevert": "This change can’t be reverted (a later change may depend on it).",
+    "cannotRevert": "This revision cannot be reverted (a later change may depend on it).",
     "copyLink": "Copy the link",
     "count": "{{shown}} of {{total}} records",
     "empty": {
@@ -550,13 +550,13 @@
       "today": "Today",
       "week": "Last 7 days"
     },
-    "planNote": "The revert is a change of its own and appears in the history.",
+    "planNote": "The revert is one new revision and appears in the history.",
     "platformWide": "Whole platform",
-    "revert": "Revert this change",
-    "revertBody": "The entity goes back as it was before this change:",
+    "revert": "Revert this revision",
+    "revertBody": "All changes in this revision will be undone together:",
     "revertConfirm": "Revert",
     "revertFailed": "Couldn’t revert",
-    "revertTitle": "Revert the change?",
+    "revertTitle": "Revert the whole revision?",
     "reverted": "Reverted",
     "rollbackBody_few": "The {{count}} changes after this record will be undone, newest first, in one transaction:",
     "rollbackBody_many": "The {{count}} changes after this record will be undone, newest first, in one transaction:",

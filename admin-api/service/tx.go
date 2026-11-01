@@ -96,33 +96,20 @@ func (a *App) mutate(ctx context.Context, fn func(context.Context, db.Querier) (
 
 // recordChange writes one change-log record through q. The actor is the subject of the request.
 func recordChange(ctx context.Context, q db.Querier, c change) error {
-	args, err := changeArgs(ctx, c)
+	if run := currentBatch(ctx); run != nil {
+		run.changes = append(run.changes, c)
+		return nil
+	}
+	tx, ok := q.(pgx.Tx)
+	if !ok {
+		return fmt.Errorf("history write requires a transaction")
+	}
+	changes, err := publicationChanges(ctx, []change{c})
 	if err != nil {
 		return err
 	}
-	_, err = q.Exec(ctx, insertChangeSQL, args...)
-	if err == nil {
-		if run := currentBatch(ctx); run != nil {
-			run.changes = append(run.changes, c)
-		}
-	}
+	_, err = db.FinishChanges(ctx, tx, changes)
 	return err
-}
-
-const insertChangeSQL = `
-	INSERT INTO authz_change (actor, service_id, entity, entity_id, action, before, after)
-	VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`
-
-func changeArgs(ctx context.Context, c change) ([]any, error) {
-	before, err := snapshot(c.before)
-	if err != nil {
-		return nil, err
-	}
-	after, err := snapshot(c.after)
-	if err != nil {
-		return nil, err
-	}
-	return []any{engine.ActorFrom(ctx), engine.ToNullUUID(c.serviceID), c.entity, uuidOrNull(c.entityID), c.action, before, after}, nil
 }
 
 // publicationChanges keeps the historical API entity and the canonical database row

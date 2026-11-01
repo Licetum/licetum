@@ -1050,8 +1050,12 @@ components:
           type:
             - string
             - "null"
-        id:
-          description: Position in the log; it grows with every change. Pass it as after to read the records that follow
+        revision:
+          description: The global revision of the transaction
+          format: int64
+          type: integer
+        seq:
+          description: The record sequence within the revision
           format: int64
           type: integer
         service_id:
@@ -1061,7 +1065,8 @@ components:
             - string
             - "null"
       required:
-        - id
+        - revision
+        - seq
         - at
         - actor
         - service_id
@@ -2712,7 +2717,7 @@ components:
       additionalProperties: true
       properties:
         dry_run:
-          description: Return the operation that would undo the change, and apply nothing
+          description: Return the operations that would undo the revision, and apply nothing
           type: boolean
       type: object
     RevertResponse:
@@ -2912,7 +2917,7 @@ components:
           description: Return the operations that would undo the changes, and apply nothing
           type: boolean
         to:
-          description: "The position of the change log to go back to: every change after it is undone, newest first. Take it from the id of a record of GET /changes"
+          description: "The position of the change log to go back to: every change after it is undone, newest first. Take it from the revision of a record of GET /changes"
           format: int64
           minimum: 0
           type: integer
@@ -3932,15 +3937,24 @@ paths:
         - Batch
   /changes:
     get:
-      description: The records of the change log after the given position, oldest first. Every write of the admin API leaves one record, in the same transaction as the write. Pass the id of the last record as after to read the next ones.
+      description: Records ordered by revision and sequence, oldest first. Pass the revision and seq of the last record as after_revision and after_seq to read the next ones.
       operationId: list_changes
       parameters:
-        - description: "Read the records after this position: the id of the last record of the previous read"
+        - description: The revision of the last record read
           explode: false
           in: query
-          name: after
+          name: after_revision
           schema:
-            description: "Read the records after this position: the id of the last record of the previous read"
+            description: The revision of the last record read
+            format: int64
+            minimum: 0
+            type: integer
+        - description: The sequence within the last revision read
+          explode: false
+          in: query
+          name: after_seq
+          schema:
+            description: The sequence within the last revision read
             format: int64
             minimum: 0
             type: integer
@@ -4120,17 +4134,17 @@ paths:
       summary: Roll the policy back to a position of the change log
       tags:
         - Batch
-  /changes/{change_id}/revert:
+  /changes/{revision}/revert:
     post:
-      description: "Puts the entity of one record of the change log back as it was before the change: a create is deleted, a delete is created again with its id (and, for a role, its items), an update is written back with its previous body. The revert is a change of its own, in the log. Only the entities a batch writes can be reverted (409 otherwise). With dry_run, the operation is returned and nothing is applied."
+      description: Reverts every record of the revision, newest sequence first, in one transaction. An unsupported entity makes the whole revert fail with 409. With dry_run, return the plan without applying it.
       operationId: revert_change
       parameters:
-        - description: Id of the change record (see GET /changes)
+        - description: The global revision to revert (see GET /changes)
           in: path
-          name: change_id
+          name: revision
           required: true
           schema:
-            description: Id of the change record (see GET /changes)
+            description: The global revision to revert (see GET /changes)
             format: int64
             minimum: 1
             type: integer
@@ -4203,7 +4217,7 @@ paths:
           description: Service Unavailable
       security:
         - bearer: []
-      summary: Revert one change
+      summary: Revert one revision
       tags:
         - Batch
   /group:
