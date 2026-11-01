@@ -235,7 +235,10 @@ type Shutdown struct {
 // Log contains deployment-only secrets, never projected in the settings stream.
 type Log struct{ SubjectSalt string }
 
+type Outbox struct{ Retention time.Duration }
+
 type Config struct {
+	Outbox     Outbox
 	Log        Log
 	DB         Database
 	Auth       Auth
@@ -259,7 +262,8 @@ type Config struct {
 func Load() (*Config, error) {
 	e := &envReader{}
 	cfg := &Config{
-		Log: Log{SubjectSalt: e.str("LOG__SUBJECT_SALT", "")},
+		Outbox: Outbox{Retention: e.duration("OUTBOX__RETENTION", time.Hour)},
+		Log:    Log{SubjectSalt: e.str("LOG__SUBJECT_SALT", "")},
 		DB: Database{
 			URI:                e.str("DB__URI", ""),
 			PoolSize:           e.int("DB__POOL_SIZE", 10),

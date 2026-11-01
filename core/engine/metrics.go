@@ -40,6 +40,8 @@ type metrics struct {
 	snapshotFallback  prometheus.Counter
 	revisionRegress   prometheus.Counter
 	epochResets       prometheus.Counter
+	outboxRows        prometheus.Gauge
+	outboxOldest      prometheus.Gauge
 	l1Cache           *prometheus.CounterVec // cache: answer, result: hit | miss
 	jwksFetches       *prometheus.CounterVec // result: ok | error
 }
@@ -130,6 +132,8 @@ func newMetrics() *metrics {
 		Help: "Times the revision of the policy read from the database was lower than the one the process had: the database was restored or a replica promoted after a failover. Run `licetum failover`.",
 	})
 	m.epochResets = prometheus.NewCounter(prometheus.CounterOpts{Name: "licetum_epoch_resets_total", Help: "Observed changes of the global revision epoch that reset the in-memory view."})
+	m.outboxRows = prometheus.NewGauge(prometheus.GaugeOpts{Name: "licetum_outbox_rows", Help: "Retained PostgreSQL outbox headers."})
+	m.outboxOldest = prometheus.NewGauge(prometheus.GaugeOpts{Name: "licetum_outbox_oldest_age_seconds", Help: "Age of the oldest retained outbox header."})
 	m.l1Cache = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "licetum_l1_cache_total",
 		Help: "Lookups in the in-process answer cache, by cache (answer) and result (hit | miss).",
@@ -141,7 +145,7 @@ func newMetrics() *metrics {
 
 	for _, c := range []prometheus.Collector{
 		m.permissionCompute, m.permissionCache, m.checkCache, m.searchCache, m.checks, m.syncFetch, m.syncResults, m.syncJobs, m.syncJobSeconds, m.syncLeaseLost, m.sourceCalls,
-		m.backgroundDropped, m.snapshotFallback, m.revisionRegress, m.epochResets, m.l1Cache, m.jwksFetches,
+		m.backgroundDropped, m.snapshotFallback, m.revisionRegress, m.epochResets, m.outboxRows, m.outboxOldest, m.l1Cache, m.jwksFetches,
 		m.dbQueries, m.dbQueryDuration,
 		m.httpRequests, m.httpDuration,
 	} {

@@ -210,3 +210,10 @@ The Helm chart accepts `secrets.logSubjectSalt`, or `LOG__SUBJECT_SALT` in `exis
 returned by the admin API, or projected in the outbox. Hash mode without a salt omits subject fields and warns once; it never
 falls back to plain text. Rotate by updating the secret and restarting all processes together. Rotation intentionally breaks
 correlation between old and new subject hashes; retain any old secret only according to your log-retention policy.
+
+### Outbox retention
+
+Before P6 supplies publication, the worker retains the outbox by age (`OUTBOX__RETENTION`, default `1h`). It deletes old
+headers and their whole payloads in bounded transactions, always preserving the newest header. History has independent
+retention and is not deleted. `licetum_outbox_rows` and `licetum_outbox_oldest_age_seconds` describe retained data.
+

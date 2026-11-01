@@ -3381,6 +3381,7 @@ These decisions are the implementation contract for #54; they do not move P4–P
    | `00021` | P3-36 | `synced_at` |
    | `00022` | P3-37 | Remaining schema-v2 tables and columns |
    | `00023` | P3-41 | Drop the legacy tables and columns |
+   | `00024` | P3-23 | Remove the history-to-outbox foreign key so independent retention is possible |
 
 2. **Transitional administration API.** Groups and roles gain a required, immutable `service_id` in create bodies;
    their global routes stay until P4. Lists filter by `?service_id`; members, role items and rules derive the owner.

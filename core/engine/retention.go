@@ -44,6 +44,7 @@ func (a *App) RunRetention(ctx context.Context) {
 		DELETE FROM known_subject WHERE ctid IN (
 			SELECT ctid FROM known_subject WHERE last_seen < now() - make_interval(days => $1) LIMIT $2 FOR UPDATE SKIP LOCKED)`, knownSubjectKeepDays)
 	a.pruneDirectory(ctx)
+	a.pruneOutbox(ctx)
 }
 
 // pruneDirectory deletes the entries of the subject directories that were not sent within the retention period of their
@@ -70,6 +71,30 @@ func (a *App) pruneInChunks(ctx context.Context, table, query string, days int) 
 		}
 		if tag.RowsAffected() < retentionChunk {
 			return
+		}
+	}
+}
+
+func (a *App) pruneOutbox(ctx context.Context) {
+	age := time.Hour
+	if a.Cfg != nil && a.Cfg.Outbox.Retention > 0 {
+		age = a.Cfg.Outbox.Retention
+	}
+	for ctx.Err() == nil {
+		n, err := db.PruneOutbox(ctx, a.DB, age, retentionChunk)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to retain outbox", "error", err)
+			return
+		}
+		if n < retentionChunk {
+			break
+		}
+	}
+	if a.metrics != nil {
+		count, oldest, err := db.OutboxSize(ctx, a.DB)
+		if err == nil {
+			a.metrics.outboxRows.Set(float64(count))
+			a.metrics.outboxOldest.Set(oldest)
 		}
 	}
 }
