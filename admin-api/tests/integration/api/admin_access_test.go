@@ -28,7 +28,7 @@ func TestLastAdministratorLiteralSubjectType(t *testing.T) {
 		t.Fatalf("non-user literal removed the last administrator: %d %s", status, raw)
 	}
 	// The rejected transaction must leave the administrator able to manage rules.
-	if status, raw := e.do(http.MethodGet, e.admin.URL+path, nil); status != http.StatusOK {
+	if status, raw := e.do(http.MethodGet, e.admin.URL+"/assignment_rule", nil); status != http.StatusOK {
 		t.Fatalf("the rejected edit locked the administrator out: %d %s", status, raw)
 	}
 	// Omitting the type also remains valid: NULL matches every subject type.
