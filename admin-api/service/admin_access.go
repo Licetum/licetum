@@ -13,6 +13,7 @@ import (
 // seeded (then the admin API is closed anyway and there is nothing to protect). "Can change" means: a rule in force
 // that allows write on the platform policy `assignment_rule` as a whole — directly or through a role — and applies to
 // somebody: a named subject (a group needs a live member), a predicate over properties, or a group with a live member.
+// Literal subjects must match the user subject type supplied by engine.NewEnv for administrator authentication.
 // A predicate or a nested group is taken as non-empty: whether anybody matches it cannot be known here.
 const adminAccessSQL = `
 SELECT NOT EXISTS (SELECT 1 FROM type_resource WHERE id = $1 AND deleted_at IS NULL)
@@ -31,7 +32,7 @@ SELECT NOT EXISTS (SELECT 1 FROM type_resource WHERE id = $1 AND deleted_at IS N
 	         AND rp.resource_from_property IS NULL AND rp.resource_where IS NULL AND 'write' = ANY(rp.access)))
 	  )
 	  AND (
-      (ar.subject IS NOT NULL)
+      (ar.subject IS NOT NULL AND (ar.subject_type IS NULL OR ar.subject_type = 'user'))
       OR (ar.subject_group_id IS NOT NULL AND EXISTS (
        SELECT 1 FROM group_member gm WHERE gm.group_id=ar.subject_group_id AND gm.enabled
        AND (gm.valid_from IS NULL OR gm.valid_from<=now()) AND (gm.expires_at IS NULL OR gm.expires_at>now())))

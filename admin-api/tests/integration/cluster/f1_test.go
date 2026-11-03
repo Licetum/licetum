@@ -106,14 +106,15 @@ func insertRules(t *testing.T, c *harness.Cluster, typeID string, n int) {
 // missCost is the number of queries to PostgreSQL that the first answer of a subject costs on a policy with n rules.
 func missCost(t *testing.T, n int) (queries int, ops map[string]int) {
 	t.Helper()
-	c := startReplicas(t, 1)
+	// Count only the cold answer: periodic revision reads are tested separately.
+	c := startReplicas(t, 1, harness.WithConfig(func(cfg *config.Config) { cfg.Revision.PollInterval = time.Hour }))
 	p := c.SeedPolicy("org")
 	c.Must(http.MethodPost, "/assignment_rule", map[string]any{
 		"type_resource_id": p.Branch, "access": []string{"read"}, "subject": "bob",
 	})
 	r := c.Replicas[0]
 	alice := c.UserToken("alice")
-	r.Warm(c, harness.Branches(p.Slug, alice), alice)
+	r.Warm(c, c.PermissionRequest(p.Slug, alice), alice)
 
 	insertRules(t, c, p.Branch, n)
 	rev, err := support.AdvanceRevision(context.Background(), c.Pool)
@@ -130,6 +131,9 @@ func missCost(t *testing.T, n int) (queries int, ops map[string]int) {
 		t.Fatal("the replica has no snapshot of the policy")
 	}
 
+	// The min-revision wait follows PEP authentication. Warm Alice once more so the PEP directory
+	// also holds the new global revision before measuring Bob's still-cold answer.
+	r.Warm(c, harness.Branches(p.Slug, alice, authzenreq.AtLeast(rev)), alice)
 	res := r.Permission(c, p.Slug, c.UserToken("bob"))
 	if res.Status != http.StatusOK {
 		t.Fatalf("bob: %d %s", res.Status, res.Body)

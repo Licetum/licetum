@@ -66,7 +66,7 @@ func Stream(table string, owner *uuid.UUID) (string, error) {
 
 // Tombstone preserves the stable key even for composite-key tables.
 func Tombstone(key map[string]any) (json.RawMessage, error) {
-	out := make(map[string]any, len(key)+1)
+	out := make(map[string]any, len(key))
 	for k, v := range key {
 		out[k] = v
 	}
