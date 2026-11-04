@@ -61,7 +61,7 @@ type searched struct {
 }
 
 // CrossCheck asks the searches of a case — POST /service/{slug}/access/v1/search/resource and …/search/action with
-// consistency=higher, as the case's subject with its claims in the token, its request attributes in the context, at its time —
+// consistency=higher, as the case's subject with its properties in the token, its request attributes in the context, at its time —
 // and compares what they list with the answers the evaluations gave to the questions of the same case (Ask). It returns every
 // question on which the two paths disagree, in words; none when they agree. A request that fails, or a list made without the
 // data of some type, fails the test. The searches asked are the ones the questions need, each once: a resource search for each
@@ -97,7 +97,7 @@ func (l *Loaded) listed(c *policyfix.Case, s search) []string {
 	all := []string{}
 	page := ""
 	for range searchPages {
-		req := s.request(l.f.ServiceOf(c), c.Subject, authzenreq.Fresh(), authzenreq.WithContext(c.Context), authzenreq.Page(searchPage, page))
+		req := s.request(l.f.ServiceOf(c), c.Subject, authzenreq.Fresh(), authzenreq.WithSubjectType(c.SubjectType), authzenreq.WithContext(c.Context), authzenreq.Page(searchPage, page))
 		res := l.askOnce(req, token)
 		ids, next, err := s.decode(res.Status, res.Body)
 		if err != nil {

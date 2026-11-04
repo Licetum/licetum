@@ -119,6 +119,7 @@ func newHumaError(status int, msg string, errs ...error) *apperr.Error {
 // Huma also serves the component schemas of the document under /schemas by default; schemas says whether that stays on.
 func newAPI(mux *http.ServeMux, title string, tags []*huma.Tag, schemas bool) huma.API {
 	cfg := huma.DefaultConfig(title, Version)
+
 	// No $schema field in responses and no Link headers: the response shapes are part of the API
 	// contract (kept from the legacy Python version).
 	cfg.CreateHooks = nil
@@ -267,12 +268,11 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	if s.trace != nil {
 		if rev := s.trace.Revision(); rev > 0 {
-			s.Header().Set(revisionHeader, strconv.FormatInt(rev, 10))
-			s.Header().Set(licetumRevisionHeader, licetumRevision(rev))
+			s.Header().Set(licetumRevisionHeader, licetumRevision(rev, s.trace.WriteEpoch()))
 		} else if code == http.StatusOK {
 			// An answer carries the revision it was read at; a request that read none (a probe, the metadata) carries none.
 			if rev := s.trace.ReadRevision(); rev > 0 {
-				s.Header().Set(licetumRevisionHeader, licetumRevision(rev))
+				s.Header().Set(licetumRevisionHeader, licetumRevision(rev, s.trace.ReadEpoch()))
 			}
 		}
 		if s.trace.SyncPending() {
@@ -322,11 +322,8 @@ const requestIDHeader = "X-Request-ID"
 // requestIDMax is the longest X-Request-ID that is returned as it was received.
 const requestIDMax = 128
 
-// revisionHeader carries the revision of a write: pass it back as context.licetum.min_revision to get answers that reflect the write.
-const revisionHeader = "X-Authz-Revision"
-
 // licetumRevisionHeader carries the revision of the policy: the one an answer was read at, or the one a write made. Its
-// value is "1.<revision>": the epoch 1 (there are no epochs before P3) and the revision of the rules.
+// value is "<epoch>.<revision>".
 const licetumRevisionHeader = "Licetum-Revision"
 
 // licetumErrorCodeHeader carries the catalog key of an error of an AuthZEN operation (see authzenError).
@@ -337,8 +334,12 @@ const licetumErrorCodeHeader = "Licetum-Error-Code"
 const syncHeader = "X-Authz-Sync"
 
 // licetumRevision is the value of Licetum-Revision for a revision of the rules.
-func licetumRevision(rev int64) string {
-	return "1." + strconv.FormatInt(rev, 10)
+func licetumRevision(rev int64, epochs ...int32) string {
+	epoch := int32(1)
+	if len(epochs) > 0 {
+		epoch = epochs[0]
+	}
+	return strconv.FormatInt(int64(epoch), 10) + "." + strconv.FormatInt(rev, 10)
 }
 
 // requestID is the identifier of a request: the caller's X-Request-ID, returned exactly as it was received when it is safe

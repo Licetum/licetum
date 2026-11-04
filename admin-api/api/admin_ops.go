@@ -26,11 +26,12 @@ var adminOpsTags = []*huma.Tag{
 
 // ChangesQuery is the filter of GET /changes.
 type ChangesQuery struct {
-	After     int64     `query:"after" required:"false" minimum:"0" doc:"Read the records after this position: the id of the last record of the previous read"`
-	ServiceID uuid.UUID `query:"service_id" required:"false" format:"uuid" doc:"Only the records of this service"`
-	Entity    string    `query:"entity" required:"false" doc:"Only the records of this kind of entity: service, type_resource, synchronizer, group, group_member, role, role_permission, assignment_rule or log_settings"`
-	Limit     int       `query:"limit" required:"false" minimum:"1" maximum:"500" default:"100" doc:"At most this many records"`
-	Wait      int       `query:"wait" required:"false" minimum:"0" maximum:"30" doc:"Seconds to wait for the first record after the position, when there is none yet: a client follows the log with it (a long poll)"`
+	AfterRevision int64     `query:"after_revision" required:"false" minimum:"0" doc:"The revision of the last record read"`
+	AfterSeq      int       `query:"after_seq" required:"false" minimum:"0" doc:"The sequence within the last revision read"`
+	ServiceID     uuid.UUID `query:"service_id" required:"false" format:"uuid" doc:"Only the records of this service"`
+	Entity        string    `query:"entity" required:"false" doc:"Only the records of this kind of entity: service, type_resource, synchronizer, group, group_member, role, role_permission, assignment_rule or log_settings"`
+	Limit         int       `query:"limit" required:"false" minimum:"1" maximum:"500" default:"100" doc:"At most this many records"`
+	Wait          int       `query:"wait" required:"false" minimum:"0" maximum:"30" doc:"Seconds to wait for the first record after the position, when there is none yet: a client follows the log with it (a long poll)"`
 }
 
 // registerOperations registers the operations of the change log, the log settings and the simulation.
@@ -40,10 +41,10 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/changes",
 		Summary:     "List the change log",
-		Description: "The records of the change log after the given position, oldest first. Every write of the admin API leaves one record, in the same transaction as the write. Pass the id of the last record as after to read the next ones.",
+		Description: "Records ordered by revision and sequence, oldest first. Pass the revision and seq of the last record as after_revision and after_seq to read the next ones.",
 		Tags:        []string{"Change log"},
 	}, requireWholeType(model.PlatformService, model.ActionRead)), func(ctx context.Context, in *ChangesQuery) (*server.Out[[]model.ChangeRecord], error) {
-		f := service.ChangeFilter{After: in.After, Entity: in.Entity, Limit: in.Limit}
+		f := service.ChangeFilter{AfterRevision: in.AfterRevision, AfterSeq: in.AfterSeq, Entity: in.Entity, Limit: in.Limit}
 		if in.ServiceID != uuid.Nil {
 			id := in.ServiceID
 			f.Service = &id
@@ -70,7 +71,7 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "put_log_settings",
 		Method:      http.MethodPut,
 		Path:        "/settings/logs",
@@ -78,7 +79,7 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 		Description: "Replaces the structure of the process logs. The settings are checked the way the logger applies them, recorded in the change log, and applied to every replica within a few seconds, without a restart. The subject is written as a keyed hash by default; the salt is never returned.",
 		Tags:        []string{"Log settings"},
 		Errors:      []int{http.StatusUnprocessableEntity},
-	}, requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.LogSettings }) (*server.Out[model.LogSettings], error) {
+	}, []string{"settings"}, "none"), requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.LogSettings }) (*server.Out[model.LogSettings], error) {
 		out, err := h.app.PutLogSettings(ctx, in.Body)
 		if err != nil {
 			return nil, err
@@ -93,6 +94,7 @@ func (h *adminHandlers) registerOperations(api huma.API) {
 // roles of P4: the right to read the memberships).
 func (h *adminHandlers) registerSimulation(api huma.API) {
 	server.RegisterSimulation(api, h.app.App, h.app.Cfg, func(op huma.Operation) huma.Operation {
+		op = withOutbox(op, nil, "none")
 		if op.OperationID == "simulate_search_subject" {
 			return withPolicy(op, requireWholeType(model.PlatformGroupMember, model.ActionRead))
 		}

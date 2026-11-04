@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -96,7 +95,7 @@ type Background struct {
 //
 // The service no longer carries an OAuth2 client of its own: administrators sign in at the identity provider of
 // ADMIN_AUTH__*, with the web interface as the client. The OAuth half of the old PLATFORM__* settings (the URLs of the
-// provider, the issuer, the client id and secret) is gone; see DeprecatedCatalog.
+// provider, the issuer, the client id and secret) is gone; see the removed-settings table in the deployment guide.
 type Platform struct {
 	Name             string
 	URL              string
@@ -232,7 +231,14 @@ type Shutdown struct {
 	Timeout time.Duration
 }
 
+// Log contains deployment-only secrets, never projected in the settings stream.
+type Log struct{ SubjectSalt string }
+
+type Outbox struct{ Retention time.Duration }
+
 type Config struct {
+	Outbox     Outbox
+	Log        Log
 	DB         Database
 	Auth       Auth
 	Platform   Platform
@@ -255,6 +261,8 @@ type Config struct {
 func Load() (*Config, error) {
 	e := &envReader{}
 	cfg := &Config{
+		Outbox: Outbox{Retention: e.duration("OUTBOX__RETENTION", time.Hour)},
+		Log:    Log{SubjectSalt: e.str("LOG__SUBJECT_SALT", "")},
 		DB: Database{
 			URI:                e.str("DB__URI", ""),
 			PoolSize:           e.int("DB__POOL_SIZE", 10),
@@ -382,97 +390,6 @@ func (c *Config) RequireDB() error {
 		return errors.New("environment variable DB__URI is not set")
 	}
 	return nil
-}
-
-// Deprecated is a setting that no longer has an effect and the one sentence an operator reads about it.
-type Deprecated struct {
-	Name   string
-	Reason string
-}
-
-// deprecatedSettings is the table of the settings that were removed but may still be set in a deployment. A pull request
-// that removes a setting stops Load() reading it and appends one row here in the same commit; the row's Reason says in one
-// sentence what replaced the setting. P3 deletes this mechanism (ADR 9.7).
-var deprecatedSettings = []Deprecated{
-	{"SYNC__LOCK_TTL", "the Redis lock of the synchronization is gone; a synchronization is one job under a lease, timed by SYNC__LEASE, and this setting has not been read since the lock was removed"},
-	{"SYNC__LOCK_WAIT", "the Redis lock of the synchronization is gone; a synchronization is one job under a lease, timed by SYNC__LEASE, and this setting has not been read since the lock was removed"},
-	{"HTTP__PUBLIC_URL", "renamed PDP__PUBLIC_URL, which the pdp command requires; HTTP__PUBLIC_URL is not read"},
-	// The OAuth client of the self-service: administrators sign in through ADMIN_AUTH__* now.
-	{"PLATFORM__AUTHORIZATION_URL", platformOAuthGone},
-	{"PLATFORM__TOKEN_URL", platformOAuthGone},
-	{"PLATFORM__JWKS_URL", platformOAuthGone},
-	{"PLATFORM__ISSUER", platformOAuthGone},
-	{"PLATFORM__CLIENT_ID", platformOAuthGone},
-	{"PLATFORM__CLIENT_SECRET", platformOAuthGone},
-	// The registry of known subjects gave way to the subject directory of each service.
-	{"SUBJECTS__ENABLED", subjectRegistryGone},
-	{"SUBJECTS__RETENTION_DAYS", subjectRegistryGone},
-	// The PDP takes no token of a person (PEP clients authenticate), so the sign-in state, the token caches, the calls on behalf
-	// of a person and their audit, and the CORS of the browser are gone: the browser reaches the admin API through its BFF.
-	{"AUTH__STATE_SECRET", signInStateGone},
-	{"AUTH__STATE_TTL", signInStateGone},
-	{"AUTH__TOKEN_L1_SIZE", personCacheGone},
-	{"AUTH__INVALID_TOKEN_TTL", personCacheGone},
-	{"DELEGATION__AUDIT_RETENTION_DAYS", delegationGone},
-	{"DELEGATION__AUDIT_MODE", delegationGone},
-	{"DELEGATION__AUDIT_BUFFER", delegationGone},
-	{"CORS__ALLOW_ORIGINS", corsGone},
-	{"CORS__ALLOW_CREDENTIALS", corsGone},
-	{"CORS__ALLOW_METHODS", corsGone},
-	{"CORS__ALLOW_HEADERS", corsGone},
-	// The synchronization runs on DBOS only.
-	{"SYNC__ENGINE", "DBOS is the only synchronization engine; a value of postgres no longer selects the sync_job table"},
-	{"WORKER__REGION", "a source with regions may be asked by any executor until regions are enforced again; the worker no longer filters the jobs by region"},
-	// The lists of the sources are not kept between synchronizations.
-	{"SYNC__FETCH_TTL", "the list a source returned is no longer kept between synchronizations, so a synchronizer's cache_ttl is ignored too; every synchronization asks the source, spaced by the backoff of sync_state and by SYNC__FRESH_MIN_INTERVAL for a fresh one"},
-	// The PDP reads the policy from one PostgreSQL.
-	{"DB__READ_URI", readReplicaGone},
-	{"DB__MAX_REPLICA_LAG", readReplicaGone},
-	{"DB__LAG_ACTION", readReplicaGone},
-	{"DB__LAG_INTERVAL", readReplicaGone},
-	// There is no Redis: the answers are kept in the process.
-	{"REDIS__URI", redisGone},
-	{"REDIS__HOT_TIMEOUT", redisGone},
-}
-
-// The reasons shared by the rows of one feature.
-const (
-	platformOAuthGone   = "the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client"
-	subjectRegistryGone = "the registry of known subjects is gone; each service has a subject directory with its own retention (PUT /service/{id}/subjects/settings)"
-	signInStateGone     = "the PDP keeps no sign-in state: per-service OAuth was removed and administrators sign in through ADMIN_AUTH__*"
-	personCacheGone     = "the PDP no longer verifies the token of a person against a service, so it keeps no cache of them; PEP clients authenticate with API keys or the tokens of a registered pep_issuer (AUTH__JWKS_TTL and AUTH__JWKS_MIN_REFRESH still apply to their key sets)"
-	delegationGone      = "calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request"
-	corsGone            = "the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server"
-	redisGone           = "there is no Redis any more: the process keeps its answers in memory and no setting names a Redis server"
-	readReplicaGone     = "the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone"
-)
-
-// DeprecatedCatalog is the table of the removed settings with the reason of each, whether or not they are set. The caller
-// gets a copy.
-func DeprecatedCatalog() []Deprecated {
-	return slices.Clone(deprecatedSettings)
-}
-
-// DeprecatedReason is the reason of the removed setting of that (upper-case) name; false when no such row exists.
-func DeprecatedReason(name string) (string, bool) {
-	for _, d := range deprecatedSettings {
-		if d.Name == name {
-			return d.Reason, true
-		}
-	}
-	return "", false
-}
-
-// DeprecatedSettings names the rows of the table of removed settings whose variable is set (names are case-insensitive, an
-// empty value counts as set). The processes log a warning for each, with its reason, so that a deployment notices it.
-func DeprecatedSettings() []string {
-	var out []string
-	for _, d := range deprecatedSettings {
-		if _, ok := lookup(d.Name); ok {
-			out = append(out, d.Name)
-		}
-	}
-	return out
 }
 
 // RequireAdminAuth checks that administrators can authenticate: the admin API refuses to start without ADMIN_AUTH__*, since

@@ -1,22 +1,23 @@
+# P3: roles and all their items belong to org. Cross-service inheritance is covered by the DAG fixtures.
 # DEC12, roles: a rule that grants a role is expanded into one permission per item of the role, each with the item's
 # target and levels and with the effect and the exception of the rule (and its subject, groups and conditions). So a
 # denial that grants a role takes every item away, an exception that grants a role lifts the denials strictly above its
 # items (and not one on the anchor of an item: a tie), the items of every target shape (a resource, the whole type, a
 # resource found from a claim, the resources whose attributes match) expand alike, an item on a type without a
-# synchronizer is a capability, and an item in another service is decided there. DEC13: the explanations name the rule
+# synchronizer is a capability, and an item in the same service is decided there. DEC13: the explanations name the rule
 # that grants the role, for every one of its items.
 #
-# division <- rrs <- branch (service org), item <- branch (service app) and the capability feature (org, no
+# division <- rrs <- branch (service org), item <- branch (service org) and the capability feature (org, no
 # synchronizer); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3; R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4. B3 and B4 are in the region
 # south. Each subject holds the rules of one scenario.
 contracts: [DEC12, DEC13]
 description: A role assignment expands into the items of the role with the effect and exception of the rule.
-services: [org, app]
+services: [org]
 types:
   - {name: division, service: org, sync: true}
   - {name: rrs, service: org, sync: true, parents: [{type: division}]}
   - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
-  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+  - {name: item, service: org, sync: true, parents: [{type: branch}]}
   - {name: feature, service: org, sync: false}
 resources:
   - {type: division, id: D1}
@@ -57,7 +58,7 @@ roles:
   - name: regional
     items:
       - {type: branch, where: [{attr: region, op: eq, value: south}], access: [read]}
-      - {type: branch, from_claim: {claim: home, lookup_type: branch, match_by: id}, access: [write]}
+      - {type: branch, from_property: {property: home, lookup_type: branch, match_by: id}, access: [write]}
   - {name: viewer, items: [{type: division, resource: D2, access: [read]}]}
   - {name: auditor, items: [{type: rrs, resource: R2, access: [audit]}]}
   - {name: part-a, items: [{type: branch, resource: B1, access: [read]}]}
@@ -97,17 +98,17 @@ cases:
   # from admin-api/tests/integration/api/roles_test.go:TestRolePermissionsReachSubjectsThroughAssignments
   - name: a person in sales gets the item on B1 of the role, and nothing else of the business
     subject: seller
-    claims: {department: sales, phase: before}
+    properties: {department: sales, phase: before}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [grant-catalog], denials: []}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
       - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
       - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
   # from admin-api/tests/integration/api/roles_test.go:TestRolePermissionsReachSubjectsThroughAssignments
-  - name: a person in sales gets the whole-type item of the role in the other service
+  - name: a person in sales gets the whole-type item of the role in the same service
     subject: seller
-    service: app
-    claims: {department: sales, phase: before}
+    service: org
+    properties: {department: sales, phase: before}
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [grant-catalog], denials: []}
       - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [grant-catalog], denials: []}
@@ -117,30 +118,30 @@ cases:
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
   # from admin-api/tests/integration/api/roles_test.go:TestRolePermissionsReachSubjectsThroughAssignments
-  - name: without the claim the role reaches nobody in the other service either
+  - name: without the claim the role reaches nobody in the same service either
     subject: nobody
-    service: app
+    service: org
     questions:
       - {type: item, resource: I1, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
       - {type: item, resource: I4, action: read, allowed: false, decision: no_access, granted_by: [], denials: []}
   # from admin-api/tests/integration/api/roles_test.go:TestRolePermissionsReachSubjectsThroughAssignments
   - name: a denial that grants the same role takes all of its items away
     subject: seller
-    claims: {department: sales, phase: after}
+    properties: {department: sales, phase: after}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [grant-catalog], denials: [{rule: deny-catalog}]}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
   # from admin-api/tests/integration/api/roles_test.go:TestRolePermissionsReachSubjectsThroughAssignments
-  - name: a denial that grants the same role takes its items away in the other service too
+  - name: a denial that grants the same role takes its items away in the same service too
     subject: seller
-    service: app
-    claims: {department: sales, phase: after}
+    service: org
+    properties: {department: sales, phase: after}
     questions:
       # I1 is covered by both items (below B1, and of the type item) of both rules.
       - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [grant-catalog], denials: [{rule: deny-catalog}]}
       - {type: item, resource: I4, action: read, allowed: false, decision: denied, granted_by: [grant-catalog], denials: [{rule: deny-catalog}]}
   # The policy of admin-api/tests/integration/api/roles_test.go:TestRoleValidationAndBlocking (the test asserts no
-  # decision): a capability item, a point item and a whole-type item in another service.
+  # decision): a capability item, a point item and a whole-type item in the same service.
   - name: the items of a role reach a capability and a resource of the service
     subject: editor
     questions:
@@ -149,9 +150,9 @@ cases:
       - {type: branch, resource: B3, action: write, allowed: true, decision: allowed, granted_by: [grant-editors]}
       - {type: branch, resource: B3, action: read, allowed: false, decision: no_access, granted_by: []}
       - {type: branch, resource: B2, action: write, allowed: false, decision: no_access}
-  - name: the whole-type item of a role reaches every resource of the type in the other service
+  - name: the whole-type item of a role reaches every resource of the type in the same service
     subject: editor
-    service: app
+    service: org
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [grant-editors]}
       - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [grant-editors]}
@@ -165,9 +166,9 @@ cases:
       - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, denials: [{rule: rd-deny-lock}]}
       - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, granted_by: [rd-allow-D1], denials: []}
       - {type: division, resource: D1, action: read, allowed: true, decision: allowed, denials: []}
-  - name: a denial that grants a role reaches below its items into the other service
+  - name: a denial that grants a role reaches below its items into the same service
     subject: role-deny
-    service: app
+    service: org
     questions:
       - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [rd-allow-D1], denials: [{rule: rd-deny-lock}]}
   - name: an exception that grants a role lifts the denial above its item, for what the item covers only
@@ -184,7 +185,7 @@ cases:
       - {type: rrs, resource: R2, action: read, allowed: true, decision: allowed, granted_by: [rt-allow-D1], denials: []}
   - name: items found by attributes and by a claim expand like the others
     subject: regional
-    claims: {home: B1}
+    properties: {home: B1}
     questions:
       - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [grant-regional]}
@@ -193,17 +194,17 @@ cases:
       - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: branch, resource: B2, action: write, allowed: false, decision: no_access}
       - {type: branch, resource: B3, action: write, allowed: false, decision: no_access}
-  - name: items found by attributes and by a claim reach below their anchors into the other service
+  - name: items found by attributes and by a claim reach below their anchors into the same service
     subject: regional
-    service: app
-    claims: {home: B1}
+    service: org
+    properties: {home: B1}
     questions:
       - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: item, resource: I1, action: write, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: item, resource: I1, action: read, allowed: false, decision: no_access}
   - name: the claim decides where the item found by a claim lies
     subject: regional
-    claims: {home: B2}
+    properties: {home: B2}
     questions:
       - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [grant-regional]}
       - {type: branch, resource: B1, action: write, allowed: false, decision: no_access}
@@ -232,9 +233,9 @@ cases:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [grant-part-a]}
       - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, granted_by: [grant-part-b]}
       - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
-  - name: the levels of two roles flow below their anchor into the other service
+  - name: the levels of two roles flow below their anchor into the same service
     subject: two-roles
-    service: app
+    service: org
     questions:
       - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [grant-part-a]}
       - {type: item, resource: I1, action: write, allowed: true, decision: allowed, granted_by: [grant-part-b]}

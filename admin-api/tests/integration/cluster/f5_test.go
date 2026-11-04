@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
@@ -100,7 +102,7 @@ func TestF5_1_ReadyzFollowsPostgreSQLAndTheSchema(t *testing.T) {
 
 	// The schema is older than the binary: the last migration is not applied.
 	latest := db.LatestMigration()
-	if _, err := c.Pool.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id = $1`, latest); err != nil {
+	if _, err := support.RawExec(ctx, c.Pool, `DELETE FROM goose_db_version_v2 WHERE version_id = $1`, latest); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, 5*time.Second, "/readyz is 503 with an old schema", func() bool {
@@ -115,13 +117,13 @@ func TestF5_1_ReadyzFollowsPostgreSQLAndTheSchema(t *testing.T) {
 
 	// The schema is the binary's again, and then newer than it: a pod of the previous release stays in service while the
 	// new schema is applied (a rolling update migrates first).
-	if _, err := c.Pool.Exec(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)`, latest); err != nil {
+	if _, err := support.RawExec(ctx, c.Pool, `INSERT INTO goose_db_version_v2 (version_id, is_applied) VALUES ($1, true)`, latest); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, 5*time.Second, "/readyz is 200 with the schema of the binary", func() bool {
 		return readyz(c, r).Status == http.StatusOK
 	})
-	if _, err := c.Pool.Exec(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)`, latest+1); err != nil {
+	if _, err := support.RawExec(ctx, c.Pool, `INSERT INTO goose_db_version_v2 (version_id, is_applied) VALUES ($1, true)`, latest+1); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(1200 * time.Millisecond) // the result is reused for a second

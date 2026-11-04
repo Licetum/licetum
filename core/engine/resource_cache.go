@@ -519,12 +519,12 @@ const rebuildClosureSQL = `
 		JOIN resource_cache par ON par.id = e.parent_id AND par.active AND par.type_resource_id <> ALL ($2::uuid[])
 		JOIN type_resource pt ON pt.id = par.type_resource_id AND pt.deleted_at IS NULL
 		JOIN type_resource_parent trp
-		    ON trp.type_resource_id = cur.type_resource_id AND trp.parent_id = e.parent_type_id
+		    ON trp.type_resource_id = cur.type_resource_id AND trp.parent_id = e.parent_type_id AND trp.eff_live
 		CROSS JOIN LATERAL (
 		    SELECT CASE
-		        WHEN up.mask IS NULL THEN trp.inherit
-		        WHEN trp.inherit IS NULL THEN up.mask
-		        ELSE ARRAY(SELECT m FROM unnest(up.mask) m WHERE m = ANY (trp.inherit) ORDER BY m)
+		        WHEN up.mask IS NULL THEN trp.eff_inherit
+		        WHEN trp.eff_inherit IS NULL THEN up.mask
+		        ELSE ARRAY(SELECT m FROM unnest(up.mask) m WHERE m = ANY (trp.eff_inherit) ORDER BY m)
 		    END AS m
 		) nm
 		WHERE nm.m IS NULL OR cardinality(nm.m) > 0
@@ -551,7 +551,7 @@ const rebuildClosureSQL = `
 // parameter of a query (x <> ALL), and a nil slice would be sent as NULL, which nothing is unequal to.
 func typesWithoutResources(ctx context.Context, tx db.Querier) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `SELECT t.id FROM type_resource t WHERE t.deleted_at IS NULL AND NOT `+
-		LiveSynchronizerExists("t.id")+` ORDER BY t.id`)
+		model.TypeModeSQL("t")+` ORDER BY t.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -707,7 +707,7 @@ func ancestorWalkSQL(match string) string {
 			UNION
 			SELECT up.idx, up.target_type, up.allowed, par.id, par.type_resource_id, par.external_id, par.name
 			FROM up
-			JOIN type_resource_parent trp ON trp.type_resource_id = up.type_id AND trp.parent_id = ANY (up.allowed)
+			JOIN type_resource_parent trp ON trp.type_resource_id = up.type_id AND trp.parent_id = ANY (up.allowed) AND trp.eff_live
 			JOIN resource_edge e ON e.child_id = up.id AND e.parent_type_id = trp.parent_id AND e.parent_id IS NOT NULL
 			JOIN resource_cache par ON par.id = e.parent_id AND par.active
 			WHERE up.type_id <> up.target_type
@@ -1127,6 +1127,18 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 		return nil, err
 	}
 	if sync != nil {
+		// A point fetch cannot establish a complete generation. Wait for the first
+		// full snapshot (including parents) before exposing individual resources.
+		if !g.IsSync(typeResourceID) {
+			ids := append([]uuid.UUID{typeResourceID}, Keys(g.AncestorTypes(typeResourceID))...)
+			g, _, err = a.EnsureSyncedGraph(ctx, g, ids, false)
+			if err != nil {
+				return nil, err
+			}
+			if !g.IsSync(typeResourceID) {
+				return nil, nil
+			}
+		}
 		// The backoff only spares a failing source: when the state cannot be read the source is asked, as it was before the
 		// state was consulted, instead of failing a read that the cache could answer.
 		states, err := loadSyncStates(ctx, a.DB, []uuid.UUID{typeResourceID})
@@ -1142,6 +1154,9 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 			// The inline write takes the lock of the component of the type, like a synchronization does, and has the same
 			// timeouts.
 			err := a.syncTx(ctx, ComponentKeys(g, []uuid.UUID{typeResourceID}), func(tx pgx.Tx) error {
+				if err := fenceSynchronizers(ctx, tx, []model.Synchronizer{*sync}); err != nil {
+					return err
+				}
 				touched := map[uuid.UUID]struct{}{}
 				if err := applyType(ctx, tx, typeResourceID, normalized, false, true, touched, &changed); err != nil {
 					return err
@@ -1150,7 +1165,7 @@ func (a *App) resolve(ctx context.Context, typeResourceID uuid.UUID, externalID 
 					return err
 				}
 				if changed {
-					return bumpDataRevisions(ctx, tx, g, []uuid.UUID{typeResourceID})
+					return publishData(ctx, tx, g, []uuid.UUID{typeResourceID})
 				}
 				return nil
 			})
@@ -1181,11 +1196,13 @@ func (a *App) IsCovered(ctx context.Context, typeResourceID uuid.UUID, resourceI
 	if err != nil {
 		return false, err
 	}
+	ids := append([]uuid.UUID{typeResourceID}, Keys(g.AncestorTypes(typeResourceID))...)
+	g, _, err = a.EnsureSyncedGraph(ctx, g, ids, false)
+	if err != nil {
+		return false, err
+	}
 	if !g.IsSync(typeResourceID) {
 		return false, nil
-	}
-	if _, err := a.EnsureSynced(ctx, g, []uuid.UUID{typeResourceID}, false); err != nil {
-		return false, err
 	}
 	return Exists(ctx, a.DB, `
 		SELECT 1
@@ -1211,12 +1228,12 @@ func (a *App) ListResources(ctx context.Context, typeResourceID uuid.UUID, inclu
 	for id := range g.AncestorTypes(typeResourceID) {
 		typeIDs = append(typeIDs, id)
 	}
-	synced, err := a.EnsureSynced(ctx, g, typeIDs, false)
+	g, synced, err := a.EnsureSyncedGraph(ctx, g, typeIDs, false)
 	if err != nil {
 		return nil, err
 	}
 	out := []model.Resource{}
-	if !synced[typeResourceID] {
+	if !synced[typeResourceID] || !g.IsSync(typeResourceID) {
 		return out, nil
 	}
 	rows, err := a.DB.Query(ctx, `

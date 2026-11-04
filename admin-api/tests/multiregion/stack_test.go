@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,7 +164,7 @@ func mustAdmin(t testing.TB, base, method, path string, body any) (map[string]an
 	}
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
-	rev, _ := strconv.ParseInt(header.Get("X-Authz-Revision"), 10, 64)
+	rev, _ := strconv.ParseInt(strings.SplitN(header.Get("Licetum-Revision"), ".", 2)[len(strings.SplitN(header.Get("Licetum-Revision"), ".", 2))-1], 10, 64)
 	return out, rev
 }
 

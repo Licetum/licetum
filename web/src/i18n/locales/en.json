@@ -75,7 +75,7 @@
       "service": "Services and settings",
       "type_resource": "Types and sources"
     },
-    "conditionNote": "Membership by a condition (for example a claim of the token) follows the identity provider: change the claim there.",
+    "conditionNote": "Membership by a condition (for example a property of the token) follows the identity provider: change the property there.",
     "grant": "Give platform management",
     "grantConfirm": "Give",
     "granted": "Platform access given",
@@ -138,7 +138,7 @@
     "addQuestion": "Add a question",
     "allTypes": "All types",
     "attrs": "Attributes",
-    "attrsHint": "The properties of the person: the claims their token would carry. The rules look at them.",
+    "attrsHint": "The properties of the person: the properties their token would carry. The rules look at them.",
     "context": "Request context",
     "contextHint": "What the request itself carries (address, channel). The calling service sets it; never copy it from user input.",
     "denied": "What took it away",
@@ -248,9 +248,9 @@
     "remove": "Remove",
     "source": "Source",
     "sources": {
-      "claim": "Token",
       "context": "Request",
-      "now": "Time"
+      "now": "Time",
+      "subject": "Subject properties"
     },
     "value": "Value",
     "valueList": "a, b, c"
@@ -300,7 +300,7 @@
       "conflicts_many": "{{count}} denials or exceptions meet this access",
       "conflicts_one": "1 denial or exception meets this access",
       "conflicts_other": "{{count}} denials or exceptions meet this access",
-      "dynamic": "The resource is found from the claim of whoever asks, so how many there are depends on the person.",
+      "dynamic": "The resource is found from the property of whoever asks, so how many there are depends on the person.",
       "failed": "The effect could not be worked out. You can still give the access.",
       "noPeople_one": "None of the {{count}} person of the directory matches",
       "noPeople_other": "None of the {{count}} people of the directory match",
@@ -318,7 +318,7 @@
       "title": "What this will do"
     },
     "problem": {
-      "claim": "Name the claim of the person’s token.",
+      "property": "Name the property of the person’s token.",
       "condition": "Add at least one condition and fill it in.",
       "dates": "The start date is after the end date.",
       "everyone": "Confirm that everyone gets this access.",
@@ -339,7 +339,7 @@
       "forever": "No end date.",
       "from": "From {{date}}.",
       "placeAll": "all resources of the type “{{type}}” of the service “{{service}}”",
-      "placeClaim": "the resource of the type “{{type}}” found by the claim “{{claim}}”",
+      "placeProperty": "the resource of the type “{{type}}” found by the property “{{property}}”",
       "placeResources_few": "{{count}} resources ({{names}}…) of the type “{{type}}”",
       "placeResources_many": "{{count}} resources ({{names}}…) of the type “{{type}}”",
       "placeResources_one": "{{names}} of the type “{{type}}”",
@@ -378,9 +378,9 @@
       "attrPlaceholder": "kind",
       "byAttr": "By attribute",
       "byAttrHint": "Resources whose attributes (as the source reports them) match all the conditions.",
-      "byClaim": "By the person’s attribute",
-      "byClaimHint": "The resource is found by the value of the claim: each person gets access to the resource their own value points to.",
-      "claim": "Claim of the token (for example department)",
+      "byProperty": "By the person’s attribute",
+      "byPropertyHint": "The resource is found by the value of the property: each person gets access to the resource their own value points to.",
+      "property": "Property of the token (for example department)",
       "label": "Where",
       "manyRules_few": "One access per resource will be created: {{count}}.",
       "manyRules_many": "One access per resource will be created: {{count}}.",
@@ -407,13 +407,16 @@
       "noGroups": "No groups yet. Create one in “People and groups”.",
       "person": "Person",
       "personHint": "How the person is named in their token: the username (preferred_username), or sub.",
-      "personPlaceholder": "For example alice"
+      "personPlaceholder": "For example alice",
+      "subjectType": "Subject type",
+      "anySubjectType": "Any subject type",
+      "subjectTypeHint": "Leave empty to match any type. Otherwise match subject.type sent by the application. The type group is reserved."
     }
   },
   "grantDetail": {
     "allHistory": "Whole history →",
     "check": "Check access…",
-    "deadNote": "The access points at a resource of a type that has no source, so it can’t take effect. Connect a source or delete the access.",
+    "deadNote": "This target needs a source and a successfully applied first synchronization for every type it reads or traverses.",
     "description": "Description",
     "disabledNote": "This access is disabled: it applies to nobody until you enable it.",
     "duplicate": "Duplicate",
@@ -427,7 +430,6 @@
       "title": "This access no longer exists"
     },
     "history": "History of this access",
-    "kind": "Label",
     "noHistory": "No records yet.",
     "onMissing": {
       "apply": "A missing attribute: the denial applies",
@@ -442,7 +444,8 @@
     "termChanged": "Term changed",
     "undoNote": "The term is saved at once; you can undo for 10 seconds.",
     "untilDate": "Until {{date}}",
-    "untilPick": "Until a date"
+    "untilPick": "Until a date",
+    "subjectType": "Subject type"
   },
   "group": {
     "add": "Add",
@@ -459,7 +462,7 @@
       "action": "Delete the group",
       "blocked": "Can’t delete the group: it is in use",
       "blockedBy": "It is used by: {{what}}. Remove those first.",
-      "body": "It must not be used by any access or other group.",
+      "body": "Its membership entries will be deleted too. It must not be used by any access rule or other group.",
       "title": "Delete the group “{{name}}”?"
     },
     "empty": {
@@ -503,7 +506,7 @@
   "history": {
     "after": "After",
     "before": "Before",
-    "cannotRevert": "This change can’t be reverted (a later change may depend on it).",
+    "cannotRevert": "This revision cannot be reverted (a later change may depend on it).",
     "copyLink": "Copy the link",
     "count": "{{shown}} of {{total}} records",
     "empty": {
@@ -520,7 +523,11 @@
       "role_permission": "role permission",
       "service": "service",
       "synchronizer": "source",
-      "type_resource": "resource type"
+      "type_resource": "resource type",
+      "pep_client": "PEP client",
+      "pep_credential": "PEP key",
+      "pep_issuer": "PEP issuer",
+      "pep_issuer_keys": "PEP issuer key cache"
     },
     "field": "Field",
     "filter": {
@@ -550,13 +557,13 @@
       "today": "Today",
       "week": "Last 7 days"
     },
-    "planNote": "The revert is a change of its own and appears in the history.",
+    "planNote": "The revert is one new revision and appears in the history.",
     "platformWide": "Whole platform",
-    "revert": "Revert this change",
-    "revertBody": "The entity goes back as it was before this change:",
+    "revert": "Revert this revision",
+    "revertBody": "All changes in this revision will be undone together:",
     "revertConfirm": "Revert",
     "revertFailed": "Couldn’t revert",
-    "revertTitle": "Revert the change?",
+    "revertTitle": "Revert the whole revision?",
     "reverted": "Reverted",
     "rollbackBody_few": "The {{count}} changes after this record will be undone, newest first, in one transaction:",
     "rollbackBody_many": "The {{count}} changes after this record will be undone, newest first, in one transaction:",
@@ -810,7 +817,7 @@
       "title": "No groups yet"
     },
     "findHint": "To look at someone who isn’t listed, open /people/<username>.",
-    "nameHelp": "Unique across the system. A group unites people by a sign — an access given to the group is received by all its members.",
+    "nameHelp": "Unique within the service. A group unites people by a sign — an access given to the group is received by all its members.",
     "nameLabel": "Group name",
     "namePlaceholder": "branch-managers",
     "noMatch": "Nothing found",
@@ -850,7 +857,7 @@
     "enabled": "Enabled",
     "field": {
       "clientId": "Client id",
-      "clientIdHelp": "The azp (or client_id) claim of the client’s tokens.",
+      "clientIdHelp": "The azp (or client_id) property of the client’s tokens.",
       "enabled": "The client is enabled",
       "issuer": "Issuer",
       "issuerHelp": "The iss of the client’s tokens: one of the registered issuers.",
@@ -924,7 +931,7 @@
       "contextHint": "An attribute of the request, not of the person: the PEP puts it into context.",
       "none": "The rules read no properties yet: a person is known by their name alone.",
       "title": "What the PEPs of this service have to send",
-      "usage": "{{rules}} in rules, {{targets}} in claim-based targets, {{memberships}} in group memberships",
+      "usage": "{{rules}} in rules, {{targets}} in property-based targets, {{memberships}} in group memberships",
       "warn": "A PEP has to send these properties in subject.properties and the attributes in context. Otherwise the answers differ from the real ones: a rule that reads a missing property does not apply, and a person is no longer in the group the property defines."
     }
   },
@@ -982,7 +989,7 @@
       "choose": "Choose a file",
       "dry": "Show what will change",
       "export": "Download the policy",
-      "hint": "The whole policy of the service as one file with names instead of ids: groups with their members, roles, level sets and accesses. It can be kept next to the code and applied to another environment.",
+      "hint": "Rules, service-owned groups and roles, and access groups as a licetum.policy/v2 document with names instead of ids. Keep it with the code and apply it to another environment. Documents in licetum.policy/v1 are not imported.",
       "import": "Apply a document",
       "noChanges": "Nothing to change: the service already matches the document.",
       "paste": "Or paste the document here",
@@ -1148,7 +1155,7 @@
       "title": "No roles yet"
     },
     "grant": "Give the role…",
-    "nameHelp": "Unique across the system. A role is a named set of permissions: add permissions, then give the role to a group or a person.",
+    "nameHelp": "Unique within the service. A role is a named set of permissions: add permissions, then give the role to a group or a person.",
     "nameLabel": "Role name",
     "namePlaceholder": "Document editor",
     "new": "Create a role",
@@ -1182,7 +1189,7 @@
     "everyone": "Everyone",
     "exception": "Exception",
     "from": "from {{date}}",
-    "fromClaim": "resource by the claim “{{claim}}”",
+    "fromProperty": "resource by the property “{{property}}”",
     "guardGroup": "for group members only",
     "kind": {
       "condition": "by condition",
@@ -1196,7 +1203,7 @@
     "status": {
       "active": "Active",
       "dead": "Has no effect",
-      "deadHint": "The rule points at a resource of a type that has no source, so it can’t apply.",
+      "deadHint": "This target needs a source and a successfully applied first synchronization for every type it reads or traverses.",
       "disabled": "Disabled",
       "expired": "Expired",
       "expiring_few": "Expires in {{count}} days",
@@ -1204,12 +1211,6 @@
       "expiring_one": "Expires in {{count}} day",
       "expiring_other": "Expires in {{count}} days",
       "scheduled": "Not started yet"
-    },
-    "subjectKind": {
-      "agent": "agent",
-      "group": "group",
-      "service": "service",
-      "user": "person"
     },
     "title": "{{who}}: {{what}} — {{where}}",
     "unknownGroup": "(unknown group)",
@@ -1255,7 +1256,8 @@
       "policy": "Policy",
       "sources": "Sources",
       "types": "Resource types"
-    }
+    },
+    "slugImmutable": "The slug cannot be changed or reused, even after deletion."
   },
   "services": {
     "col": {
@@ -1445,17 +1447,17 @@
       "except": "Exception"
     },
     "dynamicHint": "Whether they reach this resource depends on the token of whoever asks.",
-    "dynamic_few": "{{count}} rules find their resource by a claim",
-    "dynamic_many": "{{count}} rules find their resource by a claim",
-    "dynamic_one": "1 rule finds its resource by a claim",
-    "dynamic_other": "{{count}} rules find their resource by a claim",
+    "dynamic_few": "{{count}} rules find their resource by a property",
+    "dynamic_many": "{{count}} rules find their resource by a property",
+    "dynamic_one": "1 rule finds its resource by a property",
+    "dynamic_other": "{{count}} rules find their resource by a property",
     "guarded": "with a guard",
     "limited": "Only the most recent were tried.",
     "more_few": "and {{count}} more",
     "more_many": "and {{count}} more",
     "more_one": "and {{count}} more",
     "more_other": "and {{count}} more",
-    "none": "No rule gives access to this. Nobody has it, except through a rule that finds its resource by a claim.",
+    "none": "No rule gives access to this. Nobody has it, except through a rule that finds its resource by a property.",
     "note": "This is the list of rules; a denial may be lifted by an exception. To know what one person gets, use the check.",
     "open": "Open",
     "registryEmpty": "The directories of the rules’ services are empty, so people are not listed; the rules are. The applications send their people to the subject directory of their service.",
@@ -1466,7 +1468,7 @@
     "via": {
       "ancestor": "a resource above",
       "attribute": "by attributes",
-      "claim": "found by a claim",
+      "property": "found by a property",
       "resource": "this resource",
       "type": "the whole type"
     }
@@ -1526,5 +1528,8 @@
     "url": {
       "help": "Optional. Shown in the interface; Licetum does not request it."
     }
+  },
+  "ownership": {
+    "service": "Service"
   }
 }

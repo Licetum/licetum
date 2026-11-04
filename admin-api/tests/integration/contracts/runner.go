@@ -36,7 +36,6 @@ import (
 
 	"github.com/licetum/licetum/admin-api/tests/integration/harness"
 	"github.com/licetum/licetum/core/config"
-	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
 	support "github.com/licetum/licetum/core/testsupport"
@@ -260,7 +259,7 @@ func (l *Loaded) changeToTheFixture() {
 					return err
 				}
 			}
-			_, err := db.BumpRevision(ctx, tx, db.ScopeRules)
+			_, err := support.AdvanceRevision(ctx, tx)
 			return err
 		})
 		if err != nil {
@@ -459,6 +458,14 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		return id
 	}
 
+	owner := func(name string) *uuid.UUID {
+		if name == "" {
+			name = f.Services[0]
+		}
+		id := l.services[name]
+		return &id
+	}
+
 	for _, g := range accessGroups {
 		typeID := l.types[g.Type]
 		id := create(model.BatchAccessGroup, g.Type+"/@"+g.Name, &typeID, model.AccessGroupInput{Name: g.Name, Levels: g.Levels})
@@ -466,7 +473,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 	}
 	groups := map[string]uuid.UUID{}
 	for _, g := range f.Groups {
-		groups[g.Name] = create(model.BatchGroup, g.Name, nil, model.GroupInput{Name: g.Name})
+		groups[g.Name] = create(model.BatchGroup, g.Name, nil, model.GroupInput{ServiceID: owner(g.Service), Name: g.Name})
 		p.groups = append(p.groups, groups[g.Name])
 	}
 	for _, g := range f.Groups {
@@ -475,7 +482,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 			in := model.GroupMemberInput{Predicate: m.Predicate, Enabled: ptr(!m.Disabled), ValidFrom: m.ValidFrom, ExpiresAt: m.ExpiresAt}
 			switch {
 			case m.Subject != "":
-				// A membership names people by their claims: the subject is the preferred_username of the token (see Ask).
+				// A membership names people by their properties: the subject is the preferred_username of the token (see Ask).
 				in.Predicate = []model.PredicateCondition{{Attr: "preferred_username", Op: model.OpEq, Value: model.PredicateValue{Str: m.Subject}}}
 			case m.Group != "":
 				in.MemberGroupID = ptr(groups[m.Group])
@@ -488,12 +495,12 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		}
 	}
 	for _, r := range f.Roles {
-		role := create(model.BatchRole, r.Name, nil, model.RoleInput{Name: r.Name})
+		role := create(model.BatchRole, r.Name, nil, model.RoleInput{ServiceID: owner(r.Service), Name: r.Name})
 		p.roles = append(p.roles, role)
 		for i := range r.Items {
 			item := &r.Items[i]
 			in := model.RolePermissionInput{Access: item.Access}
-			in.TypeResourceID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere = l.target(&item.Target)
+			in.TypeResourceID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere = l.target(&item.Target)
 			create(model.BatchRolePermission, fmt.Sprintf("%s#%d", r.Name, i), &role, in)
 		}
 	}
@@ -519,8 +526,9 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		switch {
 		case r.Subject != "":
 			in.Subject = ptr(r.Subject)
+			in.SubjectType = r.SubjectType
 		case r.SubjectGroup != "":
-			in.Subject = ptr(model.GroupSubject(groups[r.SubjectGroup]))
+			in.SubjectGroupID = ptr(groups[r.SubjectGroup])
 		case r.MemberOf != "":
 			in.MemberOfGroupID = ptr(groups[r.MemberOf])
 		default:
@@ -535,7 +543,7 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 		} else {
 			in.Access = r.Access
 			var typeID uuid.UUID
-			typeID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere = l.target(r.Target)
+			typeID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere = l.target(r.Target)
 			in.TypeResourceID = &typeID
 		}
 		id := create(model.BatchAssignmentRule, r.Name, nil, in)
@@ -548,19 +556,19 @@ func (l *Loaded) writePolicy(f *policyfix.Fixture, accessGroups []policyfix.Acce
 }
 
 // target is the target of a rule or a role item in the terms of the API.
-func (l *Loaded) target(t *policyfix.Target) (typeID uuid.UUID, resourceID *string, fromClaim *model.ResourceFromClaim, where []model.PredicateCondition) {
+func (l *Loaded) target(t *policyfix.Target) (typeID uuid.UUID, resourceID *string, fromProperty *model.ResourceFromProperty, where []model.PredicateCondition) {
 	typeID = l.types[t.Type]
 	if t.Resource != "" {
 		resourceID = ptr(t.Resource)
 	}
-	if fc := t.FromClaim; fc != nil {
+	if fc := t.FromProperty; fc != nil {
 		matchBy := fc.MatchBy
 		if matchBy == "" {
 			matchBy = model.MatchByName
 		}
-		fromClaim = &model.ResourceFromClaim{Claim: fc.Claim, LookupTypeResourceID: l.types[fc.LookupType], MatchBy: matchBy}
+		fromProperty = &model.ResourceFromProperty{Property: fc.Property, LookupTypeResourceID: l.types[fc.LookupType], MatchBy: matchBy}
 	}
-	return typeID, resourceID, fromClaim, t.Where
+	return typeID, resourceID, fromProperty, t.Where
 }
 
 // batchSize is the most operations POST /batch takes at once.
@@ -588,7 +596,7 @@ func (l *Loaded) runBatch(ops []model.BatchOperation, what []string) {
 	}
 }
 
-// Ask asks the questions of a case of the loaded fixture: as the case's subject, with the case's claims in the token
+// Ask asks the questions of a case of the loaded fixture: as the case's subject, with the case's properties in the token
 // (preferred_username is the subject), the case's request attributes in the context, at the case's time (the clock of the
 // replica), through POST /service/{slug}/access/v1/evaluations?consistency=higher with explain. The explanation of an
 // evaluation is its context.reason_admin. The answers are in the order of the questions. A request that fails, an evaluation
@@ -626,7 +634,7 @@ func (l *Loaded) Ask(c *policyfix.Case) []Answer {
 // of the case is copied into the request: the fixture's own is not changed.
 func evaluationsOf(service string, c *policyfix.Case, questions []policyfix.Question) authzenreq.Request {
 	return authzenreq.Evaluations(service, c.Subject, questionsOf(questions),
-		authzenreq.Fresh(), authzenreq.Explain(), authzenreq.WithContext(c.Context))
+		authzenreq.Fresh(), authzenreq.Explain(), authzenreq.WithSubjectType(c.SubjectType), authzenreq.WithContext(c.Context))
 }
 
 // questionsOf are the questions of a case as evaluations: a question without a resource is about the type as a whole.
@@ -641,10 +649,10 @@ func questionsOf(qs []policyfix.Question) []authzenreq.Question {
 	return out
 }
 
-// tokenOf is the token of a case: its claims, with the subject as preferred_username.
+// tokenOf is the token of a case: its properties, with the subject as preferred_username.
 func (l *Loaded) tokenOf(c *policyfix.Case) string {
 	claims := jwt.MapClaims{}
-	maps.Copy(claims, c.Claims)
+	maps.Copy(claims, c.Properties)
 	claims["preferred_username"] = c.Subject
 	return l.Cluster.Token(claims)
 }

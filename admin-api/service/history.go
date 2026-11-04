@@ -24,11 +24,19 @@ var revertibleEntity = map[string]bool{
 // PlanRevert returns the operations that put the entity of one change back as it was before the change. It applies
 // nothing: RunBatch does, once the caller may write what the operations write.
 func (a *App) PlanRevert(ctx context.Context, changeID int64) ([]model.BatchOperation, error) {
-	c, err := a.getChange(ctx, changeID)
+	changes, err := a.changesAt(ctx, changeID)
 	if err != nil {
 		return nil, err
 	}
-	return undoOperations(c)
+	var ops []model.BatchOperation
+	for _, c := range changes {
+		undo, err := undoOperations(c)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, undo...)
+	}
+	return ops, nil
 }
 
 // PlanRollback returns the operations that undo every change after the position, newest first, so that the policy goes
@@ -54,7 +62,7 @@ func (a *App) PlanRollback(ctx context.Context, position int64) ([]model.BatchOp
 // is deleted, a delete is created again with its id, and an update is written back with its previous body.
 func undoOperations(c model.ChangeRecord) ([]model.BatchOperation, error) {
 	if c.EntityID == nil || !revertibleEntity[c.Entity] {
-		return nil, apperr.Conflict(i18n.ChangeNotRevertible, c.ID, c.Entity)
+		return nil, apperr.Conflict(i18n.ChangeNotRevertible, c.Revision, c.Entity)
 	}
 	id := *c.EntityID
 	switch c.Action {

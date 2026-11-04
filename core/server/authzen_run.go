@@ -113,6 +113,15 @@ func resourceIDOf(r *model.AuthzenResource) *string {
 // so the result ends with it. A question that cannot be decided has err set and no decision; anything else that goes
 // wrong fails the whole request.
 func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consistency, items []model.AuthzenEvaluationRequest, defaults model.AuthzenEvaluationsRequest, explain bool, semantic string) ([]evaluation, error) {
+	if reader, ok := c.app.(interface {
+		CurrentReadContext(context.Context) (context.Context, error)
+	}); c.simulated && ok {
+		fresh, err := reader.CurrentReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = fresh
+	}
 	evals := make([]evaluation, len(items))
 	if semantic != model.AuthzenExecuteAll {
 		for i, item := range items {
@@ -136,10 +145,11 @@ func (c *authzenCaller) evaluate(ctx context.Context, consistency engine.Consist
 			continue
 		}
 		key := struct {
-			Subject string
-			Claims  engine.Claims
-			Attrs   model.RequestContext
-		}{Subject: e.sp.subject, Claims: e.sp.claims, Attrs: e.attrs}
+			Subject     string
+			SubjectType string
+			Properties  engine.Properties
+			Attrs       model.RequestContext
+		}{Subject: e.sp.subject, SubjectType: e.sp.typ, Properties: e.sp.properties, Attrs: e.attrs}
 		raw, err := json.Marshal(key)
 		if err != nil {
 			return nil, err
@@ -190,7 +200,7 @@ func (c *authzenCaller) decide(ctx context.Context, consistency engine.Consisten
 	for j, i := range idx {
 		group[j] = evals[i].req
 	}
-	env := c.app.NewEnv(first.sp.claims, first.attrs)
+	env := c.app.NewEnv(first.sp.properties, first.attrs).WithSubjectType(first.sp.typ)
 	results, err := c.app.CheckAccess(ctx, c.serviceID, first.sp.subject, env, group, explain, consistency)
 	if err != nil {
 		return err
@@ -392,7 +402,7 @@ func parseSearch(kind string, in searchInput) (*search, *apperr.Error) {
 
 // permissions reads what the speaker may do in the service.
 func (c *authzenCaller) permissions(ctx context.Context, sp speaker, attrs model.RequestContext, consistency engine.Consistency) (engine.PermissionResult, error) {
-	return c.app.GetPermission(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), consistency)
+	return c.app.GetPermission(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.properties, attrs).WithSubjectType(sp.typ), consistency)
 }
 
 // searchResources answers the resource search: one page of the resources of the asked type that the speaker may do the action
@@ -401,6 +411,15 @@ func (c *authzenCaller) permissions(ctx context.Context, sp speaker, attrs model
 // the scan budget stopped is shorter than its limit and still carries a next_token. There is no total: it would need the
 // whole result.
 func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenResourceSearchResponse, error) {
+	if reader, ok := c.app.(interface {
+		CurrentReadContext(context.Context) (context.Context, error)
+	}); c.simulated && ok {
+		fresh, err := reader.CurrentReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = fresh
+	}
 	s, aerr := parseSearch("resource", in)
 	if aerr != nil {
 		return nil, aerr
@@ -417,7 +436,7 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 	if s.started {
 		query.After = &s.after
 	}
-	page, err := c.app.SearchResources(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, s.attrs), query, consistency)
+	page, err := c.app.SearchResources(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.properties, s.attrs).WithSubjectType(sp.typ), query, consistency)
 	if err != nil {
 		return nil, err
 	}
@@ -433,6 +452,15 @@ func (c *authzenCaller) searchResources(ctx context.Context, consistency engine.
 }
 
 func (c *authzenCaller) searchActions(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenActionSearchResponse, error) {
+	if reader, ok := c.app.(interface {
+		CurrentReadContext(context.Context) (context.Context, error)
+	}); c.simulated && ok {
+		fresh, err := reader.CurrentReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = fresh
+	}
 	s, aerr := parseSearch("action", in)
 	if aerr != nil {
 		return nil, aerr
@@ -495,7 +523,7 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 	for i, l := range candidates {
 		questions[i] = model.CheckRequest{Type: res.Type, Action: l}
 	}
-	answers, err := c.app.CheckAccess(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.claims, attrs), questions, false, consistency)
+	answers, err := c.app.CheckAccess(ctx, c.serviceID, sp.subject, c.app.NewEnv(sp.properties, attrs).WithSubjectType(sp.typ), questions, false, consistency)
 	if err != nil {
 		return nil, err
 	}
@@ -512,6 +540,15 @@ func (c *authzenCaller) levelsOf(ctx context.Context, sp speaker, attrs model.Re
 // resource (ADR 0001, 7.6). The directory is what the application sent; a person who is not in it is never found, and an empty
 // directory gives an empty result. Only a PEP client with the search_subject operation may ask: the answer names other people.
 func (c *authzenCaller) searchSubjects(ctx context.Context, consistency engine.Consistency, in searchInput) (*model.AuthzenSubjectSearchResponse, error) {
+	if reader, ok := c.app.(interface {
+		CurrentReadContext(context.Context) (context.Context, error)
+	}); c.simulated && ok {
+		fresh, err := reader.CurrentReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = fresh
+	}
 	s, aerr := parseSearch("subject", in)
 	if aerr != nil {
 		return nil, aerr
@@ -582,18 +619,18 @@ func directoryCursor(key string) *db.DirectoryKey {
 }
 
 // decideKnown says, for each person of a batch of the directory, whether the question is allowed to them, decided with their
-// stored properties as claims. A subject that cannot be asked about (it looks like a group) is not an answer.
+// stored properties as properties. A subject that cannot be asked about (it looks like a group) is not an answer.
 func (c *authzenCaller) decideKnown(ctx context.Context, consistency engine.Consistency, batch []db.DirectoryEntry, question []model.CheckRequest, attrs model.RequestContext) ([]bool, error) {
 	allowed := make([]bool, len(batch))
 	eg, ectx := errgroup.WithContext(ctx)
 	eg.SetLimit(authzenScanWorkers)
 	for i, e := range batch {
 		eg.Go(func() error {
-			claims, err := subjectClaims("", e.ID, e.Properties)
+			properties, err := subjectProperties(e.Type, e.ID, e.Properties)
 			if err != nil {
 				return nil
 			}
-			answers, err := c.app.CheckAccess(ectx, c.serviceID, e.ID, c.app.NewEnv(claims, attrs), question, false, consistency)
+			answers, err := c.app.CheckAccess(ectx, c.serviceID, e.ID, c.app.NewEnv(properties, attrs).WithSubjectType(e.Type), question, false, consistency)
 			if err != nil {
 				return err
 			}

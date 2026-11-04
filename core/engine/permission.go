@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +30,7 @@ const (
 	// resultCacheFormat is the version of the cached result format: when the format or the decisions change, new
 	// keys do not overlap the old ones. The answers live in the memory of one process, so it only keeps apart the keys
 	// of two formats inside it; stale entries simply expire by TTL.
-	resultCacheFormat = "t9"
+	resultCacheFormat = "t11"
 )
 
 // PermissionResult — {type_resource_name: sync {resources} | not_sync {access}}.
@@ -59,7 +60,7 @@ type permissionData struct {
 	Denied map[string][]model.ResourceAccess `json:"denied"`
 }
 
-// GetPermission is the core of Licetum: what the subject (in the given environment: its claims, and the attributes of
+// GetPermission is the core of Licetum: what the subject (in the given environment: its properties, and the attributes of
 // the request) may do with the resources of serviceID, per resource type. A type's mode is derived from its
 // synchronizer: a type with one is sync — {"type": "sync", "resources": [...]} — without one it is not_sync —
 // {"type": "not_sync", "access": [...]}. A type without applicable rules is not in the result.
@@ -79,7 +80,7 @@ func (a *App) GetPermission(ctx context.Context, serviceID uuid.UUID, subject st
 // on each type as a whole.
 func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, consistency Consistency) (*permissionData, error) {
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
-	key := fmt.Sprintf("authz:permission:%s:r%d:%s:%s:%s", resultCacheFormat, state.version, serviceID, subject,
+	key := fmt.Sprintf("authz:permission:%s:e%d:r%d:%s:st%x:%s:%s", resultCacheFormat, state.epoch, state.version, serviceID, env.subjectType(), subject,
 		a.requestFingerprint(ctx, state, env))
 	return cachedAnswer(ctx, a, key, state, consistency, a.metrics.permissionCache,
 		func(ctx context.Context) (computed[*permissionData], error) {
@@ -87,16 +88,16 @@ func (a *App) GetPermissionData(ctx context.Context, serviceID uuid.UUID, subjec
 				return computed[*permissionData]{}, err
 			}
 			started := time.Now()
-			data, deps, ttl, hold, err := a.computePermissionData(ctx, serviceID, subject, env, state, consistency)
+			data, ttl, hold, err := a.computePermissionData(ctx, serviceID, subject, env, state, consistency)
 			if err != nil {
 				return computed[*permissionData]{}, err
 			}
 			a.metrics.permissionCompute.Observe(time.Since(started).Seconds())
-			return computed[*permissionData]{value: data, deps: deps, ttl: ttl, hold: hold}, nil
+			return computed[*permissionData]{value: data, ttl: ttl, hold: hold}, nil
 		})
 }
 
-// requestFingerprint hashes what the request carries that the rules look at (its claims and its context attributes):
+// requestFingerprint hashes what the request carries that the rules look at (its properties and its context attributes):
 // two requests with the same fingerprint get the same answer. The names of those attributes are kept in the cache state
 // for the current revision of the rules (by the snapshot, or by the memo of the process); when they are not there, they
 // are read from the rules and remembered for the requests that follow.
@@ -111,19 +112,19 @@ func (a *App) requestFingerprint(ctx context.Context, state cacheState, env Env)
 		return fingerprint(allRequestAttributes(env), env)
 	}
 	if state.ok {
-		a.attrsMemo.Store(&attrsMemo{revision: state.version, attrs: attrs})
+		a.attrsMemo.Store(&attrsMemo{epoch: state.epoch, revision: state.version, attrs: attrs})
 	}
 	return fingerprint(attrs, env)
 }
 
 // conditionAttrSQL names the attribute of a condition by its source: "context:<name>" for a context attribute, and
-// "claim:<name>" otherwise. The time (source now) reads nothing from the request.
-const conditionAttrSQL = `CASE WHEN c->>'source' = 'context' THEN 'context:' ELSE 'claim:' END || (c->>'attr')`
+// "property:<name>" otherwise. The time (source now) reads nothing from the request.
+const conditionAttrSQL = `CASE WHEN c->>'source' = 'context' THEN 'context:' ELSE 'subject:' END || (c->>'attr')`
 
-const notNowSQL = `COALESCE(c->>'source', 'claim') <> 'now'`
+const notNowSQL = `COALESCE(c->>'source', 'subject') <> 'now'`
 
 // RequestAttributes reads the attributes the rules look at: the conditions of the rules, of their guards and of the group
-// memberships, and the claims of the resource_from_claim specs (of rules and of role items).
+// memberships, and the properties of the resource_from_property specs (of rules and of role items).
 func (a *App) RequestAttributes(ctx context.Context) ([]string, error) {
 	return requestAttributes(ctx, a.DB)
 }
@@ -134,8 +135,8 @@ func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
 			SELECT `+conditionAttrSQL+` AS attr FROM assignment_rule, jsonb_array_elements(predicate) c WHERE `+notNowSQL+`
 			UNION ALL SELECT `+conditionAttrSQL+` FROM assignment_rule, jsonb_array_elements(requires_predicate) c WHERE `+notNowSQL+`
 			UNION ALL SELECT `+conditionAttrSQL+` FROM group_member, jsonb_array_elements(predicate) c WHERE `+notNowSQL+`
-			UNION ALL SELECT 'claim:' || (resource_from_claim->>'claim') FROM assignment_rule WHERE resource_from_claim IS NOT NULL
-			UNION ALL SELECT 'claim:' || (resource_from_claim->>'claim') FROM role_permission WHERE resource_from_claim IS NOT NULL
+			UNION ALL SELECT 'subject:' || (resource_from_property->>'property') FROM assignment_rule WHERE resource_from_property IS NOT NULL
+			UNION ALL SELECT 'subject:' || (resource_from_property->>'property') FROM role_permission WHERE resource_from_property IS NOT NULL
 		) x WHERE attr IS NOT NULL ORDER BY attr`)
 	if err != nil {
 		return nil, err
@@ -155,8 +156,8 @@ func requestAttributes(ctx context.Context, q db.Querier) ([]string, error) {
 // allRequestAttributes names every attribute the request carries (the fallback without the list of the rules).
 func allRequestAttributes(env Env) []string {
 	var names []string
-	for k := range env.Claims {
-		names = append(names, "claim:"+k)
+	for k := range env.Properties {
+		names = append(names, "subject:"+k)
 	}
 	for k := range env.Context {
 		names = append(names, "context:"+k)
@@ -165,20 +166,26 @@ func allRequestAttributes(env Env) []string {
 	return names
 }
 
-// attribute returns the value of an attribute named by its source ("claim:x" or "context:x"); a name without a source
-// is a claim, as the names stored before the sources were.
+// attribute returns the value of an attribute named by its source ("property:x" or "context:x"); a name without a source
+// is a property, as the names stored before the sources were.
 func (e Env) attribute(name string) (any, bool) {
 	if key, ok := strings.CutPrefix(name, "context:"); ok {
 		v, found := e.Context[key]
 		return v, found && v != nil
 	}
-	key := strings.TrimPrefix(name, "claim:")
-	v, found := e.Claims[key]
+	key := strings.TrimPrefix(name, "subject:")
+	v, found := e.Properties[key]
 	return v, found && v != nil
 }
 
 func fingerprint(attrs []string, env Env) string {
 	var b strings.Builder
+	// Length-frame the namespace so opaque type strings cannot move a field boundary.
+	typ := env.subjectType()
+	b.WriteString(strconv.Itoa(len(typ)))
+	b.WriteByte(':')
+	b.WriteString(typ)
+	b.WriteByte(0)
 	for _, attr := range attrs {
 		b.WriteString(attr)
 		b.WriteByte(0)
@@ -313,6 +320,15 @@ func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity
 		identityList = append(identityList, s)
 	}
 
+	var groupIDs []uuid.UUID
+	for _, identity := range identityList {
+		if value, ok := strings.CutPrefix(identity, model.GroupSubjectPrefix); ok {
+			if id, err := uuid.Parse(value); err == nil {
+				groupIDs = append(groupIDs, id)
+			}
+		}
+	}
+
 	// An inline rule lives on a relevant type that is not deleted; a role assignment is checked by the
 	// types of its items in expandRoles. A rule is in force at $2: RuleActiveSQL at the moment of the decision, which is
 	// the App's (see SetClock), as the snapshot has it.
@@ -325,13 +341,13 @@ func (a *App) applicableRules(ctx context.Context, typeIDs []uuid.UUID, identity
 
 	// Indexed path (formerly Grant): point rows with subject IN identity — fast even with a large
 	// number of point grants.
-	direct, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject = ANY($3) ORDER BY ar.id`, typeIDs, now, identityList)
+	direct, err := a.LoadRules(ctx, ruleQuery+` AND (ar.subject = ANY($3) OR ar.subject_group_id=ANY($4)) AND (ar.subject_type IS NULL OR ar.subject_type=$5) ORDER BY ar.id`, typeIDs, now, identityList, groupIDs, env.subjectType())
 	if err != nil {
 		return nil, nil, false, err
 	}
 	// Rule path: a predicate over the request or member_of_group_id — scanned in full, since we cannot know in
 	// advance which rule matches which subject.
-	byRule, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject IS NULL ORDER BY ar.id`, typeIDs, now)
+	byRule, err := a.LoadRules(ctx, ruleQuery+` AND ar.subject IS NULL AND ar.subject_group_id IS NULL ORDER BY ar.id`, typeIDs, now)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -366,7 +382,7 @@ func applicableFromSnapshot(snap *snapshot, relevant map[uuid.UUID]bool, identit
 	for s := range identity {
 		subjects = append(subjects, s)
 	}
-	direct, scanned := snap.applicable(relevant, subjects, now)
+	direct, scanned := snap.applicable(relevant, subjects, now, env.subjectType())
 
 	var out []model.AssignmentRule
 	missing := map[uuid.UUID]bool{}
@@ -436,7 +452,7 @@ func (a *App) ExpandRoles(ctx context.Context, rules []model.AssignmentRule, typ
 			copied := r
 			copied.TypeResourceID = &typeID
 			copied.ResourceID = item.ResourceID
-			copied.ResourceFromClaim = item.ResourceFromClaim
+			copied.ResourceFromProperty = item.ResourceFromProperty
 			copied.ResourceWhere = item.ResourceWhere
 			copied.Access = item.Access
 			out = append(out, copied)
@@ -445,12 +461,22 @@ func (a *App) ExpandRoles(ctx context.Context, rules []model.AssignmentRule, typ
 	return out, nil
 }
 
+// literalTypeMatches deliberately does not constrain group identities.
+func literalTypeMatches(rule model.AssignmentRule, typ string) bool {
+	return rule.SubjectGroupID != nil || rule.Subject == nil || rule.SubjectType == nil || *rule.SubjectType == typ
+}
+
 // ruleTruth is the outcome of the conditions of a rule for the caller: the target (a literal subject from the identity
 // set, every member of a group, or a predicate over the request), and the guards (the conditions of requires_predicate,
 // and membership of requires_group_id). An attribute the request does not carry makes the outcome unknown.
 func ruleTruth(rule model.AssignmentRule, identity identitySet, env Env) truth {
+	if !literalTypeMatches(rule, env.subjectType()) {
+		return no
+	}
 	var target truth
 	switch {
+	case rule.SubjectGroupID != nil:
+		target = identity[model.GroupSubject(*rule.SubjectGroupID)]
 	case rule.Subject != nil:
 		target = identity[*rule.Subject]
 	case rule.MemberOfGroupID != nil:
@@ -484,8 +510,8 @@ func RuleApplies(rule model.AssignmentRule, identity identitySet, env Env) (appl
 func RuleOrigin(rule model.AssignmentRule) string {
 	var who string
 	switch {
-	case rule.Subject != nil && strings.HasPrefix(*rule.Subject, model.GroupSubjectPrefix):
-		who = "group " + strings.TrimPrefix(*rule.Subject, model.GroupSubjectPrefix)
+	case rule.SubjectGroupID != nil:
+		who = "group " + rule.SubjectGroupID.String()
 	case rule.Subject != nil:
 		who = "subject " + *rule.Subject
 	case rule.MemberOfGroupID != nil:
@@ -588,8 +614,6 @@ type Prepared struct {
 	// hold is how long the answer stays correct with respect to validity windows and the state of the data it was made from
 	// (see validityUntil): never less than ttl.
 	hold time.Duration
-	// deps are the data versions of the services whose resource data the decision reads (see prepare).
-	deps map[string]int64
 }
 
 // syncedTypes keeps the involved types that have resources (see sourced), and the service types among them, whose data is
@@ -612,7 +636,7 @@ func (p *Prepared) syncedTypes(synced map[uuid.UUID]bool) {
 // prepare loads and resolves everything a decision needs, except the resources themselves. The independent
 // reads run in parallel: the identity set and the type graph first, then the applicable rules, the validity
 // boundary and the sync types. asked names the types of the service the caller asks about: they are
-// synchronized even if no rule reaches them. The data versions the answer reads are recorded in p.deps.
+// synchronized even if no rule reaches them. Every data-changing synchronization moves the global revision.
 func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency, asked []string) (*Prepared, error) {
 	var identity identitySet
 	var identityUsesNow bool
@@ -686,7 +710,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 	}
 
 	// The types the applicable rules reach (the type itself, its descendants and the lookup type of
-	// resource_from_claim) are brought up to the state of their sources. From here on everything is SQL
+	// resource_from_property) are brought up to the state of their sources. From here on everything is SQL
 	// over the local copy: not a single live request per resource.
 	involved := map[uuid.UUID]bool{}
 	for _, name := range asked {
@@ -699,11 +723,11 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		for id := range g.DescendantsOf(*rule.TypeResourceID) {
 			involved[id] = true
 		}
-		if rule.ResourceFromClaim != nil {
+		if rule.ResourceFromProperty != nil {
 			// The lookup climbs from the matched resource to the rule's type through every type in between, also those no
 			// level flows through (DescendantsOf leaves them out): their data must be there, or the climb stops short.
-			involved[rule.ResourceFromClaim.LookupTypeResourceID] = true
-			for _, id := range g.TypesBetween(rule.ResourceFromClaim.LookupTypeResourceID, *rule.TypeResourceID) {
+			involved[rule.ResourceFromProperty.LookupTypeResourceID] = true
+			for _, id := range g.TypesBetween(rule.ResourceFromProperty.LookupTypeResourceID, *rule.TypeResourceID) {
 				involved[id] = true
 			}
 		}
@@ -715,6 +739,25 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		return nil, err
 	}
 	synced := res.Synced
+
+	// A first apply may have established a mode while this request waited for its job.
+	// Read the committed mode before interpreting the rows that were just applied.
+	for _, id := range involvedIDs {
+		if synced[id] && !g.IsSync(id) {
+			g, err = a.LoadTypeGraph(ctx)
+			if err != nil {
+				return nil, err
+			}
+			p.Graph = g
+			p.syncTypes = map[uuid.UUID]bool{}
+			for _, own := range p.serviceType {
+				if g.IsSync(own) {
+					p.syncTypes[own] = true
+				}
+			}
+			break
+		}
+	}
 	if res.Pending {
 		// The data of some type is not there yet: the answer is made of what exists and is not kept for long.
 		if t := TraceFrom(ctx); t != nil {
@@ -724,16 +767,6 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 		p.hold = min(p.hold, pendingAnswerTTL) // an answer that lacks data is never served beyond its short life
 	}
 	p.syncedTypes(synced)
-
-	// What the answer reads is the resource data of the involved types. Their services are recorded with the
-	// data versions this request saw before reading any of that data.
-	p.deps = map[string]int64{}
-	for id := range involved {
-		if n, ok := g.Node(id); ok {
-			svc := n.ServiceID.String()
-			p.deps[svc] = state.data[svc]
-		}
-	}
 
 	if p.Insts, err = a.buildInstances(ctx, g, snap, rules, env, missing, p.hasResources); err != nil {
 		return nil, err
@@ -750,7 +783,7 @@ func (a *App) prepare(ctx context.Context, serviceID uuid.UUID, subject string, 
 func (p *Prepared) hasResources(typeID uuid.UUID) bool { return p.sourced[typeID] }
 
 // BuildInstances turns the applicable rules into instances anchored at whole types or at resources.
-// A rule on a resource that is not in the cache has no anchor and no effect; a rule with resource_from_claim
+// A rule on a resource that is not in the cache has no anchor and no effect; a rule with resource_from_property
 // yields one instance per ancestor found, and a rule with resource_where one per resource whose attributes match.
 // The lookups of all the rules run together, in parallel with the anchors of the rules that name a resource.
 // g is the type graph the lookups climb (see findAncestorsBatch); it also says which types have resources (IsSync):
@@ -765,7 +798,7 @@ func (a *App) BuildInstances(ctx context.Context, g *TypeGraph, rules []model.As
 func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, rules []model.AssignmentRule, env Env, missing map[uuid.UUID]bool, sourced func(uuid.UUID) bool) ([]Instance, error) {
 	var refs []anchorRef
 	var lookups []ancestorLookup
-	claimValues := map[int]string{}
+	propertyValues := map[int]string{}
 	var groupTypes []uuid.UUID
 	type climb struct {
 		types []uuid.UUID
@@ -779,13 +812,13 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 			groupTypes = append(groupTypes, *r.TypeResourceID)
 		}
 		switch {
-		case r.ResourceFromClaim != nil:
-			spec := r.ResourceFromClaim
-			value := env.Claims[spec.Claim]
+		case r.ResourceFromProperty != nil:
+			spec := r.ResourceFromProperty
+			value := env.Properties[spec.Property]
 			if !PyTruthy(value) {
 				continue
 			}
-			claimValues[i] = PyStr(value)
+			propertyValues[i] = PyStr(value)
 			pair := [2]uuid.UUID{spec.LookupTypeResourceID, *r.TypeResourceID}
 			c, ok := between[pair]
 			if !ok {
@@ -857,16 +890,16 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 			return in
 		}
 		switch {
-		case rule.ResourceFromClaim != nil:
+		case rule.ResourceFromProperty != nil:
 			for _, n := range found[i] {
 				in := base
 				id := n.ID
 				in.AnchorRow, in.AnchorExt = &id, n.Ext
-				in.Note += fmt.Sprintf("; resource %s found by claim %s=%s", n.Ext, rule.ResourceFromClaim.Claim, claimValues[i])
+				in.Note += fmt.Sprintf("; resource %s found by claim %s=%s", n.Ext, rule.ResourceFromProperty.Property, propertyValues[i])
 				out = append(out, in)
 			}
 			if base.Deny && cut[i] {
-				out = append(out, absent(fmt.Sprintf("a type its claim %s is looked up through has no resources", rule.ResourceFromClaim.Claim)))
+				out = append(out, absent(fmt.Sprintf("a type its claim %s is looked up through has no resources", rule.ResourceFromProperty.Property)))
 			}
 		case rule.ResourceID != nil:
 			id, ok := rows[anchorRef{Type: *rule.TypeResourceID, Ext: *rule.ResourceID}]
@@ -900,7 +933,7 @@ func (a *App) buildInstances(ctx context.Context, g *TypeGraph, snap *snapshot, 
 	return out, nil
 }
 
-// climbTypes is TypesBetween(lower, upper) for the lookup of a resource_from_claim rule: the types the climb from a matched
+// climbTypes is TypesBetween(lower, upper) for the lookup of a resource_from_property rule: the types the climb from a matched
 // resource of the lookup type up to the rule's type may pass. Only types with resources count: a type without a live
 // synchronizer has none to match, to pass or to anchor at. It is nil when the lookup type or the rule's type has none,
 // and leaves out the types between without one, where the climb stops as at an unresolved link (findAncestorsBatch).
@@ -1123,14 +1156,14 @@ func (a *App) coverNodes(ctx context.Context, p *Prepared) (map[uuid.UUID]*nodeS
 
 // computePermissionData computes the permissions of a subject in a service. Along with the answer it returns
 // the data versions it read (see prepare) and how long it stays correct.
-func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency) (*permissionData, map[string]int64, time.Duration, time.Duration, error) {
+func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, subject string, env Env, state cacheState, consistency Consistency) (*permissionData, time.Duration, time.Duration, error) {
 	p, err := a.prepare(ctx, serviceID, subject, env, state, consistency, nil)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, 0, 0, err
 	}
 	nodes, err := a.coverNodes(ctx, p)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, 0, 0, err
 	}
 
 	data := &permissionData{
@@ -1180,7 +1213,7 @@ func (a *App) computePermissionData(ctx context.Context, serviceID uuid.UUID, su
 			}
 		}
 	}
-	return data, p.deps, p.ttl, p.hold, nil
+	return data, p.ttl, p.hold, nil
 }
 
 func Keys[K comparable, V any](m map[K]V) []K {

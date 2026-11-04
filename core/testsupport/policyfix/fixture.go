@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 
@@ -174,8 +175,9 @@ type AccessGroup struct {
 	Levels []string `json:"levels"`
 }
 
-// Group is a union of people; its members are subjects, predicates over claims, or other groups.
+// Group is a union of people; its members are subjects, predicates over properties, or other groups.
 type Group struct {
+	Service string   `json:"service,omitempty"`
 	Name    string   `json:"name"`
 	Members []Member `json:"members,omitempty"`
 }
@@ -192,27 +194,28 @@ type Member struct {
 	ExpiresAt *time.Time                 `json:"expires_at,omitempty"`
 }
 
-// Target is what a permission covers: the whole type, one resource, the resource found from a claim, or the resources
+// Target is what a permission covers: the whole type, one resource, the resource found from a property, or the resources
 // whose attributes match.
 type Target struct {
-	Type      string                     `json:"type"`
-	Resource  string                     `json:"resource,omitempty"`
-	FromClaim *FromClaim                 `json:"from_claim,omitempty"`
-	Where     []model.PredicateCondition `json:"where,omitempty"`
+	Type         string                     `json:"type"`
+	Resource     string                     `json:"resource,omitempty"`
+	FromProperty *FromProperty              `json:"from_property,omitempty"`
+	Where        []model.PredicateCondition `json:"where,omitempty"`
 }
 
-// FromClaim is resource_from_claim: the value of Claim is looked up among the resources of LookupType by MatchBy (name,
+// FromProperty is resource_from_property: the value of Property is looked up among the resources of LookupType by MatchBy (name,
 // id or meta.<attribute>).
-type FromClaim struct {
-	Claim      string `json:"claim"`
+type FromProperty struct {
+	Property   string `json:"property"`
 	LookupType string `json:"lookup_type"`
 	MatchBy    string `json:"match_by,omitempty"` // default name
 }
 
 // Role is a named set of permissions.
 type Role struct {
-	Name  string     `json:"name"`
-	Items []RoleItem `json:"items"`
+	Service string     `json:"service,omitempty"`
+	Name    string     `json:"name"`
+	Items   []RoleItem `json:"items"`
 }
 
 // RoleItem is a permission of a role.
@@ -224,6 +227,7 @@ type RoleItem struct {
 // Rule is an assignment rule: to whom (exactly one of Subject, SubjectGroup, Predicate/Everybody, MemberOf) it grants
 // or denies what (a Role, or an inline Target with Access).
 type Rule struct {
+	SubjectType *string `json:"subject_type,omitempty"`
 	// Name names the rule in explanations and in the expectations of cases; unique in the fixture.
 	Name         string                     `json:"name"`
 	Subject      string                     `json:"subject,omitempty"`
@@ -245,13 +249,14 @@ type Rule struct {
 	ExpiresAt         *time.Time                 `json:"expires_at,omitempty"`
 }
 
-// Case is a set of questions asked by one subject with one set of claims and request attributes, at one time.
+// Case is a set of questions asked by one subject with one set of properties and request attributes, at one time.
 type Case struct {
-	Name    string         `json:"name"`
-	Subject string         `json:"subject"`
-	Claims  map[string]any `json:"claims,omitempty"`
-	Context map[string]any `json:"context,omitempty"`
-	At      *time.Time     `json:"at,omitempty"`
+	SubjectType string         `json:"subject_type,omitempty"`
+	Name        string         `json:"name"`
+	Subject     string         `json:"subject"`
+	Properties  map[string]any `json:"properties,omitempty"`
+	Context     map[string]any `json:"context,omitempty"`
+	At          *time.Time     `json:"at,omitempty"`
 	// Service is the service the questions are asked of (default: the first service).
 	Service   string     `json:"service,omitempty"`
 	Questions []Question `json:"questions"`
@@ -458,12 +463,23 @@ func (f *Fixture) Validate() error {
 			}
 		}
 	}
+	ownerOf := func(service string) string {
+		if service == "" && len(f.Services) > 0 {
+			return f.Services[0]
+		}
+		return service
+	}
 	groups := map[string]bool{}
+	groupOwners := map[string]string{}
 	for _, g := range f.Groups {
+		if !slices.Contains(f.Services, ownerOf(g.Service)) {
+			bad("group %q: unknown service %q", g.Name, g.Service)
+		}
 		if groups[g.Name] {
 			bad("group %q twice", g.Name)
 		}
 		groups[g.Name] = true
+		groupOwners[g.Name] = ownerOf(g.Service)
 	}
 	for _, g := range f.Groups {
 		for _, m := range g.Members {
@@ -479,6 +495,9 @@ func (f *Fixture) Validate() error {
 			if m.Group != "" && !groups[m.Group] {
 				bad("group %q: unknown member group %q", g.Name, m.Group)
 			}
+			if m.Group != "" && groups[m.Group] && groupOwners[m.Group] != ownerOf(g.Service) {
+				bad("group %q: member group %q belongs to another service", g.Name, m.Group)
+			}
 		}
 	}
 	checkTarget := func(where string, t *Target) {
@@ -488,28 +507,36 @@ func (f *Fixture) Validate() error {
 			return
 		}
 		n := 0
-		for _, set := range []bool{t.Resource != "", t.FromClaim != nil, len(t.Where) > 0} {
+		for _, set := range []bool{t.Resource != "", t.FromProperty != nil, len(t.Where) > 0} {
 			if set {
 				n++
 			}
 		}
 		if n > 1 {
-			bad("%s: at most one of resource, from_claim, where", where)
+			bad("%s: at most one of resource, from_property, where", where)
 		}
 		// A type whose synchronizer was deleted after the policy was written may keep a rule on its resources: a dead
 		// rule, which the admin API keeps and which covers nothing.
 		if n == 1 && !tt.Sync && !syncedBefore[t.Type] {
 			bad("%s: type %q has no synchronizer, only the whole type can be covered", where, t.Type)
 		}
-		if t.FromClaim != nil && types[t.FromClaim.LookupType] == nil {
-			bad("%s: unknown lookup type %q", where, t.FromClaim.LookupType)
+		if t.FromProperty != nil && types[t.FromProperty.LookupType] == nil {
+			bad("%s: unknown lookup type %q", where, t.FromProperty.LookupType)
 		}
 	}
 	roles := map[string]bool{}
+	roleOwners := map[string]string{}
 	for _, r := range f.Roles {
+		if !slices.Contains(f.Services, ownerOf(r.Service)) {
+			bad("role %q: unknown service %q", r.Name, r.Service)
+		}
 		roles[r.Name] = true
+		roleOwners[r.Name] = ownerOf(r.Service)
 		for i := range r.Items {
 			checkTarget(fmt.Sprintf("role %q item %d", r.Name, i), &r.Items[i].Target)
+			if typ := types[r.Items[i].Type]; typ != nil && ownerOf(typ.Service) != ownerOf(r.Service) {
+				bad("role %q: item belongs to another service", r.Name)
+			}
 		}
 	}
 	accessGroups := map[string]bool{}
@@ -538,9 +565,24 @@ func (f *Fixture) Validate() error {
 		if n != 1 {
 			bad("rule %q: exactly one of subject, subject_group, predicate/everybody, member_of", r.Name)
 		}
+		owner := roleOwners[r.Role]
+		if r.Role == "" && r.Target != nil && types[r.Type] != nil {
+			owner = types[r.Type].Service
+		}
+
+		if r.SubjectType != nil {
+			typ := *r.SubjectType
+			if r.Subject == "" || typ == "" || typ == "group" || utf8.RuneCountInString(typ) > 64 {
+				bad("rule %q: invalid literal subject type %q", r.Name, typ)
+			}
+		}
+
 		for _, g := range []string{r.SubjectGroup, r.MemberOf, r.RequiresGroup} {
 			if g != "" && !groups[g] {
 				bad("rule %q: unknown group %q", r.Name, g)
+			}
+			if g != "" && groups[g] && owner != "" && groupOwners[g] != owner {
+				bad("rule %q: group %q belongs to another service", r.Name, g)
 			}
 		}
 		switch {
@@ -566,6 +608,9 @@ func (f *Fixture) Validate() error {
 		}
 	}
 	for _, c := range f.Cases {
+		if typ := c.SubjectType; typ != "" && (typ == "group" || utf8.RuneCountInString(typ) > 64) {
+			bad("case %q: invalid subject type", c.Name)
+		}
 		if c.Service != "" && !slices.Contains(f.Services, c.Service) {
 			bad("case %q: unknown service %q", c.Name, c.Service)
 		}

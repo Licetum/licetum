@@ -33,14 +33,14 @@ func truthOf(b bool) truth {
 	return no
 }
 
-// attrs are what the conditions of one case read: the claims, the request context, and the time of the decision.
+// attrs are what the conditions of one case read: the properties, the request context, and the time of the decision.
 type attrs struct {
-	claims  map[string]any
-	context map[string]any
-	now     time.Time
+	properties map[string]any
+	context    map[string]any
+	now        time.Time
 }
 
-// value returns the text of the attribute a condition reads, or false when the request does not carry it. A claim or a
+// value returns the text of the attribute a condition reads, or false when the request does not carry it. A property or a
 // context attribute that is present but null counts as missing.
 func (a attrs) value(c model.PredicateCondition) (string, bool) {
 	var raw any
@@ -61,7 +61,7 @@ func (a attrs) value(c model.PredicateCondition) (string, bool) {
 	case model.SourceContext:
 		raw, ok = a.context[c.Attr]
 	default:
-		raw, ok = a.claims[c.Attr]
+		raw, ok = a.properties[c.Attr]
 	}
 	if !ok || raw == nil {
 		return "", false
@@ -144,7 +144,7 @@ type metaValue struct {
 }
 
 // metaOf returns the attributes of a resource, normalized as a synchronizer does: invalid names, nulls and objects are
-// dropped, numbers and booleans are rendered like claim values, list items that are not scalars are dropped. The
+// dropped, numbers and booleans are rendered like property values, list items that are not scalars are dropped. The
 // bounds on the number and size of attributes are not applied: a fixture states its attributes as the source reports
 // them after the synchronizer took them.
 func (g *graph) metaOf(r resKey) map[string]metaValue {
@@ -223,8 +223,8 @@ func inForce(from, to *time.Time, now time.Time) bool {
 	return (from == nil || !now.Before(*from)) && (to == nil || now.Before(*to))
 }
 
-// matchesClaim reports whether a resource matches the value of a claim by name, id or meta.<attribute>.
-func (g *graph) matchesClaim(r *policyfix.Resource, matchBy, value string) bool {
+// matchesClaim reports whether a resource matches the value of a property by name, id or meta.<attribute>.
+func (g *graph) matchesProperty(r *policyfix.Resource, matchBy, value string) bool {
 	switch matchBy {
 	case "", model.MatchByName:
 		return r.NameOf() == value
@@ -239,7 +239,7 @@ func (g *graph) matchesClaim(r *policyfix.Resource, matchBy, value string) bool 
 	return ok && m.contains(value)
 }
 
-// pyStr renders a value as Python's str() would, which is how claim values, request attributes and resource attributes
+// pyStr renders a value as Python's str() would, which is how property values, request attributes and resource attributes
 // are compared: True and False, integers without a fraction (JSON numbers arrive as float64), lists as ['a', 'b'].
 // truthy mirrors Python's `if not value` for a value decoded from JSON.
 func truthy(v any) bool {

@@ -185,7 +185,7 @@ func (e *env) jobCount(typ string, state string) int {
 
 func (e *env) makeDue(typ string) {
 	e.t.Helper()
-	if _, err := e.pool.Exec(context.Background(), `UPDATE sync_state SET next_due_at = now() WHERE type_resource_id = $1`, typ); err != nil {
+	if _, err := support.RawExec(context.Background(), e.pool, `UPDATE sync_state SET next_due_at = now() WHERE type_resource_id = $1`, typ); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -545,7 +545,7 @@ func TestSyncLateExecutorIsFenced(t *testing.T) {
 	e.requireClosureConsistent()
 
 	// The late executor wakes up: its transaction must not apply anything.
-	if _, err := e.pool.Exec(context.Background(), `DELETE FROM resource_cache WHERE type_resource_id = $1 AND external_id = 'b3'`, f.typ); err != nil {
+	if _, err := support.RawExec(context.Background(), e.pool, `DELETE FROM resource_cache WHERE type_resource_id = $1 AND external_id = 'b3'`, f.typ); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -655,13 +655,13 @@ func TestSyncPDPRoleCannotWriteTheGraph(t *testing.T) {
 		`GRANT USAGE ON ALL SEQUENCES IN SCHEMA ` + schema + ` TO ` + role,
 		`REVOKE INSERT, UPDATE, DELETE ON resource_cache, resource_edge, resource_ancestor, sync_state FROM ` + role,
 	} {
-		if _, err := e.pool.Exec(ctx, stmt); err != nil {
+		if _, err := support.RawExec(ctx, e.pool, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)
 		}
 	}
 	t.Cleanup(func() {
 		for _, stmt := range []string{`DROP OWNED BY ` + role, `DROP ROLE ` + role} {
-			_, _ = e.pool.Exec(context.Background(), stmt)
+			_, _ = support.RawExec(context.Background(), e.pool, stmt)
 		}
 	})
 

@@ -30,6 +30,8 @@ secrets:
   dbMigrateUri: ""
   sessionSecret: ""
   oidcClientSecret: ""
+  # Shared by every process/region that hashes subject fields. Empty omits subjects.
+  logSubjectSalt: ""
 
 db:
   # PgBouncer in transaction mode in front of PostgreSQL (DB__PGBOUNCER): the simple protocol, nothing prepared. Give the migrations

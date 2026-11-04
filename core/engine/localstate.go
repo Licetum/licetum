@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/licetum/licetum/core/db"
 )
 
 // The revision of the policy and the revisions of the data of the services live in PostgreSQL (revision_state), next to
@@ -17,8 +19,7 @@ import (
 // answer in memory touches no PostgreSQL, and a write made through another replica reaches the process
 // within the poll interval.
 //
-// A view is replaced as a whole and never changed. A write made through this process (AfterWrite) and a change of the
-// resource data it made (the synchronizations) invalidate the view, so the next request reads the revisions again and sees them.
+// A view is replaced as a whole and never changed. Policy writes are observed by polling; a synchronization may still renew its local view.
 // A request that asks for at least revision N (WithMinRevision) renews a view older than N before it is answered.
 
 // localView is the revision, the data versions and the snapshot of that revision, as of readAt.
@@ -95,8 +96,19 @@ func (a *App) NoteReadRevision(ctx context.Context) {
 		return
 	}
 	if state := a.cacheState(ctx); state.ok {
-		t.noteReadRevision(state.version)
+		t.noteReadPosition(state.epoch, state.version)
 	}
+}
+
+// CurrentReadContext lets admin tools read their writes immediately while other
+// readers follow the ordinary poll interval. The revision comes from PostgreSQL,
+// rather than the process's possibly older view.
+func (a *App) CurrentReadContext(ctx context.Context) (context.Context, error) {
+	revision, err := db.LoadLocalVersions(ctx, a.DB)
+	if err != nil {
+		return nil, err
+	}
+	return WithMinRevision(ctx, revision.Revision), nil
 }
 
 // policySnapshot is the snapshot of the current view, nil when the policy is not kept in memory (or the revisions could not be
@@ -238,7 +250,7 @@ const revisionRetry = 20 * time.Millisecond
 // the interval. It returns when ctx ends. Requests renew the view too, from the same singleflight, so the reading is never
 // done twice at once.
 //
-// The poll also carries the revision of the log settings (db.ScopeLogSettings), so it runs in every process, with the local view or
+// The poll also carries log_settings.version alongside the global epoch and revision, so it runs in every process, with the local view or
 // without it (the worker, or SNAPSHOT__MAX_BYTES below zero): it is the only thing that polls for a settings change.
 func (a *App) WatchRevision(ctx context.Context) {
 	ticker := time.NewTicker(a.tuningOrDefault().revisionPoll)
@@ -288,14 +300,25 @@ func (a *App) readView(ctx context.Context) *localView {
 	}
 	loadCtx, cancelLoad := context.WithTimeout(ctx, snapshotLoadTimeout)
 	defer cancelLoad()
-	snap := a.snapshotFor(loadCtx, state.version, a.local.view.Load())
+	previous := a.local.view.Load()
+	if previous != nil && previous.state.epoch != state.epoch {
+		if a.metrics != nil {
+			a.metrics.epochResets.Inc()
+		}
+		slog.InfoContext(ctx, "global revision epoch changed", "was", previous.state.epoch, "now", state.epoch)
+		a.answersL1.Clear()
+		a.pep.dir.Store(nil)
+		a.local.oversized.Store(0)
+		previous = nil
+	}
+	snap := a.snapshotFor(loadCtx, state.version, previous)
 	if snap != nil {
 		state.snap, state.attrs, state.attrsOK = snap, snap.attrs, true
 	}
 	v := &localView{state: state, snap: snap, readAt: time.Now(), epoch: epoch}
-	if prev := a.local.view.Load(); prev != nil && state.version < prev.state.version {
+	if prev := a.local.view.Load(); prev != nil && state.epoch == prev.state.epoch && state.version < prev.state.version {
 		// The revision went backwards: the database this process reads is not the one it read before (a failover to a replica that
-		// had not received the last writes, or a restore). Revisions it used for other content may be used again, so what is
+		// had not received the last writes, or a restore). LocalVersions it used for other content may be used again, so what is
 		// kept under them in this process is dropped; `licetum failover` raises the revisions above everything seen.
 		if a.metrics != nil {
 			a.metrics.revisionRegress.Inc()

@@ -19,7 +19,7 @@ import (
 	support "github.com/licetum/licetum/core/testsupport"
 )
 
-// The anchors of a resource_from_claim rule are found by walking the resource links up from the matched resources
+// The anchors of a resource_from_property rule are found by walking the resource links up from the matched resources
 // (findAncestorsBatch, through BuildInstances). The fixture is a hierarchy of five levels with two side hierarchies that
 // lie on no route to the targets: division > region > branch > project > document, a project is also in a zone, and a
 // document also has a tag (tagset > tag). Some documents have two projects, and some projects are switched off.
@@ -58,7 +58,7 @@ type walkFixture struct {
 	all   []*walkResource
 }
 
-// walkScenario is one resource_from_claim rule: the resources of type lookup matching value, and their ancestors of
+// walkScenario is one resource_from_property rule: the resources of type lookup matching value, and their ancestors of
 // type target.
 type walkScenario struct {
 	name           string
@@ -97,12 +97,13 @@ func newWalkFixture(tb testing.TB) *walkFixture {
 	}
 
 	fx := &walkFixture{pool: pool, app: engine.New(pool, &config.Config{Snapshot: config.Snapshot{MaxBytes: -1}}), types: map[string]uuid.UUID{}}
+	tb.Cleanup(fx.app.Close)
 	service := uuid.New()
 	mustExec(tb, pool, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'walk', '', '', 'walk')`, service)
 	for _, t := range walkTypes {
 		id := uuid.New()
 		fx.types[t.name] = id
-		mustExec(tb, pool, `INSERT INTO type_resource (id, service_id, name) VALUES ($1, $2, $3)`, id, service, t.name)
+		mustExec(tb, pool, `INSERT INTO type_resource (id, service_id, name, synced_at) VALUES ($1, $2, $3, now())`, id, service, t.name)
 		// The rows are written below, as a synchronization leaves them: a type has resources while it has a live synchronizer.
 		mustExec(tb, pool, `INSERT INTO synchronizer (type_resource_id, kind, config) VALUES ($1, 'SQL', '{}')`, id)
 		for _, p := range t.parents {
@@ -185,25 +186,25 @@ func newWalkFixture(tb testing.TB) *walkFixture {
 
 func mustExec(tb testing.TB, pool *pgxpool.Pool, sql string, args ...any) {
 	tb.Helper()
-	if _, err := pool.Exec(context.Background(), sql, args...); err != nil {
+	if _, err := support.RawExec(context.Background(), pool, sql, args...); err != nil {
 		tb.Fatal(err)
 	}
 }
 
-// rules turns the scenarios into rules, each reading the claim named after its index, and the claims of the caller.
+// rules turns the scenarios into rules, each reading the property named after its index, and the properties of the caller.
 func (fx *walkFixture) rules(scenarios []walkScenario) ([]model.AssignmentRule, engine.Env) {
 	rules := make([]model.AssignmentRule, len(scenarios))
-	claims := engine.Claims{}
+	properties := engine.Properties{}
 	for i, s := range scenarios {
 		target := fx.types[s.target]
-		claim := fmt.Sprintf("c%d", i)
-		claims[claim] = s.value
+		property := fmt.Sprintf("c%d", i)
+		properties[property] = s.value
 		rules[i] = model.AssignmentRule{
 			ID: uuid.New(), TypeResourceID: &target, Access: []string{"read"}, Enabled: true, Effect: model.EffectAllow,
-			ResourceFromClaim: &model.ResourceFromClaim{Claim: claim, LookupTypeResourceID: fx.types[s.lookup], MatchBy: s.matchBy},
+			ResourceFromProperty: &model.ResourceFromProperty{Property: property, LookupTypeResourceID: fx.types[s.lookup], MatchBy: s.matchBy},
 		}
 	}
-	return rules, engine.NewEnv(claims, nil)
+	return rules, engine.NewEnv(properties, nil)
 }
 
 // anchors returns the external ids of the anchors found for each rule.
@@ -265,7 +266,7 @@ func (fx *walkFixture) expected(s walkScenario) []string {
 
 // The walk finds every anchor a climb to the roots finds: stopping at the target type, leaving the links that lead
 // away from it and not climbing at all when the lookup type is the target change nothing in the answer.
-func TestFromClaimAnchorsOnADeepHierarchy(t *testing.T) {
+func TestFromPropertyAnchorsOnADeepHierarchy(t *testing.T) {
 	fx := newWalkFixture(t)
 	rules, env := fx.rules(walkScenarios)
 	got := fx.anchors(t, rules, env)
@@ -287,7 +288,7 @@ func first(s []string) []string { return s[:min(len(s), 5)] }
 // A type without a live synchronizer has no resources, whatever rows its deleted synchronizer left in the local copy: the
 // lookup does not match among them, the climb does not pass through them and a rule does not anchor at them. The
 // anchors come back with the synchronizer.
-func TestFromClaimIgnoresTheRowsOfATypeWithoutASynchronizer(t *testing.T) {
+func TestFromPropertyIgnoresTheRowsOfATypeWithoutASynchronizer(t *testing.T) {
 	fx := newWalkFixture(t)
 	ctx := context.Background()
 	rules, env := fx.rules(walkScenarios)
@@ -327,9 +328,9 @@ func TestFromClaimIgnoresTheRowsOfATypeWithoutASynchronizer(t *testing.T) {
 	}
 }
 
-// BenchmarkFromClaimWalk measures the lookups of the scenarios one by one, and all of them as one request (one query per
+// BenchmarkFromPropertyWalk measures the lookups of the scenarios one by one, and all of them as one request (one query per
 // kind of match).
-func BenchmarkFromClaimWalk(b *testing.B) {
+func BenchmarkFromPropertyWalk(b *testing.B) {
 	fx := newWalkFixture(b)
 	run := func(name string, scenarios []walkScenario) {
 		b.Run(name, func(b *testing.B) {

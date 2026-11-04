@@ -30,3 +30,5 @@ docs/*
 !docs/README.zh-CN.md
 !docs/adr/
 !docs/deployment.md
+!docs/outbox-write-routes.md
+!docs/p3-verification.md

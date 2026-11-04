@@ -159,7 +159,7 @@ func requireAuthzenError(t *testing.T, status int, header http.Header, raw []byt
 	}
 }
 
-// visible lists the ids of the resources of the type that the person with the claims may read, asked with
+// visible lists the ids of the resources of the type that the person with the properties may read, asked with
 // consistency=higher (neither the result cache nor the source throttle is used) and with the request attributes of the
 // context, when there are any.
 func (w *world) visible(serviceID string, claims jwt.MapClaims, context map[string]any, resourceType string) []string {
@@ -175,7 +175,7 @@ func (w *world) visible(serviceID string, claims jwt.MapClaims, context map[stri
 	return ids
 }
 
-// expectVisible fails the test unless the person with the claims may read exactly the resources of the type that are wanted.
+// expectVisible fails the test unless the person with the properties may read exactly the resources of the type that are wanted.
 func (w *world) expectVisible(serviceID string, claims jwt.MapClaims, context map[string]any, resourceType string, want ...string) {
 	w.t.Helper()
 	if got := w.visible(serviceID, claims, context, resourceType); !slices.Equal(got, want) {

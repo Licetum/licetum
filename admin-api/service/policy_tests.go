@@ -12,17 +12,26 @@ import (
 )
 
 // RunPolicyTests answers the scenarios of a policy test the way the simulation answers them: the subjects with their
-// claims and request attributes, the rules and the data as they are now. It reports which expectations hold, and which
+// properties and request attributes, the rules and the data as they are now. It reports which expectations hold, and which
 // of the rules in force decided an answer at all (the coverage): a rule that no scenario reaches is one nothing checks.
 func (a *App) RunPolicyTests(ctx context.Context, serviceID uuid.UUID, in *model.PolicyTestInput) (*model.PolicyTestReport, error) {
+	ctx, err := a.CurrentReadContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	report := &model.PolicyTestReport{Cases: []model.PolicyTestCaseResult{}}
 	decided := map[string]bool{}
 	for _, c := range in.Cases {
+		subject, err := model.PrepareSubject(c.SubjectType, c.Subject, c.Properties)
+		if err != nil {
+			return nil, err
+		}
+
 		requests := make([]model.CheckRequest, len(c.Checks))
 		for i, check := range c.Checks {
 			requests[i] = model.CheckRequest{Type: check.Type, ResourceID: check.ResourceID, Action: check.Action}
 		}
-		results, err := a.CheckAccess(ctx, serviceID, c.Subject, engine.NewEnv(c.Claims, c.Context), requests, true, engine.HigherConsistency)
+		results, err := a.CheckAccess(ctx, serviceID, c.Subject, engine.NewEnv(engine.Properties(subject.Properties), c.Context).WithSubjectType(subject.Type), requests, true, engine.HigherConsistency)
 		if err != nil {
 			return nil, err
 		}
@@ -90,16 +99,10 @@ func decidingRules(e *model.Explanation) []string {
 // serviceRuleIDs returns the rules in force that apply to the resource types of a service: its inline rules, and the
 // role assignments of the roles that have items on those types.
 func (a *App) serviceRuleIDs(ctx context.Context, serviceID uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := a.DB.Query(ctx, `
-		SELECT ar.id FROM assignment_rule ar
-		JOIN type_resource t ON t.id = ar.type_resource_id
-		WHERE `+engine.RuleActiveSQL+` AND ar.role_id IS NULL AND t.service_id = $1 AND t.deleted_at IS NULL
-		UNION
-		SELECT ar.id FROM assignment_rule ar
-		JOIN role_permission rp ON rp.role_id = ar.role_id
-		JOIN type_resource t ON t.id = rp.type_resource_id
-		WHERE `+engine.RuleActiveSQL+` AND t.service_id = $1 AND t.deleted_at IS NULL
-		ORDER BY 1`, serviceID)
+	rows, err := a.DB.Query(ctx, `SELECT ar.id FROM assignment_rule ar
+ WHERE `+engine.RuleActiveSQL+` AND ar.service_id=$1
+ AND (ar.role_id IS NOT NULL OR EXISTS(SELECT 1 FROM type_resource t WHERE t.id=ar.type_resource_id AND t.deleted_at IS NULL))
+ ORDER BY ar.id`, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,19 +118,10 @@ func (a *App) serviceRuleIDs(ctx context.Context, serviceID uuid.UUID) ([]uuid.U
 	return out, rows.Err()
 }
 
-// serviceRulesAll returns every rule that applies to the resource types of a service, whether it is in force or not
-// (the linter and the export read the rules as they are written).
+// serviceRulesAll returns the owning service's authored rules, including roles
+// without items. Soft-deleted target types remain outside its live policy.
 func (a *App) serviceRulesAll(ctx context.Context, serviceID uuid.UUID) ([]model.AssignmentRule, error) {
-	return a.LoadRules(ctx, `
-		SELECT `+engine.AssignmentRuleColumns+` FROM assignment_rule ar
-		WHERE ar.id IN (
-			SELECT ar2.id FROM assignment_rule ar2
-			JOIN type_resource t ON t.id = ar2.type_resource_id
-			WHERE ar2.role_id IS NULL AND t.service_id = $1 AND t.deleted_at IS NULL
-			UNION
-			SELECT ar3.id FROM assignment_rule ar3
-			JOIN role_permission rp ON rp.role_id = ar3.role_id
-			JOIN type_resource t3 ON t3.id = rp.type_resource_id
-			WHERE t3.service_id = $1 AND t3.deleted_at IS NULL)
-		ORDER BY ar.id`, serviceID)
+	return a.LoadRules(ctx, `SELECT `+engine.AssignmentRuleColumns+` FROM assignment_rule ar
+ WHERE ar.service_id=$1 AND (ar.role_id IS NOT NULL OR EXISTS(SELECT 1 FROM type_resource t WHERE t.id=ar.type_resource_id AND t.deleted_at IS NULL))
+ ORDER BY ar.id`, serviceID)
 }

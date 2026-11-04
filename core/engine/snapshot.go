@@ -91,6 +91,9 @@ func ruleBytes(r *model.AssignmentRule) int64 {
 	if r.Subject != nil {
 		n += int64(len(*r.Subject))
 	}
+	if r.SubjectType != nil {
+		n += int64(len(*r.SubjectType))
+	}
 	if r.Name != nil {
 		n += int64(len(*r.Name))
 	}
@@ -228,7 +231,10 @@ func (a *App) loadSnapshot(ctx context.Context, revision, max int64) (*snapshot,
 			rowsOf.Close()
 			return nil, err
 		}
-		if r.Subject != nil {
+		if r.SubjectGroupID != nil {
+			key := model.GroupSubject(*r.SubjectGroupID)
+			snap.direct[key] = append(snap.direct[key], *r)
+		} else if r.Subject != nil {
 			snap.direct[*r.Subject] = append(snap.direct[*r.Subject], *r)
 		} else {
 			snap.scanned = append(snap.scanned, *r)
@@ -351,9 +357,9 @@ func (s *snapshot) liveMembers(now time.Time) []model.GroupMember {
 // applicable returns the rules in force at now that may target the caller and that live on one of the relevant types
 // (or are role assignments), in the order the queries gave them: the rules with a subject of the identity set first, by
 // id, then the scanned ones, by id.
-func (s *snapshot) applicable(relevant map[uuid.UUID]bool, subjects []string, now time.Time) (direct, scanned []model.AssignmentRule) {
+func (s *snapshot) applicable(relevant map[uuid.UUID]bool, subjects []string, now time.Time, subjectType string) (direct, scanned []model.AssignmentRule) {
 	keep := func(r *model.AssignmentRule) bool {
-		if !ruleActive(r, now) {
+		if !ruleActive(r, now) || !literalTypeMatches(*r, subjectType) {
 			return false
 		}
 		return r.RoleID != nil || (r.TypeResourceID != nil && relevant[*r.TypeResourceID])
@@ -395,7 +401,7 @@ func (s *snapshot) expandRoles(rules []model.AssignmentRule, relevant map[uuid.U
 			copied := r
 			copied.TypeResourceID = &typeID
 			copied.ResourceID = item.ResourceID
-			copied.ResourceFromClaim = item.ResourceFromClaim
+			copied.ResourceFromProperty = item.ResourceFromProperty
 			copied.ResourceWhere = item.ResourceWhere
 			copied.Access = item.Access
 			out = append(out, copied)

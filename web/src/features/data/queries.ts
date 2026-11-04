@@ -30,12 +30,12 @@ export function useServices(enabled = true) {
   });
 }
 export function useGroups(enabled = true) {
-  return useListGroups({
+  return useListGroups(undefined, {
     query: { enabled, select: (r) => (r.status === 200 ? (r.data ?? []) : ([] as Group[])) },
   });
 }
 export function useRoles(enabled = true) {
-  return useListRoles({
+  return useListRoles(undefined, {
     query: { enabled, select: (r) => (r.status === 200 ? (r.data ?? []) : ([] as Role[])) },
   });
 }
@@ -73,7 +73,12 @@ export function useChangeLog(options?: {
   liveMs?: number;
 }) {
   const client = useQueryClient();
-  const key = ['/changes', 'all', options?.serviceId ?? '', options?.entity ?? ''] as const;
+  const key = [
+    '/changes',
+    'revision-seq',
+    options?.serviceId ?? '',
+    options?.entity ?? '',
+  ] as const;
   return useQuery({
     queryKey: key,
     enabled: options?.enabled ?? true,
@@ -81,10 +86,11 @@ export function useChangeLog(options?: {
     queryFn: async () => {
       const held = client.getQueryData<ChangeRecord[]>(key) ?? [];
       const out = [...held];
-      let after = out.at(-1)?.id ?? 0;
+      let cursor = out.at(-1);
       for (let page = 0; page < 40; page++) {
         const res = await listChanges({
-          after,
+          after_revision: cursor?.revision ?? 0,
+          after_seq: cursor?.seq ?? 0,
           limit: 500,
           service_id: options?.serviceId,
           entity: options?.entity,
@@ -92,7 +98,7 @@ export function useChangeLog(options?: {
         const records = res.status === 200 ? (res.data ?? []) : [];
         out.push(...records);
         if (records.length < 500) break;
-        after = records.at(-1)?.id ?? after;
+        cursor = records.at(-1) ?? cursor;
       }
       return out;
     },

@@ -31,7 +31,7 @@ type policyNames struct {
 }
 
 // loadPolicyNames reads the names of the resource types (as service/type), of the groups and of the roles.
-func (a *App) loadPolicyNames(ctx context.Context) (*policyNames, error) {
+func (a *App) loadPolicyNames(ctx context.Context, serviceID uuid.UUID) (*policyNames, error) {
 	types, err := a.namedRows(ctx, `
 		SELECT t.id, s.slug || '/' || t.name FROM type_resource t
 		JOIN service s ON s.id = t.service_id
@@ -39,11 +39,11 @@ func (a *App) loadPolicyNames(ctx context.Context) (*policyNames, error) {
 	if err != nil {
 		return nil, err
 	}
-	groups, err := a.namedRows(ctx, `SELECT id, name FROM user_group`)
+	groups, err := a.namedRows(ctx, `SELECT id, name FROM user_group WHERE service_id=$1`, serviceID)
 	if err != nil {
 		return nil, err
 	}
-	roles, err := a.namedRows(ctx, `SELECT id, name FROM role`)
+	roles, err := a.namedRows(ctx, `SELECT id, name FROM role WHERE service_id=$1`, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,8 +55,8 @@ func (a *App) loadPolicyNames(ctx context.Context) (*policyNames, error) {
 }
 
 // namedRows reads (id, name) rows into a map from the id to the name.
-func (a *App) namedRows(ctx context.Context, sql string) (map[uuid.UUID]string, error) {
-	rows, err := a.DB.Query(ctx, sql)
+func (a *App) namedRows(ctx context.Context, sql string, args ...any) (map[uuid.UUID]string, error) {
+	rows, err := a.DB.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (a *App) ExportPolicy(ctx context.Context, serviceID uuid.UUID) (*model.Pol
 	if err != nil {
 		return nil, err
 	}
-	names, err := a.loadPolicyNames(ctx)
+	names, err := a.loadPolicyNames(ctx, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,26 +271,26 @@ func (n *policyNames) member(m model.GroupMember) model.PolicyGroupMember {
 // item converts an item of a role to the document.
 func (n *policyNames) item(p model.RolePermission) model.PolicyRoleItem {
 	return model.PolicyRoleItem{Type: n.typeName[p.TypeResourceID], ResourceID: p.ResourceID,
-		ResourceFromClaim: n.claim(p.ResourceFromClaim), ResourceWhere: p.ResourceWhere, Access: p.Access}
+		ResourceFromProperty: n.property(p.ResourceFromProperty), ResourceWhere: p.ResourceWhere, Access: p.Access}
 }
 
-// claim converts a resource_from_claim to the document: its lookup type is named.
-func (n *policyNames) claim(c *model.ResourceFromClaim) *model.PolicyResourceFromClaim {
+// property converts a resource_from_property to the document: its lookup type is named.
+func (n *policyNames) property(c *model.ResourceFromProperty) *model.PolicyResourceFromProperty {
 	if c == nil {
 		return nil
 	}
-	return &model.PolicyResourceFromClaim{Claim: c.Claim, LookupType: n.typeName[c.LookupTypeResourceID], MatchBy: c.MatchBy}
+	return &model.PolicyResourceFromProperty{Property: c.Property, LookupType: n.typeName[c.LookupTypeResourceID], MatchBy: c.MatchBy}
 }
 
 // rule converts a rule to the document: the groups, the roles and the types are named, and a group subject is
-// group:<name>.
+// subject_group by name.
 func (n *policyNames) rule(r model.AssignmentRule) model.PolicyRule {
 	out := model.PolicyRule{
 		Name: ruleDocName(r), Description: r.Description, Enabled: boolPtr(r.Enabled), Effect: r.Effect,
 		Exception: r.Exception, ValidFrom: utcPtr(r.ValidFrom), ExpiresAt: utcPtr(r.ExpiresAt),
-		OnMissingAttribute: r.OnMissingAttribute, RequiresPredicate: r.RequiresPredicate, SubjectKind: r.SubjectKind,
+		OnMissingAttribute: r.OnMissingAttribute, RequiresPredicate: r.RequiresPredicate, SubjectType: r.SubjectType,
 		ResourceID: r.ResourceID, ResourceWhere: r.ResourceWhere, Access: r.Access, Predicate: r.Predicate,
-		ResourceFromClaim: n.claim(r.ResourceFromClaim),
+		ResourceFromProperty: n.property(r.ResourceFromProperty),
 	}
 	if r.RoleID != nil {
 		role := n.roleName[*r.RoleID]
@@ -307,15 +307,11 @@ func (n *policyNames) rule(r model.AssignmentRule) model.PolicyRule {
 		group := n.groupName[*r.RequiresGroupID]
 		out.RequiresGroup = &group
 	}
-	if r.Subject != nil {
-		subject := *r.Subject
-		if id, ok := strings.CutPrefix(subject, model.GroupSubjectPrefix); ok {
-			if gid, err := uuid.Parse(id); err == nil && n.groupName[gid] != "" {
-				subject = model.GroupSubjectPrefix + n.groupName[gid]
-			}
-		}
-		out.Subject = &subject
+	if r.SubjectGroupID != nil {
+		group := n.groupName[*r.SubjectGroupID]
+		out.SubjectGroup = &group
 	}
+	out.Subject = r.Subject
 	return out
 }
 
@@ -328,6 +324,9 @@ func (n *policyNames) rule(r model.AssignmentRule) model.PolicyRule {
 // document does not have are deleted. The ids of the new entities are chosen here, so that the operations of the same
 // batch can name them.
 func (a *App) PlanPolicyImport(ctx context.Context, serviceID uuid.UUID, doc *model.PolicyDocument, prune bool) (*model.PolicyImportPlan, error) {
+	if doc.Format == "licetum.policy/v1" {
+		return nil, apperr.Unprocessable(i18n.PolicyV1NotImported)
+	}
 	if doc.Format != model.PolicyDocumentFormat {
 		return nil, apperr.Unprocessable(i18n.PolicyFormatInvalid, doc.Format)
 	}
@@ -341,11 +340,11 @@ func (a *App) PlanPolicyImport(ctx context.Context, serviceID uuid.UUID, doc *mo
 	if err := checkDocumentNames(doc); err != nil {
 		return nil, err
 	}
-	names, err := a.loadPolicyNames(ctx)
+	names, err := a.loadPolicyNames(ctx, serviceID)
 	if err != nil {
 		return nil, err
 	}
-	im := &importer{a: a, names: names, plan: &model.PolicyImportPlan{Operations: []model.BatchOperation{}}}
+	im := &importer{serviceID: serviceID, a: a, names: names, plan: &model.PolicyImportPlan{Operations: []model.BatchOperation{}}}
 	if err := im.run(ctx, serviceID, doc, prune); err != nil {
 		return nil, err
 	}
@@ -400,9 +399,10 @@ const (
 
 // importer carries the state of one plan.
 type importer struct {
-	a     *App
-	names *policyNames
-	plan  *model.PolicyImportPlan
+	serviceID uuid.UUID
+	a         *App
+	names     *policyNames
+	plan      *model.PolicyImportPlan
 	// the new ids of the groups and roles the document creates, by name
 	groupIDs map[string]uuid.UUID
 	roleIDs  map[string]uuid.UUID
@@ -531,7 +531,7 @@ func (im *importer) roles(ctx context.Context, want []model.PolicyRole) error {
 		if !exists {
 			id = im.roleIDs[w.Name]
 			im.add(model.BatchOperation{Op: model.BatchCreate, Entity: model.BatchRole, ID: idOf(id),
-				Body: model.RoleInput{Name: w.Name}})
+				Body: model.RoleInput{ServiceID: &im.serviceID, Name: w.Name}})
 			im.tally(outcomeCreated)
 		} else {
 			items, err := im.a.ListRolePermissions(ctx, id)
@@ -575,18 +575,18 @@ func (im *importer) itemInput(it model.PolicyRoleItem) (model.RolePermissionInpu
 	if in.Access == nil {
 		in.Access = []string{}
 	}
-	if it.ResourceFromClaim != nil {
-		claim, err := im.claimInput(*it.ResourceFromClaim)
+	if it.ResourceFromProperty != nil {
+		property, err := im.propertyInput(*it.ResourceFromProperty)
 		if err != nil {
 			return model.RolePermissionInput{}, err
 		}
-		in.ResourceFromClaim = claim
+		in.ResourceFromProperty = property
 	}
 	return in, nil
 }
 
-// claimInput turns a resource_from_claim of the document into its input.
-func (im *importer) claimInput(c model.PolicyResourceFromClaim) (*model.ResourceFromClaim, error) {
+// propertyInput turns a resource_from_property of the document into its input.
+func (im *importer) propertyInput(c model.PolicyResourceFromProperty) (*model.ResourceFromProperty, error) {
 	lookup, err := im.typeRef(c.LookupType)
 	if err != nil {
 		return nil, err
@@ -595,7 +595,7 @@ func (im *importer) claimInput(c model.PolicyResourceFromClaim) (*model.Resource
 	if matchBy == "" {
 		matchBy = model.MatchByName
 	}
-	return &model.ResourceFromClaim{Claim: c.Claim, LookupTypeResourceID: lookup, MatchBy: matchBy}, nil
+	return &model.ResourceFromProperty{Property: c.Property, LookupTypeResourceID: lookup, MatchBy: matchBy}, nil
 }
 
 // groups creates the groups that the installation lacks, and replaces the memberships of the ones that differ. The
@@ -617,7 +617,7 @@ func (im *importer) groups(ctx context.Context, want []model.PolicyGroup) error 
 		if !exists {
 			id = im.groupIDs[w.Name]
 			im.add(model.BatchOperation{Op: model.BatchCreate, Entity: model.BatchGroup, ID: idOf(id),
-				Body: model.GroupInput{Name: w.Name}})
+				Body: model.GroupInput{ServiceID: &im.serviceID, Name: w.Name}})
 			im.tally(outcomeCreated)
 			work = append(work, pending{id: id, members: w.Members})
 			continue
@@ -756,7 +756,7 @@ func (im *importer) ruleInput(w model.PolicyRule) (model.AssignmentRuleInput, er
 		Access: w.Access, Predicate: w.Predicate, Enabled: boolPtr(*w.Enabled), Effect: w.Effect,
 		Exception: w.Exception, ValidFrom: w.ValidFrom, ExpiresAt: w.ExpiresAt, Name: &name,
 		Description: w.Description, OnMissingAttribute: &onMissing, RequiresPredicate: w.RequiresPredicate,
-		ResourceID: w.ResourceID, ResourceWhere: w.ResourceWhere, SubjectKind: w.SubjectKind,
+		ResourceID: w.ResourceID, ResourceWhere: w.ResourceWhere, SubjectType: w.SubjectType,
 	}
 	if in.Predicate == nil {
 		in.Predicate = []model.PredicateCondition{}
@@ -777,25 +777,20 @@ func (im *importer) ruleInput(w model.PolicyRule) (model.AssignmentRuleInput, er
 		}
 		in.TypeResourceID = &id
 	}
-	if w.ResourceFromClaim != nil {
-		claim, err := im.claimInput(*w.ResourceFromClaim)
+	if w.ResourceFromProperty != nil {
+		property, err := im.propertyInput(*w.ResourceFromProperty)
 		if err != nil {
 			return in, err
 		}
-		in.ResourceFromClaim = claim
+		in.ResourceFromProperty = property
 	}
-	if w.Subject != nil {
-		subject := *w.Subject
-		if group, ok := strings.CutPrefix(subject, model.GroupSubjectPrefix); ok {
-			if _, notUUID := uuid.Parse(group); notUUID != nil {
-				id, err := im.groupRef(group)
-				if err != nil {
-					return in, err
-				}
-				subject = model.GroupSubjectPrefix + id.String()
-			}
+	in.Subject = w.Subject
+	if w.SubjectGroup != nil {
+		id, err := im.groupRef(*w.SubjectGroup)
+		if err != nil {
+			return in, err
 		}
-		in.Subject = &subject
+		in.SubjectGroupID = &id
 	}
 	if w.MemberOf != nil {
 		id, err := im.groupRef(*w.MemberOf)
@@ -811,7 +806,7 @@ func (im *importer) ruleInput(w model.PolicyRule) (model.AssignmentRuleInput, er
 		}
 		in.RequiresGroupID = &id
 	}
-	return in, nil
+	return in, in.Validate()
 }
 
 // normalizeRule gives a rule of the document the form that an exported rule has, so that the two compare equal when they
@@ -835,8 +830,8 @@ func normalizeRule(r model.PolicyRule) model.PolicyRule {
 	}
 	out.ValidFrom = utcPtr(out.ValidFrom)
 	out.ExpiresAt = utcPtr(out.ExpiresAt)
-	if out.ResourceFromClaim != nil {
-		out.ResourceFromClaim = normalizeClaim(*out.ResourceFromClaim)
+	if out.ResourceFromProperty != nil {
+		out.ResourceFromProperty = normalizeProperty(*out.ResourceFromProperty)
 	}
 	out.Predicate = nilIfEmpty(out.Predicate)
 	out.RequiresPredicate = nilIfEmpty(out.RequiresPredicate)
@@ -847,8 +842,8 @@ func normalizeRule(r model.PolicyRule) model.PolicyRule {
 // normalizeItem gives an item of a role of the document the form of an exported item.
 func normalizeItem(it model.PolicyRoleItem) model.PolicyRoleItem {
 	out := it
-	if out.ResourceFromClaim != nil {
-		out.ResourceFromClaim = normalizeClaim(*out.ResourceFromClaim)
+	if out.ResourceFromProperty != nil {
+		out.ResourceFromProperty = normalizeProperty(*out.ResourceFromProperty)
 	}
 	out.ResourceWhere = nilIfEmpty(out.ResourceWhere)
 	if out.Access == nil {
@@ -867,8 +862,8 @@ func normalizeMember(m model.PolicyGroupMember) model.PolicyGroupMember {
 	return out
 }
 
-// normalizeClaim makes the default match_by explicit.
-func normalizeClaim(c model.PolicyResourceFromClaim) *model.PolicyResourceFromClaim {
+// normalizeProperty makes the default match_by explicit.
+func normalizeProperty(c model.PolicyResourceFromProperty) *model.PolicyResourceFromProperty {
 	if c.MatchBy == "" {
 		c.MatchBy = model.MatchByName
 	}

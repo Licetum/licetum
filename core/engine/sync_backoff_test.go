@@ -43,7 +43,7 @@ func backoffType(t *testing.T) (*pgxpool.Pool, uuid.UUID) {
 		{`INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'backoff', '', '', 'backoff')`, []any{service}},
 		{`INSERT INTO type_resource (id, service_id, name) VALUES ($1, $2, 'branch')`, []any{typ, service}},
 	} {
-		if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
+		if _, err := support.RawExec(ctx, pool, q.sql, q.args...); err != nil {
 			t.Fatal(err)
 		}
 	}

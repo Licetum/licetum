@@ -17,8 +17,9 @@ import (
 )
 
 // The PEP directory: the identity providers whose tokens a PEP presents, the clients of the services that call the PEP API and
-// the API keys issued to them (migration 00006). Every write runs in its own transaction with the bump of the pep scope, so the
-// directory read at a revision holds every write up to it. No write touches the rules scope: a PEP change decides nothing.
+// the API keys issued to them. Every changed write runs through PolicyTx with one
+// global revision and a PEP-stream publication. It names no affected decision service;
+// P3 still keys cached answers by the global position.
 
 // The kinds of a client (pep_client.kind).
 const (
@@ -82,8 +83,9 @@ type PEPCredential struct {
 }
 
 // PEPDirectoryData is what LoadPEPDirectory reads: the issuers, the enabled clients that are not deleted, the credentials of those
-// clients that are not revoked, and the revision of the pep scope. It is one snapshot.
+// clients that are not revoked, and the global epoch and revision. It is one snapshot.
 type PEPDirectoryData struct {
+	Epoch       int32
 	Revision    int64
 	Issuers     []PEPIssuer
 	Clients     []PEPClient
@@ -110,13 +112,13 @@ SELECT
 		ORDER BY k.key_id), '[]'::jsonb)
 	 FROM pep_credential k JOIN pep_client c ON c.id = k.client_id JOIN service s ON s.id = c.service_id AND s.deleted_at IS NULL
 	 WHERE k.revoked_at IS NULL AND c.enabled AND c.deleted_at IS NULL),
-	COALESCE((SELECT revision FROM revision_state WHERE scope = 'pep'), 0)`
+	(SELECT epoch FROM revision_state WHERE scope = 'global'), (SELECT revision FROM revision_state WHERE scope = 'global')`
 
 // LoadPEPDirectory reads the PEP directory in one statement, through q (the reader of the check path, see engine.PEPDirectory).
 func LoadPEPDirectory(ctx context.Context, q Querier) (PEPDirectoryData, error) {
 	var issuers, clients, credentials []byte
 	var out PEPDirectoryData
-	if err := q.QueryRow(ctx, pepDirectorySQL).Scan(&issuers, &clients, &credentials, &out.Revision); err != nil {
+	if err := q.QueryRow(ctx, pepDirectorySQL).Scan(&issuers, &clients, &credentials, &out.Epoch, &out.Revision); err != nil {
 		return PEPDirectoryData{}, err
 	}
 	if err := json.Unmarshal(issuers, &out.Issuers); err != nil {
@@ -142,7 +144,7 @@ func UpsertIssuer(ctx context.Context, pool *pgxpool.Pool, i PEPIssuer) error {
 	if audiences == nil {
 		audiences = []string{}
 	}
-	return InTx(ctx, pool, func(tx pgx.Tx) error {
+	return runPEPMutation(ctx, pool, pepMutation{table: "pep_issuer", key: func() map[string]any { return map[string]any{"issuer": i.Issuer} }, action: "upsert"}, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO pep_issuer (issuer, jwks_url, audiences, algs, require_typ)
 			VALUES ($1, $2, $3, $4, $5)
@@ -152,14 +154,13 @@ func UpsertIssuer(ctx context.Context, pool *pgxpool.Pool, i PEPIssuer) error {
 			i.Issuer, i.JWKSURL, audiences, algs, i.RequireTyp); err != nil {
 			return err
 		}
-		_, err := BumpRevision(ctx, tx, ScopePEP)
-		return err
+		return markPEPMutation(tx)
 	})
 }
 
 // DeleteIssuer deletes the issuer. An issuer that a client uses, live or deleted, cannot be deleted (ErrPEPIssuerInUse).
 func DeleteIssuer(ctx context.Context, pool *pgxpool.Pool, issuer string) error {
-	return InTx(ctx, pool, func(tx pgx.Tx) error {
+	return runPEPMutation(ctx, pool, pepMutation{table: "pep_issuer", key: func() map[string]any { return map[string]any{"issuer": issuer} }, action: "delete"}, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM pep_issuer WHERE issuer = $1`, issuer)
 		if err != nil {
 			if pgCode(err) == "23503" {
@@ -170,8 +171,7 @@ func DeleteIssuer(ctx context.Context, pool *pgxpool.Pool, issuer string) error 
 		if tag.RowsAffected() == 0 {
 			return ErrPEPNotFound
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
-		return err
+		return markPEPMutation(tx)
 	})
 }
 
@@ -202,7 +202,7 @@ func CreatePEPClient(ctx context.Context, pool *pgxpool.Pool, c PEPClient) (PEPC
 	if c.Operations == nil {
 		c.Operations = slices.Clone(pepDefaultOperations)
 	}
-	err := InTx(ctx, pool, func(tx pgx.Tx) error {
+	err := runPEPMutation(ctx, pool, pepMutation{table: "pep_client", key: func() map[string]any { return map[string]any{"id": c.ID} }, serviceID: &c.ServiceID, action: "create"}, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO pep_client (id, service_id, name, kind, issuer, client_id, operations, enabled)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -211,8 +211,7 @@ func CreatePEPClient(ctx context.Context, pool *pgxpool.Pool, c PEPClient) (PEPC
 		).Scan(&c.CreatedAt); err != nil {
 			return pepClientError(err)
 		}
-		_, err := BumpRevision(ctx, tx, ScopePEP)
-		return err
+		return markPEPMutation(tx)
 	})
 	if err != nil {
 		return PEPClient{}, err
@@ -239,7 +238,7 @@ func UpdatePEPClient(ctx context.Context, pool *pgxpool.Pool, c PEPClient) (PEPC
 // exist, or is deleted, is ErrPEPNotFound.
 func ModifyPEPClient(ctx context.Context, pool *pgxpool.Pool, serviceID, clientID uuid.UUID, change func(*PEPClient) error) (PEPClient, error) {
 	var c PEPClient
-	err := InTx(ctx, pool, func(tx pgx.Tx) error {
+	err := runPEPMutation(ctx, pool, pepMutation{table: "pep_client", key: func() map[string]any { return map[string]any{"id": clientID} }, serviceID: &serviceID, action: "update"}, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT id, service_id, name, kind, issuer, client_id, operations, enabled, created_at
 			FROM pep_client WHERE id = $1 AND service_id = $2 AND deleted_at IS NULL FOR UPDATE`, clientID, serviceID,
@@ -262,8 +261,7 @@ func ModifyPEPClient(ctx context.Context, pool *pgxpool.Pool, serviceID, clientI
 			c.ID, c.ServiceID, c.Name, c.Issuer, c.ClientID, c.Operations, c.Enabled); err != nil {
 			return pepClientError(err)
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
-		return err
+		return markPEPMutation(tx)
 	})
 	if err != nil {
 		return PEPClient{}, err
@@ -273,7 +271,7 @@ func ModifyPEPClient(ctx context.Context, pool *pgxpool.Pool, serviceID, clientI
 
 // DeletePEPClient deletes a client of the service: the client is soft-deleted and its keys are revoked with it.
 func DeletePEPClient(ctx context.Context, pool *pgxpool.Pool, serviceID, clientID uuid.UUID) error {
-	return InTx(ctx, pool, func(tx pgx.Tx) error {
+	return runPEPMutation(ctx, pool, pepMutation{table: "pep_client", key: func() map[string]any { return map[string]any{"id": clientID} }, serviceID: &serviceID, action: "delete"}, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE pep_client SET deleted_at = now()
 			WHERE id = $1 AND service_id = $2 AND deleted_at IS NULL`, clientID, serviceID)
@@ -287,8 +285,7 @@ func DeletePEPClient(ctx context.Context, pool *pgxpool.Pool, serviceID, clientI
 			UPDATE pep_credential SET revoked_at = now() WHERE client_id = $1 AND revoked_at IS NULL`, clientID); err != nil {
 			return err
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
-		return err
+		return markPEPMutation(tx)
 	})
 }
 
@@ -364,7 +361,7 @@ func ListPEPKeys(ctx context.Context, q Querier, serviceID, clientID uuid.UUID) 
 // issues for one client never pass the limit together.
 func IssueAPIKey(ctx context.Context, pool *pgxpool.Pool, clientID uuid.UUID) (string, string, error) {
 	var full, keyID string
-	err := InTx(ctx, pool, func(tx pgx.Tx) error {
+	err := runPEPMutation(ctx, pool, pepMutation{table: "pep_credential", key: func() map[string]any { return map[string]any{"key_id": keyID} }, clientID: &clientID, action: "create"}, func(tx pgx.Tx) error {
 		var kind string
 		err := tx.QueryRow(ctx, `SELECT kind FROM pep_client WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
 			clientID).Scan(&kind)
@@ -396,8 +393,7 @@ func IssueAPIKey(ctx context.Context, pool *pgxpool.Pool, clientID uuid.UUID) (s
 			keyID, clientID, hash); err != nil {
 			return err
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
-		return err
+		return markPEPMutation(tx)
 	})
 	if err != nil {
 		return "", "", err
@@ -408,7 +404,7 @@ func IssueAPIKey(ctx context.Context, pool *pgxpool.Pool, clientID uuid.UUID) (s
 // RevokeAPIKey revokes a key. A key that is already revoked stays revoked and changes nothing; a key that does not exist is
 // ErrPEPNotFound.
 func RevokeAPIKey(ctx context.Context, pool *pgxpool.Pool, keyID string) error {
-	return InTx(ctx, pool, func(tx pgx.Tx) error {
+	return runPEPMutation(ctx, pool, pepMutation{table: "pep_credential", key: func() map[string]any { return map[string]any{"key_id": keyID} }, action: "update"}, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE pep_credential SET revoked_at = now() WHERE key_id = $1 AND revoked_at IS NULL`, keyID)
 		if err != nil {
 			return err
@@ -423,8 +419,7 @@ func RevokeAPIKey(ctx context.Context, pool *pgxpool.Pool, keyID string) error {
 			}
 			return nil
 		}
-		_, err = BumpRevision(ctx, tx, ScopePEP)
-		return err
+		return markPEPMutation(tx)
 	})
 }
 

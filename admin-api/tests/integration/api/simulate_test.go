@@ -45,13 +45,13 @@ func reasonOf(answer map[string]any) map[string]any {
 
 func TestSimulationAnswersLikeThePDPForThePropertiesGivenAndExplains(t *testing.T) {
 	w := newWorld(t)
-	sales := w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	sales := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+sales+"/member", map[string]any{"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
 	w.grant(map[string]any{"type_resource_id": w.branch, "member_of_group_id": sales, "access": []string{"write"}})
 	w.rule("division", "D1", nil)
 	w.rule("rrs", "R1", deny("read"))
 
-	// The properties are the claims: with the department the group rule holds, without it it does not.
+	// The properties are the properties: with the department the group rule holds, without it it does not.
 	department := authzenreq.WithProperties(map[string]any{"department": "sales"})
 	status, out := w.simulate(authzenreq.Evaluation(w.org, "dave", authzenreq.On("branch", "B3"), "write", department))
 	if status != http.StatusOK || out["decision"] != true {

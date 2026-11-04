@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -65,13 +66,13 @@ func (v *PredicateValue) UnmarshalJSON(data []byte) error {
 }
 
 // PredicateCondition is a single condition. Conditions in a list are ANDed. Source says where the attribute is read
-// from: a claim of the subject (the default), an attribute the request carries (context), or the time of the decision
+// from: a property of the subject (the default), an attribute the request carries (context), or the time of the decision
 // (now: hour and weekday, in UTC).
 type PredicateCondition struct {
-	Attr   string         `json:"attr" doc:"The attribute: a claim name (source claim), a key of the request context (source context), or hour or weekday (source now)" example:"department"`
+	Attr   string         `json:"attr" doc:"The attribute: a subject property name (source subject), a key of the request context (source context), or hour or weekday (source now)" example:"department"`
 	Op     string         `json:"op" enum:"eq,ne,in,not_in,regex,gt,ge,lt,le,in_cidr" doc:"Operator: eq — equality, ne — inequality, in — membership in a list, not_in — absence from a list, regex — regular expression search (RE2), gt, ge, lt, le — numeric comparison, in_cidr — the address lies in one of the networks. An attribute the request does not carry never satisfies a condition of an allow rule; ne and not_in included"`
 	Value  PredicateValue `json:"value" doc:"The value to compare with: a string, or a list for in, not_in and in_cidr"`
-	Source string         `json:"source,omitempty" enum:"claim,context,now" doc:"Where the attribute comes from: claim (a claim of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"`
+	Source string         `json:"source,omitempty" enum:"subject,context,now" doc:"Where the attribute comes from: subject (a property of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"`
 }
 
 const (
@@ -89,7 +90,7 @@ const (
 
 // Sources of a condition.
 const (
-	SourceClaim   = "claim"
+	SourceSubject = "subject"
 	SourceContext = "context"
 	SourceNow     = "now"
 )
@@ -112,6 +113,9 @@ func (c *PredicateCondition) UnmarshalJSON(data []byte) error {
 	}
 	*c = PredicateCondition{Attr: *raw.Attr, Op: *raw.Op, Value: *raw.Value}
 	if raw.Source != nil {
+		if *raw.Source == "claim" {
+			return apperr.Unprocessable(i18n.PredicateSourceInvalid, *raw.Source)
+		}
 		c.Source = *raw.Source
 	}
 	return nil
@@ -125,6 +129,18 @@ func validatePredicate(conds []PredicateCondition) error {
 		}
 	}
 	return nil
+}
+
+// SubjectPredicate returns a copy with the default source made explicit for storage.
+// Resource-attribute conditions keep their separate, source-free representation.
+func SubjectPredicate(conds []PredicateCondition) []PredicateCondition {
+	out := slices.Clone(conds)
+	for i := range out {
+		if out[i].Source == "" {
+			out[i].Source = SourceSubject
+		}
+	}
+	return out
 }
 
 // validateResourceWhere checks the conditions over the attributes of the resources: they take no source, the
@@ -146,7 +162,7 @@ func validateResourceWhere(conds []PredicateCondition) error {
 
 func validateCondition(c PredicateCondition) error {
 	switch c.Source {
-	case "", SourceClaim, SourceContext:
+	case "", SourceSubject, SourceContext:
 	case SourceNow:
 		if c.Attr != "hour" && c.Attr != "weekday" {
 			return apperr.Unprocessable(i18n.PredicateNowAttrInvalid, c.Attr)
@@ -193,14 +209,14 @@ func validateCondition(c PredicateCondition) error {
 	return nil
 }
 
-// ResourceFromClaim computes the rule's resource_id dynamically from a claim of the subject: the claim
+// ResourceFromProperty computes the rule's resource_id dynamically from a property of the subject: the property
 // value is looked up among resources of type lookup_type_resource_id (by name or id), then we climb
 // the hierarchy up to the rule's own type (the number of levels is derived from the type tree).
-type ResourceFromClaim struct {
+type ResourceFromProperty struct {
 	_                    struct{}  `nullable:"true" additionalProperties:"true"`
-	Claim                string    `json:"claim" doc:"Name of the claim of the subject whose value is looked up in the source" example:"branch_name"`
-	LookupTypeResourceID uuid.UUID `json:"lookup_type_resource_id" format:"uuid" doc:"Resource type in which the claim value is looked up (may belong to any service)"`
-	MatchBy              string    `json:"match_by" required:"false" default:"name" doc:"Which resource field the claim value is matched against: name, id, or meta.<attribute> — an attribute the source reported (equal to the claim value, or containing it if the attribute is a list)" example:"meta.owner"`
+	Property             string    `json:"property" doc:"Name of the property of the subject whose value is looked up in the source" example:"branch_name"`
+	LookupTypeResourceID uuid.UUID `json:"lookup_type_resource_id" format:"uuid" doc:"Resource type in which the property value is looked up (may belong to any service)"`
+	MatchBy              string    `json:"match_by" required:"false" default:"name" doc:"Which resource field the property value is matched against: name, id, or meta.<attribute> — an attribute the source reported (equal to the property value, or containing it if the attribute is a list)" example:"meta.owner"`
 }
 
 const (
@@ -234,28 +250,28 @@ func ValidMetaKey(key string) bool {
 	return true
 }
 
-type resourceFromClaimRaw struct {
-	Claim                *string    `json:"claim"`
+type resourceFromPropertyRaw struct {
+	Property             *string    `json:"property"`
 	LookupTypeResourceID *uuid.UUID `json:"lookup_type_resource_id" format:"uuid"`
 	MatchBy              *string    `json:"match_by"`
 }
 
-func (r *ResourceFromClaim) UnmarshalJSON(data []byte) error {
-	var raw resourceFromClaimRaw
+func (r *ResourceFromProperty) UnmarshalJSON(data []byte) error {
+	var raw resourceFromPropertyRaw
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if raw.Claim == nil || raw.LookupTypeResourceID == nil {
-		return errors.New("resource_from_claim: claim and lookup_type_resource_id are required")
+	if raw.Property == nil || raw.LookupTypeResourceID == nil {
+		return errors.New("resource_from_property: property and lookup_type_resource_id are required")
 	}
 	matchBy := MatchByName
 	if raw.MatchBy != nil {
 		matchBy = *raw.MatchBy
 	}
 	if _, isMeta := MetaKeyOf(matchBy); matchBy != MatchByName && matchBy != MatchByID && !isMeta {
-		return errors.New("resource_from_claim: match_by must be name, id or meta.<attribute>")
+		return errors.New("resource_from_property: match_by must be name, id or meta.<attribute>")
 	}
-	*r = ResourceFromClaim{Claim: *raw.Claim, LookupTypeResourceID: *raw.LookupTypeResourceID, MatchBy: matchBy}
+	*r = ResourceFromProperty{Property: *raw.Property, LookupTypeResourceID: *raw.LookupTypeResourceID, MatchBy: matchBy}
 	return nil
 }
 
@@ -265,27 +281,28 @@ func (r *ResourceFromClaim) UnmarshalJSON(data []byte) error {
 // with access, and optionally a target). To whom it is granted is one of three ways: subject, predicate
 // or member_of_group_id.
 type AssignmentRuleInput struct {
-	_                  struct{}             `additionalProperties:"true"`
-	RoleID             *uuid.UUID           `json:"role_id" format:"uuid" required:"false" doc:"Id of a role: grants all its permissions. Mutually exclusive with the inline permission (type_resource_id, resource_id, resource_from_claim, access)"`
-	TypeResourceID     *uuid.UUID           `json:"type_resource_id" format:"uuid" required:"false" doc:"Id of the resource type the inline permission applies to (of any service); required without role_id"`
-	ResourceID         *string              `json:"resource_id" required:"false" doc:"Resource id; null means the rule covers the whole resource type (if resource_from_claim is not set either)"`
-	ResourceFromClaim  *ResourceFromClaim   `json:"resource_from_claim" required:"false" doc:"Compute resource_id dynamically from a claim of the subject; mutually exclusive with resource_id"`
-	Access             []string             `json:"access" minItems:"1" required:"false" doc:"Access levels of the inline permission (read, write, ...); required without role_id" example:"[\"read\",\"write\"]"`
-	Subject            *string              `json:"subject" required:"false" doc:"A specific subject or group (group:{uuid}); mutually exclusive with predicate and member_of_group_id" example:"alice"`
-	Predicate          []PredicateCondition `json:"predicate" required:"false" doc:"AND conditions over the claims and the request; mutually exclusive with subject and member_of_group_id"`
-	MemberOfGroupID    *uuid.UUID           `json:"member_of_group_id" format:"uuid" required:"false" doc:"The rule applies to everyone who is a member of this group; mutually exclusive with subject and predicate"`
-	Enabled            *bool                `json:"enabled" required:"false" default:"true" doc:"Whether the rule is active"`
-	Effect             string               `json:"effect" required:"false" enum:"allow,deny" default:"allow" doc:"allow grants the access levels; deny takes them away from everything the rule covers, whatever the allow rules say, unless an exception below the denial lifts it"`
-	Exception          bool                 `json:"exception" required:"false" doc:"Only for allow rules: the rule lifts the denials that lie strictly above it in the hierarchy, for the resources it covers"`
-	ValidFrom          *time.Time           `json:"valid_from" required:"false" nullable:"true" doc:"The rule takes effect from this moment (RFC 3339); omitted or null — right away"`
-	ExpiresAt          *time.Time           `json:"expires_at" required:"false" nullable:"true" doc:"The rule stops taking effect at this moment (RFC 3339); omitted or null — never"`
-	Name               *string              `json:"name" required:"false" nullable:"true" maxLength:"200" doc:"A name for the rule: it names the rule in the change log and in the explanations. Optional" example:"Sales can read the branches"`
-	Description        *string              `json:"description" required:"false" nullable:"true" maxLength:"2000" doc:"What the rule is for. Optional"`
-	OnMissingAttribute *string              `json:"on_missing_attribute" required:"false" nullable:"true" enum:"skip,apply" doc:"Only for deny rules: what the denial does when a condition reads an attribute the request does not carry. skip: the condition does not hold, the denial does not apply (the behaviour before this option existed); apply: the denial applies (fail closed). A new deny rule defaults to apply; an allow rule always skips, it grants nothing on a missing attribute"`
-	RequiresPredicate  []PredicateCondition `json:"requires_predicate" required:"false" nullable:"false" doc:"A guard: conditions that must hold as well for the rule to apply, in addition to its subject, group or predicate"`
-	RequiresGroupID    *uuid.UUID           `json:"requires_group_id" required:"false" nullable:"true" format:"uuid" doc:"A guard: the subject must be a member of this group for the rule to apply"`
-	ResourceWhere      []PredicateCondition `json:"resource_where" required:"false" nullable:"true" doc:"Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions. Mutually exclusive with resource_id and resource_from_claim; needs a synchronizer"`
-	SubjectKind        *string              `json:"subject_kind" required:"false" nullable:"true" enum:"user,service,agent,group" doc:"A label of the subject: user, service, agent or group. It classifies the rule; it does not change what matches"`
+	SubjectGroupID       *uuid.UUID            `json:"subject_group_id" format:"uuid" required:"false" doc:"The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id"`
+	_                    struct{}              `additionalProperties:"true"`
+	RoleID               *uuid.UUID            `json:"role_id" format:"uuid" required:"false" doc:"Id of a role: grants all its permissions. Mutually exclusive with the inline permission (type_resource_id, resource_id, resource_from_property, access)"`
+	TypeResourceID       *uuid.UUID            `json:"type_resource_id" format:"uuid" required:"false" doc:"Id of the resource type the inline permission applies to (of any service); required without role_id"`
+	ResourceID           *string               `json:"resource_id" required:"false" doc:"Resource id; null means the rule covers the whole resource type (if resource_from_property is not set either)"`
+	ResourceFromProperty *ResourceFromProperty `json:"resource_from_property" required:"false" doc:"Compute resource_id dynamically from a property of the subject; mutually exclusive with resource_id"`
+	Access               []string              `json:"access" minItems:"1" required:"false" doc:"Access levels of the inline permission (read, write, ...); required without role_id" example:"[\"read\",\"write\"]"`
+	Subject              *string               `json:"subject" required:"false" doc:"A specific subject; group: is reserved. Mutually exclusive with subject_group_id, predicate and member_of_group_id" example:"alice"`
+	Predicate            []PredicateCondition  `json:"predicate" required:"false" doc:"AND conditions over the properties and the request; mutually exclusive with subject and member_of_group_id"`
+	MemberOfGroupID      *uuid.UUID            `json:"member_of_group_id" format:"uuid" required:"false" doc:"The rule applies to everyone who is a member of this group; mutually exclusive with subject and predicate"`
+	Enabled              *bool                 `json:"enabled" required:"false" default:"true" doc:"Whether the rule is active"`
+	Effect               string                `json:"effect" required:"false" enum:"allow,deny" default:"allow" doc:"allow grants the access levels; deny takes them away from everything the rule covers, whatever the allow rules say, unless an exception below the denial lifts it"`
+	Exception            bool                  `json:"exception" required:"false" doc:"Only for allow rules: the rule lifts the denials that lie strictly above it in the hierarchy, for the resources it covers"`
+	ValidFrom            *time.Time            `json:"valid_from" required:"false" nullable:"true" doc:"The rule takes effect from this moment (RFC 3339); omitted or null — right away"`
+	ExpiresAt            *time.Time            `json:"expires_at" required:"false" nullable:"true" doc:"The rule stops taking effect at this moment (RFC 3339); omitted or null — never"`
+	Name                 *string               `json:"name" required:"false" nullable:"true" maxLength:"200" doc:"A name for the rule: it names the rule in the change log and in the explanations. Optional" example:"Sales can read the branches"`
+	Description          *string               `json:"description" required:"false" nullable:"true" maxLength:"2000" doc:"What the rule is for. Optional"`
+	OnMissingAttribute   *string               `json:"on_missing_attribute" required:"false" nullable:"true" enum:"skip,apply" doc:"Only for deny rules: what the denial does when a condition reads an attribute the request does not carry. skip: the condition does not hold, the denial does not apply (the behaviour before this option existed); apply: the denial applies (fail closed). A new deny rule defaults to apply; an allow rule always skips, it grants nothing on a missing attribute"`
+	RequiresPredicate    []PredicateCondition  `json:"requires_predicate" required:"false" nullable:"false" doc:"A guard: conditions that must hold as well for the rule to apply, in addition to its subject, group or predicate"`
+	RequiresGroupID      *uuid.UUID            `json:"requires_group_id" required:"false" nullable:"true" format:"uuid" doc:"A guard: the subject must be a member of this group for the rule to apply"`
+	ResourceWhere        []PredicateCondition  `json:"resource_where" required:"false" nullable:"true" doc:"Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions. Mutually exclusive with resource_id and resource_from_property; needs a synchronizer"`
+	SubjectType          *string               `json:"subject_type" required:"false" nullable:"true" doc:"Subject type for a literal subject; null matches any type. The type group is reserved"`
 }
 
 // Values of on_missing_attribute (see AssignmentRuleInput).
@@ -305,7 +322,7 @@ func (a *AssignmentRuleInput) Validate() error {
 		a.RequiresPredicate = []PredicateCondition{}
 	}
 	if a.RoleID != nil {
-		if a.TypeResourceID != nil || a.ResourceID != nil || a.ResourceFromClaim != nil || len(a.Access) > 0 || len(a.ResourceWhere) > 0 {
+		if a.TypeResourceID != nil || a.ResourceID != nil || a.ResourceFromProperty != nil || len(a.Access) > 0 || len(a.ResourceWhere) > 0 {
 			return apperr.Unprocessable(i18n.RoleAssignmentInlineExclusive)
 		}
 	} else {
@@ -346,6 +363,8 @@ func (a *AssignmentRuleInput) Validate() error {
 	if err := validatePredicate(a.RequiresPredicate); err != nil {
 		return err
 	}
+	a.Predicate = SubjectPredicate(a.Predicate)
+	a.RequiresPredicate = SubjectPredicate(a.RequiresPredicate)
 	if a.OnMissingAttribute != nil && *a.OnMissingAttribute == OnMissingApply && a.Effect != EffectDeny {
 		return apperr.Unprocessable(i18n.OnMissingApplyNeedsDeny)
 	}
@@ -354,14 +373,26 @@ func (a *AssignmentRuleInput) Validate() error {
 			return err
 		}
 	}
-	if a.ResourceID != nil && a.ResourceFromClaim != nil {
+	if a.ResourceID != nil && a.ResourceFromProperty != nil {
 		return apperr.Unprocessable(i18n.ResourceTargetExclusive)
 	}
-	if len(a.ResourceWhere) > 0 && (a.ResourceID != nil || a.ResourceFromClaim != nil) {
+	if len(a.ResourceWhere) > 0 && (a.ResourceID != nil || a.ResourceFromProperty != nil) {
 		return apperr.Unprocessable(i18n.ResourceTargetExclusive)
 	}
+	if a.Subject != nil && strings.HasPrefix(*a.Subject, GroupSubjectPrefix) {
+		return apperr.Unprocessable(i18n.SubjectGroupReserved)
+	}
+	if a.SubjectType != nil {
+		if a.Subject == nil {
+			return apperr.Unprocessable(i18n.SubjectTypeRequiresLiteral)
+		}
+		if err := checkSubjectType(*a.SubjectType); err != nil {
+			return apperr.Unprocessable(i18n.RuleSubjectTypeInvalid)
+		}
+	}
+
 	modes := 0
-	for _, set := range []bool{a.Subject != nil, a.MemberOfGroupID != nil, len(a.Predicate) > 0} {
+	for _, set := range []bool{a.Subject != nil, a.SubjectGroupID != nil, a.MemberOfGroupID != nil, len(a.Predicate) > 0} {
 		if set {
 			modes++
 		}
@@ -373,34 +404,36 @@ func (a *AssignmentRuleInput) Validate() error {
 }
 
 type AssignmentRule struct {
-	ID                 uuid.UUID            `json:"id" format:"uuid" doc:"Rule id"`
-	RoleID             *uuid.UUID           `json:"role_id" format:"uuid" doc:"Role whose permissions the rule grants; null for an inline rule"`
-	TypeResourceID     *uuid.UUID           `json:"type_resource_id" format:"uuid" doc:"Resource type id of the inline permission; null for a role rule"`
-	ResourceID         *string              `json:"resource_id" doc:"Resource id; null means the whole type"`
-	ResourceFromClaim  *ResourceFromClaim   `json:"resource_from_claim" doc:"Dynamic resource_id computed from a claim"`
-	Access             []string             `json:"access" doc:"Access levels of the inline permission; null for a role rule"`
-	Subject            *string              `json:"subject" doc:"A specific subject or group (group:{uuid})"`
-	Predicate          []PredicateCondition `json:"predicate" doc:"AND conditions over the claims and the request"`
-	MemberOfGroupID    *uuid.UUID           `json:"member_of_group_id" format:"uuid" doc:"Group whose members are granted access"`
-	Enabled            bool                 `json:"enabled" doc:"Whether the rule is active"`
-	Effect             string               `json:"effect" enum:"allow,deny" doc:"allow or deny"`
-	Exception          bool                 `json:"exception" doc:"An allow rule that lifts the denials above it"`
-	ValidFrom          *time.Time           `json:"valid_from" nullable:"true" doc:"The rule takes effect from this moment; null — right away"`
-	ExpiresAt          *time.Time           `json:"expires_at" nullable:"true" doc:"The rule stops taking effect at this moment; null — never"`
-	Name               *string              `json:"name" nullable:"true" doc:"The name of the rule; null when it has none"`
-	Description        *string              `json:"description" nullable:"true" doc:"What the rule is for; null when there is no description"`
-	OnMissingAttribute string               `json:"on_missing_attribute" enum:"skip,apply" doc:"What a denial does when a condition reads an attribute the request does not carry: skip or apply (see the input)"`
-	RequiresPredicate  []PredicateCondition `json:"requires_predicate" nullable:"false" doc:"The guard conditions that must hold as well for the rule to apply"`
-	RequiresGroupID    *uuid.UUID           `json:"requires_group_id" format:"uuid" nullable:"true" doc:"The guard: the subject must be a member of this group; null when there is no such guard"`
-	ResourceWhere      []PredicateCondition `json:"resource_where" nullable:"true" doc:"The conditions over the resource attributes the rule covers; null for a rule on a resource id, on a claim or on the whole type"`
-	SubjectKind        *string              `json:"subject_kind" nullable:"true" doc:"The label of the subject: user, service, agent or group; null when there is none"`
+	SubjectGroupID       *uuid.UUID            `json:"subject_group_id" format:"uuid" required:"false" doc:"The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id"`
+	ServiceID            uuid.UUID             `json:"service_id" format:"uuid" doc:"Owning service id"`
+	ID                   uuid.UUID             `json:"id" format:"uuid" doc:"Rule id"`
+	RoleID               *uuid.UUID            `json:"role_id" format:"uuid" doc:"Role whose permissions the rule grants; null for an inline rule"`
+	TypeResourceID       *uuid.UUID            `json:"type_resource_id" format:"uuid" doc:"Resource type id of the inline permission; null for a role rule"`
+	ResourceID           *string               `json:"resource_id" doc:"Resource id; null means the whole type"`
+	ResourceFromProperty *ResourceFromProperty `json:"resource_from_property" doc:"Dynamic resource_id computed from a property"`
+	Access               []string              `json:"access" doc:"Access levels of the inline permission; null for a role rule"`
+	Subject              *string               `json:"subject" doc:"A specific subject; null when another subject selector is used"`
+	Predicate            []PredicateCondition  `json:"predicate" doc:"AND conditions over the properties and the request"`
+	MemberOfGroupID      *uuid.UUID            `json:"member_of_group_id" format:"uuid" doc:"Group whose members are granted access"`
+	Enabled              bool                  `json:"enabled" doc:"Whether the rule is active"`
+	Effect               string                `json:"effect" enum:"allow,deny" doc:"allow or deny"`
+	Exception            bool                  `json:"exception" doc:"An allow rule that lifts the denials above it"`
+	ValidFrom            *time.Time            `json:"valid_from" nullable:"true" doc:"The rule takes effect from this moment; null — right away"`
+	ExpiresAt            *time.Time            `json:"expires_at" nullable:"true" doc:"The rule stops taking effect at this moment; null — never"`
+	Name                 *string               `json:"name" nullable:"true" doc:"The name of the rule; null when it has none"`
+	Description          *string               `json:"description" nullable:"true" doc:"What the rule is for; null when there is no description"`
+	OnMissingAttribute   string                `json:"on_missing_attribute" enum:"skip,apply" doc:"What a denial does when a condition reads an attribute the request does not carry: skip or apply (see the input)"`
+	RequiresPredicate    []PredicateCondition  `json:"requires_predicate" nullable:"false" doc:"The guard conditions that must hold as well for the rule to apply"`
+	RequiresGroupID      *uuid.UUID            `json:"requires_group_id" format:"uuid" nullable:"true" doc:"The guard: the subject must be a member of this group; null when there is no such guard"`
+	ResourceWhere        []PredicateCondition  `json:"resource_where" nullable:"true" doc:"The conditions over the resource attributes the rule covers; null for a rule on a resource id, on a property or on the whole type"`
+	SubjectType          *string               `json:"subject_type" nullable:"true" doc:"Subject type for a literal subject; null matches any type. The type group is reserved"`
 }
 
-// validateTarget checks the target of a permission (inline rule or role item): at most one of a resource id, a claim
+// validateTarget checks the target of a permission (inline rule or role item): at most one of a resource id, a property
 // and a resource_where, and the conditions of resource_where.
-func validateTarget(resourceID *string, fromClaim *ResourceFromClaim, where []PredicateCondition) error {
+func validateTarget(resourceID *string, fromProperty *ResourceFromProperty, where []PredicateCondition) error {
 	set := 0
-	for _, target := range []bool{resourceID != nil, fromClaim != nil, len(where) > 0} {
+	for _, target := range []bool{resourceID != nil, fromProperty != nil, len(where) > 0} {
 		if target {
 			set++
 		}
@@ -442,9 +475,8 @@ func validateValidity(from, to *time.Time) error {
 
 type AssignmentRuleWithContext struct {
 	AssignmentRule
-	ServiceID        *uuid.UUID `json:"service_id" format:"uuid" doc:"Id of the service that owns the resource type; null for a role rule"`
-	ServiceName      *string    `json:"service_name" doc:"Name of the service that owns the resource type; null for a role rule"`
-	TypeResourceName *string    `json:"type_resource_name" doc:"Resource type name; null for a role rule"`
-	RoleName         *string    `json:"role_name" doc:"Name of the granted role; null for an inline rule"`
-	TargetValid      bool       `json:"target_valid" doc:"Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted — and for a resource_from_claim that looks a resource up in, or climbs through, such a type. A denial of that kind still applies below the links to the resources the type left"`
+	ServiceName      *string `json:"service_name" doc:"Name of the owning service"`
+	TypeResourceName *string `json:"type_resource_name" doc:"Resource type name; null for a role rule"`
+	RoleName         *string `json:"role_name" doc:"Name of the granted role; null for an inline rule"`
+	TargetValid      bool    `json:"target_valid" doc:"Whether the rule's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse. An unapplied or deleted source makes that target inactive. Denials may still apply below unresolved links"`
 }

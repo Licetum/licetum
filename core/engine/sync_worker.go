@@ -98,7 +98,7 @@ func markUnanswered(ctx context.Context, tx pgx.Tx, typeID uuid.UUID, reason str
 }
 
 // runSync synchronizes the given types: it decides which of them need the source, fetches them in parallel, and applies the
-// result in one transaction. settle runs last, in that transaction, and is the engine's fence: it returns errLeaseLost
+// result in one transaction. settle runs before the writes, in that transaction, and is the engine's fence: it returns errLeaseLost
 // when the execution no longer owns the work, which rolls everything back.
 func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, settle func(ctx context.Context, tx pgx.Tx, unanswered map[uuid.UUID]bool) error) (map[uuid.UUID]bool, error) {
 	g, err := a.LoadTypeGraph(ctx)
@@ -249,6 +249,30 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 	err = a.syncTx(ctx, keys, func(tx pgx.Tx) error {
 		touched := map[uuid.UUID]struct{}{}
 		movedTypes = nil
+		if err := settle(ctx, tx, unanswered); err != nil {
+			return err
+		}
+		if err := fenceSynchronizers(ctx, tx, due); err != nil {
+			return err
+		}
+		var catalogTypes []uuid.UUID
+		for _, st := range settled {
+			changed, err := initializeTypeMode(ctx, tx, st.typeID)
+			if err != nil {
+				return err
+			}
+			if changed {
+				catalogTypes = append(catalogTypes, st.typeID)
+			}
+		}
+		if len(catalogTypes) > 0 {
+			var err error
+			g, err = loadTypeGraph(ctx, tx)
+			if err != nil {
+				return err
+			}
+		}
+
 		for _, c := range changed {
 			// A hash that differs does not mean the rows do: the database says what changed.
 			var rowsChanged bool
@@ -259,11 +283,12 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 				movedTypes = append(movedTypes, c.typeID)
 			}
 		}
-		if err := rebuildClosure(ctx, tx, touched); err != nil {
+		restored, err := touchModeDescendants(ctx, tx, catalogTypes, touched)
+		if err != nil {
 			return err
 		}
-		// The revision of the data of these services moves in the transaction that moved the data, and only when it moved.
-		if err := bumpDataRevisions(ctx, tx, g, movedTypes); err != nil {
+		movedTypes = append(movedTypes, restored...)
+		if err := rebuildClosure(ctx, tx, touched); err != nil {
 			return err
 		}
 		for _, st := range settled {
@@ -282,7 +307,7 @@ func (a *App) runSync(ctx context.Context, typeIDs []uuid.UUID, fresh bool, sett
 				return err
 			}
 		}
-		return settle(ctx, tx, unanswered)
+		return publishData(ctx, tx, g, movedTypes, catalogTypes...)
 	})
 	if err != nil {
 		return nil, err

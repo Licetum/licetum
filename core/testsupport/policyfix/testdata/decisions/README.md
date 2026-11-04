@@ -1,6 +1,6 @@
 # Decision tables
 
-The fixtures of the decision contracts (DEC01–DEC13 of `contracts.yaml`; the format is `core/testsupport/policyfix`). Each one
+The fixtures of the decision contracts (DEC01–DEC15 of `contracts.yaml`; the format is `core/testsupport/policyfix`). Each one
 is checked twice: by the engine through the AuthZEN API (`admin-api/tests/integration/contracts`, with the searches of
 every case cross-checked against the evaluations) and by the reference evaluator (`core/testsupport/refeval`).
 
@@ -28,14 +28,14 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationOrphanFailsClosed | dec11_unresolved_parent (the recovery is synchronization) |
 | TestIntegrationOrphanAboveFailsClosed | dec11_unresolved_above (the recovery is synchronization) |
 | TestIntegrationCheckExplainAuthzenMetrics | dec13_explanations (one denial on B1, one exception on B2: the runner's check of repeated entries); the AuthZEN envelope, the subject mismatch and the metrics are not decisions |
-| TestIntegrationResourceAttributes | dec10_resource_from_claim (the attributes in the admin list and the refused attribute name are not decisions) |
+| TestIntegrationResourceAttributes | dec10_resource_from_property (the attributes in the admin list and the refused attribute name are not decisions) |
 
 ### hierarchy_test.go
 
 | Test | Tables |
 |---|---|
 | TestIntegrationHierarchyCascade | dec05_cross_service_cascade, dec01_what_a_rule_covers (the sync state is not a decision) |
-| TestIntegrationHierarchyResourceFromClaim | dec10_resource_from_claim |
+| TestIntegrationHierarchyResourceFromClaim | dec10_resource_from_property |
 | TestIntegrationHierarchyWholeTypeAndMerge | dec05_cross_service_cascade |
 | TestIntegrationHierarchySourceChanges | dec05_source_changes, dec05_cross_service_cascade (the cache rows and the admin list are not decisions) |
 | TestIntegrationHierarchyTypeTreeChanges | dec05_retyped_parent_link |
@@ -54,7 +54,7 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse | dec10_guards (the refused delete of the guard group is not a decision) |
 | TestIntegrationResourceWhereCoversTheResourcesWhoseAttributesMatch | dec10_resource_where (the refused targets are not decisions) |
 | TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences | dec12_access_groups, dec12_access_group_levels (levels changed under the rules through `before`; the protected references and the refused groups are not decisions) |
-| TestIntegrationSubjectKindIsStoredAndChecked | not a decision test |
+| TestIntegrationSubjectTypeIsStoredAndChecked | not a decision test |
 
 ### roles_test.go
 
@@ -74,7 +74,7 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationBatchRefusesAnIdAnotherEntityHas | not a decision test |
 | TestIntegrationPolicyImportRefusesARuleIdOfAnotherService | dec01_what_a_rule_covers (the rule that still decides after the refused import) |
 | TestIntegrationRoleItemsKeepTheirConditionsAndAccessGroupsThroughTheDocument | dec12_role_items_with_conditions (the document and its import are not decisions) |
-| TestIntegrationNestedGroupsAndSubjectKindsRoundTrip | not a decision test (the decision it relies on is in dec12_nested_groups_sixteen_levels) |
+| TestIntegrationNestedGroupsRoundTrip | not a decision test (the decision it relies on is in dec12_nested_groups_sixteen_levels) |
 | TestIntegrationResourceWhereMatchesListAttributes | dec10_resource_where_lists |
 
 ### escalation_test.go
@@ -86,3 +86,5 @@ tables, so that a regression the API test would catch is caught by a table too. 
 | TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies | dec09_deny_on_unknown_membership |
 | TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute | dec09_denial_from_a_network, dec09_missing_attribute (the value the PATCH stores is an admin write) |
 | TestIntegrationPointWriterCannotGiveItselfARoleWithAPlatformItem | not a decision test |
+
+DEC15 adds typed literal-subject rows to `dec01_what_a_rule_covers.yaml`: user, service and custom types, null-as-any, group identities and properties that cannot replace the identity.

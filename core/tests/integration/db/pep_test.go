@@ -33,7 +33,7 @@ func newPEPPool(t *testing.T) (*pgxpool.Pool, uuid.UUID) {
 		t.Fatal(err)
 	}
 	service := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'pep', '', '', 'pep')`, service); err != nil {
+	if _, err := support.RawExec(ctx, pool, `INSERT INTO service (id, name, url, icon, slug) VALUES ($1, 'pep', '', '', 'pep')`, service); err != nil {
 		t.Fatal(err)
 	}
 	return pool, service
@@ -79,37 +79,37 @@ func TestPEPRevokingAKeyFreesASlot(t *testing.T) {
 	}
 }
 
-func TestPEPWritesMoveTheScopePEPAndNotTheRules(t *testing.T) {
+func TestPEPWritesMoveTheGlobalRevision(t *testing.T) {
 	pool, service := newPEPPool(t)
 	ctx := context.Background()
 	client := apiKeyClient(t, pool, service, "gateway")
 
-	before, err := db.LoadRevisions(ctx, pool)
+	before, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	support.IssueTestAPIKey(t, pool, client.ID)
-	after, err := db.LoadRevisions(ctx, pool)
+	after, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.PEP != before.PEP+1 {
-		t.Errorf("a key issue moved the pep scope from %d to %d, want one step", before.PEP, after.PEP)
+	if after.Revision != before.Revision+1 {
+		t.Errorf("a key issue moved the pep scope from %d to %d, want one step", before.Revision, after.Revision)
 	}
-	if after.Rules != before.Rules {
-		t.Errorf("a key issue moved the rules scope from %d to %d, want no change", before.Rules, after.Rules)
+	if after.Revision != before.Revision+1 {
+		t.Errorf("a key issue moved the rules scope from %d to %d, want one step", before.Revision, after.Revision)
 	}
 
-	// The other way round: a rules write leaves the pep scope where it is.
-	if _, err := db.BumpRevision(ctx, pool, db.ScopeRules); err != nil {
+	// A policy write moves the same global revision as a PEP write.
+	if _, err := support.AdvanceRevision(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	again, err := db.LoadRevisions(ctx, pool)
+	again, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.PEP != after.PEP {
-		t.Errorf("a rules write moved the pep scope from %d to %d", after.PEP, again.PEP)
+	if again.Revision != after.Revision+1 {
+		t.Errorf("a rules write moved the pep scope from %d to %d", after.Revision, again.Revision)
 	}
 }
 
@@ -119,7 +119,7 @@ func TestPEPDeletedServiceTakesItsClientsAndKeys(t *testing.T) {
 	client := apiKeyClient(t, pool, service, "gateway")
 	support.IssueTestAPIKey(t, pool, client.ID)
 
-	if _, err := pool.Exec(ctx, `DELETE FROM service WHERE id = $1`, service); err != nil {
+	if _, err := support.RawExec(ctx, pool, `DELETE FROM service WHERE id = $1`, service); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
@@ -152,7 +152,7 @@ func TestPEPSoftDeletedServiceLeavesTheDirectory(t *testing.T) {
 		t.Fatalf("before the soft delete: %d clients and %d credentials, want 1 and 1", len(data.Clients), len(data.Credentials))
 	}
 
-	if _, err := pool.Exec(ctx, `UPDATE service SET deleted_at = now() WHERE id = $1`, service); err != nil {
+	if _, err := support.RawExec(ctx, pool, `UPDATE service SET deleted_at = now() WHERE id = $1`, service); err != nil {
 		t.Fatal(err)
 	}
 	data, err = db.LoadPEPDirectory(ctx, pool)
@@ -282,20 +282,20 @@ func TestPEPClientAndKeysAreReachedThroughTheirServiceOnly(t *testing.T) {
 		t.Fatalf("keys = %v, %v", keys, err)
 	}
 
-	revisions, err := db.LoadRevisions(ctx, pool)
+	revisions, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := revisions.PEP
+	before := revisions.Revision
 	stop := errors.New("stop")
 	if _, err := db.ModifyPEPClient(ctx, pool, service, client.ID, func(c *db.PEPClient) error { c.Name = "renamed"; return stop }); !errors.Is(err, stop) {
 		t.Fatalf("an error of the change = %v", err)
 	}
-	revisions, err = db.LoadRevisions(ctx, pool)
+	revisions, err = db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := db.GetPEPClient(ctx, pool, service, client.ID); got.Name != "checkout" || revisions.PEP != before {
+	if got, _ := db.GetPEPClient(ctx, pool, service, client.ID); got.Name != "checkout" || revisions.Revision != before {
 		t.Fatalf("a refused change was written: %v", got)
 	}
 

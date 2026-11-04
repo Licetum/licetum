@@ -93,7 +93,7 @@ func (f *dbosFixture) jobs(typ uuid.UUID, status string) int {
 
 func (f *dbosFixture) exec(t *testing.T, sql string, args ...any) {
 	t.Helper()
-	if _, err := f.pool.Exec(context.Background(), sql, args...); err != nil {
+	if _, err := support.RawExec(context.Background(), f.pool, sql, args...); err != nil {
 		t.Fatal(err)
 	}
 }

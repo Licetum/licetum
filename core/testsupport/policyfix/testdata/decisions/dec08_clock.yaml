@@ -21,20 +21,20 @@ cases:
   # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationClockConditionsReadTheHourOfTheDecision
   - name: a condition that always holds and one that never does
     subject: user-1
-    claims: {preferred_username: user-1}
+    properties: {preferred_username: user-1}
     questions:
       - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [d1-at-any-time]}
       - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
   - name: the same at the last second of a Sunday
     subject: user-1
-    claims: {preferred_username: user-1}
+    properties: {preferred_username: user-1}
     at: 2030-01-06T23:59:59Z
     questions:
       - {type: division, resource: D1, action: read, allowed: true, decision: allowed}
       - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
   - name: the same at midnight
     subject: user-1
-    claims: {preferred_username: user-1}
+    properties: {preferred_username: user-1}
     at: 2030-01-07T00:00:00Z
     questions:
       - {type: division, resource: D1, action: read, allowed: true, decision: allowed}

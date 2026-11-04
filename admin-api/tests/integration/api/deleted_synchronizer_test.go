@@ -84,7 +84,7 @@ func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) 
 	snapshotDecisions := func() []string {
 		t.Helper()
 		results, err := w.app.CheckAccess(ctx, uuid.MustParse(w.appSvc), hierarchySubject,
-			engine.NewEnv(engine.Claims{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
+			engine.NewEnv(engine.Properties{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +221,7 @@ func TestIntegrationADeletedSynchronizerLeavesNoResourcesToDecide(t *testing.T) 
 		t.Fatalf("the preview of a rule on D1 counts no resource of item nor of part: %v", types)
 	}
 
-	// A synchronizer created again finds the rows: the resources are back, and so is the route to P1.
+	// The first apply of the replacement source restores its resources and the route to P1.
 	w.must("POST", w.typePath("item")+"/resource/synchronizer", itemSource())
 	if got := decisions(w.checkAccess(w.appSvc, true, questions...)); !slices.Equal(got, allowed) {
 		t.Fatalf("with a synchronizer again, the query path: %v", got)
@@ -254,7 +254,7 @@ func TestIntegrationADeletedSynchronizerCutsTheRoutesBelowItWhateverTheLowerSour
 				t.Helper()
 				queries = w.checkAccess(w.appSvc, true, question)[0]["explanation"].(map[string]any)["decision"].(string)
 				results, err := w.app.CheckAccess(ctx, uuid.MustParse(w.appSvc), hierarchySubject,
-					engine.NewEnv(engine.Claims{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
+					engine.NewEnv(engine.Properties{"preferred_username": hierarchySubject}, nil), asked, true, engine.MinimizeLatency)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -285,7 +285,7 @@ func TestIntegrationADeletedSynchronizerCutsTheRoutesBelowItWhateverTheLowerSour
 			dataRevision := func() int64 {
 				t.Helper()
 				var rev int64
-				if err := w.pool.QueryRow(ctx, `SELECT revision FROM revision_state WHERE scope = 'data:' || $1`, w.appSvc).Scan(&rev); err != nil {
+				if err := w.pool.QueryRow(ctx, `SELECT revision FROM revision_state WHERE scope = 'global'`).Scan(&rev); err != nil {
 					t.Fatal(err)
 				}
 				return rev
@@ -318,17 +318,32 @@ func TestIntegrationADeletedSynchronizerCutsTheRoutesBelowItWhateverTheLowerSour
 				t.Fatalf("without a synchronizer of item, P1 gets nothing from D1: %s on the query path, %s on the snapshot path", q, s)
 			}
 
-			// And the routes come back with the synchronizer, before anything is synchronized.
+			// The replacement starts unapplied: no old route is restored just by creating it.
+			w.stopWorker()
 			before = dataRevision()
 			w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
-			if got, want := ancestors(), []string{"B1", "D1", "I1", "P1", "R1"}; !slices.Equal(got, want) {
-				t.Fatalf("after the synchronizer of item was created again, the ancestors of P1 %v, want %v", got, want)
+			if got := ancestors(); !slices.Equal(got, []string{"P1"}) {
+				t.Fatalf("unapplied replacement restored old routes: %v", got)
 			}
 			if got := dataRevision(); got <= before {
-				t.Fatalf("the data revision of the service of part did not move: %d, was %d", got, before)
+				t.Fatalf("replacement catalog revision did not move: %d, was %d", got, before)
+			}
+			if variant == "no worker runs" {
+				w.exec(`ALTER TABLE src_part RENAME TO src_part_off`)
+			}
+			w.worker(nil, engine.SyncHooks{})
+			graph, err := w.app.LoadTypeGraph(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.app.EnsureSynced(ctx, graph, []uuid.UUID{uuid.MustParse(w.item)}, true); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := ancestors(), []string{"B1", "D1", "I1", "P1", "R1"}; !slices.Equal(got, want) {
+				t.Fatalf("first apply did not restore routes below item: %v, want %v", got, want)
 			}
 			if q, s := decisions(); q != engine.DecisionAllowed || s != engine.DecisionAllowed {
-				t.Fatalf("with a synchronizer of item again: %s, %s", q, s)
+				t.Fatalf("after the replacement's first apply: %s, %s", q, s)
 			}
 		})
 	}
@@ -393,23 +408,23 @@ func TestIntegrationASynchronizationThatStartedBeforeTheSynchronizerWasDeletedDo
 	}
 }
 
-// A resource_from_claim that looks a resource up in a type without a synchronizer, or climbs through one, finds nothing:
+// A resource_from_property that looks a resource up in a type without a synchronizer, or climbs through one, finds nothing:
 // the rule list and the items of a role say its target does not take effect (target_valid) and the lint reports it, until
-// the synchronizer is there again. A claim looked up among the resources of a type that has them is not touched.
+// the synchronizer is there again. A property looked up among the resources of a type that has them is not touched.
 func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *testing.T) {
 	w := newWorld(t)
 	w.partBelowItem()
 	claim := func(name, lookup string) map[string]any {
-		return map[string]any{"resource_from_claim": map[string]any{
-			"claim": name, "lookup_type_resource_id": w.typeByName[lookup], "match_by": "name"}}
+		return map[string]any{"resource_from_property": map[string]any{
+			"property": name, "lookup_type_resource_id": w.typeByName[lookup], "match_by": "name"}}
 	}
 	withEffect := func(m map[string]any) map[string]any { m["effect"] = "deny"; return m }
 	inItem := w.rule("branch", "", withEffect(claim("item_name", "item")))      // looks in item
 	throughItem := w.rule("branch", "", withEffect(claim("part_name", "part"))) // climbs from part through item to branch
 	inBranch := w.rule("branch", "", withEffect(claim("branch_name", "branch")))
-	role := w.must("POST", "/role", map[string]any{"name": "by-item"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "by-item"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
-		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "resource_from_claim": claim("item_name", "item")["resource_from_claim"]})
+		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "resource_from_property": claim("item_name", "item")["resource_from_property"]})
 
 	valid := func() (rules map[string]bool, items []bool) {
 		t.Helper()
@@ -460,16 +475,29 @@ func TestIntegrationARuleThatLooksInATypeWithoutASynchronizerIsMarkedDead(t *tes
 		}
 	}
 
+	synchronize := func() {
+		ctx := context.Background()
+		g, err := w.app.LoadTypeGraph(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.app.EnsureSynced(ctx, g, []uuid.UUID{uuid.MustParse(w.item), uuid.MustParse(w.branch), uuid.MustParse(w.typeByName["part"]), uuid.MustParse(w.division), uuid.MustParse(w.rrs)}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	synchronize()
 	expect("while item has its synchronizer", false, false, false, false)
 	w.must(http.MethodDelete, w.typePath("item")+"/resource/synchronizer/"+w.syncs["item"], nil)
 	expect("without a synchronizer of item", true, true, false, true)
 	w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
-	expect("with a synchronizer of item again", false, false, false, false)
+	expect("replacement before its first apply", true, true, false, true)
+	synchronize()
+	expect("with a replacement applied", false, false, false, false)
 }
 
 // The denials that read the resources of a type without a synchronizer, or the rows that type left, keep an anchor that is no
 // resource (the tables dec06_denials_that_lose_their_type.yaml decide it): P1 of part names I1 of item as its parent, so a
-// denial by claim whose anchor is an item covers P1 once item has no resources, on the query path and on the snapshot path,
+// denial by property whose anchor is an item covers P1 once item has no resources, on the query path and on the snapshot path,
 // in the permission list and in the explanation. The same denial does not cover P3, which has no parent.
 func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T) {
 	w := newWorld(t)
@@ -477,10 +505,10 @@ func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T)
 	w.partBelowItem()
 	w.source("part", "P3", "Part 3", "")
 	w.rule("part", "", nil)
-	denial := w.rule("item", "", map[string]any{"effect": "deny", "access": []string{"*"}, "resource_from_claim": map[string]any{
-		"claim": "part_name", "lookup_type_resource_id": w.typeByName["part"], "match_by": "name"}})
+	denial := w.rule("item", "", map[string]any{"effect": "deny", "access": []string{"*"}, "resource_from_property": map[string]any{
+		"property": "part_name", "lookup_type_resource_id": w.typeByName["part"], "match_by": "name"}})
 
-	claims := engine.Claims{"preferred_username": hierarchySubject, "part_name": "Part 1"}
+	claims := engine.Properties{"preferred_username": hierarchySubject, "part_name": "Part 1"}
 	asked := func(ids ...string) []model.CheckRequest {
 		var out []model.CheckRequest
 		for _, id := range ids {
@@ -498,7 +526,7 @@ func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T)
 		return results
 	}
 	// verify checks the answers about P1 and P3: P3 has no parent, so the denial never covers it; P1 is denied, by the item the
-	// claim finds while item has resources, and as an assumed denial anchored at no resource while it has none.
+	// property finds while item has resources, and as an assumed denial anchored at no resource while it has none.
 	verify := func(when string, results []model.CheckResult, p1 string, assumed bool) {
 		t.Helper()
 		if results[0].Explanation.Decision != p1 || results[1].Explanation.Decision != engine.DecisionAllowed {
@@ -527,10 +555,10 @@ func TestIntegrationADenialThatLosesItsTypeStaysInForceOnBothPaths(t *testing.T)
 	if got := ids(list, "part"); !slices.Equal(got, []string{"P3"}) {
 		t.Fatalf("the permission list names %v, want P3 alone", got)
 	}
-	// A request without the claim is not under the denial.
-	claims = engine.Claims{"preferred_username": hierarchySubject}
+	// A request without the property is not under the denial.
+	claims = engine.Properties{"preferred_username": hierarchySubject}
 	verify("without the claim", decide(engine.HigherConsistency), engine.DecisionAllowed, false)
-	claims = engine.Claims{"preferred_username": hierarchySubject, "part_name": "Part 1"}
+	claims = engine.Properties{"preferred_username": hierarchySubject, "part_name": "Part 1"}
 
 	w.must("POST", w.typePath("item")+"/resource/synchronizer", w.itemSource())
 	verify("with a synchronizer of item again", decide(engine.HigherConsistency), engine.DecisionDenied, false)

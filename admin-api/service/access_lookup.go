@@ -23,8 +23,12 @@ const accessPeopleSample = 20
 // whom each applies to — a subject, a group, a condition, everyone — and, where the registry knows them, the people.
 // It is the reverse of a check: the rules are those of every subject, loaded once, and the covering is the one the
 // decision uses (coversOf), so what is listed is what a decision would weigh. Rules that find their resource from a
-// claim cannot be placed without a token and are listed apart.
+// property cannot be placed without a token and are listed apart.
 func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.UUID, resourceID *string) (*model.AccessLookup, error) {
+	ctx, err := a.CurrentReadContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := a.GetExistingTypeResource(ctx, a.DB, serviceID, typeResourceID); err != nil {
 		return nil, err
 	}
@@ -69,7 +73,8 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 			involved[id] = true
 		}
 	}
-	if _, err := a.EnsureSynced(ctx, g, engine.Keys(involved), false); err != nil {
+	g, _, err = a.EnsureSyncedGraph(ctx, g, engine.Keys(involved), false)
+	if err != nil {
 		return nil, err
 	}
 
@@ -89,7 +94,7 @@ func (a *App) WhoHasAccess(ctx context.Context, serviceID, typeResourceID uuid.U
 
 	var static, dynamic []model.AssignmentRule
 	for _, r := range rules {
-		if r.ResourceFromClaim != nil {
+		if r.ResourceFromProperty != nil {
 			dynamic = append(dynamic, r)
 		} else {
 			static = append(static, r)
@@ -171,12 +176,8 @@ func (a *App) lookupNames(ctx context.Context, rules []model.AssignmentRule) (lo
 		if r.MemberOfGroupID != nil {
 			groupIDs = append(groupIDs, *r.MemberOfGroupID)
 		}
-		if r.Subject != nil {
-			if id, ok := strings.CutPrefix(*r.Subject, model.GroupSubjectPrefix); ok {
-				if gid, err := uuid.Parse(id); err == nil {
-					groupIDs = append(groupIDs, gid)
-				}
-			}
+		if r.SubjectGroupID != nil {
+			groupIDs = append(groupIDs, *r.SubjectGroupID)
 		}
 		if r.RoleID != nil {
 			roleIDs = append(roleIDs, *r.RoleID)
@@ -285,13 +286,9 @@ func whoOf(rule *model.AssignmentRule, names lookedUpNames) model.AccessWho {
 	who := model.AccessWho{Predicate: []model.PredicateCondition{}, Guarded: len(rule.RequiresPredicate) > 0 || rule.RequiresGroupID != nil}
 	group := func(id uuid.UUID) *model.NamedID { return &model.NamedID{ID: id, Name: names.groups[id]} }
 	switch {
+	case rule.SubjectGroupID != nil:
+		who.Kind, who.Group = "group", group(*rule.SubjectGroupID)
 	case rule.Subject != nil:
-		if id, ok := strings.CutPrefix(*rule.Subject, model.GroupSubjectPrefix); ok {
-			if gid, err := uuid.Parse(id); err == nil {
-				who.Kind, who.Group = "group", group(gid)
-				return who
-			}
-		}
 		who.Kind, who.Subject = "user", rule.Subject
 	case rule.MemberOfGroupID != nil:
 		who.Kind, who.Group = "group", group(*rule.MemberOfGroupID)
@@ -303,13 +300,8 @@ func whoOf(rule *model.AssignmentRule, names lookedUpNames) model.AccessWho {
 	return who
 }
 
-// peopleReached tries every rule on the people of the subject directories of the services its types belong to (ADR 0001, 8.8)
-// and says, per rule, how many it applies to and who the first few are. A person is tried with the properties stored for
-// them as their claims; a condition on the request context cannot hold without a request, so it reaches nobody here. The
-// service of a rule is the service of the type it targets (of the types of the items of the role it grants, and of the type
-// its claim is looked up in): the directory of another service is not counted, and a service with an empty directory has no
-// people. A person who is in the directories of two of a rule's services is counted once. The figures say how far to trust
-// the answer.
+// peopleReached evaluates each rule against its owning service's subject directory.
+// Request context is absent here, and a directory of another service contributes no subjects.
 func (a *App) peopleReached(ctx context.Context, rules []*model.AssignmentRule) ([]peopleResult, model.AccessPeople, error) {
 	results := make([]peopleResult, len(rules))
 	info := model.AccessPeople{}
@@ -362,7 +354,7 @@ func (a *App) peopleReached(ctx context.Context, rules []*model.AssignmentRule) 
 	now := time.Now()
 	counted := make([]map[string]bool, len(rules))
 	for _, p := range people {
-		env := engine.Env{Claims: engine.Claims(p.entry.Properties), Now: now}
+		env := engine.Env{SubjectType: p.entry.Type, Properties: engine.Properties(p.entry.Properties), Now: now}
 		identity, _ := engine.IdentityOf(members, p.entry.ID, env)
 		for i, rule := range rules {
 			if !slices.Contains(ruleServices[i], p.service) {
@@ -393,77 +385,17 @@ func (a *App) peopleReached(ctx context.Context, rules []*model.AssignmentRule) 
 	return results, info, nil
 }
 
-// servicesOfRules says, for each rule, the services whose people it can reach: the service of the type it targets, of the
-// type its claim is looked up in, and of the types of the items of the role it grants.
-func (a *App) servicesOfRules(ctx context.Context, rules []*model.AssignmentRule) ([][]uuid.UUID, error) {
-	typesOf := make([][]uuid.UUID, len(rules))
-	var roleIDs []uuid.UUID
-	for i, r := range rules {
-		if r.TypeResourceID != nil {
-			typesOf[i] = append(typesOf[i], *r.TypeResourceID)
-		}
-		if r.ResourceFromClaim != nil {
-			typesOf[i] = append(typesOf[i], r.ResourceFromClaim.LookupTypeResourceID)
-		}
-		if r.RoleID != nil {
-			roleIDs = append(roleIDs, *r.RoleID)
-		}
-	}
-	roleTypes := map[uuid.UUID][]uuid.UUID{}
-	if len(roleIDs) > 0 {
-		rows, err := a.DB.Query(ctx, `SELECT role_id, type_resource_id FROM role_permission WHERE role_id = ANY($1)`, roleIDs)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var role, typ uuid.UUID
-			if err := rows.Scan(&role, &typ); err != nil {
-				return nil, err
-			}
-			roleTypes[role] = append(roleTypes[role], typ)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-	}
-	var typeIDs []uuid.UUID
-	for i, r := range rules {
-		if r.RoleID != nil {
-			typesOf[i] = append(typesOf[i], roleTypes[*r.RoleID]...)
-		}
-		typeIDs = append(typeIDs, typesOf[i]...)
-	}
-	serviceOf := map[uuid.UUID]uuid.UUID{}
-	if len(typeIDs) > 0 {
-		rows, err := a.DB.Query(ctx, `SELECT id, service_id FROM type_resource WHERE id = ANY($1) AND deleted_at IS NULL`, typeIDs)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var typ, service uuid.UUID
-			if err := rows.Scan(&typ, &service); err != nil {
-				return nil, err
-			}
-			serviceOf[typ] = service
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-	}
+// servicesOfRules selects only each rule owner's directory. An upstream lookup
+// type never changes whose subject properties the owning application supplied.
+func (a *App) servicesOfRules(_ context.Context, rules []*model.AssignmentRule) ([][]uuid.UUID, error) {
 	out := make([][]uuid.UUID, len(rules))
-	for i, types := range typesOf {
-		for _, t := range types {
-			if service, ok := serviceOf[t]; ok && !slices.Contains(out[i], service) {
-				out[i] = append(out[i], service)
-			}
-		}
+	for i, r := range rules {
+		out[i] = []uuid.UUID{r.ServiceID}
 	}
 	return out, nil
 }
 
-// peopleResult is how many people of the directories a rule applies to, with the first few.
+// peopleResult is how many people of the owning directory a rule applies to.
 type peopleResult struct {
 	total  int
 	sample []model.KnownPerson

@@ -2,7 +2,7 @@
 
 package api_test
 
-// Integration test of what a resource_from_claim lookup needs synchronized: every type its climb passes. Same
+// Integration test of what a resource_from_property lookup needs synchronized: every type its climb passes. Same
 // Testcontainers environment as hierarchy_test.go; the resources come from the fake HTTP source of core/testsupport.
 
 import (
@@ -18,19 +18,19 @@ import (
 	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// A resource_from_claim rule finds its anchors by climbing the resource links from the matched resource up to the rule's
+// A resource_from_property rule finds its anchors by climbing the resource links from the matched resource up to the rule's
 // type, so the request must synchronize every type on the way (TypeGraph.TypesBetween in prepare), also one no level flows
 // through and no rule or question names. Without its data the link below it stays unresolved, the climb stops there and a
 // denial found that way has no anchor: it fails open.
 //
 // zone <- team (inherit read) <- squad (inherit write) <- space. Read flows from a zone to its teams, write from a team to its
-// squads, nothing from a zone to a squad or a space: the squad, of another service, lies between the space a claim names and
+// squads, nothing from a zone to a squad or a space: the squad, of another service, lies between the space a property names and
 // the zone the denial is anchored on, and only the climb reaches it (read is granted on the zones as a whole: a rule on the
 // teams would bring the squads in as its descendants, and the questions name teams only). The answer then reads the data of
 // the squads' service, so a change of that data alone (the squad, and with it the space, moves under another team) reaches
 // the cached answers without consistency=higher: at once in the process that ran the synchronization, within the poll
 // interval in another.
-func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
+func TestIntegrationPropertyLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
 	src := support.NewSource(t)
@@ -67,7 +67,7 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 		"type_resource_id": types["zone"], "subject": "alice", "access": []string{"read"}})["id"].(string)
 	deny := e.must("POST", "/assignment_rule", map[string]any{
 		"type_resource_id": types["zone"], "subject": "alice", "access": []string{"read"}, "effect": "deny",
-		"resource_from_claim": map[string]any{"claim": "blocked", "lookup_type_resource_id": types["space"], "match_by": "id"},
+		"resource_from_property": map[string]any{"property": "blocked", "lookup_type_resource_id": types["space"], "match_by": "id"},
 	})["id"].(string)
 
 	typeIDs := []string{types["zone"], types["team"], types["squad"], types["space"]}
@@ -83,7 +83,7 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 
 	token := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub", "blocked": "S1"})
 	type teamAnswer struct{ decision, deniedAt string }
-	// ask asks the check API at base, with the default consistency, about read on T1 and T2 as alice, whose claim names S1.
+	// ask asks the check API at base, with the default consistency, about read on T1 and T2 as alice, whose property names S1.
 	ask := func(base string) [2]teamAnswer {
 		t.Helper()
 		req := authzenreq.Evaluations("org", authzenreq.SubjectOf(token), []authzenreq.Question{
@@ -137,11 +137,11 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 
 	revisions := func() (orgData, squadsData int64) {
 		t.Helper()
-		rev, err := db.LoadRevisions(ctx, e.pool)
+		rev, err := db.LoadLocalVersions(ctx, e.pool)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return rev.Data[org], rev.Data[squads]
+		return rev.Revision, rev.Revision
 	}
 	orgBefore, squadsBefore := revisions()
 
@@ -149,9 +149,9 @@ func TestIntegrationClaimLookupSynchronizesTheTypesItClimbs(t *testing.T) {
 	src.Set("squad", map[string]any{"id": "Q1", "name": "Squad 1", "parent_id": "T2"})
 	e.must("POST", "/type_resource/"+types["squad"]+"/resource/refresh", nil)
 	orgAfter, squadsAfter := revisions()
-	// Only the data of the squads' service moved: the cached answers are dropped only if they recorded it.
-	if squadsAfter <= squadsBefore || orgAfter != orgBefore {
-		t.Fatalf("data revisions: org %d -> %d, squads %d -> %d; want only the squads' to move",
+	// In P3 the synchronization moves the global revision for every service.
+	if squadsAfter <= squadsBefore || orgAfter <= orgBefore {
+		t.Fatalf("data revisions: org %d -> %d, squads %d -> %d; want the global revision to move",
 			orgBefore, orgAfter, squadsBefore, squadsAfter)
 	}
 

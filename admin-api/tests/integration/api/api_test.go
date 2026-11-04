@@ -60,15 +60,16 @@ func TestMain(m *testing.M) {
 }
 
 type env struct {
-	t     *testing.T
-	admin *httptest.Server
-	check *httptest.Server
-	ops   *httptest.Server // the operations listener of the same PDP: probes and metrics (server.NewOpsHandler)
-	mock  *httptest.Server
-	key   *rsa.PrivateKey
-	app   *service.App
-	pool  *pgxpool.Pool
-	cfg   *config.Config
+	seedRevision int64
+	t            *testing.T
+	admin        *httptest.Server
+	check        *httptest.Server
+	ops          *httptest.Server // the operations listener of the same PDP: probes and metrics (server.NewOpsHandler)
+	mock         *httptest.Server
+	key          *rsa.PrivateKey
+	app          *service.App
+	pool         *pgxpool.Pool
+	cfg          *config.Config
 	// adminToken is sent to the admin API by default (see do).
 	adminToken string
 	// callers makes the questions of the tests the questions of a PEP client (see doWithHeader); extra are the other apps of
@@ -162,6 +163,9 @@ func setup(t *testing.T) *env {
 			other.AfterPEPWrite()
 		}
 	})
+	if err := pool.QueryRow(context.Background(), `SELECT revision FROM revision_state WHERE scope='global'`).Scan(&e.seedRevision); err != nil {
+		t.Fatal(err)
+	}
 	return e
 }
 
@@ -169,7 +173,7 @@ func setup(t *testing.T) *env {
 // restore-admin in another process): the revision is bumped as every write does, and the app reads it again at once.
 func (e *env) externalChange(ctx context.Context) {
 	e.t.Helper()
-	revision, err := db.BumpRevision(ctx, e.pool, db.ScopeRules)
+	revision, err := support.AdvanceRevision(ctx, e.pool)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -261,7 +265,7 @@ func (e *env) mockHandler() http.Handler {
 // testAdminAudience is the audience (ADMIN_AUTH__AUDIENCE) the admin API of the tests requires.
 const testAdminAudience = "licetum-admin"
 
-// token signs claims as the mock identity provider. A token that names no audience gets the one of the admin API, so the same
+// token signs properties as the mock identity provider. A token that names no audience gets the one of the admin API, so the same
 // token works there and (where the audience is not looked at) at a service; a test of the audience sets "aud" itself.
 func (e *env) token(claims jwt.MapClaims) string {
 	claims["iss"] = e.mock.URL + "/realm"
@@ -337,7 +341,7 @@ func (e *env) track(app *engine.App) *engine.App {
 }
 
 // asPEP turns a question to the AuthZEN API that names who asks by a person's token into the question of a PEP client: the API key of
-// the client of the service, and the claims of the token as the properties of the subject (support.PEPCallers). The PDP takes
+// the client of the service, and the properties of the token as the properties of the subject (support.PEPCallers). The PDP takes
 // no person's token on these routes; a test of that gives the header legacyToken, which this does not touch.
 func (e *env) asPEP(target string, headers []string, body any) ([]string, any) {
 	if e.callers == nil || e.admin == nil || strings.HasPrefix(target, e.admin.URL) {
@@ -440,8 +444,8 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 		expectJSON(t, "synchronizer config", sync["config"], `{"kind":"http","url":"`+m+`/sync/`+s.kind+`"}`)
 	}
 
-	sales := e.must("POST", "/group/", map[string]any{"name": "sales"})["id"].(string)
-	managers := e.must("POST", "/group/", map[string]any{"name": "managers"})["id"].(string)
+	sales := e.must("POST", "/group/", map[string]any{"service_id": filials, "name": "sales"})["id"].(string)
+	managers := e.must("POST", "/group/", map[string]any{"service_id": filials, "name": "managers"})["id"].(string)
 	e.must("POST", "/group/"+sales+"/member/",
 		map[string]any{"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
 	e.must("POST", "/group/"+managers+"/member/", map[string]any{"member_group_id": sales})
@@ -451,8 +455,8 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	e.must("POST", "/assignment_rule/", map[string]any{"type_resource_id": planogram, "access": []string{"write"},
 		"predicate": []any{map[string]any{"attr": "level", "op": "in", "value": []string{"5", "6"}}}})
 	e.must("POST", "/assignment_rule/", map[string]any{"type_resource_id": branch, "access": []string{"audit"},
-		"member_of_group_id":  managers,
-		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": branch}})
+		"member_of_group_id":     managers,
+		"resource_from_property": map[string]any{"property": "branch_name", "lookup_type_resource_id": branch}})
 
 	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "u1", "department": "sales", "branch_name": "Branch3"})
 	bob := e.token(jwt.MapClaims{"sub": "bob", "level": 5})
@@ -469,7 +473,7 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 		return out
 	}
 
-	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a claim.
+	// alice: d1 directly + cascade to b1,b2; through the nested role managers — b3 by name from a property.
 	expectJSON(t, "alice@filials", permissions("filials", alice, "division", "branch"), `{
 		"division": [{"id":"d1","name":"North","access":["read"]}],
 		"branch": [
@@ -481,7 +485,7 @@ func TestIntegrationPermissionFlow(t *testing.T) {
 	expectJSON(t, "alice@replan", permissions("replan", alice, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["read"]},
 		{"id":"p3","name":"Plano3","access":["audit"]}]}`)
-	// bob: predicate level in [5,6] (an int claim is compared as a string) — the whole planogram type.
+	// bob: predicate level in [5,6] (an int property is compared as a string) — the whole planogram type.
 	expectJSON(t, "bob@replan", permissions("replan", bob, "planogram"), `{"planogram": [
 		{"id":"p1","name":"Plano1","access":["write"]},
 		{"id":"p3","name":"Plano3","access":["write"]}]}`)
@@ -535,12 +539,12 @@ func TestIntegrationSchemaValidation(t *testing.T) {
 	typeID := e.must("POST", "/service/"+svcID+"/type_resource/", map[string]any{"name": "t", "type_resource_parent_id": nil})["id"].(string)
 
 	// The frontend sends extra fields and explicit nulls — pydantic accepted them, so must Huma.
-	group := e.must("POST", "/group/", map[string]any{"name": "r1", "id": "ignored", "unknown": 1})
+	group := e.must("POST", "/group/", map[string]any{"service_id": svcID, "name": "r1", "id": "ignored", "unknown": 1})
 	if _, has := group["$schema"]; has {
 		t.Fatal("the response must not contain $schema")
 	}
 	e.must("POST", "/assignment_rule/", map[string]any{
-		"type_resource_id": typeID, "access": []string{"read"}, "resource_id": nil, "resource_from_claim": nil,
+		"type_resource_id": typeID, "access": []string{"read"}, "resource_id": nil, "resource_from_property": nil,
 		"subject": nil, "member_of_group_id": nil, "predicate": []any{}, "subjectValue": "extra-field",
 	})
 	e.must("POST", "/group/"+group["id"].(string)+"/member/", map[string]any{"member_group_id": nil, "predicate": []any{}, "enabled": true})
@@ -704,7 +708,7 @@ func TestIntegrationPlatformPolicies(t *testing.T) {
 	}
 
 	// Without the self-service the admin API is closed to everyone.
-	if _, err := e.pool.Exec(context.Background(), `UPDATE service SET deleted_at = now() WHERE id = $1`,
+	if _, err := support.RawExec(context.Background(), e.pool, `UPDATE service SET deleted_at = now() WHERE id = $1`,
 		model.PlatformServiceID); err != nil {
 		t.Fatal(err)
 	}

@@ -236,9 +236,9 @@
     "remove": "移除",
     "source": "来源",
     "sources": {
-      "claim": "令牌",
       "context": "请求",
-      "now": "时间"
+      "now": "时间",
+      "subject": "主体属性"
     },
     "value": "值",
     "valueList": "a, b, c"
@@ -286,7 +286,7 @@
       "title": "这将产生的效果"
     },
     "problem": {
-      "claim": "请填写此人令牌中的声明名称。",
+      "property": "请填写此人令牌中的声明名称。",
       "condition": "请至少添加一个条件并填写完整。",
       "dates": "开始日期晚于结束日期。",
       "everyone": "请确认所有人都将获得此访问权限。",
@@ -307,7 +307,7 @@
       "forever": "无截止日期。",
       "from": "自 {{date}} 起。",
       "placeAll": "服务“{{service}}”中类型“{{type}}”的所有资源",
-      "placeClaim": "通过声明“{{claim}}”找到的类型“{{type}}”的资源",
+      "placeProperty": "通过声明“{{property}}”找到的类型“{{type}}”的资源",
       "placeResources_other": "类型“{{type}}”的 {{count}} 个资源（{{names}}…）",
       "placeWhere": "类型“{{type}}”中满足 {{cond}} 的资源",
       "role": "{{who}} 将获得角色“{{role}}”的权限。{{term}}",
@@ -343,9 +343,9 @@
       "attrPlaceholder": "kind",
       "byAttr": "按属性",
       "byAttrHint": "属性（按数据源报告的）满足全部条件的资源。",
-      "byClaim": "按此人的属性",
-      "byClaimHint": "资源按声明的值找到：每个人获得其自身值所指向资源的访问权限。",
-      "claim": "令牌的声明（例如 department）",
+      "byProperty": "按此人的属性",
+      "byPropertyHint": "资源按声明的值找到：每个人获得其自身值所指向资源的访问权限。",
+      "property": "令牌的声明（例如 department）",
       "label": "范围",
       "manyRules_other": "将为每个资源创建一条访问权限：{{count}} 条。",
       "matchBy": "匹配方式：name、id 或 meta.<属性>",
@@ -369,13 +369,16 @@
       "noGroups": "还没有组。请到“人员与组”中创建。",
       "person": "个人",
       "personHint": "此人在其令牌中的名称：用户名（preferred_username），或 sub。",
-      "personPlaceholder": "例如 alice"
+      "personPlaceholder": "例如 alice",
+      "subjectType": "主体类型",
+      "anySubjectType": "任意主体类型",
+      "subjectTypeHint": "留空表示匹配任意类型；否则必须与应用发送的 subject.type 一致。group 类型为保留值。"
     }
   },
   "grantDetail": {
     "allHistory": "完整历史 →",
     "check": "检查访问…",
-    "deadNote": "该访问权限指向一个没有数据源的类型的资源，因此无法生效。请连接数据源或删除该访问权限。",
+    "deadNote": "此目标读取或遍历的每个类型都需要数据源和首次成功应用的同步。",
     "description": "说明",
     "disabledNote": "此访问权限已停用：启用之前它对任何人都不生效。",
     "duplicate": "复制",
@@ -389,7 +392,6 @@
       "title": "此访问权限已不存在"
     },
     "history": "此访问权限的历史",
-    "kind": "标记",
     "noHistory": "还没有记录。",
     "onMissing": {
       "apply": "缺少属性：拒绝生效",
@@ -404,7 +406,8 @@
     "termChanged": "期限已更改",
     "undoNote": "期限立即保存；10 秒内可以撤销。",
     "untilDate": "直到 {{date}}",
-    "untilPick": "直到某个日期"
+    "untilPick": "直到某个日期",
+    "subjectType": "主体类型"
   },
   "group": {
     "add": "添加",
@@ -421,7 +424,7 @@
       "action": "删除组",
       "blocked": "无法删除组：它正在被使用",
       "blockedBy": "它被以下内容使用：{{what}}。请先移除它们。",
-      "body": "它不能被任何访问权限或其他组使用。",
+      "body": "其成员关系条目也将被删除。访问规则或其他组不得引用此组。",
       "title": "删除组“{{name}}”？"
     },
     "empty": {
@@ -465,7 +468,7 @@
   "history": {
     "after": "之后",
     "before": "之前",
-    "cannotRevert": "无法撤销此更改（之后的更改可能依赖它）。",
+    "cannotRevert": "无法撤销此修订（后续更改可能依赖它）。",
     "copyLink": "复制链接",
     "count": "{{shown}} / {{total}} 条记录",
     "empty": {
@@ -482,7 +485,11 @@
       "role_permission": "角色权限",
       "service": "服务",
       "synchronizer": "数据源",
-      "type_resource": "资源类型"
+      "type_resource": "资源类型",
+      "pep_client": "PEP 客户端",
+      "pep_credential": "PEP 密钥",
+      "pep_issuer": "PEP 签发者",
+      "pep_issuer_keys": "PEP 签发者密钥缓存"
     },
     "field": "字段",
     "filter": {
@@ -512,13 +519,13 @@
       "today": "今天",
       "week": "最近 7 天"
     },
-    "planNote": "撤销本身也是一次更改，会出现在历史中。",
+    "planNote": "撤销会创建一项新修订，并出现在历史中。",
     "platformWide": "整个平台",
-    "revert": "撤销此更改",
-    "revertBody": "该实体将恢复到此更改之前的样子：",
+    "revert": "撤销此修订",
+    "revertBody": "将一并撤销此修订中的所有更改：",
     "revertConfirm": "撤销",
     "revertFailed": "无法撤销",
-    "revertTitle": "撤销此更改？",
+    "revertTitle": "撤销整个修订？",
     "reverted": "已撤销",
     "rollbackBody_other": "此记录之后的 {{count}} 项更改将在一个事务中按从新到旧的顺序撤销：",
     "rollbackConfirm": "回退",
@@ -763,7 +770,7 @@
       "title": "还没有组"
     },
     "findHint": "要查看未列出的人，请打开 /people/<用户名>。",
-    "nameHelp": "在整个系统中唯一。组按某种特征把人员联合起来——授予组的访问权限会被其所有成员获得。",
+    "nameHelp": "在服务内唯一。组按某种特征把人员联合起来——授予组的访问权限会被其所有成员获得。",
     "nameLabel": "组名称",
     "namePlaceholder": "branch-managers",
     "noMatch": "没有找到",
@@ -920,7 +927,7 @@
       "choose": "选择文件",
       "dry": "显示将发生的更改",
       "export": "下载策略",
-      "hint": "服务的整个策略保存为一个文件，用名称代替 id：组及其成员、角色、级别集和访问权限。可与代码放在一起，并应用到另一个环境。",
+      "hint": "将规则、服务自己的组和角色以及访问组保存为 licetum.policy/v2 文档，使用名称代替 ID。可与代码一起保存并应用于其他环境。不导入 licetum.policy/v1 文档。",
       "import": "应用文档",
       "noChanges": "没有需要更改的内容：服务已与文档一致。",
       "paste": "或在此粘贴文档",
@@ -1065,7 +1072,7 @@
       "title": "还没有角色"
     },
     "grant": "授予该角色…",
-    "nameHelp": "在整个系统中唯一。角色是一组命名的权限：先添加权限，再把角色授予组或个人。",
+    "nameHelp": "在服务内唯一。角色是一组命名的权限：先添加权限，再把角色授予组或个人。",
     "nameLabel": "角色名称",
     "namePlaceholder": "文档编辑者",
     "new": "创建角色",
@@ -1084,7 +1091,7 @@
     "everyone": "所有人",
     "exception": "例外",
     "from": "自 {{date}} 起",
-    "fromClaim": "按声明“{{claim}}”确定的资源",
+    "fromProperty": "按声明“{{property}}”确定的资源",
     "guardGroup": "仅限组成员",
     "kind": {
       "condition": "按条件",
@@ -1098,17 +1105,11 @@
     "status": {
       "active": "有效",
       "dead": "不起作用",
-      "deadHint": "该规则指向一个没有数据源的类型的资源，因此无法生效。",
+      "deadHint": "此目标读取或遍历的每个类型都需要数据源和首次成功应用的同步。",
       "disabled": "已停用",
       "expired": "已过期",
       "expiring_other": "{{count}} 天后到期",
       "scheduled": "尚未开始"
-    },
-    "subjectKind": {
-      "agent": "智能体",
-      "group": "组",
-      "service": "服务",
-      "user": "个人"
     },
     "title": "{{who}}：{{what}} — {{where}}",
     "unknownGroup": "（未知的组）",
@@ -1154,7 +1155,8 @@
       "policy": "策略",
       "sources": "数据源",
       "types": "资源类型"
-    }
+    },
+    "slugImmutable": "slug 不可更改或重复使用，即使服务已删除。"
   },
   "services": {
     "col": {
@@ -1346,7 +1348,7 @@
     "via": {
       "ancestor": "上层资源",
       "attribute": "按属性",
-      "claim": "通过声明找到",
+      "property": "通过声明找到",
       "resource": "此资源",
       "type": "整个类型"
     }
@@ -1403,5 +1405,8 @@
     "url": {
       "help": "可选。显示在界面中；Licetum 不会请求它。"
     }
+  },
+  "ownership": {
+    "service": "服务"
   }
 }

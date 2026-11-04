@@ -69,6 +69,10 @@ func TestContract_DEC13_ExplanationsNameTheRules(t *testing.T) {
 	runContract(t, "DEC13")
 }
 
+func TestContract_DEC15_LiteralSubjectsMatchTheirExplicitTypeAndID(t *testing.T) {
+	runContract(t, "DEC15")
+}
+
 // runContract asks the questions of every fixture that checks the contract and reports each answer that differs from the
 // expectation, and each question on which the searches disagree with the
 // evaluations. A contract no fixture checks yet is skipped: its table is still being written.

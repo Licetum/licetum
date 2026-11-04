@@ -2,8 +2,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -15,16 +15,17 @@ import (
 )
 
 // The PEP directory is what the check API authenticates a PEP with: the verifiers of the identity providers, the enabled clients
-// of each service and the credentials of the API keys. The process keeps it per revision of the pep scope. The revision comes from
+// of each service and the credentials of the API keys. The process keeps it at the global epoch and revision. The revision comes from
 // the view of the process (see cacheState), which the requests and WatchRevision renew like the policy revisions, so a warm request
 // touches no database. The directory is loaded again only when that revision moved, once for the requests that wait.
 
 // pepLoadTimeout bounds the load of the directory (one statement).
 const pepLoadTimeout = 10 * time.Second
 
-// PEPDirectory is the PEP directory as of one revision of the pep scope. The requests of the process share it: it is read-only
+// PEPDirectory is the PEP directory as of one global epoch and revision. The requests of the process share it: it is read-only
 // once loaded.
 type PEPDirectory struct {
+	epoch    int32
 	revision int64
 	// Verifiers verifies the tokens of each issuer, by issuer.
 	Verifiers map[string]*pepauth.Verifier
@@ -34,7 +35,7 @@ type PEPDirectory struct {
 	Credentials map[string]db.PEPCredential
 	// clients are the enabled clients by id, for the credentials.
 	clients map[uuid.UUID]db.PEPClient
-	// behind is when the process first saw a newer revision of the pep scope than this directory holds (Unix nanoseconds, 0 while
+	// behind is when the process first saw a newer global epoch and revision than this directory holds (Unix nanoseconds, 0 while
 	// the directory is current). It bounds how long a failing reload is covered by this directory (POLICY__MAX_STALENESS).
 	behind atomic.Int64
 }
@@ -62,7 +63,7 @@ type pepState struct {
 func (p *pepState) keep(d *PEPDirectory) *PEPDirectory {
 	for {
 		cur := p.dir.Load()
-		if cur != nil && cur.revision >= d.revision {
+		if cur != nil && (cur.epoch > d.epoch || (cur.epoch == d.epoch && cur.revision >= d.revision)) {
 			return cur
 		}
 		if p.dir.CompareAndSwap(cur, d) {
@@ -84,7 +85,7 @@ func pepStaleLimit(t tuning) time.Duration {
 	return pepDefaultStaleLimit
 }
 
-// PEPDirectory returns the PEP directory of the process, as of the revision of the pep scope the process has read. It is loaded
+// PEPDirectory returns the PEP directory of the process, as of the global epoch and revision the process has read. It is loaded
 // again when that revision is newer than the one held. The directory follows the policy: when the view cannot confirm the revisions
 // (see cacheState), the directory is read from PostgreSQL and the read fails when PostgreSQL does. When a reload fails while the
 // view is confirmed, the last directory is served for at most pepStaleLimit after the process first saw the newer revision, so a
@@ -99,14 +100,14 @@ func (a *App) PEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 		return a.pep.keep(d), nil
 	}
 	cur := a.pep.dir.Load()
-	if cur != nil && cur.revision >= state.pep {
+	if cur != nil && cur.epoch == state.epoch && cur.revision >= state.version {
 		cur.behind.Store(0)
 		return cur, nil
 	}
 	if cur != nil {
 		cur.behind.CompareAndSwap(0, time.Now().UnixNano())
 	}
-	got, err, _ := a.pep.loads.Do(strconv.FormatInt(state.pep, 10), func() (any, error) {
+	got, err, _ := a.pep.loads.Do(fmt.Sprintf("%d.%d", state.epoch, state.version), func() (any, error) {
 		d, err := a.loadPEPDirectory(ctx)
 		if err != nil {
 			return nil, err
@@ -122,7 +123,7 @@ func (a *App) PEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 	if cur == nil {
 		return nil, err
 	}
-	if cur.revision >= state.pep {
+	if cur.epoch == state.epoch && cur.revision >= state.version {
 		return cur, nil
 	}
 	cur.behind.CompareAndSwap(0, time.Now().UnixNano())
@@ -147,6 +148,7 @@ func (a *App) loadPEPDirectory(ctx context.Context) (*PEPDirectory, error) {
 // newPEPDirectory builds the directory from its rows: a verifier per issuer, the clients by service and the credentials by key id.
 func (a *App) newPEPDirectory(data db.PEPDirectoryData) *PEPDirectory {
 	d := &PEPDirectory{
+		epoch:            data.Epoch,
 		revision:         data.Revision,
 		Verifiers:        make(map[string]*pepauth.Verifier, len(data.Issuers)),
 		ClientsByService: make(map[uuid.UUID][]db.PEPClient),

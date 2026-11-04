@@ -110,7 +110,7 @@ type RuleRef struct {
 	Exception bool      `json:"exception" doc:"An allow rule that lifts the denials above it"`
 	Access    []string  `json:"access" nullable:"false" doc:"Access levels of the rule"`
 	Anchor    Anchor    `json:"anchor" doc:"Where the rule is anchored; it covers this resource through the hierarchy"`
-	AppliesTo string    `json:"applies_to" doc:"Why the rule applies to the caller: the subject, a group, a role, a claims predicate, or everyone" example:"group 4e2c…"`
+	AppliesTo string    `json:"applies_to" doc:"Why the rule applies to the caller: the subject, a group, a role, a properties predicate, or everyone" example:"group 4e2c…"`
 }
 
 // DenialRef is a denial that applies to the asked level.

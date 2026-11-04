@@ -18,12 +18,12 @@ const grantPreviewSample = 10
 func ruleFromInput(in *model.AssignmentRuleInput) model.AssignmentRule {
 	enabled := in.Enabled == nil || *in.Enabled
 	return model.AssignmentRule{
-		RoleID: in.RoleID, TypeResourceID: in.TypeResourceID, ResourceID: in.ResourceID,
-		ResourceFromClaim: in.ResourceFromClaim, Access: in.Access, Subject: in.Subject, Predicate: in.Predicate,
+		SubjectGroupID: in.SubjectGroupID, RoleID: in.RoleID, TypeResourceID: in.TypeResourceID, ResourceID: in.ResourceID,
+		ResourceFromProperty: in.ResourceFromProperty, Access: in.Access, Subject: in.Subject, Predicate: in.Predicate,
 		MemberOfGroupID: in.MemberOfGroupID, Enabled: enabled, Effect: in.Effect, Exception: in.Exception,
 		ValidFrom: in.ValidFrom, ExpiresAt: in.ExpiresAt, Name: in.Name, Description: in.Description,
 		OnMissingAttribute: onMissingOf(in, nil), RequiresPredicate: in.RequiresPredicate,
-		RequiresGroupID: in.RequiresGroupID, ResourceWhere: in.ResourceWhere, SubjectKind: in.SubjectKind,
+		RequiresGroupID: in.RequiresGroupID, ResourceWhere: in.ResourceWhere, SubjectType: in.SubjectType,
 	}
 }
 
@@ -32,7 +32,12 @@ func ruleFromInput(in *model.AssignmentRuleInput) model.AssignmentRule {
 // cancels what it grants, one inside it carves a part out). The body is that of POST /assignment_rule and is checked the
 // same way.
 func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (*model.GrantPreview, error) {
-	if _, err := a.checkAssignmentRuleRefs(ctx, a.DB, in, true); err != nil {
+	ctx, err := a.CurrentReadContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := a.checkAssignmentRuleRefs(ctx, a.DB, in, true)
+	if err != nil {
 		return nil, err
 	}
 	g, err := a.LoadTypeGraph(ctx)
@@ -41,6 +46,7 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 	}
 
 	rule := ruleFromInput(in)
+	rule.ServiceID = *owner
 	// The types the rule reaches: its own, or those of the items of its role.
 	var roleTypes []uuid.UUID
 	if in.RoleID != nil {
@@ -93,7 +99,8 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 			involved[id] = true
 		}
 	}
-	if _, err := a.EnsureSynced(ctx, g, engine.Keys(involved), false); err != nil {
+	g, _, err = a.EnsureSyncedGraph(ctx, g, engine.Keys(involved), false)
+	if err != nil {
 		return nil, err
 	}
 	synced, err := a.TypesWithSynchronizer(ctx, engine.Keys(involved))
@@ -102,7 +109,7 @@ func (a *App) PreviewGrant(ctx context.Context, in *model.AssignmentRuleInput) (
 	}
 
 	for _, r := range rules {
-		if r.ResourceFromClaim != nil {
+		if r.ResourceFromProperty != nil {
 			out.Dynamic = true
 		}
 	}
@@ -248,7 +255,7 @@ func (a *App) grantMeets(ctx context.Context, g *engine.TypeGraph, rule *model.A
 	}
 	var static []model.AssignmentRule
 	for _, r := range existing {
-		if r.ResourceFromClaim == nil {
+		if r.ResourceFromProperty == nil {
 			static = append(static, r)
 		}
 	}
@@ -343,10 +350,9 @@ func (a *App) grantMeets(ctx context.Context, g *engine.TypeGraph, rule *model.A
 // whoKey names whom a rule applies to: a subject, a group, a set of conditions, or everyone.
 func whoKey(r *model.AssignmentRule) (kind, key string) {
 	switch {
+	case r.SubjectGroupID != nil:
+		return "group", r.SubjectGroupID.String()
 	case r.Subject != nil:
-		if id, ok := strings.CutPrefix(*r.Subject, model.GroupSubjectPrefix); ok {
-			return "group", id
-		}
 		return "user", *r.Subject
 	case r.MemberOfGroupID != nil:
 		return "group", r.MemberOfGroupID.String()
@@ -382,5 +388,5 @@ func sameTarget(a, b *model.AssignmentRule) bool {
 	if (a.ResourceID == nil) != (b.ResourceID == nil) || (a.ResourceID != nil && *a.ResourceID != *b.ResourceID) {
 		return false
 	}
-	return len(a.ResourceWhere) == 0 && len(b.ResourceWhere) == 0 && a.ResourceFromClaim == nil && b.ResourceFromClaim == nil
+	return len(a.ResourceWhere) == 0 && len(b.ResourceWhere) == 0 && a.ResourceFromProperty == nil && b.ResourceFromProperty == nil
 }

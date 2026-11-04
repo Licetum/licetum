@@ -48,6 +48,8 @@ type SyncOptions struct {
 
 // SyncResult is what Ensure found out.
 type SyncResult struct {
+	// graph is the immutable graph refreshed after a first apply during this wait.
+	graph *TypeGraph
 	// Synced holds the types that have a live synchronizer: only their data is current.
 	Synced map[uuid.UUID]bool
 	// Unanswered holds the types whose source did not answer in the job that was waited for (their data stays as it was).
@@ -84,6 +86,13 @@ func (a *App) EnsureSynced(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUI
 	return res.Synced, err
 }
 
+// EnsureSyncedGraph also returns the graph after the wait. Admin readers must use
+// it when a first apply can change a type from not_sync to sync.
+func (a *App) EnsureSyncedGraph(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, fresh bool) (*TypeGraph, map[uuid.UUID]bool, error) {
+	res, err := a.ensure(ctx, g, typeIDs, SyncOptions{Fresh: fresh, Wait: a.adminWait()}, "admin")
+	return res.graph, res.Synced, err
+}
+
 // dedupKey names the job of a set of types: the same set has the same key in every process; a fresh job has its own.
 func dedupKey(typeIDs []uuid.UUID, fresh bool) string {
 	ids := make([]string, len(typeIDs))
@@ -110,7 +119,7 @@ func dedupKey(typeIDs []uuid.UUID, fresh bool) string {
 // a type whose throttle ran out is refreshed in the background, the request answers from the data that exists. A type
 // whose source failed lately is in backoff: nobody asks the source until it ends, the data stays.
 func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opts SyncOptions, source string) (SyncResult, error) {
-	res := SyncResult{Synced: map[uuid.UUID]bool{}, Unanswered: map[uuid.UUID]bool{}}
+	res := SyncResult{graph: g, Synced: map[uuid.UUID]bool{}, Unanswered: map[uuid.UUID]bool{}}
 	syncs, err := a.liveSynchronizers(ctx, typeIDs)
 	if err != nil {
 		return res, err
@@ -133,6 +142,17 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 		if err != nil {
 			return res, err
 		}
+		for _, id := range ids {
+			if st, ok := states[id]; ok && st.usable() && !g.IsSync(id) {
+				g, err = a.LoadTypeGraph(ctx)
+				if err != nil {
+					return res, err
+				}
+				res.graph = g
+				break
+			}
+		}
+
 		var block, async []uuid.UUID
 		res.Pending = false
 		for _, s := range syncs {
@@ -232,6 +252,12 @@ func (a *App) ensure(ctx context.Context, g *TypeGraph, typeIDs []uuid.UUID, opt
 			res.Unanswered[id] = true
 		}
 		if opts.Fresh {
+			for _, id := range ids {
+				if !g.IsSync(id) {
+					res.graph, err = a.LoadTypeGraph(ctx)
+					return res, err
+				}
+			}
 			return res, nil
 		}
 	}

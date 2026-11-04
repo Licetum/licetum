@@ -104,6 +104,18 @@ export function GrantDrawer() {
   );
   const data = useTargetData(form, patchStable, enabled);
   const { services, type, hasSource } = data;
+  const ownerService =
+    form.what === 'role'
+      ? (roles.data?.find((r) => r.id === form.roleId)?.service_id ?? form.serviceId)
+      : form.serviceId;
+  useEffect(() => {
+    if (
+      form.groupId &&
+      ownerService &&
+      groups.data?.some((g) => g.id === form.groupId && g.service_id !== ownerService)
+    )
+      patchStable({ groupId: undefined });
+  }, [ownerService, form.groupId, groups.data, patchStable]);
 
   const problem = problemOf(form, { hasSource });
 
@@ -265,10 +277,17 @@ export function GrantDrawer() {
                 aria-label={t('grant.who.group')}
                 placeholder={t('grant.who.groupPlaceholder')}
                 value={form.groupId}
-                onChange={(groupId) => patch({ groupId })}
+                onChange={(groupId) =>
+                  patch({
+                    groupId,
+                    serviceId: groups.data?.find((g) => g.id === groupId)?.service_id,
+                  })
+                }
                 optionFilterProp="label"
                 loading={groups.isPending}
-                options={(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))}
+                options={(groups.data ?? [])
+                  .filter((g) => !ownerService || g.service_id === ownerService)
+                  .map((g) => ({ value: g.id, label: g.name }))}
                 notFoundContent={t('grant.who.noGroups')}
               />
             )}
@@ -283,6 +302,17 @@ export function GrantDrawer() {
                 />
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {t('grant.who.personHint')}
+                </Typography.Text>
+                <Input
+                  aria-label={t('grant.who.subjectType')}
+                  placeholder={t('grant.who.anySubjectType')}
+                  maxLength={64}
+                  value={form.subjectType}
+                  onChange={(e) => patch({ subjectType: e.target.value })}
+                  className="mono"
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('grant.who.subjectTypeHint')}
                 </Typography.Text>
               </>
             )}
@@ -332,7 +362,9 @@ export function GrantDrawer() {
                 aria-label={t('grant.what.role')}
                 placeholder={t('grant.what.rolePlaceholder')}
                 value={form.roleId}
-                onChange={(roleId) => patch({ roleId })}
+                onChange={(roleId) =>
+                  patch({ roleId, serviceId: roles.data?.find((r) => r.id === roleId)?.service_id })
+                }
                 optionFilterProp="label"
                 loading={roles.isPending}
                 options={(roles.data ?? []).map((r) => ({ value: r.id, label: r.name }))}
@@ -382,7 +414,7 @@ export function GrantDrawer() {
                       <CondEditor
                         value={form.requires}
                         onChange={(requires) => patch({ requires })}
-                        sources={['claim', 'context', 'now']}
+                        sources={['subject', 'context', 'now']}
                         addLabel={t('cond.add')}
                         label={t('grant.when.guard')}
                       />
@@ -394,7 +426,9 @@ export function GrantDrawer() {
                         value={form.requiresGroupId}
                         onChange={(requiresGroupId) => patch({ requiresGroupId })}
                         optionFilterProp="label"
-                        options={(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))}
+                        options={(groups.data ?? [])
+                          .filter((g) => !ownerService || g.service_id === ownerService)
+                          .map((g) => ({ value: g.id, label: g.name }))}
                       />
                     </Flex>
                   ),

@@ -16,7 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// signAdmin signs claims as the mock identity provider does, without the defaults e.token adds: the claims are the token's own.
+// signAdmin signs properties as the mock identity provider does, without the defaults e.token adds: the properties are the token's own.
 func (e *env) signAdmin(method jwt.SigningMethod, key any, claims jwt.MapClaims) string {
 	e.t.Helper()
 	tok := jwt.NewWithClaims(method, claims)

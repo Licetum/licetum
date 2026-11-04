@@ -17,10 +17,10 @@ import (
 
 func (a *App) CreateService(ctx context.Context, in *model.ServiceInput) (*model.ServiceResponse, error) {
 	var resp model.ServiceResponse
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		s, err := engine.ScanService(q.QueryRow(ctx, `
-			INSERT INTO service (name, slug, url, icon)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO service (name, slug, url, icon, identity_domain_id)
+			VALUES ($1, $2, $3, $4, (SELECT id FROM identity_domain WHERE name='default'))
 			RETURNING `+engine.ServiceColumns,
 			in.Name, in.Slug, derefString(in.URL), derefString(in.Icon),
 		))
@@ -64,10 +64,13 @@ func (a *App) UpdateService(ctx context.Context, serviceID uuid.UUID, in *model.
 	}
 
 	var resp model.ServiceResponse
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingService(ctx, q, serviceID)
 		if err != nil {
 			return change{}, err
+		}
+		if in.Slug != nil && *in.Slug != old.Slug {
+			return change{}, apperr.Unprocessable(i18n.ServiceSlugImmutable)
 		}
 		// COALESCE: nil PATCH fields keep their current value.
 		s, err := engine.ScanService(q.QueryRow(ctx, `
@@ -92,7 +95,7 @@ func (a *App) UpdateService(ctx context.Context, serviceID uuid.UUID, in *model.
 		resp = s.Response()
 		// services are the entities of the platform "service" policy
 		return change{entity: "service", entityID: serviceID, serviceID: &serviceID, action: actionUpdate,
-			before: old.Response(), after: resp}, nil
+			beforeFields: serviceBeforeFields(old), before: old.Response(), after: resp}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -101,7 +104,7 @@ func (a *App) UpdateService(ctx context.Context, serviceID uuid.UUID, in *model.
 }
 
 func (a *App) DeleteService(ctx context.Context, serviceID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingService(ctx, q, serviceID)
 		if err != nil {
 			return change{}, err
@@ -119,13 +122,9 @@ func (a *App) DeleteService(ctx context.Context, serviceID uuid.UUID) (uuid.UUID
 		if _, err := q.Exec(ctx, `UPDATE service SET deleted_at = now() WHERE id = $1`, serviceID); err != nil {
 			return change{}, err
 		}
-		// The PEP directory holds the clients of live services only, so the delete moves the pep scope too (PEPDirectory).
-		if _, err := db.BumpRevision(ctx, q, db.ScopePEP); err != nil {
-			return change{}, err
-		}
 		// services are the entities of the platform "service" policy
 		return change{entity: "service", entityID: serviceID, serviceID: &serviceID, action: actionDelete,
-			before: old.Response()}, nil
+			beforeFields: serviceBeforeFields(old), before: old.Response()}, nil
 	})
 	if err != nil {
 		return uuid.Nil, err
@@ -138,4 +137,8 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func serviceBeforeFields(s *model.Service) map[string]any {
+	return map[string]any{"id": s.ID, "name": s.Name, "slug": s.Slug, "url": s.URL, "icon": s.Icon}
 }

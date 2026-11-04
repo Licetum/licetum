@@ -19,7 +19,7 @@ import (
 type pdpEngine interface {
 	ServiceIDByRef(ctx context.Context, ref string) (uuid.UUID, error)
 	AuthenticatePEP(ctx context.Context, credential, serviceRef, operation string) (*engine.PEPCaller, error)
-	NewEnv(claims engine.Claims, context map[string]any) engine.Env
+	NewEnv(properties engine.Properties, context map[string]any) engine.Env
 	CheckAccess(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, requests []model.CheckRequest, explain bool, consistency engine.Consistency) ([]model.CheckResult, error)
 	LogDecisions(ctx context.Context, serviceID uuid.UUID, subject string, checks []model.CheckRequest, results []model.CheckResult, consistency engine.Consistency)
 	GetPermission(ctx context.Context, serviceID uuid.UUID, subject string, env engine.Env, consistency engine.Consistency) (engine.PermissionResult, error)

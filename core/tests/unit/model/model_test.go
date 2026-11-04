@@ -66,16 +66,16 @@ func TestAssignmentRuleValidationEnforcesTargetShape(t *testing.T) {
 	if err != nil || valid == nil || !*valid.Enabled || valid.Predicate == nil {
 		t.Fatalf("defaults were not applied: %+v, %v", valid, err)
 	}
-	fromClaim, err := decodeAndValidate[model.AssignmentRuleInput](t, `{"type_resource_id":"`+typeResourceID+`","access":["read"],"resource_from_claim":{"claim":"owner","lookup_type_resource_id":"`+typeResourceID+`"}}`)
-	if err != nil || fromClaim.ResourceFromClaim.MatchBy != model.MatchByName {
-		t.Fatalf("match_by must default to name: %+v, %v", fromClaim, err)
+	fromProperty, err := decodeAndValidate[model.AssignmentRuleInput](t, `{"type_resource_id":"`+typeResourceID+`","access":["read"],"resource_from_property":{"property":"owner","lookup_type_resource_id":"`+typeResourceID+`"}}`)
+	if err != nil || fromProperty.ResourceFromProperty.MatchBy != model.MatchByName {
+		t.Fatalf("match_by must default to name: %+v, %v", fromProperty, err)
 	}
 
 	invalid := map[string]string{
 		"missing access":             `{"type_resource_id":"` + typeResourceID + `"}`,
 		"empty access":               `{"type_resource_id":"` + typeResourceID + `","access":[]}`,
 		"multiple subject targets":   `{"type_resource_id":"` + typeResourceID + `","access":["read"],"subject":"a","predicate":[{"attr":"a","op":"eq","value":"b"}]}`,
-		"resource target conflict":   `{"type_resource_id":"` + typeResourceID + `","access":["read"],"resource_id":"x","resource_from_claim":{"claim":"c","lookup_type_resource_id":"` + typeResourceID + `"}}`,
+		"resource target conflict":   `{"type_resource_id":"` + typeResourceID + `","access":["read"],"resource_id":"x","resource_from_property":{"property":"c","lookup_type_resource_id":"` + typeResourceID + `"}}`,
 		"unknown predicate operator": `{"type_resource_id":"` + typeResourceID + `","access":["read"],"predicate":[{"attr":"a","op":"gt","value":"b"}]}`,
 		"invalid regular expression": `{"type_resource_id":"` + typeResourceID + `","access":["read"],"predicate":[{"attr":"a","op":"regex","value":"("}]}`,
 	}

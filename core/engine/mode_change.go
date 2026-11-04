@@ -21,8 +21,13 @@ import (
 // makes the closure follow in the transaction that changes the mode.
 
 // ClosureMove says that ChangeMode rebuilt the closure of the resources of the type and of the types below it (a nil move:
-// there was nothing to rebuild). The caller hands it to AfterClosureMove once the transaction has committed.
-type ClosureMove struct{}
+// neither data nor a type mode changed). CatalogTypes includes a reset mode even when the source had no rows.
+// The caller hands it to AfterClosureMove once the transaction has committed.
+type ClosureMove struct {
+	Types        []uuid.UUID
+	Services     []uuid.UUID
+	CatalogTypes []uuid.UUID
+}
 
 // ChangeMode runs write, the creation or the deletion of the synchronizer of a type, in the transaction tx, and rebuilds the
 // closure of the resources of the type and of the resources below them (found by the declared links) before the transaction commits, under the lock of the
@@ -49,6 +54,23 @@ func (a *App) ChangeMode(ctx context.Context, tx db.Querier, typeID uuid.UUID, w
 		if err := write(); err != nil {
 			return err
 		}
+		reset, err := tx.Exec(ctx, `UPDATE type_resource SET synced_at=NULL WHERE id=$1 AND synced_at IS NOT NULL`, typeID)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM sync_state WHERE type_resource_id=$1`, typeID); err != nil {
+			return err
+		}
+		var catalogTypes []uuid.UUID
+		if reset.RowsAffected() > 0 {
+			catalogTypes = []uuid.UUID{typeID}
+			move = &ClosureMove{CatalogTypes: catalogTypes}
+		}
+		// Creating a source does not restore old data: only its first apply can restore the mode.
+		if !g.IsSync(typeID) {
+			return nil
+		}
+
 		// The rows of the type and every row that hangs below them by the declared links. The closure cannot say who hangs
 		// below: it was cut when the synchronizer was deleted, and a route that is back has no row in it yet.
 		rows, err := tx.Query(ctx, `
@@ -86,10 +108,7 @@ func (a *App) ChangeMode(ctx context.Context, tx db.Querier, typeID uuid.UUID, w
 		for id := range g.DescendantsOf(typeID) {
 			types = append(types, id)
 		}
-		if err := bumpDataRevisions(ctx, tx, g, types); err != nil {
-			return err
-		}
-		move = &ClosureMove{}
+		move = &ClosureMove{Types: types, Services: dataAffectedServices(g, types), CatalogTypes: catalogTypes}
 		return nil
 	})
 	return move, modeChangeError(err)

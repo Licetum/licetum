@@ -99,7 +99,7 @@ func runHoldScenario(t *testing.T, seed uint64) (stale, refused, computations in
 	registry := prometheus.NewRegistry()
 	results := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hold_test_results"}, []string{"result"})
 	registry.MustRegister(results)
-	state := cacheState{ok: true, degraded: true, version: 1, tag: "t"}
+	state := cacheState{ok: true, degraded: true, version: 1, epoch: 1}
 
 	// The world: the moments a rule or a membership starts or stops being in force. The answer changes at each of them.
 	var bounds []time.Time

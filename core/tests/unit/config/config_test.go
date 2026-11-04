@@ -1,10 +1,7 @@
 package config_test
 
 import (
-	"os"
-	"regexp"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -72,16 +69,6 @@ func TestLoadReportsBadValues(t *testing.T) {
 	t.Setenv("CORS__ALLOW_ORIGINS", `["broken`)
 	if _, err := config.Load(); err == nil {
 		t.Fatal("expected a parse error")
-	}
-}
-
-// The registry of known subjects is gone: its settings are named by the warning of the deprecated ones.
-func TestTheSettingsOfTheRetiredSubjectRegistryAreDeprecated(t *testing.T) {
-	t.Setenv("SUBJECTS__ENABLED", "true")
-	t.Setenv("SUBJECTS__RETENTION_DAYS", "0")
-	got := config.DeprecatedSettings()
-	if !slices.Contains(got, "SUBJECTS__ENABLED") || !slices.Contains(got, "SUBJECTS__RETENTION_DAYS") {
-		t.Errorf("DeprecatedSettings = %v", got)
 	}
 }
 
@@ -235,29 +222,6 @@ func TestLoadSyncPipelineSettings(t *testing.T) {
 	if cfg.Sync.Lease != 9*time.Second || !cfg.Sync.KeepWarm || cfg.DB.SyncPoolSize != 2 {
 		t.Errorf("wrong values: %+v", cfg.Sync)
 	}
-	if got := config.DeprecatedSettings(); !slices.Equal(got, []string{"SYNC__LOCK_TTL"}) {
-		t.Errorf("DeprecatedSettings = %v", got)
-	}
-}
-
-// DBOS is the only synchronization engine and the worker no longer filters jobs by region: a deployment that still sets
-// SYNC__ENGINE (to postgres, or to anything) or WORKER__REGION (to anything) starts, and is told by the deprecation warning.
-func TestTheSettingsOfTheRemovedSynchronizationEngineAndRegionAreIgnored(t *testing.T) {
-	unsetDeprecated(t)
-	t.Setenv("SYNC__ENGINE", "kafka")
-	t.Setenv("WORKER__REGION", "Not A Region!")
-	if _, err := config.Load(); err != nil {
-		t.Fatalf("a removed setting must not stop the start: %v", err)
-	}
-	got := config.DeprecatedSettings()
-	for _, name := range []string{"SYNC__ENGINE", "WORKER__REGION"} {
-		if !slices.Contains(got, name) {
-			t.Errorf("%s is not reported as deprecated: %v", name, got)
-		}
-	}
-	if reason, _ := config.DeprecatedReason("SYNC__ENGINE"); !strings.Contains(reason, "DBOS") {
-		t.Errorf("the reason of SYNC__ENGINE must name DBOS, got %q", reason)
-	}
 }
 
 func TestLoadResilienceDefaults(t *testing.T) {
@@ -400,203 +364,6 @@ func TestLoadAdminAuthRefusesAPartialConfiguration(t *testing.T) {
 		}
 		for k := range env {
 			t.Setenv(k, "")
-		}
-	}
-}
-
-// The OAuth client of the self-service is gone; a deployment that still sets it is told.
-func TestDeprecatedSettingsNameTheOAuthClientOfTheSelfService(t *testing.T) {
-	t.Setenv("PLATFORM__CLIENT_SECRET", "s")
-	t.Setenv("PLATFORM__ISSUER", "https://idp")
-	got := config.DeprecatedSettings()
-	if !slices.Contains(got, "PLATFORM__CLIENT_SECRET") || !slices.Contains(got, "PLATFORM__ISSUER") {
-		t.Errorf("DeprecatedSettings = %v", got)
-	}
-}
-
-// The settings of the features 2c took out are still read for the warning, whatever they hold.
-func TestDeprecatedSettingsNameTheFeaturesOfTheTokenOfAService(t *testing.T) {
-	for _, name := range []string{"AUTH__STATE_SECRET", "AUTH__TOKEN_L1_SIZE", "DELEGATION__AUDIT_MODE", "CORS__ALLOW_ORIGINS"} {
-		t.Setenv(name, "x")
-	}
-	got := config.DeprecatedSettings()
-	for _, name := range []string{"AUTH__STATE_SECRET", "AUTH__TOKEN_L1_SIZE", "DELEGATION__AUDIT_MODE", "CORS__ALLOW_ORIGINS"} {
-		if !slices.Contains(got, name) {
-			t.Errorf("%s is not named as deprecated: %v", name, got)
-		}
-	}
-	// Loading does not fail on them: a deployment that still sets them starts and logs the warning.
-	if _, err := config.Load(); err != nil {
-		t.Errorf("a deprecated setting must not stop the start: %v", err)
-	}
-}
-
-// unsetDeprecated makes every variable of the catalog absent for the test (t.Setenv first, so that the runner restores the
-// ambient value afterwards).
-func unsetDeprecated(t *testing.T) {
-	t.Helper()
-	for _, d := range config.DeprecatedCatalog() {
-		t.Setenv(d.Name, "")
-		if err := os.Unsetenv(d.Name); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestDeprecatedCatalogEveryRowHasAReason(t *testing.T) {
-	name := regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
-	catalog := config.DeprecatedCatalog()
-	if len(catalog) == 0 {
-		t.Fatal("the catalog is empty")
-	}
-	seen := map[string]bool{}
-	for _, d := range catalog {
-		if !name.MatchString(d.Name) {
-			t.Errorf("%q is not an upper-case setting name", d.Name)
-		}
-		if seen[d.Name] {
-			t.Errorf("%s is in the catalog twice", d.Name)
-		}
-		seen[d.Name] = true
-		if d.Reason == "" || strings.TrimSpace(d.Reason) != d.Reason {
-			t.Errorf("%s: the reason %q is empty or has surrounding space", d.Name, d.Reason)
-		}
-		if got, ok := config.DeprecatedReason(d.Name); !ok || got != d.Reason {
-			t.Errorf("DeprecatedReason(%s) = %q, %v; want %q", d.Name, got, ok, d.Reason)
-		}
-	}
-	if _, ok := config.DeprecatedReason("NO_SUCH_SETTING"); ok {
-		t.Error("DeprecatedReason names a setting that is not in the catalog")
-	}
-	catalog[0].Reason = "changed by the caller"
-	if config.DeprecatedCatalog()[0].Reason == "changed by the caller" {
-		t.Error("a caller changed the table through the slice DeprecatedCatalog returned")
-	}
-}
-
-// DeprecatedSettings hides the rows whose variable is unset; walking the catalog reaches all of them.
-func TestDeprecatedSettingsReturnsEveryCatalogRowThatIsSet(t *testing.T) {
-	unsetDeprecated(t)
-	if got := config.DeprecatedSettings(); len(got) != 0 {
-		t.Fatalf("with nothing set DeprecatedSettings = %v", got)
-	}
-	var names []string
-	for _, d := range config.DeprecatedCatalog() {
-		names = append(names, d.Name)
-		t.Setenv(d.Name, "x")
-		if got := config.DeprecatedSettings(); !slices.Equal(got, []string{d.Name}) {
-			t.Errorf("with only %s set DeprecatedSettings = %v", d.Name, got)
-		}
-		if err := os.Unsetenv(d.Name); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range names {
-		t.Setenv(name, "x")
-	}
-	if got := config.DeprecatedSettings(); !slices.Equal(got, names) {
-		t.Errorf("with every row set DeprecatedSettings = %v, want the catalog in order %v", got, names)
-	}
-}
-
-// A removed setting that is still set must not stop the start. A row is added in the commit that stops Load() reading the
-// variable; a task that appends it earlier fails here.
-func TestLoadSucceedsWithEverySettingOfTheCatalogSet(t *testing.T) {
-	for _, d := range config.DeprecatedCatalog() {
-		t.Setenv(d.Name, "x")
-	}
-	if _, err := config.Load(); err != nil {
-		t.Errorf("a deprecated setting must not stop the start: %v", err)
-	}
-}
-
-// The reason of HTTP__PUBLIC_URL once told an operator that a Redis lock was replaced by a job table.
-func TestTheReasonOfARenamedOrReplacedSettingNamesItsReplacement(t *testing.T) {
-	for name, replacement := range map[string]string{
-		"HTTP__PUBLIC_URL":        "PDP__PUBLIC_URL",
-		"PLATFORM__ISSUER":        "ADMIN_AUTH__",
-		"PLATFORM__CLIENT_SECRET": "ADMIN_AUTH__",
-		"SYNC__LOCK_TTL":          "SYNC__LEASE",
-	} {
-		reason, ok := config.DeprecatedReason(name)
-		if !ok || !strings.Contains(reason, replacement) {
-			t.Errorf("the reason of %s is %q, want it to name %s", name, reason, replacement)
-		}
-	}
-}
-
-// No process reads a Redis setting: Load() starts without any and with the old ones set, which are then listed as deprecated.
-func TestLoadWithoutAnyRedisSetting(t *testing.T) {
-	unsetDeprecated(t)
-	if _, err := config.Load(); err != nil {
-		t.Fatalf("Load without REDIS__* settings: %v", err)
-	}
-	if got := config.DeprecatedSettings(); len(got) != 0 {
-		t.Errorf("with nothing set DeprecatedSettings = %v", got)
-	}
-}
-
-func TestLoadStartsWithRedisSettingsStillSetAndListsThemAsDeprecated(t *testing.T) {
-	unsetDeprecated(t)
-	t.Setenv("REDIS__URI", "redis://localhost:6379/0")
-	t.Setenv("REDIS__HOT_TIMEOUT", "not a duration")
-	if _, err := config.Load(); err != nil {
-		t.Fatalf("a Redis setting that is still set must not stop the start: %v", err)
-	}
-	if got := config.DeprecatedSettings(); !slices.Equal(got, []string{"REDIS__URI", "REDIS__HOT_TIMEOUT"}) {
-		t.Errorf("DeprecatedSettings = %v, want the two Redis settings", got)
-	}
-}
-
-// removedSettingsOfThePDPStage is the exit list of the step that removed Redis, the read replica and the table
-// synchronization engine, in the order of the catalog: each is a row with its reason, and a deployment that still sets one
-// starts and is told once (the cli test checks the log).
-var removedSettingsOfThePDPStage = []string{
-	"SYNC__LOCK_TTL", "SYNC__LOCK_WAIT",
-	"SYNC__ENGINE", "WORKER__REGION",
-	"SYNC__FETCH_TTL",
-	"DB__READ_URI", "DB__MAX_REPLICA_LAG", "DB__LAG_ACTION", "DB__LAG_INTERVAL",
-	"REDIS__URI", "REDIS__HOT_TIMEOUT",
-}
-
-func TestTheCatalogHoldsEverySettingRemovedWithRedisTheReplicaAndTheTableEngine(t *testing.T) {
-	rows := map[string]string{}
-	for _, d := range config.DeprecatedCatalog() {
-		rows[d.Name] = d.Reason
-	}
-	for _, name := range removedSettingsOfThePDPStage {
-		if reason, ok := rows[name]; !ok || strings.TrimSpace(reason) == "" {
-			t.Errorf("%s is not a catalog row with a reason (reason %q)", name, reason)
-		}
-	}
-	// The earlier rows stay: the exit list comes on top of them, not instead of them.
-	for _, name := range []string{"HTTP__PUBLIC_URL", "PLATFORM__CLIENT_SECRET", "SUBJECTS__ENABLED", "AUTH__STATE_SECRET",
-		"AUTH__TOKEN_L1_SIZE", "DELEGATION__AUDIT_MODE", "CORS__ALLOW_ORIGINS"} {
-		if _, ok := rows[name]; !ok {
-			t.Errorf("%s left the catalog", name)
-		}
-	}
-	// With each of them set the process starts and reports exactly that one.
-	unsetDeprecated(t)
-	for _, name := range removedSettingsOfThePDPStage {
-		t.Setenv(name, "x")
-		if _, err := config.Load(); err != nil {
-			t.Errorf("Load with %s set: %v", name, err)
-		}
-		if got := config.DeprecatedSettings(); !slices.Equal(got, []string{name}) {
-			t.Errorf("with only %s set DeprecatedSettings = %v", name, got)
-		}
-		if err := os.Unsetenv(name); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestTheReasonOfTheRedisSettingsSaysThereIsNoRedis(t *testing.T) {
-	for _, name := range []string{"REDIS__URI", "REDIS__HOT_TIMEOUT"} {
-		reason, ok := config.DeprecatedReason(name)
-		if !ok || !strings.Contains(reason, "no Redis") {
-			t.Errorf("the reason of %s is %q", name, reason)
 		}
 	}
 }

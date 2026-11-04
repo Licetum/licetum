@@ -48,7 +48,7 @@ export const pdpAddress = (base: string, ref: string) =>
 export const pdpUrl = (base: string, ref: string, operation: AuthzenOperation) =>
   `${pdpAddress(base, ref)}/${AUTHZEN_PATHS[operation]}`;
 
-/** A claim or an attribute of the request: a string, or a list of strings (the rules compare claims as text). */
+/** A property or an attribute of the request: a string, or a list of strings (the rules compare claims as text). */
 export type Value = string | string[];
 export type Properties = Record<string, Value>;
 

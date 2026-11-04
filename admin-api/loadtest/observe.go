@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -94,11 +96,11 @@ func parseSwapPages(vmstat string) float64 {
 // the extension (shared_preload_libraries); without it the run still measures the server, and the database is a black
 // box in the report.
 func enableStatements(ctx context.Context, o observer) observer {
-	if _, err := o.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pg_stat_statements`); err != nil {
+	if _, err := support.RawExec(ctx, o.pool, `CREATE EXTENSION IF NOT EXISTS pg_stat_statements`); err != nil {
 		slog.Warn("statement statistics are off", "error", err)
 		return o
 	}
-	if _, err := o.pool.Exec(ctx, `SELECT 1 FROM pg_stat_statements LIMIT 1`); err != nil {
+	if _, err := support.RawExec(ctx, o.pool, `SELECT 1 FROM pg_stat_statements LIMIT 1`); err != nil {
 		slog.Warn("statement statistics are off: start the server with shared_preload_libraries=pg_stat_statements", "error", err)
 		return o
 	}

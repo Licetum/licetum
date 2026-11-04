@@ -3,8 +3,8 @@
 package api_test
 
 // The questions a PEP client puts to the AuthZEN API about the people of its application. The person is subject.id and their
-// claims are subject.properties: the claims decide, the name of the person is the preferred_username unless the caller sends
-// one, a subject that looks like a group is refused, and the claims are bounded.
+// properties are subject.properties: the properties decide, the name of the person is the preferred_username unless the caller sends
+// one, a subject that looks like a group is refused, and the properties are bounded.
 
 import (
 	"errors"
@@ -30,10 +30,10 @@ type propertiesWorld struct {
 func newPropertiesWorld(t *testing.T) *propertiesWorld {
 	t.Helper()
 	w := newWorld(t)
-	group := w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	group := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+group+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
-	team := w.must("POST", "/group", map[string]any{"name": "team"})["id"].(string)
+	team := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "team"})["id"].(string)
 	w.must("POST", "/group/"+team+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "preferred_username", "op": "eq", "value": "alice"}}})
 	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1", "member_of_group_id": group, "access": []string{"read"}})
@@ -42,7 +42,7 @@ func newPropertiesWorld(t *testing.T) *propertiesWorld {
 	return &propertiesWorld{world: w, group: group, client: key}
 }
 
-// reads asks, as the PEP client, whether the person may read the branch; the claims of the person are the properties.
+// reads asks, as the PEP client, whether the person may read the branch; the properties of the person are the properties.
 func (w *propertiesWorld) reads(person string, properties map[string]any, branch string) bool {
 	w.t.Helper()
 	opts := []authzenreq.Option{}
@@ -60,7 +60,7 @@ func (w *propertiesWorld) reads(person string, properties map[string]any, branch
 func TestAuthzenPropertiesDecideForAPerson(t *testing.T) {
 	w := newPropertiesWorld(t)
 
-	// The claims the caller sends decide.
+	// The properties the caller sends decide.
 	if !w.reads("dave", map[string]any{"department": "sales"}, "B1") {
 		t.Fatal("dave from sales reads B1")
 	}
@@ -101,7 +101,7 @@ func TestAuthzenASubjectThatLooksLikeAGroupIsRefused(t *testing.T) {
 	}
 }
 
-func TestAuthzenTheClaimsOfAPersonAreBounded(t *testing.T) {
+func TestAuthzenThePropertiesOfAPersonAreBounded(t *testing.T) {
 	w := newPropertiesWorld(t)
 	claims := func(n int) map[string]any {
 		out := map[string]any{}
@@ -115,7 +115,7 @@ func TestAuthzenTheClaimsOfAPersonAreBounded(t *testing.T) {
 		return w.askWithHeader(authzenreq.Evaluation(w.ref(w.org), "dave", authzenreq.On("branch", "B1"), "read", authzenreq.WithProperties(properties)), w.client)
 	}
 
-	// At most 100 claims.
+	// At most 100 properties.
 	status, _, body := about(claims(100))
 	if _, err := authzenreq.Allowed(status, body); err != nil {
 		t.Fatalf("100 claims: %v", err)
@@ -148,12 +148,12 @@ func TestAuthzenTheResourcesOfAPersonAreSearchedByTheirProperties(t *testing.T) 
 		return ids
 	}
 
-	// Everything under D1 for a person from sales, nothing for one without the claim.
+	// Everything under D1 for a person from sales, nothing for one without the property.
 	if got := search("dave", map[string]any{"department": "sales"}); !slices.Equal(got, []string{"B1", "B2", "B3"}) {
 		t.Fatalf("the branches of dave from sales: %v", got)
 	}
 	if got := search("dave", nil); len(got) != 0 {
-		t.Fatalf("the branches of dave without the claim: %v", got)
+		t.Fatalf("the branches of dave without the subject: %v", got)
 	}
 	// The name of the person is their preferred_username here as well: alice is in team, which reads under D2.
 	if got := search("alice", nil); !slices.Equal(got, []string{"B4"}) {

@@ -30,7 +30,8 @@ import (
 )
 
 type App struct {
-	DB *pgxpool.Pool
+	dbosWrongDatabase atomic.Bool
+	DB                *pgxpool.Pool
 	// SyncDB is the pool of the synchronization transactions (DB__SYNC_POOL_SIZE connections), apart from the request pool,
 	// so that a synchronization waiting for a lock never takes a connection a request needs. Nil: DB is used.
 	SyncDB *pgxpool.Pool
@@ -110,9 +111,9 @@ func (a *App) now() time.Time {
 // it must be called before the App serves a request, and now must be safe for concurrent use.
 func (a *App) SetClock(now func() time.Time) { a.clock = now }
 
-// NewEnv is the environment of a request decided by this App: the claims, the request attributes and the time of its clock.
-func (a *App) NewEnv(claims Claims, context map[string]any) Env {
-	return Env{Claims: claims, Context: context, Now: a.now()}
+// NewEnv is the environment of a request decided by this App: the properties, the request attributes and the time of its clock.
+func (a *App) NewEnv(properties Properties, context map[string]any) Env {
+	return Env{SubjectType: "user", Properties: properties, Context: context, Now: a.now()}
 }
 
 func New(pool *pgxpool.Pool, cfg *config.Config) *App {
@@ -156,15 +157,21 @@ func (a *App) Close() {
 }
 
 // AfterWrite is called once a write that can change a decision has committed, with the revision the write took
-// (db.BumpRevision, in the write's own transaction): it is the revision of the write for the caller (X-Authz-Revision),
+// (db.TakeRevision, in the write's own transaction): it is the revision of the write for the caller (Licetum-Revision),
 // it makes this process read the revisions again at once, and it makes the types of the platform itself due for synchronization (the
 // entities they are made of were just written, and a write must show at once; the data of the other services is not
 // touched: a change of a type or of a synchronizer changes its structure signature instead).
-func (a *App) AfterWrite(ctx context.Context, revision int64) {
+func (a *App) AfterWrite(ctx context.Context, revision int64, epochs ...int32) {
 	if t := TraceFrom(ctx); t != nil {
-		t.setRevision(revision)
+		var epoch int32
+		if len(epochs) > 0 {
+			t.setRevision(revision, epochs[0])
+		} else if err := a.DB.QueryRow(ctx, `SELECT epoch FROM revision_state WHERE scope = 'global'`).Scan(&epoch); err == nil {
+			t.setRevision(revision, epoch)
+		} else {
+			t.setRevision(revision)
+		}
 	}
-	a.invalidateView()
 	if err := a.invalidatePlatformSync(ctx); err != nil {
 		slog.ErrorContext(ctx, "failed to make the platform types due for synchronization", "error", err)
 	}
@@ -172,11 +179,11 @@ func (a *App) AfterWrite(ctx context.Context, revision int64) {
 
 // ---------- shared existence checks ----------
 
-const ServiceColumns = `id, name, slug, url, icon`
+const ServiceColumns = `id, name, slug, url, icon, identity_domain_id, created_at`
 
 func ScanService(row pgx.Row) (*model.Service, error) {
 	var s model.Service
-	err := row.Scan(&s.ID, &s.Name, &s.Slug, &s.URL, &s.Icon)
+	err := row.Scan(&s.ID, &s.Name, &s.Slug, &s.URL, &s.Icon, &s.IdentityDomainID, &s.CreatedAt)
 	return &s, err
 }
 
@@ -249,7 +256,7 @@ func (a *App) LoadTypeParents(ctx context.Context, q db.Querier, types []*model.
 		byID[t.ID] = t
 	}
 	rows, err := q.Query(ctx,
-		`SELECT type_resource_id, parent_id, inherit FROM type_resource_parent
+		`SELECT type_resource_id, parent_id, eff_inherit, eff_live, to_jsonb(p)-ARRAY['inherit','live'] FROM type_resource_parent p
 		 WHERE type_resource_id = ANY($1) ORDER BY parent_id`, ids)
 	if err != nil {
 		return err
@@ -258,11 +265,19 @@ func (a *App) LoadTypeParents(ctx context.Context, q db.Querier, types []*model.
 	for rows.Next() {
 		var child uuid.UUID
 		var p model.TypeParent
-		if err := rows.Scan(&child, &p.TypeResourceID, &p.Inherit); err != nil {
+		var live bool
+		var canonical json.RawMessage
+		if err := rows.Scan(&child, &p.TypeResourceID, &p.Inherit, &live, &canonical); err != nil {
 			return err
 		}
 		t := byID[child]
-		t.Parents = append(t.Parents, p)
+		if t.CanonicalParents == nil {
+			t.CanonicalParents = map[uuid.UUID]json.RawMessage{}
+		}
+		t.CanonicalParents[p.TypeResourceID] = canonical
+		if live {
+			t.Parents = append(t.Parents, p)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -319,7 +334,7 @@ func (a *App) GetExistingTypeResourceAnyService(ctx context.Context, q db.Querie
 
 func (a *App) GetExistingGroup(ctx context.Context, q db.Querier, groupID uuid.UUID) (*model.Group, error) {
 	var g model.Group
-	err := q.QueryRow(ctx, `SELECT id, name FROM user_group WHERE id = $1`, groupID).Scan(&g.ID, &g.Name)
+	err := q.QueryRow(ctx, `SELECT service_id, id, name FROM user_group WHERE id = $1`, groupID).Scan(&g.ServiceID, &g.ID, &g.Name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound(i18n.GroupNotFound, groupID)
 	}
@@ -328,7 +343,7 @@ func (a *App) GetExistingGroup(ctx context.Context, q db.Querier, groupID uuid.U
 
 func (a *App) GetExistingRole(ctx context.Context, q db.Querier, roleID uuid.UUID) (*model.Role, error) {
 	var r model.Role
-	err := q.QueryRow(ctx, `SELECT id, name FROM role WHERE id = $1`, roleID).Scan(&r.ID, &r.Name)
+	err := q.QueryRow(ctx, `SELECT service_id, id, name FROM role WHERE id = $1`, roleID).Scan(&r.ServiceID, &r.ID, &r.Name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound(i18n.RoleNotFound, roleID)
 	}

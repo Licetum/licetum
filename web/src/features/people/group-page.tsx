@@ -91,7 +91,7 @@ export function GroupPage({ groupId }: { groupId: string }) {
   const own = useMemo(
     () =>
       (rules.data ?? []).filter(
-        (r) => r.member_of_group_id === groupId || r.subject === `group:${groupId}`,
+        (r) => r.member_of_group_id === groupId || r.subject_group_id === groupId,
       ),
     [rules.data, groupId],
   );
@@ -273,7 +273,9 @@ export function GroupPage({ groupId }: { groupId: string }) {
               <Button
                 type="primary"
                 icon={<Plus size={16} aria-hidden />}
-                onClick={() => grant.open({ who: { kind: 'group', id: groupId } })}
+                onClick={() =>
+                  grant.open({ who: { kind: 'group', id: groupId }, serviceId: group.service_id })
+                }
               >
                 {t('grant.open')}
               </Button>
@@ -503,7 +505,12 @@ export function GroupPage({ groupId }: { groupId: string }) {
                 access.whole('assignment_rule', 'write') ? (
                   <Button
                     type="primary"
-                    onClick={() => grant.open({ who: { kind: 'group', id: groupId } })}
+                    onClick={() =>
+                      grant.open({
+                        who: { kind: 'group', id: groupId },
+                        serviceId: group.service_id,
+                      })
+                    }
                   >
                     {t('grant.open')}
                   </Button>

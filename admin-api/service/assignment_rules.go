@@ -16,14 +16,14 @@ import (
 )
 
 // checkResourceTarget: a type without a synchronizer has no resources to point at — a permission on it
-// grants access to the type as a whole (no resource_id, no resource_from_claim and no resource_where), and
+// grants access to the type as a whole (no resource_id, no resource_from_property and no resource_where), and
 // the permission result lists such a type as not_sync. Used for inline rules and for the items of roles alike.
 func (a *App) checkResourceTarget(ctx context.Context, q db.Querier, typeResourceID uuid.UUID, resourceID *string,
-	fromClaim *model.ResourceFromClaim, where []model.PredicateCondition) error {
-	if resourceID == nil && fromClaim == nil && len(where) == 0 {
+	fromProperty *model.ResourceFromProperty, where []model.PredicateCondition) error {
+	if resourceID == nil && fromProperty == nil && len(where) == 0 {
 		return nil
 	}
-	ok, err := a.hasSynchronizer(ctx, q, typeResourceID)
+	ok, err := a.hasLiveSynchronizer(ctx, q, typeResourceID)
 	if err != nil || ok {
 		return err
 	}
@@ -32,22 +32,24 @@ func (a *App) checkResourceTarget(ctx context.Context, q db.Querier, typeResourc
 
 // checkRuleTarget checks the target of an inline rule (see checkResourceTarget).
 func (a *App) checkRuleTarget(ctx context.Context, q db.Querier, in *model.AssignmentRuleInput) error {
-	return a.checkResourceTarget(ctx, q, *in.TypeResourceID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere)
+	return a.checkResourceTarget(ctx, q, *in.TypeResourceID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere)
 }
 
 // checkAssignmentRuleRefs checks the referenced entities: the role, or the type with its access groups and the lookup
-// type of a claim; the target (see checkRuleTarget) when checkTarget is set; the group the rule is bound to and the
+// type of a property; the target (see checkRuleTarget) when checkTarget is set; the group the rule is bound to and the
 // group the rule is guarded by.
 //
-// It returns the service the inline permission's type belongs to (nil for a role), which the change log records: the type is read
+// It returns the owner of the type or role, which the change log records: the target is read
 // once, for both. Every statement of a write is a round trip to the primary, and the admin API of a region that is not the
 // primary's pays the latency of the link for each.
 func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *model.AssignmentRuleInput, checkTarget bool) (*uuid.UUID, error) {
 	var serviceID *uuid.UUID
 	if in.RoleID != nil {
-		if _, err := a.GetExistingRole(ctx, q, *in.RoleID); err != nil {
+		role, err := a.GetExistingRole(ctx, q, *in.RoleID)
+		if err != nil {
 			return nil, err
 		}
+		serviceID = &role.ServiceID
 	} else {
 		var owner uuid.UUID
 		err := q.QueryRow(ctx, `SELECT service_id FROM type_resource WHERE id = $1 AND deleted_at IS NULL`, *in.TypeResourceID).Scan(&owner)
@@ -66,28 +68,45 @@ func (a *App) checkAssignmentRuleRefs(ctx context.Context, q db.Querier, in *mod
 		if err := a.checkAccessGroupRefs(ctx, q, *in.TypeResourceID, in.Access); err != nil {
 			return nil, err
 		}
-		if in.ResourceFromClaim != nil {
-			if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromClaim.LookupTypeResourceID); err != nil {
+		if in.ResourceFromProperty != nil {
+			if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromProperty.LookupTypeResourceID); err != nil {
 				return nil, err
 			}
 		}
 	}
 	if in.MemberOfGroupID != nil {
-		if _, err := a.GetExistingGroup(ctx, q, *in.MemberOfGroupID); err != nil {
+		group, err := a.GetExistingGroup(ctx, q, *in.MemberOfGroupID)
+		if err != nil {
 			return nil, err
+		}
+		if group.ServiceID != *serviceID {
+			return nil, apperr.Unprocessable(i18n.ServiceOwnershipMismatch)
 		}
 	}
 	if in.RequiresGroupID != nil {
-		if _, err := a.GetExistingGroup(ctx, q, *in.RequiresGroupID); err != nil {
+		group, err := a.GetExistingGroup(ctx, q, *in.RequiresGroupID)
+		if err != nil {
 			return nil, err
+		}
+		if group.ServiceID != *serviceID {
+			return nil, apperr.Unprocessable(i18n.ServiceOwnershipMismatch)
+		}
+	}
+	if in.SubjectGroupID != nil {
+		group, err := a.GetExistingGroup(ctx, q, *in.SubjectGroupID)
+		if err != nil {
+			return nil, err
+		}
+		if group.ServiceID != *serviceID {
+			return nil, apperr.Unprocessable(i18n.ServiceOwnershipMismatch)
 		}
 	}
 	return serviceID, nil
 }
 
-// fromClaimParam: SQL NULL (not JSON null) for a missing resource_from_claim, otherwise the
-// check constraint "resource_id IS NULL OR resource_from_claim IS NULL" does not work.
-func fromClaimParam(v *model.ResourceFromClaim) *string {
+// fromClaimParam: SQL NULL (not JSON null) for a missing resource_from_property, otherwise the
+// check constraint "resource_id IS NULL OR resource_from_property IS NULL" does not work.
+func fromPropertyParam(v *model.ResourceFromProperty) *string {
 	if v == nil {
 		return nil
 	}
@@ -103,8 +122,6 @@ func whereParam(conds []model.PredicateCondition) *string {
 	s := engine.MustJSON(conds)
 	return &s
 }
-
-// ruleServiceID is the service a rule belongs to: the one that owns its resource type (none for a role rule).
 
 // onMissingOf is what a denial does when a condition reads an attribute the request does not carry (see
 // model.AssignmentRuleInput.OnMissingAttribute). Given explicitly, that is it. Otherwise a deny rule that was a deny
@@ -126,10 +143,10 @@ func onMissingOf(in *model.AssignmentRuleInput, old *model.AssignmentRule) strin
 // ruleArgs are the values of the columns an assignment rule is written with, in the order of its INSERT.
 func ruleArgs(in *model.AssignmentRuleInput, onMissing string) []any {
 	return []any{
-		engine.ToNullUUID(in.RoleID), engine.ToNullUUID(in.TypeResourceID), in.ResourceID, fromClaimParam(in.ResourceFromClaim),
-		in.Access, in.Subject, engine.MustJSON(in.Predicate), engine.ToNullUUID(in.MemberOfGroupID), *in.Enabled,
+		engine.ToNullUUID(in.RoleID), engine.ToNullUUID(in.TypeResourceID), in.ResourceID, fromPropertyParam(in.ResourceFromProperty),
+		in.Access, in.Subject, engine.MustJSON(model.SubjectPredicate(in.Predicate)), engine.ToNullUUID(in.MemberOfGroupID), *in.Enabled,
 		in.Effect, in.Exception, in.ValidFrom, in.ExpiresAt, in.Name, in.Description,
-		onMissing, engine.MustJSON(in.RequiresPredicate), engine.ToNullUUID(in.RequiresGroupID), whereParam(in.ResourceWhere), in.SubjectKind,
+		onMissing, engine.MustJSON(model.SubjectPredicate(in.RequiresPredicate)), engine.ToNullUUID(in.RequiresGroupID), whereParam(in.ResourceWhere), in.SubjectType, engine.ToNullUUID(in.SubjectGroupID),
 	}
 }
 
@@ -141,19 +158,19 @@ func (a *App) CreateAssignmentRule(ctx context.Context, in *model.AssignmentRule
 // rules it deleted with the ids they had.
 func (a *App) createAssignmentRule(ctx context.Context, in *model.AssignmentRuleInput, id *uuid.UUID) (*model.AssignmentRule, error) {
 	var r *model.AssignmentRule
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		serviceID, err := a.checkAssignmentRuleRefs(ctx, q, in, true)
 		if err != nil {
 			return change{}, err
 		}
 		r, err = engine.ScanAssignmentRule(q.QueryRow(ctx, `
 			INSERT INTO assignment_rule AS ar
-				(id, role_id, type_resource_id, resource_id, resource_from_claim, access, subject, predicate, member_of_group_id,
+				(service_id,id, role_id, type_resource_id, resource_id, resource_from_property, access, subject, predicate, member_of_group_id,
 				 enabled, effect, exception, valid_from, expires_at, name, description,
-				 on_missing_attribute, requires_predicate, requires_group_id, resource_where, subject_kind)
-			VALUES (COALESCE($21::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15,
-				$16, $17::jsonb, $18, $19::jsonb, $20)
-			RETURNING `+engine.AssignmentRuleColumns, append(ruleArgs(in, onMissingOf(in, nil)), id)...,
+				 on_missing_attribute, requires_predicate, requires_group_id, resource_where, subject_type,subject_group_id)
+			VALUES ($23,COALESCE($22::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15,
+				$16, $17::jsonb, $18, $19::jsonb, $20,$21)
+			RETURNING `+engine.AssignmentRuleColumns, append(ruleArgs(in, onMissingOf(in, nil)), id, *serviceID)...,
 		))
 		if db.IsPrimaryKeyViolation(err) {
 			return change{}, idTaken(id)
@@ -173,15 +190,15 @@ func (a *App) createAssignmentRule(ctx context.Context, in *model.AssignmentRule
 // type_resource_id (or role_id), so a single management page does not need nesting in the URL.
 func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWithContext, error) {
 	rows, err := a.DB.Query(ctx, `
-		SELECT `+engine.AssignmentRuleColumns+`, t.service_id, s.name, t.name, ro.name,
+		SELECT `+engine.AssignmentRuleColumns+`, s.name, t.name, ro.name,
 		       ar.role_id IS NOT NULL
-		       OR (ar.resource_id IS NULL AND ar.resource_from_claim IS NULL AND ar.resource_where IS NULL)
-		       OR `+engine.LiveSynchronizerExists("t.id")+`
+		       OR (ar.resource_id IS NULL AND ar.resource_from_property IS NULL AND ar.resource_where IS NULL)
+		       OR `+model.TypeModeSQL("t")+`
 		FROM assignment_rule ar
 		LEFT JOIN type_resource t ON t.id = ar.type_resource_id
-		LEFT JOIN service s ON s.id = t.service_id
+		JOIN service s ON s.id = ar.service_id
 		LEFT JOIN role ro ON ro.id = ar.role_id
-		WHERE ar.role_id IS NOT NULL OR (t.deleted_at IS NULL AND s.deleted_at IS NULL)
+		WHERE s.deleted_at IS NULL AND (ar.role_id IS NOT NULL OR t.deleted_at IS NULL)
 		ORDER BY s.name, t.name, ar.id`)
 	if err != nil {
 		return nil, err
@@ -192,13 +209,13 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 	var graph lookupGraph
 	for rows.Next() {
 		var c model.AssignmentRuleWithContext
-		r, err := engine.ScanAssignmentRule(rows, &c.ServiceID, &c.ServiceName, &c.TypeResourceName, &c.RoleName, &c.TargetValid)
+		r, err := engine.ScanAssignmentRule(rows, &c.ServiceName, &c.TypeResourceName, &c.RoleName, &c.TargetValid)
 		if err != nil {
 			return nil, err
 		}
 		c.AssignmentRule = *r
-		if c.TargetValid && r.ResourceFromClaim != nil && r.TypeResourceID != nil {
-			cut, err := graph.cut(ctx, a, r.ResourceFromClaim.LookupTypeResourceID, *r.TypeResourceID)
+		if c.TargetValid && r.ResourceFromProperty != nil && r.TypeResourceID != nil {
+			cut, err := graph.cut(ctx, a, r.ResourceFromProperty.LookupTypeResourceID, *r.TypeResourceID)
 			if err != nil {
 				return nil, err
 			}
@@ -209,7 +226,7 @@ func (a *App) ListAssignmentRules(ctx context.Context) ([]model.AssignmentRuleWi
 	return out, rows.Err()
 }
 
-// lookupGraph loads the type graph the first time a list needs it: the target of a resource_from_claim is valid only while the
+// lookupGraph loads the type graph the first time a list needs it: the target of a resource_from_property is valid only while the
 // types it looks in and climbs through have synchronizers (engine.TypeGraph.LookupCut), which the SQL of the list does not see.
 type lookupGraph struct{ g *engine.TypeGraph }
 
@@ -244,7 +261,7 @@ func (a *App) getExistingAssignmentRule(ctx context.Context, q db.Querier, ruleI
 func ruleTargetChanged(old *model.AssignmentRule, in *model.AssignmentRuleInput) bool {
 	return !equalPtr(old.TypeResourceID, in.TypeResourceID) ||
 		!equalPtr(old.ResourceID, in.ResourceID) ||
-		!equalPtr(old.ResourceFromClaim, in.ResourceFromClaim) ||
+		!equalPtr(old.ResourceFromProperty, in.ResourceFromProperty) ||
 		!sameConditions(old.ResourceWhere, in.ResourceWhere)
 }
 
@@ -254,7 +271,7 @@ func sameConditions(a, b []model.PredicateCondition) bool {
 }
 
 // RetargetsRule reports whether an update moves a rule to another target: its type or its role, the resource it names,
-// the claim that finds it, or its conditions on resources. The API checks such a change with more than a point write.
+// the property that finds it, or its conditions on resources. The API checks such a change with more than a point write.
 func RetargetsRule(old *model.AssignmentRule, in *model.AssignmentRuleInput) bool {
 	return ruleTargetChanged(old, in) || !equalPtr(old.RoleID, in.RoleID)
 }
@@ -268,7 +285,7 @@ func equalPtr[T comparable](a, b *T) bool {
 
 func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *model.AssignmentRuleInput) (*model.AssignmentRule, error) {
 	var r *model.AssignmentRule
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingAssignmentRule(ctx, q, ruleID)
 		if err != nil {
 			return change{}, err
@@ -277,14 +294,17 @@ func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *mo
 		if err != nil {
 			return change{}, err
 		}
+		if *serviceID != old.ServiceID {
+			return change{}, apperr.Unprocessable(i18n.RuleServiceRetarget)
+		}
 
 		r, err = engine.ScanAssignmentRule(q.QueryRow(ctx, `
 			UPDATE assignment_rule AS ar SET
-				role_id = $2, type_resource_id = $3, resource_id = $4, resource_from_claim = $5::jsonb, access = $6,
+				role_id = $2, type_resource_id = $3, resource_id = $4, resource_from_property = $5::jsonb, access = $6,
 				subject = $7, predicate = $8::jsonb, member_of_group_id = $9, enabled = $10,
 				effect = $11, exception = $12, valid_from = $13, expires_at = $14, name = $15, description = $16,
 				on_missing_attribute = $17, requires_predicate = $18::jsonb, requires_group_id = $19,
-				resource_where = $20::jsonb, subject_kind = $21
+				resource_where = $20::jsonb, subject_type = $21,subject_group_id=$22
 			WHERE ar.id = $1
 			RETURNING `+engine.AssignmentRuleColumns, append([]any{ruleID}, ruleArgs(in, onMissingOf(in, old))...)...,
 		))
@@ -304,7 +324,7 @@ func (a *App) UpdateAssignmentRule(ctx context.Context, ruleID uuid.UUID, in *mo
 }
 
 func (a *App) DeleteAssignmentRule(ctx context.Context, ruleID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingAssignmentRule(ctx, q, ruleID)
 		if err != nil {
 			return change{}, err
@@ -318,6 +338,13 @@ func (a *App) DeleteAssignmentRule(ctx context.Context, ruleID uuid.UUID) (uuid.
 			if err != nil {
 				return change{}, err
 			}
+		}
+		if old.RoleID != nil {
+			role, err := a.GetExistingRole(ctx, q, *old.RoleID)
+			if err != nil {
+				return change{}, err
+			}
+			serviceID = &role.ServiceID
 		}
 		return change{entity: "assignment_rule", entityID: ruleID, serviceID: serviceID, action: actionDelete,
 			before: old}, nil

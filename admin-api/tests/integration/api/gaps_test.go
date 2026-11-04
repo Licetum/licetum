@@ -12,25 +12,44 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/licetum/licetum/core/model"
 )
 
-func TestIntegrationBatchRefusesAnIdAnotherEntityHas(t *testing.T) {
+func TestContract_HIS04_BatchRefusesTakenIDsForEveryEntity(t *testing.T) {
 	w := newWorld(t)
-	taken := "00000000-0000-4000-8000-0000000000c1"
-	w.must("POST", "/batch", map[string]any{"operations": []map[string]any{
-		{"op": "create", "entity": "role", "id": taken, "body": map[string]any{"name": "first"}},
-	}})
-
-	status, raw := w.do("POST", w.admin.URL+"/batch", map[string]any{"operations": []map[string]any{
-		{"op": "create", "entity": "role", "body": map[string]any{"name": "other"}},
-		{"op": "create", "entity": "role", "id": taken, "body": map[string]any{"name": "second"}},
-	}})
-	if status != http.StatusConflict || !strings.Contains(string(raw), `"operation":1`) {
-		t.Fatalf("a given id of another role: %d %s", status, raw)
-	}
-	if strings.Contains(string(w.mustRaw("GET", "/role")), `"other"`) {
-		t.Fatal("the operation before the conflict was applied")
+	group := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "id-owner"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "id-owner"})["id"].(string)
+	for _, tc := range []struct {
+		entity, parent string
+		body           map[string]any
+	}{
+		{"group", "", map[string]any{"service_id": w.org, "name": "taken-group"}},
+		{"role", "", map[string]any{"service_id": w.org, "name": "taken-role"}},
+		{"assignment_rule", "", map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "subject": hierarchySubject, "access": []string{"read"}}},
+		{"access_group", w.typeByName["branch"], map[string]any{"name": "taken-access", "levels": []string{"read"}}},
+		{"group_member", group, map[string]any{"predicate": []map[string]any{{"attr": "sub", "op": "eq", "value": "alice"}}}},
+		{"role_permission", role, map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "access": []string{"read"}}},
+	} {
+		t.Run(tc.entity, func(t *testing.T) {
+			taken := uuid.NewString()
+			op := map[string]any{"op": "create", "entity": tc.entity, "id": taken, "body": tc.body}
+			if tc.parent != "" {
+				op["parent"] = tc.parent
+			}
+			w.must("POST", "/batch", map[string]any{"operations": []map[string]any{op}})
+			name := "must-rollback-" + tc.entity
+			status, raw := w.do("POST", w.admin.URL+"/batch", map[string]any{"operations": []map[string]any{
+				{"op": "create", "entity": "role", "body": map[string]any{"service_id": w.org, "name": name}}, op,
+			}})
+			if status != http.StatusConflict || !strings.Contains(string(raw), `"operation":1`) {
+				t.Fatalf("taken %s id: %d %s", tc.entity, status, raw)
+			}
+			if strings.Contains(string(w.mustRaw("GET", "/role")), name) {
+				t.Fatal("operation before conflict leaked")
+			}
+		})
 	}
 }
 
@@ -52,7 +71,7 @@ func TestIntegrationRoleItemsKeepTheirConditionsAndAccessGroupsThroughTheDocumen
 	w := newWorld(t)
 	w.projectType()
 	w.must("POST", w.typePath("project")+"/access_group", map[string]any{"name": "viewer", "levels": []string{"read"}})
-	role := w.must("POST", "/role", map[string]any{"name": "project-reader"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "project-reader"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": w.typeByName["project"],
 		"resource_where":   []map[string]any{{"attr": "owner", "op": "eq", "value": "alice"}},
@@ -93,15 +112,15 @@ func TestIntegrationRoleItemsKeepTheirConditionsAndAccessGroupsThroughTheDocumen
 	}
 }
 
-func TestIntegrationNestedGroupsAndSubjectKindsRoundTrip(t *testing.T) {
+func TestIntegrationNestedGroupsRoundTrip(t *testing.T) {
 	w := newWorld(t)
-	inner := w.must("POST", "/group", map[string]any{"name": "inner"})["id"].(string)
+	inner := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "inner"})["id"].(string)
 	w.must("POST", "/group/"+inner+"/member", map[string]any{
 		"predicate": []map[string]any{{"attr": "team", "op": "eq", "value": "audit"}}})
-	outer := w.must("POST", "/group", map[string]any{"name": "outer"})["id"].(string)
+	outer := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "outer"})["id"].(string)
 	w.must("POST", "/group/"+outer+"/member", map[string]any{"member_group_id": inner})
 	w.must("POST", "/assignment_rule", map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1",
-		"access": []string{"read"}, "member_of_group_id": outer, "subject_kind": "service", "name": "outer-read"})
+		"access": []string{"read"}, "member_of_group_id": outer, "name": "outer-read"})
 
 	doc := w.exportPolicy()
 	nested := false
@@ -113,7 +132,7 @@ func TestIntegrationNestedGroupsAndSubjectKindsRoundTrip(t *testing.T) {
 	if !nested || len(doc.Groups) != 2 {
 		t.Fatalf("the nested group in the document: %+v", doc.Groups)
 	}
-	if len(doc.Rules) != 1 || doc.Rules[0].SubjectKind == nil || *doc.Rules[0].SubjectKind != "service" ||
+	if len(doc.Rules) != 1 || doc.Rules[0].SubjectType != nil ||
 		doc.Rules[0].MemberOf == nil || *doc.Rules[0].MemberOf != "outer" {
 		t.Fatalf("the rule in the document: %+v", doc.Rules)
 	}

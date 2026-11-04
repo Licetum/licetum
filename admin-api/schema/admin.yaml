@@ -49,7 +49,7 @@ components:
             - string
             - "null"
         via:
-          description: "How the rule reaches the resource: anchored on it (resource), on an ancestor (ancestor), on its type or a higher one (type), on the resources whose attributes match (attribute), or found by a claim (claim)"
+          description: "How the rule reaches the resource: anchored on it (resource), on an ancestor (ancestor), on its type or a higher one (type), on the resources whose attributes match (attribute), or found by a property (property)"
           enum:
             - resource
             - ancestor
@@ -91,11 +91,16 @@ components:
         name:
           description: The name; a rule or an item refers to it as @name
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
         type_resource_id:
           description: Id of the resource type the group belongs to
           format: uuid
           type: string
       required:
+        - service_id
         - id
         - type_resource_id
         - name
@@ -128,7 +133,7 @@ components:
       additionalProperties: false
       properties:
         dynamic:
-          description: "Rules that find their resource from a claim of whoever asks: whether they reach this one depends on that person's claims"
+          description: "Rules that find their resource from a property of whoever asks: whether they reach this one depends on that person's properties"
           items:
             $ref: "#/components/schemas/AccessEntry"
           type: array
@@ -185,7 +190,7 @@ components:
           description: The rule has a guard (requires_predicate or requires_group_id) that narrows whom it reaches
           type: boolean
         kind:
-          description: A subject, a group, everyone whose claims satisfy conditions, or everyone who signs in
+          description: A subject, a group, everyone whose properties satisfy conditions, or everyone who signs in
           enum:
             - user
             - group
@@ -277,7 +282,7 @@ components:
             - apply
           type: string
         predicate:
-          description: AND conditions over the claims and the request
+          description: AND conditions over the properties and the request
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -294,16 +299,16 @@ components:
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type: array
-        resource_from_claim:
-          $ref: "#/components/schemas/ResourceFromClaim"
-          description: Dynamic resource_id computed from a claim
+        resource_from_property:
+          $ref: "#/components/schemas/ResourceFromProperty"
+          description: Dynamic resource_id computed from a property
         resource_id:
           description: Resource id; null means the whole type
           type:
             - string
             - "null"
         resource_where:
-          description: The conditions over the resource attributes the rule covers; null for a rule on a resource id, on a claim or on the whole type
+          description: The conditions over the resource attributes the rule covers; null for a rule on a resource id, on a property or on the whole type
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -313,13 +318,21 @@ components:
           description: Role whose permissions the rule grants; null for an inline rule
           format: uuid
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
         subject:
-          description: A specific subject or group (group:{uuid})
+          description: A specific subject; null when another subject selector is used
           type:
             - string
             - "null"
-        subject_kind:
-          description: "The label of the subject: user, service, agent or group; null when there is none"
+        subject_group_id:
+          description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
+          format: uuid
+          type: string
+        subject_type:
+          description: Subject type for a literal subject; null matches any type. The type group is reserved
           type:
             - string
             - "null"
@@ -334,11 +347,12 @@ components:
             - string
             - "null"
       required:
+        - service_id
         - id
         - role_id
         - type_resource_id
         - resource_id
-        - resource_from_claim
+        - resource_from_property
         - access
         - subject
         - predicate
@@ -354,7 +368,7 @@ components:
         - requires_predicate
         - requires_group_id
         - resource_where
-        - subject_kind
+        - subject_type
       type: object
     AssignmentRuleInput:
       additionalProperties: true
@@ -419,7 +433,7 @@ components:
             - string
             - "null"
         predicate:
-          description: AND conditions over the claims and the request; mutually exclusive with subject and member_of_group_id
+          description: AND conditions over the properties and the request; mutually exclusive with subject and member_of_group_id
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -436,39 +450,38 @@ components:
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type: array
-        resource_from_claim:
-          $ref: "#/components/schemas/ResourceFromClaim"
-          description: Compute resource_id dynamically from a claim of the subject; mutually exclusive with resource_id
+        resource_from_property:
+          $ref: "#/components/schemas/ResourceFromProperty"
+          description: Compute resource_id dynamically from a property of the subject; mutually exclusive with resource_id
         resource_id:
-          description: Resource id; null means the rule covers the whole resource type (if resource_from_claim is not set either)
+          description: Resource id; null means the rule covers the whole resource type (if resource_from_property is not set either)
           type:
             - string
             - "null"
         resource_where:
-          description: Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions. Mutually exclusive with resource_id and resource_from_claim; needs a synchronizer
+          description: Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions. Mutually exclusive with resource_id and resource_from_property; needs a synchronizer
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
             - array
             - "null"
         role_id:
-          description: "Id of a role: grants all its permissions. Mutually exclusive with the inline permission (type_resource_id, resource_id, resource_from_claim, access)"
+          description: "Id of a role: grants all its permissions. Mutually exclusive with the inline permission (type_resource_id, resource_id, resource_from_property, access)"
           format: uuid
           type: string
         subject:
-          description: A specific subject or group (group:{uuid}); mutually exclusive with predicate and member_of_group_id
+          description: "A specific subject; group: is reserved. Mutually exclusive with subject_group_id, predicate and member_of_group_id"
           examples:
             - alice
           type:
             - string
             - "null"
-        subject_kind:
-          description: "A label of the subject: user, service, agent or group. It classifies the rule; it does not change what matches"
-          enum:
-            - user
-            - service
-            - agent
-            - group
+        subject_group_id:
+          description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
+          format: uuid
+          type: string
+        subject_type:
+          description: Subject type for a literal subject; null matches any type. The type group is reserved
           type:
             - string
             - "null"
@@ -536,7 +549,7 @@ components:
             - apply
           type: string
         predicate:
-          description: AND conditions over the claims and the request
+          description: AND conditions over the properties and the request
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -553,16 +566,16 @@ components:
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type: array
-        resource_from_claim:
-          $ref: "#/components/schemas/ResourceFromClaim"
-          description: Dynamic resource_id computed from a claim
+        resource_from_property:
+          $ref: "#/components/schemas/ResourceFromProperty"
+          description: Dynamic resource_id computed from a property
         resource_id:
           description: Resource id; null means the whole type
           type:
             - string
             - "null"
         resource_where:
-          description: The conditions over the resource attributes the rule covers; null for a rule on a resource id, on a claim or on the whole type
+          description: The conditions over the resource attributes the rule covers; null for a rule on a resource id, on a property or on the whole type
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -578,26 +591,30 @@ components:
             - string
             - "null"
         service_id:
-          description: Id of the service that owns the resource type; null for a role rule
+          description: Owning service id
           format: uuid
           type: string
         service_name:
-          description: Name of the service that owns the resource type; null for a role rule
+          description: Name of the owning service
           type:
             - string
             - "null"
         subject:
-          description: A specific subject or group (group:{uuid})
+          description: A specific subject; null when another subject selector is used
           type:
             - string
             - "null"
-        subject_kind:
-          description: "The label of the subject: user, service, agent or group; null when there is none"
+        subject_group_id:
+          description: The group itself as the subject; mutually exclusive with subject, predicate and member_of_group_id
+          format: uuid
+          type: string
+        subject_type:
+          description: Subject type for a literal subject; null matches any type. The type group is reserved
           type:
             - string
             - "null"
         target_valid:
-          description: "Whether the rule's target can take effect: false for a rule on a specific resource (resource_id or resource_from_claim) of a type that has no synchronizer and hence no resources — e.g. after its synchronizer was deleted — and for a resource_from_claim that looks a resource up in, or climbs through, such a type. A denial of that kind still applies below the links to the resources the type left"
+          description: "Whether the rule's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse. An unapplied or deleted source makes that target inactive. Denials may still apply below unresolved links"
           type: boolean
         type_resource_id:
           description: Resource type id of the inline permission; null for a role rule
@@ -615,16 +632,16 @@ components:
             - string
             - "null"
       required:
-        - service_id
         - service_name
         - type_resource_name
         - role_name
         - target_valid
+        - service_id
         - id
         - role_id
         - type_resource_id
         - resource_id
-        - resource_from_claim
+        - resource_from_property
         - access
         - subject
         - predicate
@@ -640,7 +657,7 @@ components:
         - requires_predicate
         - requires_group_id
         - resource_where
-        - subject_kind
+        - subject_type
       type: object
     AuthzenAction:
       additionalProperties: true
@@ -883,10 +900,10 @@ components:
           type: string
         properties:
           additionalProperties: {}
-          description: "The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"
+          description: "The properties of the person that the rules read (department, groups, ...): at most 100 properties and 16 KiB of JSON. preferred_username is the subject id unless it is given"
           type: object
         type:
-          description: "Subject type (not interpreted): 1 to 64 characters, and not group"
+          description: "Subject type used to match literal-subject rules: 1 to 64 characters, and not group"
           examples:
             - user
           type: string
@@ -1050,8 +1067,12 @@ components:
           type:
             - string
             - "null"
-        id:
-          description: Position in the log; it grows with every change. Pass it as after to read the records that follow
+        revision:
+          description: The global revision of the transaction
+          format: int64
+          type: integer
+        seq:
+          description: The record sequence within the revision
           format: int64
           type: integer
         service_id:
@@ -1061,7 +1082,8 @@ components:
             - string
             - "null"
       required:
-        - id
+        - revision
+        - seq
         - at
         - actor
         - service_id
@@ -1159,7 +1181,7 @@ components:
           type: string
         properties:
           additionalProperties: {}
-          description: "The properties of the subject (subject.properties): the claims the rules read, stored as sent, at most 100 of them and 16 KiB in all"
+          description: "The properties of the subject (subject.properties): the properties the rules read, stored as sent, at most 100 of them and 16 KiB in all"
           type: object
         type:
           description: "The type of the subject (the subject.type of AuthZEN); absent: user"
@@ -1366,7 +1388,7 @@ components:
             $ref: "#/components/schemas/GrantConflict"
           type: array
         dynamic:
-          description: "The rule finds its resource from a claim of whoever asks, so what it covers depends on the person: Resources does not count it"
+          description: "The rule finds its resource from a property of whoever asks, so what it covers depends on the person: Resources does not count it"
           type: boolean
         people:
           $ref: "#/components/schemas/GrantPeople"
@@ -1427,17 +1449,40 @@ components:
         name:
           description: Group name
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
       required:
+        - service_id
         - id
+        - name
+      type: object
+    GroupCreateInput:
+      additionalProperties: true
+      properties:
+        name:
+          description: Group name (unique inside its service)
+          type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
+      required:
+        - service_id
         - name
       type: object
     GroupInput:
       additionalProperties: true
       properties:
         name:
-          description: Group name (globally unique)
+          description: Group name (unique inside its service)
           examples:
             - sales
+          type: string
+        service_id:
+          description: Owning service; required on create and immutable
+          format: uuid
           type: string
       required:
         - name
@@ -1467,12 +1512,16 @@ components:
           format: uuid
           type: string
         predicate:
-          description: AND conditions over subject claims
+          description: AND conditions over subject properties
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
             - array
             - "null"
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
         valid_from:
           description: The membership starts at this moment; null — right away
           format: date-time
@@ -1480,6 +1529,7 @@ components:
             - string
             - "null"
       required:
+        - service_id
         - id
         - group_id
         - member_group_id
@@ -1508,7 +1558,7 @@ components:
           format: uuid
           type: string
         predicate:
-          description: AND conditions over subject claims; an empty list matches any subject
+          description: AND conditions over subject properties; an empty list matches any subject
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -2010,37 +2060,6 @@ components:
         - name
         - levels
       type: object
-    PolicyClaim:
-      additionalProperties: false
-      properties:
-        memberships:
-          description: In how many conditions of group memberships (groups are shared by every service)
-          format: int64
-          type: integer
-        name:
-          description: The property of the subject (a claim), or the request attribute
-          type: string
-        rules:
-          description: In how many conditions of rules and their guards that apply to the service
-          format: int64
-          type: integer
-        source:
-          description: claim — read from subject.properties of the request; context — read from the context of the request
-          enum:
-            - claim
-            - context
-          type: string
-        targets:
-          description: In how many claim-based targets (resource_from_claim) of those rules and their roles
-          format: int64
-          type: integer
-      required:
-        - name
-        - source
-        - rules
-        - targets
-        - memberships
-      type: object
     PolicyCoverage:
       additionalProperties: false
       properties:
@@ -2073,9 +2092,9 @@ components:
             - array
             - "null"
         format:
-          description: "The version of the format: licetum.policy/v1"
+          description: "The version of the format: licetum.policy/v2"
           enum:
-            - licetum.policy/v1
+            - licetum.policy/v2
           type: string
         groups:
           description: Groups of subjects, with their memberships
@@ -2136,7 +2155,7 @@ components:
           description: The name of a group nested as a whole; mutually exclusive with predicate
           type: string
         predicate:
-          description: AND conditions over the claims; an empty list matches any subject
+          description: AND conditions over the properties; an empty list matches any subject
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -2197,20 +2216,51 @@ components:
         - deleted
         - unchanged
       type: object
-    PolicyResourceFromClaim:
+    PolicyProperty:
       additionalProperties: false
       properties:
-        claim:
-          description: The claim whose value is looked up
+        memberships:
+          description: In how many conditions of group memberships (groups are shared by every service)
+          format: int64
+          type: integer
+        name:
+          description: The property of the subject (a property), or the request attribute
           type: string
+        rules:
+          description: In how many conditions of rules and their guards that apply to the service
+          format: int64
+          type: integer
+        source:
+          description: subject — read from subject.properties of the request; context — read from the context of the request
+          enum:
+            - subject
+            - context
+          type: string
+        targets:
+          description: In how many property-based targets (resource_from_property) of those rules and their roles
+          format: int64
+          type: integer
+      required:
+        - name
+        - source
+        - rules
+        - targets
+        - memberships
+      type: object
+    PolicyResourceFromProperty:
+      additionalProperties: false
+      properties:
         lookup_type:
           description: The resource type the value is looked up in, as service/type
           type: string
         match_by:
           description: name, id or meta.<attribute>; absent — name
           type: string
+        property:
+          description: The property whose value is looked up
+          type: string
       required:
-        - claim
+        - property
         - lookup_type
       type: object
     PolicyRole:
@@ -2236,9 +2286,9 @@ components:
           items:
             type: string
           type: array
-        resource_from_claim:
-          $ref: "#/components/schemas/PolicyResourceFromClaim"
-          description: A resource computed from a claim of the subject
+        resource_from_property:
+          $ref: "#/components/schemas/PolicyResourceFromProperty"
+          description: A resource computed from a property of the subject
         resource_id:
           description: A resource of the type
           type: string
@@ -2302,7 +2352,7 @@ components:
             - apply
           type: string
         predicate:
-          description: AND conditions over the claims and the request
+          description: AND conditions over the properties and the request
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
@@ -2318,9 +2368,9 @@ components:
           type:
             - array
             - "null"
-        resource_from_claim:
-          $ref: "#/components/schemas/PolicyResourceFromClaim"
-          description: A resource computed from a claim of the subject
+        resource_from_property:
+          $ref: "#/components/schemas/PolicyResourceFromProperty"
+          description: A resource computed from a property of the subject
         resource_id:
           description: A resource of the type
           type: string
@@ -2335,15 +2385,13 @@ components:
           description: The name of the role granted; absent for an inline rule
           type: string
         subject:
-          description: A specific subject, or group:<id>
+          description: "A specific subject; group: is reserved"
           type: string
-        subject_kind:
-          description: A label of the subject
-          enum:
-            - user
-            - service
-            - agent
-            - group
+        subject_group:
+          description: The name of the group itself as the subject
+          type: string
+        subject_type:
+          description: Subject type for a literal subject; null matches any type. The type group is reserved
           type: string
         type:
           description: The resource type of the inline permission, as service/type; absent for a role rule
@@ -2379,10 +2427,6 @@ components:
           maxItems: 100
           minItems: 1
           type: array
-        claims:
-          additionalProperties: {}
-          description: The claims of the subject (subject.properties of an AuthZEN request)
-          type: object
         context:
           additionalProperties: {}
           description: The attributes of the request
@@ -2394,11 +2438,20 @@ components:
           maxLength: 200
           minLength: 1
           type: string
+        properties:
+          additionalProperties: {}
+          description: The properties of the subject (subject.properties of an AuthZEN request)
+          type: object
         subject:
           description: The subject, named as the rules name it (preferred_username, or sub)
           examples:
             - alice
           minLength: 1
+          type: string
+        subject_type:
+          default: user
+          description: "Subject type used to match literal-subject rules: 1 to 64 characters, and not group"
+          maxLength: 64
           type: string
       required:
         - name
@@ -2532,7 +2585,7 @@ components:
       additionalProperties: false
       properties:
         attr:
-          description: "The attribute: a claim name (source claim), a key of the request context (source context), or hour or weekday (source now)"
+          description: "The attribute: a subject property name (source subject), a key of the request context (source context), or hour or weekday (source now)"
           examples:
             - department
           type: string
@@ -2551,9 +2604,9 @@ components:
             - in_cidr
           type: string
         source:
-          description: "Where the attribute comes from: claim (a claim of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"
+          description: "Where the attribute comes from: subject (a property of the subject, the default), context (a key of the request context) or now (hour 0-23 or weekday 1-7, Monday is 1, in UTC)"
           enum:
-            - claim
+            - subject
             - context
             - now
           type: string
@@ -2597,7 +2650,7 @@ components:
           type: string
         meta:
           additionalProperties: {}
-          description: "Attributes the source reported besides id, name and the parents: strings or arrays of strings. Rules can match a claim against them (match_by meta.<name>)"
+          description: "Attributes the source reported besides id, name and the parents: strings or arrays of strings. Rules can match a property against them (match_by meta.<name>)"
           type: object
         name:
           description: Resource name
@@ -2649,26 +2702,26 @@ components:
         - name
         - access
       type: object
-    ResourceFromClaim:
+    ResourceFromProperty:
       additionalProperties: true
       properties:
-        claim:
-          description: Name of the claim of the subject whose value is looked up in the source
-          examples:
-            - branch_name
-          type: string
         lookup_type_resource_id:
-          description: Resource type in which the claim value is looked up (may belong to any service)
+          description: Resource type in which the property value is looked up (may belong to any service)
           format: uuid
           type: string
         match_by:
           default: name
-          description: "Which resource field the claim value is matched against: name, id, or meta.<attribute> — an attribute the source reported (equal to the claim value, or containing it if the attribute is a list)"
+          description: "Which resource field the property value is matched against: name, id, or meta.<attribute> — an attribute the source reported (equal to the property value, or containing it if the attribute is a list)"
           examples:
             - meta.owner
           type: string
+        property:
+          description: Name of the property of the subject whose value is looked up in the source
+          examples:
+            - branch_name
+          type: string
       required:
-        - claim
+        - property
         - lookup_type_resource_id
       type:
         - object
@@ -2712,7 +2765,7 @@ components:
       additionalProperties: true
       properties:
         dry_run:
-          description: Return the operation that would undo the change, and apply nothing
+          description: Return the operations that would undo the revision, and apply nothing
           type: boolean
       type: object
     RevertResponse:
@@ -2746,17 +2799,40 @@ components:
         name:
           description: Role name
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
       required:
+        - service_id
         - id
+        - name
+      type: object
+    RoleCreateInput:
+      additionalProperties: true
+      properties:
+        name:
+          description: Role name (unique inside its service)
+          type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
+      required:
+        - service_id
         - name
       type: object
     RoleInput:
       additionalProperties: true
       properties:
         name:
-          description: Role name (globally unique)
+          description: Role name (unique inside its service)
           examples:
             - sales_manager
+          type: string
+        service_id:
+          description: Owning service; required on create and immutable
+          format: uuid
           type: string
       required:
         - name
@@ -2775,9 +2851,9 @@ components:
           description: Item id
           format: uuid
           type: string
-        resource_from_claim:
-          $ref: "#/components/schemas/ResourceFromClaim"
-          description: Dynamic resource_id computed from a claim
+        resource_from_property:
+          $ref: "#/components/schemas/ResourceFromProperty"
+          description: Dynamic resource_id computed from a property
         resource_id:
           description: Resource id; null means the whole type
           type:
@@ -2794,16 +2870,21 @@ components:
           description: Id of the role the item belongs to
           format: uuid
           type: string
+        service_id:
+          description: Owning service id
+          format: uuid
+          type: string
         type_resource_id:
           description: Resource type id
           format: uuid
           type: string
       required:
+        - service_id
         - id
         - role_id
         - type_resource_id
         - resource_id
-        - resource_from_claim
+        - resource_from_property
         - resource_where
         - access
       type: object
@@ -2819,23 +2900,23 @@ components:
             type: string
           minItems: 1
           type: array
-        resource_from_claim:
-          $ref: "#/components/schemas/ResourceFromClaim"
-          description: Compute resource_id dynamically from a claim of the subject; mutually exclusive with resource_id and resource_where
+        resource_from_property:
+          $ref: "#/components/schemas/ResourceFromProperty"
+          description: Compute resource_id dynamically from a property of the subject; mutually exclusive with resource_id and resource_where
         resource_id:
-          description: Resource id; null means the item covers the whole resource type (if resource_from_claim and resource_where are not set either)
+          description: Resource id; null means the item covers the whole resource type (if resource_from_property and resource_where are not set either)
           type:
             - string
             - "null"
         resource_where:
-          description: Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions; mutually exclusive with resource_id and resource_from_claim; needs a synchronizer
+          description: Covers the resources of the type whose attributes (as the synchronizer reported them) match these conditions; mutually exclusive with resource_id and resource_from_property; needs a synchronizer
           items:
             $ref: "#/components/schemas/PredicateCondition"
           type:
             - array
             - "null"
         type_resource_id:
-          description: Id of the resource type the item applies to (of any service)
+          description: Id of the resource type the item applies to (of the role's service)
           format: uuid
           type: string
       required:
@@ -2856,9 +2937,9 @@ components:
           description: Item id
           format: uuid
           type: string
-        resource_from_claim:
-          $ref: "#/components/schemas/ResourceFromClaim"
-          description: Dynamic resource_id computed from a claim
+        resource_from_property:
+          $ref: "#/components/schemas/ResourceFromProperty"
+          description: Dynamic resource_id computed from a property
         resource_id:
           description: Resource id; null means the whole type
           type:
@@ -2876,14 +2957,14 @@ components:
           format: uuid
           type: string
         service_id:
-          description: Id of the service that owns the resource type
+          description: Owning service id
           format: uuid
           type: string
         service_name:
           description: Name of the service that owns the resource type
           type: string
         target_valid:
-          description: "Whether the item's target can take effect: false for an item on a specific resource of a type that has no synchronizer, or that looks a resource up in, or climbs through, such a type (see AssignmentRule.target_valid)"
+          description: "Whether the item's target can take effect: specific resources and property lookups need applied data and a live synchronizer on every type they read or traverse"
           type: boolean
         type_resource_id:
           description: Resource type id
@@ -2893,15 +2974,15 @@ components:
           description: Resource type name
           type: string
       required:
-        - service_id
         - service_name
         - type_resource_name
         - target_valid
+        - service_id
         - id
         - role_id
         - type_resource_id
         - resource_id
-        - resource_from_claim
+        - resource_from_property
         - resource_where
         - access
       type: object
@@ -2912,7 +2993,7 @@ components:
           description: Return the operations that would undo the changes, and apply nothing
           type: boolean
         to:
-          description: "The position of the change log to go back to: every change after it is undone, newest first. Take it from the id of a record of GET /changes"
+          description: "The position of the change log to go back to: every change after it is undone, newest first. Take it from the revision of a record of GET /changes"
           format: int64
           minimum: 0
           type: integer
@@ -2931,7 +3012,7 @@ components:
           $ref: "#/components/schemas/Anchor"
           description: Where the rule is anchored; it covers this resource through the hierarchy
         applies_to:
-          description: "Why the rule applies to the caller: the subject, a group, a role, a claims predicate, or everyone"
+          description: "Why the rule applies to the caller: the subject, a group, a role, a properties predicate, or everyone"
           examples:
             - group 4e2c…
           type: string
@@ -2973,7 +3054,7 @@ components:
             - filials
           type: string
         slug:
-          description: "Service slug: lowercase Latin letters, digits, '-' and '_', unique among live services. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID"
+          description: "Service slug: lowercase Latin letters, digits, '-' and '_', unique across all services, including deleted ones. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID"
           examples:
             - filials
           maxLength: 64
@@ -3035,7 +3116,7 @@ components:
             - string
             - "null"
         slug:
-          description: Service slug (see POST /service)
+          description: "Immutable service slug: sending the current value is accepted; changing it is rejected with 422"
           maxLength: 64
           pattern: ^[a-z0-9][a-z0-9_-]*$
           type:
@@ -3541,17 +3622,19 @@ paths:
       description: |-
         What it grants — either **role_id** (all permissions of a role; each item of the role keeps its own
         target and access levels) or an inline permission: **type_resource_id** with **access** (for example ["read","write"]),
-        on a specific resource (**resource_id**), on a resource computed from a claim at check time (**resource_from_claim**)
+        on a specific resource (**resource_id**), on a resource computed from a property at check time (**resource_from_property**)
         or on the whole type (neither). The grant cascades to all resources of child types, including types of other
         services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
         has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
-        Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
-        the rule applies to everyone.
+        Who the rule applies to — choose **subject** (a specific subject), **subject_group_id** (the group itself),
+        **predicate** (AND conditions over the properties of the subject) or **member_of_group_id** (all members of a group).
+        These selectors are mutually exclusive. An empty predicate applies to everyone. The literal subject prefix group: is reserved.
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
         exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
+
+        The owning service is derived from the type or role and cannot be changed. Referenced groups and roles must belong to that service; a property lookup type may belong to another service.
       operationId: create_assignment_rule
       requestBody:
         content:
@@ -3767,17 +3850,19 @@ paths:
 
         What it grants — either **role_id** (all permissions of a role; each item of the role keeps its own
         target and access levels) or an inline permission: **type_resource_id** with **access** (for example ["read","write"]),
-        on a specific resource (**resource_id**), on a resource computed from a claim at check time (**resource_from_claim**)
+        on a specific resource (**resource_id**), on a resource computed from a property at check time (**resource_from_property**)
         or on the whole type (neither). The grant cascades to all resources of child types, including types of other
         services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
         has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
-        Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-        **predicate** (AND conditions over the claims of the subject) or **member_of_group_id** (all members of a group). If none is set,
-        the rule applies to everyone.
+        Who the rule applies to — choose **subject** (a specific subject), **subject_group_id** (the group itself),
+        **predicate** (AND conditions over the properties of the subject) or **member_of_group_id** (all members of a group).
+        These selectors are mutually exclusive. An empty predicate applies to everyone. The literal subject prefix group: is reserved.
 
         **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
         exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
+
+        The owning service is derived from the type or role and cannot be changed. Referenced groups and roles must belong to that service; a property lookup type may belong to another service.
       operationId: update_assignment_rule
       parameters:
         - description: Rule id
@@ -3932,15 +4017,24 @@ paths:
         - Batch
   /changes:
     get:
-      description: The records of the change log after the given position, oldest first. Every write of the admin API leaves one record, in the same transaction as the write. Pass the id of the last record as after to read the next ones.
+      description: Records ordered by revision and sequence, oldest first. Pass the revision and seq of the last record as after_revision and after_seq to read the next ones.
       operationId: list_changes
       parameters:
-        - description: "Read the records after this position: the id of the last record of the previous read"
+        - description: The revision of the last record read
           explode: false
           in: query
-          name: after
+          name: after_revision
           schema:
-            description: "Read the records after this position: the id of the last record of the previous read"
+            description: The revision of the last record read
+            format: int64
+            minimum: 0
+            type: integer
+        - description: The sequence within the last revision read
+          explode: false
+          in: query
+          name: after_seq
+          schema:
+            description: The sequence within the last revision read
             format: int64
             minimum: 0
             type: integer
@@ -4120,17 +4214,17 @@ paths:
       summary: Roll the policy back to a position of the change log
       tags:
         - Batch
-  /changes/{change_id}/revert:
+  /changes/{revision}/revert:
     post:
-      description: "Puts the entity of one record of the change log back as it was before the change: a create is deleted, a delete is created again with its id (and, for a role, its items), an update is written back with its previous body. The revert is a change of its own, in the log. Only the entities a batch writes can be reverted (409 otherwise). With dry_run, the operation is returned and nothing is applied."
+      description: Reverts every record of the revision, newest sequence first, in one transaction. An unsupported entity makes the whole revert fail with 409. With dry_run, return the plan without applying it.
       operationId: revert_change
       parameters:
-        - description: Id of the change record (see GET /changes)
+        - description: The global revision to revert (see GET /changes)
           in: path
-          name: change_id
+          name: revision
           required: true
           schema:
-            description: Id of the change record (see GET /changes)
+            description: The global revision to revert (see GET /changes)
             format: int64
             minimum: 1
             type: integer
@@ -4203,12 +4297,19 @@ paths:
           description: Service Unavailable
       security:
         - bearer: []
-      summary: Revert one change
+      summary: Revert one revision
       tags:
         - Batch
   /group:
     get:
       operationId: list_groups
+      parameters:
+        - explode: false
+          in: query
+          name: service_id
+          schema:
+            format: uuid
+            type: string
       responses:
         "200":
           content:
@@ -4274,13 +4375,13 @@ paths:
       tags:
         - Group
     post:
-      description: Group names are globally unique (409 on a duplicate).
+      description: Group names are unique inside their service (409 on a duplicate).
       operationId: create_group
       requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/GroupInput"
+              $ref: "#/components/schemas/GroupCreateInput"
         required: true
       responses:
         "200":
@@ -4350,7 +4451,7 @@ paths:
         - Group
   /group/{group_id}:
     delete:
-      description: Not allowed while the group is referenced by rules or memberships (409, extra.blocked_by).
+      description: Deletes the group and its membership entries. Not allowed while rules or another group reference it (409, extra.blocked_by).
       operationId: delete_group
       parameters:
         - description: Group id
@@ -4587,7 +4688,7 @@ paths:
       tags:
         - Group member
     post:
-      description: Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
+      description: Membership is defined either by a predicate (AND conditions over the properties of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
       operationId: create_group_member
       parameters:
         - description: Group id
@@ -4745,7 +4846,7 @@ paths:
       tags:
         - Group member
     patch:
-      description: Membership is defined either by a predicate (AND conditions over the claims of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
+      description: Membership is defined either by a predicate (AND conditions over the properties of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively.
       operationId: update_group_member
       parameters:
         - description: Group id
@@ -5237,6 +5338,13 @@ paths:
   /role:
     get:
       operationId: list_roles
+      parameters:
+        - explode: false
+          in: query
+          name: service_id
+          schema:
+            format: uuid
+            type: string
       responses:
         "200":
           content:
@@ -5302,13 +5410,13 @@ paths:
       tags:
         - Role
     post:
-      description: "A role is a named set of permissions: add them with the role permission endpoints, then grant the role with an assignment rule (role_id). Role names are globally unique (409 on a duplicate)."
+      description: "A role is a named set of permissions: add them with the role permission endpoints, then grant the role with an assignment rule (role_id). Role names are unique inside their service (409 on a duplicate)."
       operationId: create_role
       requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RoleInput"
+              $ref: "#/components/schemas/RoleCreateInput"
         required: true
       responses:
         "200":
@@ -5615,7 +5723,7 @@ paths:
       tags:
         - Role permission
     post:
-      description: "An item grants access levels on a target of a resource type, the same way an inline rule does: the whole type (no resource_id and no resource_from_claim), a resource (resource_id) or a resource computed from a claim of the subject (resource_from_claim). A specific resource can only be targeted on a type with a synchronizer (400 otherwise). '*' is not allowed in a role: denying everything is possible only with an inline deny rule. An item on a platform policy (the self-service types) needs write on that policy as a whole, as creating a rule on it does."
+      description: "An item grants access levels on a target of a resource type, the same way an inline rule does: the whole type (no resource_id and no resource_from_property), a resource (resource_id) or a resource computed from a property of the subject (resource_from_property). A specific resource can only be targeted on a type with a synchronizer (400 otherwise). '*' is not allowed in a role: denying everything is possible only with an inline deny rule. An item on a platform policy (the self-service types) needs write on that policy as a whole, as creating a rule on it does."
       operationId: create_role_permission
       parameters:
         - description: Role id
@@ -5773,7 +5881,7 @@ paths:
       tags:
         - Role permission
     patch:
-      description: "An item grants access levels on a target of a resource type, the same way an inline rule does: the whole type (no resource_id and no resource_from_claim), a resource (resource_id) or a resource computed from a claim of the subject (resource_from_claim). A specific resource can only be targeted on a type with a synchronizer (400 otherwise). '*' is not allowed in a role: denying everything is possible only with an inline deny rule. An item on a platform policy (the self-service types) needs write on that policy as a whole, as creating a rule on it does."
+      description: "An item grants access levels on a target of a resource type, the same way an inline rule does: the whole type (no resource_id and no resource_from_property), a resource (resource_id) or a resource computed from a property of the subject (resource_from_property). A specific resource can only be targeted on a type with a synchronizer (400 otherwise). '*' is not allowed in a role: denying everything is possible only with an inline deny rule. An item on a platform policy (the self-service types) needs write on that policy as a whole, as creating a rule on it does."
       operationId: update_role_permission
       parameters:
         - description: Role id
@@ -6822,7 +6930,7 @@ paths:
         - PEP
   /service/{service_id}/policy/export:
     get:
-      description: The rules of the service, the groups and roles they use (with the groups nested in them), and the access groups of the resource types involved, with names instead of ids (licetum.policy/v1). The document is what POST /service/{service_id}/policy/import takes back.
+      description: The rules of the service, the groups and roles they use (with the groups nested in them), and the access groups of the resource types involved, with names instead of ids (licetum.policy/v2). The document is what POST /service/{service_id}/policy/import takes back.
       operationId: export_policy
       parameters:
         - description: Service id
@@ -6994,7 +7102,7 @@ paths:
         - Policy
   /service/{service_id}/policy/lint:
     get:
-      description: Finds the rules that decide nothing (disabled, outside their validity, naming a resource of a type without a synchronizer, guarding on a group without members), the rules that grant more than they seem to (to everyone who signs in, or denying on a claim a token may lack), the duplicates, and the entities nothing uses (roles, access groups). Each finding has a severity, a stable code and a message in the request language.
+      description: Finds the rules that decide nothing (disabled, outside their validity, naming a resource of a type without a synchronizer, guarding on a group without members), the rules that grant more than they seem to (to everyone who signs in, or denying on a property a token may lack), the duplicates, and the entities nothing uses (roles, access groups). Each finding has a severity, a stable code and a message in the request language.
       operationId: lint_policy
       parameters:
         - description: Service id
@@ -7067,7 +7175,7 @@ paths:
         - Policy
   /service/{service_id}/policy/properties:
     get:
-      description: The claims and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in claim-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. The claims are the keys of subject.properties, the attributes the keys of context, that a PEP of the service has to send for the answers to be the real ones.
+      description: The properties and the request attributes the enabled rules that apply to the service's resource types (and to the types above them) read — in their conditions and guards and in property-based targets, and those of their roles — and the conditions of the group memberships, with how many times each is read. The properties are the keys of subject.properties, the attributes the keys of context, that a PEP of the service has to send for the answers to be the real ones.
       operationId: policy_properties
       parameters:
         - description: Service id
@@ -7084,7 +7192,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: "#/components/schemas/PolicyClaim"
+                  $ref: "#/components/schemas/PolicyProperty"
                 type:
                   - array
                   - "null"
@@ -7477,7 +7585,7 @@ paths:
         - Policy
   /service/{service_id}/policy/test:
     post:
-      description: "Answers the scenarios as the simulation does, with the subjects' claims and request attributes, and the data as it is now. Each expectation says whether the answer must be allowed or must not be. The report names the rules that decided each answer, and the coverage: the rules in force that apply to the service's resource types, and those that no scenario reached. Nothing is stored by this call: the scenarios a service keeps are under /policy/scenarios."
+      description: "Answers the scenarios as the simulation does, with the subjects' properties and request attributes, and the data as it is now. Each expectation says whether the answer must be allowed or must not be. The report names the rules that decided each answer, and the coverage: the rules in force that apply to the service's resource types, and those that no scenario reached. Nothing is stored by this call: the scenarios a service keeps are under /policy/scenarios."
       operationId: run_policy_tests
       parameters:
         - description: Service id
@@ -7557,7 +7665,7 @@ paths:
   /service/{service_id}/simulate/access/v1/evaluation:
     post:
       description: |-
-        Decides whether the subject may perform the action on the resource, as the PDP would. subject.id is the person simulated and subject.properties are their claims, taken as they are given. The answer always carries its explanation in context.reason_admin.
+        Decides whether the subject may perform the action on the resource, as the PDP would. subject.id is the person simulated and subject.properties are their properties, taken as they are given. The answer always carries its explanation in context.reason_admin.
 
         The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
         request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
@@ -7640,7 +7748,7 @@ paths:
   /service/{service_id}/simulate/access/v1/evaluations:
     post:
       description: |-
-        Decides up to 100 evaluations in one request, with the defaults of the top level and the evaluations_semantic of the options, as the PDP would. subject.id is the person simulated and subject.properties are their claims, taken as they are given. Each answer carries its explanation in context.reason_admin.
+        Decides up to 100 evaluations in one request, with the defaults of the top level and the evaluations_semantic of the options, as the PDP would. subject.id is the person simulated and subject.properties are their properties, taken as they are given. Each answer carries its explanation in context.reason_admin.
 
         The request is the one of the AuthZEN Authorization API 1.0 of the PDP, and so is the answer. The context holds the attributes of the
         request that the rules may read. The answer always comes from the data as it is now. Nothing is recorded: the decision is not logged.
@@ -7723,7 +7831,7 @@ paths:
   /service/{service_id}/simulate/access/v1/search/action:
     post:
       description: |-
-        Lists the actions (access levels) the subject may perform on the resource; without resource.id the resource is the type as a whole. subject.id is the person simulated and subject.properties are their claims, taken as they are given.
+        Lists the actions (access levels) the subject may perform on the resource; without resource.id the resource is the type as a whole. subject.id is the person simulated and subject.properties are their properties, taken as they are given.
 
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are
         more results; send it back as page.token with the same request.
@@ -7809,7 +7917,7 @@ paths:
   /service/{service_id}/simulate/access/v1/search/resource:
     post:
       description: |-
-        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. subject.id is the person simulated and subject.properties are their claims, taken as they are given.
+        Lists the resources of the type resource.type on which the subject may perform the action; resource.id is ignored. subject.id is the person simulated and subject.properties are their properties, taken as they are given.
 
         Paging: page.limit is the size of the page (at most 1000, the default), and the response carries page.next_token while there are
         more results; send it back as page.token with the same request.
@@ -8412,7 +8520,7 @@ paths:
       tags:
         - Subject
     get:
-      description: The entry with its properties and the groups the person is in now, decided with the stored properties as claims.
+      description: The entry with its properties and the groups the person is in now, decided with the stored properties as properties.
       operationId: get_directory_entry
       parameters:
         - description: Service id
@@ -8846,7 +8954,7 @@ paths:
         - Type resource
   /service/{service_id}/type_resource/{type_resource_id}/access:
     get:
-      description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target."
+      description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a property are listed apart. Needs read on all assignment rules, because it shows them whatever their target."
       operationId: who_has_access
       parameters:
         - description: Service id
@@ -9583,7 +9691,7 @@ paths:
       tags:
         - Resource
     post:
-      description: "Before saving, the source is checked by fetching the resource probe_resource_id: if it is not found or the source is unavailable — 424. The single-resource SQL query uses the :id parameter and must return the columns id, name, parent_id; an HTTP source must serve GET {url}/{id} and GET {url}, optionally with the configured headers. Every other column (SQL) or field (HTTP) of a resource becomes its attribute (meta: strings or lists of strings) that rules can match a claim against (resource_from_claim.match_by = meta.<name>). Secrets (the password in the DSN, header values) are returned masked as ********; sending the mask back in an update keeps the stored value. A resource type has one source: when it already has one the answer is 409 — change that one."
+      description: "Before saving, the source is checked by fetching the resource probe_resource_id: if it is not found or the source is unavailable — 424. The single-resource SQL query uses the :id parameter and must return the columns id, name, parent_id; an HTTP source must serve GET {url}/{id} and GET {url}, optionally with the configured headers. Every other column (SQL) or field (HTTP) of a resource becomes its attribute (meta: strings or lists of strings) that rules can match a property against (resource_from_property.match_by = meta.<name>). Secrets (the password in the DSN, header values) are returned masked as ********; sending the mask back in an update keeps the stored value. A resource type has one source: when it already has one the answer is 409 — change that one."
       operationId: create_synchronizer
       parameters:
         - description: Service id
@@ -9851,7 +9959,7 @@ paths:
       tags:
         - Resource
     patch:
-      description: "Before saving, the source is checked by fetching the resource probe_resource_id: if it is not found or the source is unavailable — 424. The single-resource SQL query uses the :id parameter and must return the columns id, name, parent_id; an HTTP source must serve GET {url}/{id} and GET {url}, optionally with the configured headers. Every other column (SQL) or field (HTTP) of a resource becomes its attribute (meta: strings or lists of strings) that rules can match a claim against (resource_from_claim.match_by = meta.<name>). Secrets (the password in the DSN, header values) are returned masked as ********; sending the mask back in an update keeps the stored value."
+      description: "Before saving, the source is checked by fetching the resource probe_resource_id: if it is not found or the source is unavailable — 424. The single-resource SQL query uses the :id parameter and must return the columns id, name, parent_id; an HTTP source must serve GET {url}/{id} and GET {url}, optionally with the configured headers. Every other column (SQL) or field (HTTP) of a resource becomes its attribute (meta: strings or lists of strings) that rules can match a property against (resource_from_property.match_by = meta.<name>). Secrets (the password in the DSN, header values) are returned masked as ********; sending the mask back in an update keeps the stored value."
       operationId: update_synchronizer
       parameters:
         - description: Service id
@@ -10309,9 +10417,9 @@ tags:
     name: Type resource
   - description: Concrete resources of a type and the synchronizers that fetch them from the owning service (SQL query or HTTP).
     name: Resource
-  - description: "Global groups of people: a group is a subject too (`group:<uuid>`), so it is granted permissions the same way as a user."
+  - description: "Service-owned groups of people: a rule refers to the group itself with subject_group_id."
     name: Group
-  - description: "Who belongs to a group: by a predicate over claims (the properties of the subject) or by nesting another group."
+  - description: "Who belongs to a group: by a predicate over properties (the properties of the subject) or by nesting another group."
     name: Group member
   - description: "Global roles: named sets of permissions. A role is not a subject: an assignment rule grants it (role_id)."
     name: Role

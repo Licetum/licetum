@@ -70,13 +70,17 @@ func (a *App) Authenticate(ctx context.Context, authorization string) (*Access, 
 	if err != nil {
 		return nil, err
 	}
-	claims := engine.Claims(verified.Claims)
-	subject, err := a.AdminSubject(claims)
+	properties := engine.Properties(verified.Claims)
+	subject, err := a.AdminSubject(properties)
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := a.GetPermissionData(ctx, model.PlatformServiceID, subject, engine.NewEnv(claims, nil), engine.MinimizeLatency)
+	ctx, err = a.CurrentReadContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	data, err := a.GetPermissionData(ctx, model.PlatformServiceID, subject, engine.NewEnv(properties, nil), engine.MinimizeLatency)
 	if err != nil {
 		return nil, err
 	}

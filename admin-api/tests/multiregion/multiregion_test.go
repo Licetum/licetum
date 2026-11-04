@@ -181,9 +181,9 @@ func TestF6_7_AnAdminWriteFromRegionBIsSlowByTheLinkOnly(t *testing.T) {
 		mustAdmin(t, regionB.admin, "POST", "/assignment_rule", rule(fmt.Sprintf("far%d", i), nil))
 		worst = max(worst, time.Since(start))
 	}
-	// The write itself is six round trips (chaos/f6_test.go, F6-7, asserts it); the request also authorizes the caller and refreshes the
-	// policy of the administration, which cross the link too. Reported, not asserted: the guide puts the administration in the
-	// region of the primary.
+	// WR06 records the measured per-route request and transaction budgets.
+	// This multi-process run reports the link cost, including authorization and
+	// refresh reads. The deployment guide places administration near the primary.
 	t.Logf("an admin write from region B with %v to the primary: %v (%.1f round trips)", farLink, worst.Round(time.Millisecond), float64(worst)/float64(farLink))
 }
 

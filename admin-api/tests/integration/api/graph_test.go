@@ -92,11 +92,11 @@ func TestIntegrationNeAndNotInPredicates(t *testing.T) {
 		map[string]any{"attr": "username", "op": "ne", "value": "ivanovich"},
 		map[string]any{"attr": "grade", "op": "not_in", "value": []string{"intern"}},
 	}})
-	got := func(claims engine.Claims) []string { return ids(w.permission(w.org, claims), "division") }
-	if r := got(engine.Claims{"department": "sales", "username": "petrov", "grade": "senior"}); len(r) != 1 {
+	got := func(claims engine.Properties) []string { return ids(w.permission(w.org, claims), "division") }
+	if r := got(engine.Properties{"department": "sales", "username": "petrov", "grade": "senior"}); len(r) != 1 {
 		t.Fatalf("petrov: %v", r)
 	}
-	for name, claims := range map[string]engine.Claims{
+	for name, claims := range map[string]engine.Properties{
 		"ivanovich":     {"department": "sales", "username": "ivanovich", "grade": "senior"},
 		"intern":        {"department": "sales", "username": "petrov", "grade": "intern"},
 		"missing claim": {"department": "sales", "grade": "senior"},
@@ -358,16 +358,24 @@ func TestIntegrationResourceAttributes(t *testing.T) {
 		t.Fatalf("resource P3: %d %s", status, raw)
 	}
 
-	// One rule: whoever the "username" claim names as the owner gets access to that project.
+	// A first point lookup must establish the full snapshot, not mark a single
+	// fetched row as a completed generation and hide its siblings.
+	var initialized bool
+	var resources int
+	if err := w.pool.QueryRow(context.Background(), `SELECT synced_at IS NOT NULL,(SELECT count(*) FROM resource_cache WHERE type_resource_id=$1) FROM type_resource WHERE id=$1`, w.typeByName["project"]).Scan(&initialized, &resources); err != nil || !initialized || resources != 3 {
+		t.Fatalf("first point lookup left an incomplete snapshot: initialized=%v resources=%d error=%v", initialized, resources, err)
+	}
+
+	// One rule: whoever the "username" property names as the owner gets access to that project.
 	byOwner := func(matchBy string) map[string]any {
-		return map[string]any{"resource_from_claim": map[string]any{
-			"claim": "username", "lookup_type_resource_id": w.typeByName["project"], "match_by": matchBy}}
+		return map[string]any{"resource_from_property": map[string]any{
+			"property": "username", "lookup_type_resource_id": w.typeByName["project"], "match_by": matchBy}}
 	}
 	rule := w.rule("project", "", byOwner("meta.owner"))
-	alice, bob := engine.Claims{"username": "alice"}, engine.Claims{"username": "bob"}
+	alice, bob := engine.Properties{"username": "alice"}, engine.Properties{"username": "bob"}
 	expectIDs(t, w.permission(w.appSvc, alice), "project", "P1", "P3")
 	expectIDs(t, w.permission(w.appSvc, bob), "project", "P2")
-	if got := w.permission(w.appSvc, engine.Claims{"username": "nobody"}); len(got) != 0 {
+	if got := w.permission(w.appSvc, engine.Properties{"username": "nobody"}); len(got) != 0 {
 		t.Fatalf("an unknown owner must get nothing: %+v", got)
 	}
 
@@ -376,14 +384,14 @@ func TestIntegrationResourceAttributes(t *testing.T) {
 	expectIDs(t, w.permission(w.appSvc, alice), "project", "P3")
 	expectIDs(t, w.permission(w.appSvc, bob), "project", "P1", "P2")
 
-	// The attribute may be a list: the claim only has to be one of its items.
+	// The attribute may be a list: the property only has to be one of its items.
 	w.must("DELETE", "/assignment_rule/"+rule, nil)
 	w.rule("project", "", byOwner("meta.owners"))
-	expectIDs(t, w.permission(w.appSvc, engine.Claims{"username": "dave"}), "project", "P3")
+	expectIDs(t, w.permission(w.appSvc, engine.Properties{"username": "dave"}), "project", "P3")
 
 	// The anchor may lie above the matched resource: the branches of the owner's projects cascade down.
-	w.rule("branch", "", map[string]any{"resource_from_claim": map[string]any{
-		"claim": "username", "lookup_type_resource_id": w.typeByName["project"], "match_by": "meta.owner"}})
+	w.rule("branch", "", map[string]any{"resource_from_property": map[string]any{
+		"property": "username", "lookup_type_resource_id": w.typeByName["project"], "match_by": "meta.owner"}})
 	res := w.permission(w.org, bob)
 	expectIDs(t, res, "branch", "B1")
 	expectIDs(t, w.permission(w.appSvc, bob), "item", "I1")
@@ -391,7 +399,7 @@ func TestIntegrationResourceAttributes(t *testing.T) {
 	// An invalid attribute name is rejected.
 	status, raw = w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["project"], "subject": "u", "access": []string{"read"},
-		"resource_from_claim": map[string]any{"claim": "c", "lookup_type_resource_id": w.typeByName["project"], "match_by": "meta.bad name"}})
+		"resource_from_property": map[string]any{"property": "c", "lookup_type_resource_id": w.typeByName["project"], "match_by": "meta.bad name"}})
 	if status != http.StatusUnprocessableEntity {
 		t.Fatalf("a bad attribute name must be rejected: %d %s", status, raw)
 	}

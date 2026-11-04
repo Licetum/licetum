@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/licetum/licetum/core/config"
 	"github.com/licetum/licetum/core/db"
 )
 
@@ -143,6 +144,9 @@ func (a *App) dbosPoolSize() int {
 func (a *App) dbosURL() (string, error) {
 	if a.Cfg == nil {
 		return "", errors.New("dbos: no configuration")
+	}
+	if config.DBOSDatabaseMismatch(a.Cfg.DB.URI, a.Cfg.Sync.DBOSURI) && a.dbosWrongDatabase.CompareAndSwap(false, true) {
+		slog.Warn("SYNC__DBOS_URI must name the application database; P5 transactional enqueue requires DBOS tables in the same database")
 	}
 	raw := a.Cfg.DB.URI
 	if a.Cfg.Sync.DBOSURI != "" {

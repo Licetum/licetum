@@ -13,9 +13,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `web/` — the admin interface, AGPL-3.0-only.
 - Tasks: `task go:lint`, `go:test`, `go:coverage`, `go:schema` run both Go modules; `web:*` the interface.
 
-The sections below still name the old `backend/internal/...` paths: read `backend/internal/api` as `admin-api/api` or
-`core/server`, and `backend/internal/service` as `admin-api/service` (admin) or `core/engine` (decisions, synchronization).
-
 ## What this is
 
 Licetum — a centralized authorization service. Client services register themselves, define a
@@ -25,21 +22,12 @@ localized: English (default), Russian and Chinese — see "Localization" below. 
 licensed per part (`LICENSE`): `core/` under MIT, `admin-api/` and `web/` under AGPL-3.0-only; a library or SDK meant to be
 embedded into other software gets its own permissive license when it is added (not before).
 
-The backend is written in Go (`backend/`), one binary with subcommands:
-- `licetum admin` — admin API (services, type_resources, resources, groups, group_members, roles and their
-  permission items, assignment_rules, PEP clients, the subject directory, the AuthZEN simulation, platform self-service). Port 8000. Routes: `internal/api/admin.go`.
-- `licetum pdp` — the PDP, the single runtime endpoint client services actually call at request time
-  (the AuthZEN API under `/service/{ref}/access/v1/`, as a PEP client), kept in its own process/port (8001, `-addr` or `PDP__ADDR` overrides it) so it can be
-  scaled/deployed independently of the admin surface. Its probes and `/metrics` are on the ops port (9090, `PDP__OPS_ADDR`), never on
-  this one. Routes: `core/server/authzen_routes.go`.
-- `licetum worker` — the synchronization worker: runs the DBOS runtime that executes the jobs that fetch the resource sources into the
-  local copy (`engine/sync_dbos.go`), and keeps the types in use fresh on a schedule. Metrics on :8002. The PDP and admin processes never
-  apply a synchronization.
-- `licetum migrate` — apply DB migrations and seed the platform self-service.
-- `licetum restore-admin [-user name]...` — the way back in when nobody can manage the platform: puts the admin group, its
-  memberships (`PLATFORM__ADMIN_CLAIM_VALUES` and each `-user`, matched by the claim of `ADMIN_AUTH__SUBJECT_CLAIM`), the admin rules of every policy back in force and switches off
-  the denials that cover a policy (`db.RestoreAdminAccess`, `internal/db/restore.go`). The seed never does this on purpose.
-- `licetum openapi pdp [-yaml] [-lang en|ru|zh]` — print the PDP's OpenAPI spec without a server (the admin API's is `licetum-admin openapi admin`).
+The backend is written in Go 1.26, in two modules:
+- `core/cmd/licetum`: `pdp` (public :8001, ops :9090), `worker` (metrics :8002), `migrate`, `failover`, and `openapi pdp`.
+- `admin-api/cmd/licetum-admin`: `admin` (:8000), `restore-admin [-user name]...`, and `openapi admin`.
+- The PDP serves AuthZEN under `/service/{slug}/access/v1/`. The admin API manages services, types, policy entities, PEP clients, directories and simulations.
+- The worker executes DBOS synchronization jobs; the PDP and admin processes request work without applying source snapshots themselves.
+- `restore-admin` restores platform access using `ADMIN_AUTH__*` and configured administrators. Ordinary platform seed intentionally does not undo administrator edits.
 
 The admin API is itself protected by Licetum permissions — see "Self-service: access policies for
 Licetum itself" below.
@@ -50,7 +38,7 @@ Tasks for the whole repo live in `Taskfile.yaml` (go-task): `task check` runs ev
 without changing files (as CI would), `task lint` does the same but fixes and formats, `task test`,
 `task generate` (OpenAPI schemas → orval client), `task dev` (docker compose). `task --list` for the rest.
 CI (`.github/workflows/ci.yml`, on pull requests and pushes to main) runs `task check` + `pnpm build`
-and `task backend:coverage` with a disposable PostgreSQL Testcontainer, so integration tests
+and `task go:coverage` with a disposable PostgreSQL Testcontainer, so integration tests
 run there too. `task go:deps:check` (also part of `task go:lint`) fails when `go list -deps -test`, with the same tags, lists `github.com/redis/go-redis` in either module (and depguard `no-redis` refuses the import): Redis is not used any more. `task go:vet:tags` (part of `task go:lint`, so of `task check` and of the CI job `go-lint`) compiles and vets the
 code behind the build tags `integration`, `chaos` and `multiregion` in both modules, with and without `-race`, and builds the
 load test, so the suites that run only nightly cannot stop compiling unseen; a new build tag goes into `GO_BUILD_TAGS` of
@@ -64,7 +52,7 @@ run on every pull request through PgBouncer runs nightly: `.github/workflows/nig
 load test; multi-region is switched off until P7, ADR 0001 §10.7) is called by the dispatcher `nightly.yml` on `main` with the ref of the epic.
 
 The decision contracts (DEC01–DEC14, DECP) are tables, not code: `core/testsupport/policyfix` is the fixture format (services,
-types, resources, groups, roles, rules, cases with claims, context and a time, questions with the expected decision and
+types, resources, groups, roles, rules, cases with subject properties, context and a time, questions with the expected decision and
 explanation), its `testdata/decisions/*.yaml` the tables. Two independent sides answer them: the engine through the AuthZEN API
 of the PDP (`admin-api/tests/integration/contracts`: `Load` builds a cluster per fixture, the fake source serves its
 resources, `Ask` asks the case's evaluations (`POST …/access/v1/evaluations`, with explain) at the case's time through
@@ -72,59 +60,50 @@ resources, `Ask` asks the case's evaluations (`POST …/access/v1/evaluations`, 
 fails every DEC and DECP test where the list (`coverNodes`) disagrees with the evaluations (`CoversOf`); level `pg`), and `core/testsupport/refeval`, a
 reference evaluator written from the semantics that shares no code with the engine (depguard keeps it away from engine, server
 and db). `core/testsupport/policygen` generates random valid fixtures (also types that had a synchronizer and lost it, with a `before`
-block: rows left behind, links to them, rules and claim lookups that name them); DECP compares the two sides on them (seeds 1–20 per pull
+block: rows left behind, links to them, rules and property lookups that name them); DECP compares the two sides on them (seeds 1–20 per pull
 request, `LICETUM_DECP_SEEDS`, `task go:test:decp`, `decp.yml` nightly over 21–520). A disagreement is a defect of one side or
 an open point of the semantics: settle it in both, then pin it in a table.
 
-Backend (run from `backend/`, Go 1.26):
+Backend commands run from their module directory:
+```sh
+(cd core && go run ./cmd/licetum migrate)
+(cd core && go run ./cmd/licetum pdp)
+(cd core && go run ./cmd/licetum worker)
+(cd admin-api && go run ./cmd/licetum-admin admin)
+(cd admin-api && go run ./cmd/licetum-admin restore-admin -user alice)
+task go:coverage
+task go:schema
 ```
-go run ./cmd/licetum migrate           # apply migrations + seed self-service (idempotent)
-go run ./cmd/licetum admin             # admin API on :8000 (-addr / HTTP__ADDR to override)
-go run ./cmd/licetum pdp               # the PDP (AuthZEN, permission endpoints) on :8001
-go run ./cmd/licetum worker            # synchronization worker (jobs that fetch the resource sources), metrics on :8002
-go vet ./... && go test -race ./...                    # unit tests
-go test -race -tags integration ./...                  # integration tests via Testcontainers (set DOCKER_HOST for non-default contexts;
-                                                       # LICETUM_TEST_POSTGRES_URI uses a running server instead)
-task backend:coverage                                  # coverage reports in backend/reports/
-```
-Lint: `golangci-lint run` (config `backend/.golangci.yml`: gofmt/goimports, staticcheck, gosec,
-unused, depguard layer rules) + `go mod tidy -diff`. After changing the API run `task backend:schema`
-— `backend/schema/{admin,pdp}.yaml` are committed (orval input) and `task check` fails on drift.
+Run Go tests in both modules. Integration tests need Docker or `LICETUM_TEST_POSTGRES_URI`; run database suites sequentially on a bounded shared server.
+Lint configuration lives in each module. After API changes run `task generate`; `core/schema/pdp.yaml` and `admin-api/schema/admin.yaml` are committed,
+and the generated web client stays uncommitted. `task check` checks drift, all build tags, contracts, locales and the web gates.
 
-Migrations: `core/db/migrations/00001_init.sql` is the whole schema of a fresh install (goose, one file: before the first
-public release all earlier migrations were folded into it). A schema change from now on is a new `0000N_name.sql` (goose
+Migrations: `core/db/migrations/00001_init.sql` is the whole schema of a fresh install (goose, one file: the temporary P3 chain was folded into the schema-v2 initializer). A schema change from now on is a new `0000N_name.sql` (goose
 format, `-- +goose Up` / `Down`), embedded into the binary; it must not rewrite an applied one. The platform self-service
 (the Licetum service within itself, its policy types, their sources, the admin group) is seeded by `db.SeedPlatform`, run by
 `licetum migrate` after the migrations: it depends on the environment, so it is not in a migration.
 Step 2e of P2 (no Redis, no read-replica routing, no table synchronization engine) added **no migration**, and nothing that P2 stopped using was dropped (ADR 0001, 11.1 and 11.6.2).
-**Schema left behind for P3**, to be dropped with the other leftovers when schema v2 lands: the table engine's `sync_job` with `sync_job_token_seq` and the indexes
-`sync_job_active`, `sync_job_claim` and `sync_job_created` (nothing reads or writes them since the table engine was deleted; rows an old worker left queued are never run);
-`known_subject` (replaced by the subject directory); `delegated_call`; the OAuth columns and `trusted_clients` of `service` (NULL or empty, unread). `sync_demand` and
-`sync_executor` are still used (`ensure`, the DBOS heartbeat) and go in P5 with `ensure`.
+**Schema v2 removes the retired objects:** `authz_change`, `delegated_call`, `known_subject`, the table engine's `sync_job` and its sequences and indexes,
+and the OAuth columns and `trusted_clients` of `service`. `sync_demand`, `sync_executor` and `sync_state.invalidated_at` remain in use until P4/P5.
+`goose_db_version_v2` stores v2 versions. `migrate` refuses a `goose_db_version` found on its search path before any write, naming the installed version.
+Install into a new database; disposable development databases are recreated with `docker compose down -v`.
 
 Fast read path (`core/engine`: `snapshot.go`, `localstate.go`, `lru.go`, `background.go`, `tuning.go`, `keysets.go`; the key sets in `core/pepauth/jwks.go`;
 settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`; the numbers are in `core/README.md`):
-- **The revision lives in PostgreSQL** (`revision_state`, migration `00002`, `db.BumpRevision` / `db.LoadRevisions`, `core/db/revision.go`):
-  scope `rules` numbers every write that can change a decision (rules, memberships, groups, roles and items, access groups, services, types,
-  synchronizers), scope `data:<service id>` numbers the resource data of a service. A write bumps `rules` **in its own transaction**
-  (`mutate`, once per batch in `RunBatch`, `RestoreAdminAccess`, the seed), a synchronization that changed data bumps `data:<service>` in the
-  transaction of `applyType` (`bumpDataRevisions`; also `resolve`), so the number cannot reach a reader before the data. After the commit
-  `App.AfterWrite(ctx, revision)` sets the revision of the request (`X-Authz-Revision` of an admin write, `Licetum-Revision` of a PDP answer), invalidates the view and makes the platform types due. Answer keys are `authz:permission:t9:r<rules>:…` / `authz:check:t5:r<rules>:…`.
-- The check path decides from `cacheState` (`App.cacheState`). In a process with the snapshot on
-  (`SNAPSHOT__MAX_BYTES` positive, the default) the state is the `localView`: the revisions last read from `revision_state`
-  (`readCacheState`: one statement), with the `snapshot` of that revision. A request uses the view; the view is renewed by `WatchRevision`
-  (started by `cli.Serve`) and by the requests every `REVISION__POLL_INTERVAL` (`singleflight`, so never twice at once), in the request when it
-  is older than `staleLimit` (2 s or 8 polls), after a write of this process (`invalidateView`, from `AfterWrite` and the synchronizations)
-  and when the request asks for a newer revision (`context.licetum.min_revision`): `renewView` then waits for the revision for at most
-  `REVISION__WAIT_MAX`, and if it does not come the answer is computed from the data and **not kept** (`cachedAnswer`, `store`).
-  Cache misses queue for `COMPUTE__CONCURRENCY` slots (`computeSlots`, default half of `DB__POOL_SIZE`).
-  A write made through another process is therefore seen within the poll interval, not at once: a client that needs it at once passes the
-  `X-Authz-Revision` of its write as `context.licetum.min_revision`. When the revisions cannot be read, the last view is served (as long as `POLICY__MAX_STALENESS` allows, no limit by default; see "Resilience") and marked
-  `degraded` (answers are kept in memory only); a view invalidated by a local write is not served then (the queries read the policy).
+- **The global position lives in PostgreSQL** (`revision_state`, `db.TakeRevision`, `db.PolicyTx`, `db.LoadLocalVersions`): the only row is `global`,
+  with an epoch and revision. Every published admin, directory, PEP and data-changing synchronization transaction takes its revision last and writes an outbox header
+  in that same transaction. Compound policy writes take one revision and ordered history records. `Licetum-Revision` carries `<epoch>.<revision>`.
+  `App.AfterWrite` records the request position and makes platform sources due without invalidating the view; admin reads ask for the current global position.
+  P3 answer keys use the global position, so even publications that name no affected decision services invalidate cached answers when the position is observed.
+  Per-service precision returns with P5.
+- The check path uses `cacheState` and an immutable `localView`: one global epoch/revision pair and its snapshot. `WatchRevision` and requests renew it every
+  `REVISION__POLL_INTERVAL`; `context.licetum.min_revision` can request a newer confirmed pair. A bounded wait that cannot confirm it computes from current data without caching.
+  `AfterWrite` does not invalidate the view. Admin authentication and tools use `CurrentReadContext` to read their own writes immediately; other processes observe writes through polling.
+  Closure moves can invalidate the view. A new epoch clears old-epoch answers. During PostgreSQL failure, the last confirmed view follows `POLICY__MAX_STALENESS` and validity boundaries.
+  Cache misses share one computation and use `COMPUTE__CONCURRENCY` slots. The public freshness header is `Licetum-Revision: <epoch>.<revision>`.
 - The snapshot holds what a decision reads: services (id, name, slug: `ServiceColumns`), the type graph, the enabled
   memberships and rules *with* their validity windows (compared with the clock per request, `ruleActive`/`memberActive`), the role items, the
-  access groups, the request attributes and the validity boundaries (for the TTL of an answer); the types with a live synchronizer are in the type
-  graph (`TypeNode.Sync`). It is built in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` (by slug only) answers from it (an
+  access groups, the request attributes and the validity boundaries (for the TTL of an answer); the applied types with a live synchronizer are marked `TypeNode.Sync` in the type graph. It is built in one `REPEATABLE READ` read-only transaction and never changed afterwards. `ServiceIDByRef` (by slug only) answers from it (an
   unknown or deleted slug is a 404 without a query). Every write that changes any of this must bump the revision (all admin writes go through
   `mutate` or the batch, which do); a change made by other means (`restore-admin` does bump) shows up at `SNAPSHOT__MAX_AGE` at the latest.
   The lever `consistency=higher` (`engine.WithConsistency`, set by the process that serves the request — no query parameter or header of the PDP sets it;
@@ -133,8 +112,7 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   - **Probes** (`engine/ready.go`, `server.NewServer`), on the PDP's ops listener (`PDP__OPS_ADDR`, 9090; the public listener has none):
     `GET /healthz` has no dependency; `GET /readyz` (`App.Ready`) is 200 when the process is
     not draining (`App.SetDraining`), PostgreSQL answers one statement within 1 s (`db.SchemaVersion`, result reused for 1 s, not counted in the
-    metrics) with the schema **at least** `db.LatestMigration()` (a newer one is fine: the previous release stays ready during a rolling
-    update), and the view holds its snapshot (or the policy is deliberately not copied: `oversized`). The worker has
+    metrics) with the schema **equal to** `db.LatestMigration()`, and the view holds its snapshot (or the policy is deliberately not copied: `oversized`). The worker has
     `/readyz` too (database and schema only). `licetum_degraded{component="postgres"}` (the only component: the view is unconfirmed for `staleLimit`
     or the statements fail; `dependencyHealth` in `ready.go`) and `licetum_snapshot_age_seconds` (age of `localView.readAt`).
   - **Degraded PostgreSQL**: `readView` reads the revisions with a 1 s timeout (`revisionReadTimeout`; the snapshot build has its own 30 s),
@@ -166,12 +144,13 @@ settings `SNAPSHOT__*`, `AUTH__JWKS_*`, `CACHE__ANSWER_L1_SIZE`, `BACKGROUND__*`
   PDP's PostgreSQL may itself be a replica set behind one DSN, which is not Licetum's business until the postgres adapter on streaming replicas returns in P5. There is no test against a real
   streaming replica meanwhile (the contracts REV02, CONS01 and FC01-FC03 bring them back in P5/P6, and `task go:test:integration:replica` returns with them; `scripts/pg-replica.sh` stays);
   `cluster/failover_test.go` (`TestF6_11_*`) tests `licetum failover` without a replica.
-  `licetum failover` (`db.BumpAllRevisions`) raises every revision after a promotion and a revision that goes backwards is counted
+  `licetum failover` (`db.StartEpoch`) atomically increments the global epoch, jumps the revision and appends an `epoch_start` header after a promotion. PDPs discard old-epoch caches; a revision that goes backwards within an epoch is counted
   (`licetum_revision_regressions_total`) and drops the in-memory answers; `synchronizer.regions` is stored but not enforced: any executor may ask a source until regions are
   enforced again; `deploy/helm/licetum` (`deploy/helm/test.sh`, golden files in `tests/golden`, `kind-test.sh`),
   `docs/deployment.md`, the Compose environment `admin-api/tests/multiregion` (tag `multiregion`, `task go:test:multiregion`, `multiregion.yml`, switched off until P7 per ADR 0001 §10.7).
-  An admin write is six round trips to the primary at most (`mutate` sends the change record and the revision bump as one batch; `checkAssignmentRuleRefs` reads
-  the type once and returns its service): `chaos/f6_test.go` `TestF6_7_*` keeps it so, since the admin API of a far region pays the link for each.
+  WR06 measures every admin write route with a pgx tracer (a batch counts once); the request and write-transaction maxima are in
+  `admin-api/tests/integration/api/write_roundtrips.json`, with evidence in `write_roundtrips.md`. Compound writes and inline ChangeMode have separate budgets.
+  The former fixed six-trip chaos assertion is replaced by this measured contract; the admin API of a far region pays the link for each call.
 - The query path is kept next to the snapshot path on purpose (`prepare`, `applicableRules` / `applicableFromSnapshot`, `cacheTTL` /
   `snapshot.ttl`, ...): a policy that does not fit, the lever `consistency=higher` and the admin simulations use it. Change one, change the other;
   `TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath` (random policies, both paths, answers and explanations) keeps them equal.
@@ -204,35 +183,31 @@ pnpm typecheck      # tsc --noEmit (noUnusedLocals / noUnusedParameters on)
 pnpm knip           # unused files/exports/deps (src/api is generated and ignored)
 pnpm test           # Jest: unit and component tests, the API is mocked
 pnpm format         # oxfmt (format:check in CI); config .oxfmtrc.json — single quotes, width 100
-pnpm orval          # generate src/api from ../backend/schema/admin.yaml (gitignored, never edit)
+pnpm orval          # generate src/api from ../admin-api/schema/admin.yaml (gitignored, never edit)
 ```
 
 Full stack via Docker Compose (from repo root): `docker compose up` (`task dev`) — a dev setup: sources
-are mounted, the Go apps run under air (hot reload, `dev` target of `backend/Dockerfile`), the web interface
+are mounted, the Go apps run under air (hot reload, `dev` targets of `core/Dockerfile` and `admin-api/Dockerfile`), the web interface
 runs `pnpm dev`. It runs postgres, a local Dex OIDC provider, a one-shot `postgres_init` migration container
 (`licetum migrate`), the PDP, the synchronization worker, the admin API and the web interface — see `docker-compose.yml` /
 `infra/*.compose.yml` for the env vars each service expects (`DB__*`, `ADMIN_AUTH__*`,
-`PLATFORM__*`). The `runtime` target of `backend/Dockerfile` is the production image.
+`PLATFORM__*`). The `runtime` targets of those Dockerfiles build the separate production binaries.
 
-The orval client `web/src/api` is **not committed**: only `backend/schema/*.yaml` is. It is generated
+The orval client `web/src/api` is **not committed**: only `core/schema/pdp.yaml` and `admin-api/schema/admin.yaml` is. It is generated
 by `pnpm orval` / `task generate`, by `task web:lint` (so `task check` type-checks it), by the
-web image (`build-deps` stage copies `backend/schema` to `/backend/schema`) and by the dev compose
+web image (`build-deps` stage reads `admin-api/schema`) and by the dev compose
 service on start. `web/Dockerfile` stages: `ci` (Node + Task for quality checks), `build-deps`
 (deps + code + generated client, used by compose), `prod-builder` (`pnpm build`), `prod` (the standalone Next.js
 server on :3000).
 
 ## Backend architecture
 
-Layout under `backend/internal/`: `api/` (Huma v2 on top of stdlib `net/http`: operations with
-OpenAPI docs, schema validation, middleware — HTTP concerns only) → `service/` (business logic, one file per domain, methods on
-`*service.App`) → `db/` (pgx pool, `Querier` interface shared by pool and tx, goose migrations,
-seed), `synchronizer/` (resource source adapters).
-`model/` holds request/response structs and their `Validate()` (the pydantic equivalent);
-`config/` reads env vars. Handlers never touch the DB directly; they call `service.App` methods.
+`admin-api/api` contains Huma v2 operations and HTTP middleware; `admin-api/service` contains administration business logic.
+Both use `core/engine` (decisions, snapshots, synchronization), `core/db` (pgx, migrations and transaction publication), `core/outbox` (canonical streams and codec),
+`core/model`, `core/config`, `core/httpx`, `core/i18n` and `core/pepauth`. Handlers call service methods and do not write SQL directly.
 
-API docs are generated from code, FastAPI-style: `/docs` (Swagger UI) and `/openapi.json` on both
-apps, or `licetum openapi pdp` (the admin API: `licetum-admin openapi admin`) without a server. When adding or changing an endpoint:
-register it with `register(api, huma.Operation{...}, handler)` in `internal/api` (OperationID,
+API docs are generated from code: the admin serves `/docs` and `/openapi.json`; PDP documentation is available on its ops listener and through the CLI, or `licetum openapi pdp` (the admin API: `licetum-admin openapi admin`) without a server. When adding or changing an endpoint:
+register it with `server.Register` in the appropriate module (OperationID,
 Summary, Description, Tags, extra Errors), and document every field of its model with struct tags
 (`doc`, `example`, `enum`, `format:"uuid"`; required = value field, optional = pointer +
 `required:"false"`). Input body structs keep `` _ struct{} `additionalProperties:"true"` `` —
@@ -242,17 +217,16 @@ or Huma won't see their fields.
 Settings: `config.Load()` reads env vars with the same prefixes as before (`DB__`, `AUTH__`,
 `PLATFORM__`, `ADMIN_AUTH__`, `SYNC__`, plus `HTTP__ADDR`, `PDP__ADDR`, `PDP__OPS_ADDR`, `PDP__PUBLIC_URL`, `PDP__AUDIENCE`, `PDP__SEARCH_SCAN_BUDGET`, `PEP__RATE_LIMIT` and `PEP__RATE_BURST`); names are case-insensitive, lists accept a
 JSON array or CSV. `DB__URI` may keep the SQLAlchemy `+asyncpg` suffix (`db.NormalizeDSN`).
-`PLATFORM__ADMIN_GROUP_NAME` replaces `PLATFORM__ADMIN_ROLE_NAME`; the old name is still read as a fallback. A setting that was removed but may still be set in a deployment is a row of the table in `core/config/config.go` (`DeprecatedCatalog`: name and the reason an operator reads). The pdp, admin and worker processes log one warning per set row with `setting` and `reason`; migrate, failover, restore-admin and openapi do not. A pull request that removes a setting adds its row in the same commit. There is no Redis: `REDIS__URI` and `REDIS__HOT_TIMEOUT` (like `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL`, `SYNC__ENGINE`, `SYNC__FETCH_TTL`, `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT` and `WORKER__REGION`) are rows of that table, so a deployment that still sets them starts and is told once each; `TestTheCatalogHoldsEverySettingRemovedWithRedisTheReplicaAndTheTableEngine` and the cli test of the same list keep it so. The OAuth client of the
-self-service (`PLATFORM__AUTHORIZATION_URL`, `__TOKEN_URL`, `__JWKS_URL`, `__ISSUER`, `__CLIENT_ID`, `__CLIENT_SECRET`) is gone (they are in
-`config.DeprecatedSettings`): administrators authenticate through `ADMIN_AUTH__*`, see "Administrator sign-in" below.
+`PLATFORM__ADMIN_GROUP_NAME` names the platform administrator group. Administrators sign in through `ADMIN_AUTH__*`;
+the service row carries no OAuth client. DeprecatedSettings/DeprecatedCatalog and their startup warnings are removed. Retired Redis, replica and table-engine settings are not supported.
+Use `LOG__SUBJECT_SALT` from the deployment secret; it is never stored in PostgreSQL or projected in an outbox image.
 
 Errors: return `*apperr.Error` from the service layer, created from an i18n catalog key
 (`apperr.NotFound(i18n.ServiceNotFound, id)`, `apperr.BlockedBy(list, i18n.RoleDeleteBlocked, id)`,
 `apperr.FailedDependency(...)` for upstream failures). It implements
 `huma.StatusError` and is itself the error body `{"detail": ..., "extra": {"type":
 "generic"|"missing"|"blocked_by", "code": "<catalog key>"}}`; `huma.NewErrorWithContext` is overridden
-(`internal/api/server.go`) so Huma's own validation errors use the same shape. Any other error becomes a logged 500 without details. Admin writes that affect permissions bump the revision of
-the rules in their own transaction (`mutate`) and call `App.AfterWrite`. A 401 carries `WWW-Authenticate` (RFC 6750):
+(`core/server/server.go`) so Huma's own validation errors use the same shape. Any other error becomes a logged 500 without details. Admin policy writes use `PolicyTx` and call `App.AfterWrite` after commit. A 401 carries `WWW-Authenticate` (RFC 6750):
 `apperr.Unauthorized` — no usable credentials (`Bearer`), `apperr.InvalidToken` — a malformed,
 expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHeader` adds others.
 
@@ -266,65 +240,38 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   became a group: its keys keep their legacy `role_*` values (`GroupNotFound` = `role_not_found`, …). The new
   roles use `role_definition_*` values. Russian texts keep the legacy Python wording.
 - API docs: write summaries/descriptions/`doc` tags in English, then add the same string with its
-  translation to `internal/api/locales/ru.json` and `zh.json`. `TestContract_API02_DocsTranslationsComplete` and
+  translation to `admin-api/api/locales/ru.json` and `zh.json`. `TestContract_API02_DocsTranslationsComplete` and
   `TestContract_API02_CatalogComplete` fail on anything missing or unused.
 
 ### Domain model
 
-- **Service**: a client application registered with Licetum, with a **slug**: lowercase Latin letters, digits, `-`, `_`, unique among live services and
-  never a UUID (`model.ValidSlug`; `00009_service_slug.sql`). The PDP takes the service as one path
-  segment — its slug only (`App.ServiceIDByRef`; the uuid form is gone). Licetum itself is registered with the slug
-  `model.PlatformSlug` (`licetum`, reserved: no other service takes it; a name that makes an invalid slug
-  falls back to `service-<12 hex digits of the id>`, `00009_service_slug.sql`). The application `url` and the `icon` are optional and are never requested
-  (no live check from the server: `""` removes them in PATCH). A service has no sign-in configuration: the callers of its PDP
-  are its PEP clients (see "Check, AuthZEN, metrics"). The unused columns of the `service` table stay in the schema until schema v2 (P3, see "Migrations" above).
+- **Service**: an owning application with name, optional URL/icon and an immutable slug. Slugs are unique across live and deleted rows and never reused.
+  Changing a slug is 422 at the API and rejected by an ALWAYS database trigger; sending its current value is accepted. `identity_domain_id` is immutable in P3 too.
+  Services belong to the default identity domain; domains and `created_at` are internal schema metadata, not P3 API settings. PEP clients authenticate callers; service OAuth columns are removed.
 - **TypeResource**: a resource *type* belonging to a service (e.g. "project", "branch"), with any
-  number of parent types (`type_resource_parent(type_resource_id, parent_id, inherit)`) — a DAG, not
+  number of parent types (`type_resource_parent(type_resource_id, parent_id, inherit, live, eff_inherit, eff_live)`) — a DAG, not
   a tree. The parent link is both structural *and* the permission-inheritance chain — it can cross
   service boundaries (e.g. `division → branch → planogram` where each level belongs to a different
   service), which is how a grant on one service's type cascades into another's. `inherit` on a link
   is the set of access levels (grants *and* denials) that flow down along it; NULL = all levels.
+  P3 writes desired `inherit/live` and effective `eff_inherit/eff_live` together. Readers and closure use effective links; canonical images exclude desired fields.
+  Both ends share an identity domain through composite FKs. `exported=false` and power-of-two `buckets=16` are internal defaults, hidden from the P3 API.
   `access_implies` (`{"write": ["read"]}`) is the level hierarchy of the type: granting write grants
   read, denying read denies write. Cycles are rejected on write (`checkParents`). The request body
   still accepts the deprecated `type_resource_parent_id` (= one parent, all levels; `Validate()`
   normalizes it into `parents`), the response keeps it only for a type with exactly one parent. The name is unique within the service among live rows
   (partial unique index `uq_type_resource_service_name` + 409 `type_resource_name_taken`) — types
   are keyed by name in the AuthZEN requests (`resource.type`).
-- **Type mode is derived, not stored**: a type is `sync` if a live (not deleted) Synchronizer points
-  at it, otherwise `not_sync` — a "permission without resources" (a capability such as
-  `advanced_working_mode`): it has no resources, and a rule with `resource_id = NULL` grants access
-  to the type as a whole. The single SQL definition is `liveSynchronizerExists`
-  (`internal/service/synchronizers.go`, used by `hasSynchronizer` and `wholeTypeAccess`). Hence a
-  rule on a specific resource (`resource_id` / `resource_from_claim`) is only allowed on a type with
-  a synchronizer (`checkRuleTarget`, 400 `assignment_rule_needs_synchronizer`; re-checked on PATCH
-  only when the target changes, so a rule that died with its synchronizer can still be disabled);
-  the rule list marks such dead rules with `target_valid = false`. The SQL definition is `engine.LiveSynchronizerExists`; the engine reads it
-  once per type graph (`TypeNode.Sync`, `TypeGraph.IsSync`, so the snapshot has it).
-  **A type without a live synchronizer has no resources**, also one whose synchronizer was deleted: the rows it reported stay in
-  `resource_cache` (a synchronizer created again finds them) but no decision reads them. `IsSync` is what every path that reads a resource
-  asks: a point rule on one anchors nothing (a denial stays as an absent anchor, see "Decision semantics"), a question about one is
-  `resource_not_found` (`decideChecks`, `CacheLookup`, the reverse lookup, AuthZEN, the simulations), no cascade reaches the type (the result
-  types are the types that have resources) and `resource_where` matches none; a `resource_from_claim` rule whose lookup type has none matches
-  nothing and its climb does not pass through such a type (`climbTypes`). An allow rule that finds nothing for that reason covers nothing;
-  a **denial** must not lapse with the resources it read, so it keeps an absent anchor at the rule's type (`buildInstances`: a
-  `resource_from_claim` denial with a claim in the request whose lookup type, rule type or a type on a route between them has no resources
-  (`TypeGraph.LookupCut`), and a `resource_where` denial on a type that has none; whether or not the claim matches anything, since the
-  anchor is not known): like the denial on a missing resource it covers nothing for real, and the resources below a link to a parent that
-  is not there fall under it. Such a rule is `target_valid = false` and `GET /service/{id}/policy/lint` reports it
-  (`lint_rule_lookup_dead`). A link of a resource of a type below to one of those rows is
-  unresolved (`UnresolvedParents`, `resourceParents`): the closure does not lead through them (`rebuildClosureSQL`). The closure is stored,
-  so it follows the mode in the write that changes it: creating or deleting a synchronizer runs `engine.App.ChangeMode` in the same
-  transaction (the lock of the type's component, the timeouts of a synchronization, `rebuildClosure` of the type's rows and of the rows
-  that hang below them by the declared links, the data revision of the services of the types below), and `AfterClosureMove` follows the
-  commit; the routes are cut or back when the request returns, whatever the sources and the workers of the types below do. `rebuildClosure`
-  reads the types that have resources in its own transaction (`typesWithoutResources`), not from the graph a synchronization loaded
-  before it fetched, so a synchronization that was running while the synchronizer was deleted does not write the route back. The structure
-  signature of the types below also marks a type that lost its synchronizer (`TypeNode.SourceDeleted`), so their next synchronization
-  rebuilds again (harmless, and it stores the new signature). A mode that changes by other means (`restore-admin` switching the
-  synchronizers of the platform types back on) and a change of the type links are followed by the synchronization of the types below
-  only. The query path and the snapshot path read the same graph, so they agree.
+- **Type mode is derived** by `model.TypeModeSQL`: `synced_at IS NOT NULL` and a live source. A new source alone leaves the type `not_sync`;
+  its first accepted full apply sets the timestamp and publishes the canonical type image with its data streams in one transaction. Later applies keep that timestamp.
+  Deleting/replacing the source clears it. First apply is fenced by the source row version and configuration, including changes that were changed back before the fetch completed.
+  Rule target validation deliberately requires only a live source (`model.LiveSynchronizerSQL`), so a resource rule can be written before first apply.
+  A type without applied data contributes no resources: point anchors and property lookups cannot traverse it. Whole-type capability rules still apply to `not_sync` types.
+  Denials keep absent anchors when their lookup, target or route has no resources, preserving fail-closed behavior; a missing lookup cannot silently remove a denial.
+  `ChangeMode` runs inline under the admin write transaction in P3 and updates closure/data headers. Source deletion cuts routes before returning; first accepted apply restores
+  affected descendant routes even when lower sources are unavailable. Fetches fenced out after source deletion cannot restore those routes. P5 moves component rebuilds to its writer.
 - **Synchronizer**: per-TypeResource adapter (SQL query or HTTP endpoint, see
-  `internal/synchronizer/adapter.go`) that fetches the live list of concrete resources for a type
+  `core/synchronizer/adapter.go`) that fetches the live list of concrete resources for a type
   from the owning service. `singleflight` collapses concurrent duplicate fetches (per synchronizer; a `fresh` fetch never joins one that
   started before it). A source that does not answer is held back by the backoff in `sync_state`, which every replica reads. SQL sources use SQLAlchemy-style `:id`
   in the stored query (translated to `$1` by `BindIDParam`) — keep that format for compatibility.
@@ -345,7 +292,7 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   a failure message has the secrets of the configuration redacted) and `POST /type_resource/{id}/resource/refresh` asks the
   source now (`RefreshResources`: `ensure` with `Fresh`; 422 without a source, 424 when it did not answer or the worker did not finish in `SYNC__ADMIN_WAIT`).
 - **ResourceCache**: the local copy of the resource hierarchy fetched by the synchronizers
-  (`internal/service/resource_cache.go`) with an `active` flag (a resource gone from its source is
+  (`core/engine/resource_cache.go`) with an `active` flag (a resource gone from its source is
   switched off, not deleted). The permission computation works on this copy only and never asks a
   source per resource. A resource may have several parents, of different types: `resource_edge(child,
   parent_type, parent_external_id, parent_id)` holds the declared links (`parent_id` NULL = the parent
@@ -359,41 +306,41 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   **Sync contract**: a source resource has the required `id` and `name`, the optional `parent_id` (or
   `parents`) and *any other column (SQL) / field (HTTP, or an explicit `meta` object)*, which becomes
   the resource's attribute in `resource_cache.meta` (jsonb; `synchronizer.normalizeMeta`: strings —
-  numbers and booleans are rendered like claim values — or lists of strings; NULLs, objects, invalid
+  numbers and booleans are rendered like property values — or lists of strings; NULLs, objects, invalid
   names (`model.ValidMetaKey`: `[A-Za-z0-9_-]{1,63}`, not `id`/`name`/`parent_id`/`parents`/`meta`),
   over 32 attributes, values over 1024 characters and lists over 64 items are dropped). Attributes
   are part of the sync digest, so a change is written by the next sync, which also bumps the data version
-  of the service that owns the type (`revision_state`, scope `data:<service>`, see item 7 of the permission computation). The admin list
+  with a global revision and `data:<type UUID>` header, naming affected owner/descendant services. The admin list
   (`GET /type_resource/{id}/resource`) also brings the parent types up to date, so a link is `resolved: false` only when its
   parent is really missing; a resource gone from its source stays with `active: false` and is listed with
   `?include_inactive=true`.
-- **Group** (was `role` before the split, see `00007_role_to_group.sql`): a union of people — a *global*
-  identity, not itself a service or type-scoped concept. A group is just another `subject`: it gets
-  permissions the same way a user does, via AssignmentRule. Its synthetic subject string is
-  `model.GroupSubject(groupID)` = `group:<uuid>`. Table `user_group` (`group` is a reserved word in SQL).
+- **Group** (`user_group`): a service-owned union of subjects. Create bodies require `service_id`; ownership is immutable. Routes stay global in P3 and lists filter by service.
+  The group's own grants use explicit `subject_group_id`; `group:<uuid>` is an internal engine identity, rejected as a literal API subject.
+  Deleting a group cascades and audits its own memberships; rules and incoming nested-group references still block deletion.
 - **GroupMember**: makes a subject a member of a Group, either directly or via a `predicate` matched against
-  JWT claims (e.g. "everyone with `department=sales`"). Members can also be other groups (`member_group_id`),
+  subject properties (e.g. "everyone with `department=sales`"). Members can also be other groups (`member_group_id`),
   forming nested group membership resolved transitively in `core/engine/permission.go::IdentityOf`: round by round, each
   reading the previous one, through at most `MaxGroupDepth` (16) nestings whatever the order of the memberships.
-- **Role** (`00008_role_permission.sql`): a *named set of permissions*. Its items (`role_permission`) each carry
+- **Role**: a service-owned *named set of permissions*. Create bodies require immutable `service_id`; items inherit it and composite FKs enforce ownership. Its items (`role_permission`) each carry
   a target and access levels, the same shape as an inline rule — the whole type, a `resource_id` or a
-  `resource_from_claim` (checked by `checkResourceTarget`, like a rule). A role is neither a subject nor a member
+  `resource_from_property` (checked by `checkResourceTarget`, like a rule). A role is neither a subject nor a member
   of anything: it is granted by an AssignmentRule with `role_id`. A group answers "who", a role answers "what".
   Items cannot contain `*` — denying everything is possible only with an inline deny rule. An item on a platform
   policy needs write on that policy as a whole (`checkPlatformTargets`, as creating a rule on it does): a point
   write on the role does not reach the platform. Deleting a role that
   a rule grants is 409 (`extra.blocked_by: assignment_rule`); a type that an item points at cannot be deleted
-  (409, `role_permission`), and so is a type that a claim-based target uses as its lookup type
-  (`resource_from_claim.lookup_type_resource_id`); items go with their role.
+  (409, `role_permission`), and so is a type that a property-based target uses as its lookup type
+  (`resource_from_property.lookup_type_resource_id`); items go with their role.
 - **AssignmentRule** (formerly "Grant" — some comments still reference the old name): grants either a **role**
   (`role_id`; the inline fields are then NULL, DB CHECK `ck_assignment_rule_role_xor_inline`) or an **inline
   permission**: `access` (a list of strings, e.g. `["read","write"]`) on a TypeResource. To whoever it applies:
-  exactly one of three mutually-exclusive targets (enforced by DB CHECK constraints): a literal `subject` (a user,
-  or `group:<uuid>`), a `predicate` over claims, or `member_of_group_id`. An inline permission targets exactly one
+  exactly one of four selectors (DB CHECK constraints): literal `subject`, explicit `subject_group_id`, a `predicate` over subject properties, or `member_of_group_id`.
+  Only literal subjects may carry nullable `subject_type`: NULL matches any type; a value matches `subject.type`. Other selectors require NULL.
+  Request subjects default to type `user`; `group` is reserved. Rule ownership derives from its inline type or role and cannot move on PATCH. An inline permission targets exactly one
   of two resource shapes: a literal `resource_id` (or `None` = the whole type), or a
-  `resource_from_claim` spec that resolves a concrete `resource_id` dynamically from the caller's
-  claims at check time (e.g. "job title → the branch-hierarchy node they're scoped to").
-  `resource_from_claim.match_by` is `name`, `id` or `meta.<attribute>`: with an attribute the claim
+  `resource_from_property` spec that resolves a concrete `resource_id` dynamically from the subject's
+  properties at check time (e.g. "job title → the branch-hierarchy node they're scoped to").
+  `resource_from_property.match_by` is `name`, `id` or `meta.<attribute>`: with an attribute the property
   value is matched against the attribute the source reported (equal, or a list containing it — both
   forms use the GIN index on `meta`). The anchors are the matched resource's ancestors of the rule's type through the
   resolved resource links, whatever the inherit masks (`findAncestorsBatch` walks the edges, not the closure, which keeps
@@ -401,17 +348,17 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   The climb stops at a resource of the rule's type (the type graph has no cycle) and follows only the links to those types
   (`ancestorWalkSQL`); `core/tests/integration/engine/walk_test.go` checks it against a climb to the roots and has its
   benchmark. With the lookup type equal to the rule's type this is the
-  "owner" pattern: one rule `{claim: preferred_username, lookup type: project, match_by: meta.owner}`
+  "owner" pattern: one rule `{property: preferred_username, lookup type: project, match_by: meta.owner}`
   gives each user access to the projects (and their descendants) whose `owner` attribute is theirs.
   `effect` is `allow` (default) or `deny`; a denial may use the level `*` (every level). An allow
   rule with `exception = true` lifts the denials above it. `valid_from`/`expires_at` bound the time
   the rule is in force (also on GroupMember). Predicate operators: `eq`, `ne`, `in`, `not_in`,
-  `regex`; a claim missing from the token never satisfies a condition, `ne`/`not_in` included
+  `regex`; a property missing from the subject never satisfies a condition, `ne`/`not_in` included
   ("everyone except ivanovich" is `username ne ivanovich`). `eq`, `ne` and `regex` take one value: with a list value they
   never hold (validation lets it through, as the Python version did; use `in`/`not_in`). A role assignment takes the effect and the
   exception of the rule for all of the role's items; `expandRoles` turns it into one rule per item (same id,
   subject and validity, the item's target and access), so the engine treats role permissions like inline ones.
-- **Conditions and request context** (`predicate.go`, `conditions.go`): a condition reads a claim (`source` claim, the
+- **Conditions and request context** (`predicate.go`, `conditions.go`): a condition reads a subject property (`source` subject, the
   default), an attribute of the request (`source` context: the check body, the `context` query parameter, the AuthZEN
   `context`), or the clock (`source` now: `hour`, `weekday`, UTC). Operators: `eq ne in not_in regex`, numeric
   `gt ge lt le`, `in_cidr`. An attribute the request does not carry makes a condition *unknown*: an allow rule grants
@@ -420,37 +367,34 @@ expired or rejected token (`Bearer error="invalid_token"`); `apperr.Error.WithHe
   membership whose predicate reads a missing attribute is unknown too (`identitySet`). `requires_predicate` and
   `requires_group_id` guard any
   rule. `resource_where` covers the resources whose attributes, as the synchronizer reported them (`resource_cache.meta`),
-  match (exclusive with `resource_id` and `resource_from_claim`; needs a synchronizer). The database narrows the rows by
+  match (exclusive with `resource_id` and `resource_from_property`; needs a synchronizer). The database narrows the rows by
   containment on `meta` for equality and membership conditions, as a string and as a list element (containment does not
-  match a list against a scalar, so both shapes are looked up); `resourceMatches` decides. `subject_kind` is a label only.
+  match a list against a scalar, so both shapes are looked up); `resourceMatches` decides. `subject_type` participates in literal matching in SQL, snapshots, simulations, searches, scenarios and the reference evaluator; it is part of cache keys and fingerprints.
   The cache key of an answer covers the attributes the rules read, and an answer that reads the clock lives until the
   next minute.
 - **AccessGroup** (`access_group`, `access_groups.go`): named access levels of one resource type. A rule or a role item
   lists `@name` in its `access` (`expandAccess`). Renaming or deleting a group that a rule or an item names is refused
   (409, `blocked_by`).
 
-- **Subject directory** (`subject_directory`, `subject_directory_seen`, `subject_directory_settings`, migration `00008`; `core/db/directory.go`,
+- **Subject directory** (`subject_directory`, `subject_directory_seen`, `subject_directory_settings`; `core/db/directory.go`,
   `admin-api/service/directory.go`, `admin-api/api/admin_directory.go`; ADR 0001, 8.8): the people of a **service**, sent on purpose by its
-  application or an editor. It replaces `known_subject` (global, filled by every token; the registry is removed in the second step of the
-  directory step). Six routes under `/service/{id}/subjects`: `PUT` (up to 1000 people, each once; `{type?, id, name?, properties?}`, the
+  application or an editor. It replaces the retired global known-subject registry, whose table is absent from schema v2. Six routes under `/service/{id}/subjects`: `PUT` (up to 1000 people, each once; `{type?, id, name?, properties?}`, the
   properties stored as sent within 100 entries and 16 KiB), `GET` (list: `type`, `search`, `limit`, `offset`, with a total, ordered by type
   and then bytewise by id), `GET|DELETE …/{type}/{id}` (an id with `/` goes percent-encoded; the entry comes with the groups the stored
   properties put the person in), `GET|PUT …/settings` (`retention_days`, null: forever, the default). The id of a person is kept exactly
   as sent and never starts with `group:`. The upsert writes only a row whose name or properties differ (`UpsertDirectory`, `IS DISTINCT
-  FROM`): an unchanged batch touches no row of `subject_directory` and takes **no revision** (no decision reads the directory); the time
+  FROM`): an unchanged batch touches no row of `subject_directory` and takes **no revision**; the time
   an entry was last sent is kept apart in `subject_directory_seen` and refreshed at most hourly. The worker's retention (`RunRetention`,
   `db.PruneDirectory`, 10 000-row chunks) deletes the entries not sent within their service's `retention_days`; every worker runs it hourly
-  and there is no lock: a chunk takes its rows with `FOR UPDATE SKIP LOCKED` (the same for the `known_subject` prune), so overlapping runs
+  and there is no lock: a chunk takes its rows with `FOR UPDATE SKIP LOCKED`, so overlapping runs
   divide the work and never wait for each other (a cross-worker once-per-interval guarantee is a P5 task of the writer's leader). Until the roles of the
   service (P4) the routes are governed by the platform policy `group_member` (whole type). The key of a scan is (type, id) bytewise
   (`DirectoryAfter`, index `ix_subject_directory_scan`). Tests: `directory_test.go` in `admin-api/tests/integration/api` (DIR02, DIR04) and
   in `core/tests/integration/db`.
-  **The registry of known subjects is gone.** `known_subject` (global, filled by every verified token, `SUBJECTS__ENABLED`/`SUBJECTS__RETENTION_DAYS`,
-  `NoteSubject`, `/subject`) was removed in favour of the directory: nothing writes the table any more, and `RunRetention` drops what the previous
-  release left in it after a fixed 90 days (no setting; the table goes with the schema of P3). The directory feeds the AuthZEN subject search
+  **The registry of known subjects is gone.** Its table and fixed ninety-day prune are removed. The directory feeds the AuthZEN subject search
   (below), the people a rule reaches (`peopleReached`, `service/access_lookup.go`) and the person page. `peopleReached` tries each rule on the
-  people of the directories of **the services of the rule's types** (the type it targets, the type its claim is looked up in, the types of the
-  items of the role it grants; `servicesOfRules`), decided with the stored properties as claims: a service with an empty directory has no people, the
+  people of the directories of **the services of the rule's types** (the type it targets, the type its property is looked up in, the types of the
+  items of the role it grants; `servicesOfRules`), decided with the stored subject properties: a service with an empty directory has no people, the
   directory of another service is not counted, a person of two of a rule's services is counted once (DIR03); at most `engine.EvaluationLimit`
   (5000) people are tried (`limited`). The administrators of the platform are no longer noted when they sign in: they appear in the rules and
   memberships that name them, or in the directory of the platform service if somebody sends them there.
@@ -487,13 +431,13 @@ key sets of the PEP issuers share its code): `iss` exact, `aud` must contain the
 a missing or bad token is a 401 (`WWW-Authenticate`, `invalid_token` for a token), keys that cannot be read a 424, no `ADMIN_AUTH__*`
 a 503 `admin_auth_not_configured` (the `admin` command refuses to start without them; half of the three is a config error). The
 permissions still come from the platform policies below. The seed and `restore-admin` need only `ADMIN_AUTH__*` (the service row has no OAuth
-client: its OAuth columns stay NULL); `restore-admin -user` matches the subject claim. The web interface is the OIDC client (code flow with
+client: those columns are absent); `restore-admin -user` matches the subject claim. The web interface is the OIDC client (code flow with
 PKCE; `OIDC_*`): `/auth/login` seals the state, nonce and PKCE verifier into the cookie `licetum_flow` (ten minutes, path `/auth`),
 `/auth/callback` checks it, exchanges the code at the token endpoint and writes the session cookie, the tokens are renewed at the token
 endpoint; nothing is kept on a server. Tests: `TestContract_ADM01_*` (`admin-api/tests/integration/api/admin_auth_test.go`),
 `TestContract_ADM13_*` (`core/tests/integration/db/admin_auth_test.go`), `TestContract_WEB01_*` (`web/tests/oidc.test.ts`).
 
-Enforcement: `internal/api/auth.go`. An operation declares its policy with
+Enforcement: `admin-api/api/auth.go`. An operation declares its policy with
 `withPolicy(op, requireAny|requireWholeType|requireResource(type, action, pathParam))`; the Huma middleware
 `platformAuth` verifies the token against the self-service (`service.App.Authenticate`) and checks the policy
 before the body is parsed. Lists need read on any entity and are filtered with `filterAllowed`; changing an
@@ -506,11 +450,11 @@ levels; a denial beats the whole-type access, `Access.Can` looks at the entity's
 stays public. Writes that change a policy's entities (services, types, groups, members,
 roles, role items, rules) bump the revision of the rules.
 
-### Permission computation (`internal/service/permission.go`)
+### Permission computation (`core/engine/permission.go`)
 
 This is the core algorithm and the most important part to understand before touching anything
 authorization-related. The entry point is `GetPermission(ctx, service, subject, env, consistency)`, where `env` (`service.NewEnv`) holds the
-claims, the request context and the time of the decision;
+subject properties, the request context and the time of the decision;
 it returns the typed result `{type_name: sync | not_sync}` used by the PDP and the self-service
 (`Authenticate` uses `getPermissionData`, which also returns the denied entities).
 1. Resolve the caller's identity set: `{subject} ∪ {group_subject(g) for every group g they belong to,
@@ -524,8 +468,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
 3. `ensure` (`engine/sync_jobs.go`) makes sure the types the rules reach are synchronized; **the check path never writes the
    graph**. State is in PostgreSQL: `sync_state` (per type: the digest `format`/`data_hash`/`graph_sig` of the last
    synchronization, `applied_at`, `next_due_at` = the throttle of 30 s or the end of the backoff, `attempts`, `last_error`); the jobs
-   are DBOS workflows on the queue `licetum-sync` (the `sync_job` table of the previous engine is no longer used: its rows are never
-   run, P3 drops it). One query reads the states of the involved types, and each
+   are DBOS workflows on the queue `licetum-sync`; the previous table engine is removed from schema v2. One query reads the states of the involved types, and each
    type falls in one case: no data under the current structure (never synchronized, or the type graph above it or its
    synchronizer changed: `structureOf`) or a platform type that a write made due → the request enqueues the job and
    **waits** for it up to `SYNC__REQUEST_WAIT` (5 s), then answers from what exists (the type contributes no resources, the
@@ -555,10 +498,9 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    replacement under the id `<id>+r` (the waiters follow the chain) and prunes the old workflows (`dbosJanitor`). The integration suites of the synchronization
    (`admin-api/tests/integration/api/sync_test.go`, `sync_crash_test.go`) and `core/engine/sync_dbos_test.go` are the evidence for the
    engine. `App.Role` (pdp, admin, worker; none = unrestricted for tools and tests) refuses to run jobs
-   outside the worker. Every committed change of a type's data bumps the data revision of its service in the same transaction
-   (`bumpDataRevisions`, see F2), and the worker then calls `invalidateView`. `resolve` (one resource
+   outside the worker. Every committed data change takes one global revision with `data:<type UUID>` headers in that transaction, and the worker then calls `invalidateView`. `resolve` (one resource
    refreshed inline by the admin API) writes under the same component lock and timeouts.
-4. Rules become *instances* (rule × anchor; a `resource_from_claim` rule yields the anchor found by one
+4. Rules become *instances* (rule × anchor; a `resource_from_property` rule yields the anchor found by one
    `findAncestors` query). Each instance covers the anchor's descendants through the closure
    (`expandAnchors`) with the level mask that flows to them; a whole-type rule covers all resources of the type
    and of its descendant types.
@@ -568,17 +510,11 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
    on a `not_sync` type with `sync` descendants still cascades to their resources). Response:
    `{name: {"type": "sync", "resources": [...]} | {"type": "not_sync", "access": [...]}}`; a `not_sync` type
    without rules is absent, on a name collision `sync` wins.
-7. Cached in memory per `(service, subject, claims fingerprint, revision of the rules)`: key
-   `authz:permission:t9:r<revision>:<service>:<subject>:<fingerprint>` (bump `t9` when the format or the decisions change; the
-   fingerprint covers only the claims and the request-context attributes the rules and the role items look at, which the snapshot
-   knows — a process without it remembers them per revision, `attrsMemo`). TTL = min(60 s, the next moment a rule, a role item's
-   assignment or a membership starts/stops being in force). Admin writes bump the revision of the rules in `revision_state`. A cached
-   entry also records the revisions of the data of the services whose resource data it read (scope `data:<service>`, bumped by
-   synchronizations and by `resolve`): it is served only while those are unchanged, so a change in one service leaves the answers that
-   do not read it in place. The whole computation runs through `cachedAnswer` (`engine/cache.go`): the revisions come from the view
-   (`readCacheState`), concurrent misses for the same key share one computation (singleflight) and queue for a computation slot, and the
-   entry is kept in memory. `POST /check` answers are cached the same way (`authz:check:t5:…`, keyed by a hash of the
-   questions and of `explain`).
+7. Cached in memory per service, subject id and type, relevant subject/request properties, explain mode and global epoch/revision.
+   The fingerprint covers attributes the rules and role items read; TTL is bounded by validity transitions and clock dependencies. Concurrent misses share a computation.
+   P3 invalidates every old-position answer on any global publication, including PEP and directory writes. There are no per-service revision-state rows or Redis counters.
+   P5 restores per-service precision. AuthZEN evaluation/batch answers use the same cache machinery; the released v0.1 `/check` and `/permission` API is gone.
+
 
 ### Decision semantics (deny wins, explicit exceptions)
 
@@ -604,9 +540,9 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   known ancestor is assumed too, for the levels the known routes do not carry (`CoversOf`, pass C of `coverNodes`; the
   explanation flags the assumed levels only). Only an exception provably below a denial lifts it, so a point exception on the
   orphan itself does not lift an assumed one. The same holds for a denial that cannot find its anchors because a type it needs
-  has no synchronizer (see "Domain model", Type mode). Known gap: a `resource_from_claim` denial whose climb from the matched resource
+  has no synchronizer (see "Domain model", Type mode). Known gap: a `resource_from_property` denial whose climb from the matched resource
   reaches an unresolved link (a parent that is not in the cache, not a type without resources) before the rule's type finds no anchor
-  (both the engine and the reference evaluator). A denial by claim whose lookup type has no resources denies the rule's own type nowhere
+  (both the engine and the reference evaluator). A denial by property whose lookup type has no resources denies the rule's own type nowhere
   (its anchor is not known), only what lies below a missing parent.
 - Worked example (division → rrs → branch → item; `D1 ⊃ R1, R2`, `R1 ⊃ B1, B2`, `R2 ⊃ B3`, `B1 ⊃ I1`):
 
@@ -622,10 +558,21 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   `core/testsupport/policyfix/testdata/decisions` (`worked_example.yaml` is this one), checked against the engine and the
   reference evaluator (see "Commands").
 
+
+### Mandatory outbox
+
+`core/outbox` maps canonical post-images and key-only tombstones to `catalog`, `svc:<owner UUID>`, `pep`, `settings` and `dir:<service UUID>`;
+`data:<type UUID>` headers identify changed data partitions. Private source configuration and the subject-hash salt are never projected.
+Statement transition-table triggers mark covered writes and a deferred ALWAYS constraint requires an outbox header from the same transaction, including cascades, TRUNCATE and replica session role.
+Directory settings are not covered but their API writes take revision-only headers. Scenarios and read tools take no revision. Directory content uses `TakeRevision` without `admin_write`.
+`ServicesBelow` names owners and effective descendants without exported-link gating in P3. The codec is frozen in ADR 0002: record-aligned compressed chunks of at most 1 MiB and a stream digest.
+WR01–WR06 and PUB02/PUB05 enforce the transaction boundary, commit order, canonical table diff, route declarations and measured round-trip budgets.
+See `docs/outbox-write-routes.md` for the shared canned catalogue and exact no-op/cascade semantics. Outbox retention defaults to one hour, in bounded chunks, preserving the newest header.
+
 ### Batch, history and policy tools
 
 - **Reverse lookup and preview** (`access_lookup.go`, `grant_preview.go`): `GET …/type_resource/{id}/access?resource_id=` lists the rules
-  in force that cover a resource (`coversOf` over the instances of every subject's rules; denials first; rules found by a claim apart),
+  in force that cover a resource (`coversOf` over the instances of every subject's rules; denials first; rules found through a property lookup separately),
   one entry per instance with `via`, the levels that reach it, `who` and the known people (a denial covered both for real and through a
   missing parent is one entry: `assumed_levels` are the levels only assumed, `assumed` says none reaches for real; `reachesOf`; one rule
   can still make several entries reached the same way — role items, `resource_where` anchors — so the interface keys rows by position);
@@ -641,20 +588,19 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   `extra.operation` and nothing is applied; `CheckOperations` checks the shape first. Each operation needs the policy of
   the admin route that makes the same write. An entity the batch creates is covered by the right that created it: the
   caller's access was read before the batch.
-- Inside a batch, `mutate` writes into the batch's transaction (`withBatch`, `tx.go`), and the revision of the rules is bumped
-  once, after the commit. Creates take an optional id: the history and the import use it to restore or name entities.
-- The change log keeps the entity before and after each change, so it is the undo log. `PlanRevert` and `PlanRollback`
-  (`history.go`) turn records into operations: create -> delete, delete -> create with the same id, update -> write the
-  previous body back. `POST /changes/{id}/revert` and `POST /changes/rollback` apply them through the batch (`dry_run`
-  plans only). Only the batch's entities can be reverted; deleting a role records its items too. `GET /changes?wait=N`
-  long-polls the log: the service polls the table, so the records of every replica are seen. Known limitation: ids are not
-  in commit order, so a poller can pass a record that commits after a higher id; a fix needs a commit horizon.
+- `PolicyTx` takes `admin_write` before invariant reads and mutation. Its recheck hook is reserved for P4 bindings; P3 platform authorization remains unchanged.
+  A batch joins that transaction, deduplicates touched rows and takes one final global revision. Header, history, notification and commit are the final operations.
+- `change_log` is ordered by `(revision, seq)` in commit order. It keeps the API entity before/after for undo; outbox streams carry canonical database rows instead.
+  `GET /changes?after_revision=&after_seq=&wait=` follows that cursor without skipping concurrent commits. `POST /changes/{revision}/revert` reverses every record
+  of one revision, newest sequence first; rollback `{to: revision}` reverses later revisions. Both use one batch and support `dry_run`.
+  Role items and owned group memberships removed by cascades are audited too. Only batch entity types can be reverted. History retention is independent of outbox retention.
 - Policy tools (admin, read access on the service): `POST /service/{id}/policy/test` runs scenarios through the
   simulation and reports the rules that decided each answer and the coverage (`policy_tests.go`);
   `GET /service/{id}/policy/lint` (`lint.go`, messages in the request language); `GET /service/{id}/policy/export` and
-  `POST /service/{id}/policy/import?dry_run&prune` (`policy_document.go`). The document (`licetum.policy/v1`) names
+  `POST /service/{id}/policy/import?dry_run&prune` (`policy_document.go`). The document (`licetum.policy/v2`) names
   everything: a rule is matched by its name, or by its id when it is named `rule-<id>`. The import plans operations with
-  the ids of new entities chosen up front, so one batch can name them.
+  the ids of new entities chosen up front, so one batch can name them. `licetum.policy/v1` is explicitly refused before nested input validation.
+  Scenario inputs use `properties` and optional `subject_type` (default `user`); cases use the same subject preparation as AuthZEN.
 - A create that is given an id another entity has is refused with 409 (`idTaken`, `db.IsPrimaryKeyViolation`), so a
   batch or an import rolls back as a whole. The policy document lists are optional on input.
 - Access groups have a page (`pages/access-groups`); they are also managed through the batch and the policy document.
@@ -681,8 +627,8 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   (`App.NoteReadRevision`, called once per authenticated request by `authzenFreshness`; the metadata, a cacheable public document, carries none), and a 401 carries `WWW-Authenticate: Bearer realm="<PDP__PUBLIC_URL>/service/<slug>"`
   (`realm="licetum"` without the public URL; `error="invalid_token"` follows for a credential that was presented and rejected, `apperr.Error.WithRealm`). A 424 for keys that cannot be read says so and
   nothing of where they are: the URL and the transport error stay in the cause, which is logged. The person of the access log is `on_behalf_of`, hashed or omitted by the `subject` log setting (`log_settings`) like `subject` and `user`. A request that is not valid is a 400, not Huma's 422 (the
-  `NewErrorWithContext` hook maps it for the `AuthZEN` tag; `badRequest` does it for errors of the handlers). The callers are PEP clients (below): the person of a question is the body's `subject`, whose claims are in
-  `subject.properties` (`subjectClaims`, `model.PrepareSubject`: `subject.type` of 1–64 and `subject.id` of 1–256 characters (not bytes), at most 100 claims and 16 KiB, no `group` type and no `group:` prefix, for the evaluations of a batch too; `preferred_username` defaults to `subject.id`),
+  `NewErrorWithContext` hook maps it for the `AuthZEN` tag; `badRequest` does it for errors of the handlers). The callers are PEP clients (below): the person of a question is the body's `subject`, whose properties are in
+  `subject.properties` (`subjectProperties`, `model.PrepareSubject`: `subject.type` of 1–64 and `subject.id` of 1–256 characters (not bytes), at most 100 properties and 16 KiB, no `group` type and no `group:` prefix, for the evaluations of a batch too; `preferred_username` defaults to `subject.id`),
   and nothing about a call is recorded in the database. `context.licetum.explain` puts the explanation
   into `context.reason_admin`, `context.licetum.min_revision` asks for an answer that reflects a revision (the only freshness a caller can ask for); the other context keys are the request attributes. Resource search (`engine.SearchResources`) reads the candidates of the type from `resource_cache` by a keyset scan in bytewise order
   (`ORDER BY external_id COLLATE "C"`, the index `ix_resource_cache_type_external_c` of migration `00007`) and decides them in batches of 500 under
@@ -694,21 +640,21 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   in P5), so a caller with few grants on a very large type pays up to the budget per page; the result has no `total` (`properties.name` is the name; a `not_sync` type has none); action search lists the levels on a resource (or on the type as a whole:
   the candidates are the levels the person has on some resource of the type, each decided by `CheckAccess`); subject search (a PEP client with
   `search_subject`) decides the people of the **directory of the service** of the asked `subject.type` (`DirectoryAfter`,
-  keyset by type and id, bytewise) with their stored properties as claims: batches of 100 from the cursor until the page is full or 1000 people
+  keyset by type and id, bytewise) with their stored subject properties: batches of 100 from the cursor until the page is full or 1000 people
   were gone through, the page token is the last person covered (`type:id`, no `page.total`), so no page skips or repeats a person; the decisions are
   the cached `CheckAccess` ones. A person who is not in the directory is never found, an empty directory gives an empty result (DIR01); the result
   carries the stored display name as `properties.name`.
-- **PEP clients** (`engine/pep.go`, `engine/pep_auth.go`, `server/authzen_auth.go`, `server/pep_limits.go`, `pepauth/`, migration `00006`; ADR 0001, 7.10): the
+- **PEP clients** (`engine/pep.go`, `engine/pep_auth.go`, `server/authzen_auth.go`, `server/pep_limits.go`, `pepauth/`; ADR 0001, 7.10): the
   callers of the AuthZEN routes. The directory (`pep_issuer`, `pep_client`, `pep_credential`) is read as a whole by `App.PEPDirectory` and follows the
-  `pep` scope of `revision_state`; a write to it bumps that scope only (no decision reads the directory, so no answer key moves) and calls
-  `App.AfterPEPWrite`. A client belongs to one service and is `api_key` (a key `lct_<16 hex digits>_<43 characters>`, stored as the sha256 of its
+  global epoch/revision; a changed write uses `PolicyTx`, emits `pep` with no affected decision services, and calls `App.AfterPEPWrite`.
+  P3 global cache keys still invalidate decisions when that revision is observed. A client belongs to one service and is `api_key` (a key `lct_<16 hex digits>_<43 characters>`, stored as the sha256 of its
   secret, at most two active at once) or `jwt` (the `iss` and the `azp`/`client_id` of the token of an issuer registered in `pep_issuer`: the algorithm
   allowlist, `aud` always required, the issuer's `audiences` or else `PDP__AUDIENCE` (default `PDP__PUBLIC_URL`), `at+jwt` when the issuer asks, 60 s of
   leeway). `operations` lists what it may call: `evaluate` (the default), `search_resource`, `search_action`, `search_subject` and `explain`. The routes ask
   `AuthenticatePEP` first (`authzenAuth.caller`): an API key or a token of a registered issuer that does not verify is a 401 (`Bearer error="invalid_token"`,
   a key's answer takes the same time whether its id exists or not); a valid credential that gives nothing on the service (no such service, a client of
   another service, a disabled one, an operation it lacks, `explain` without the `explain` operation) is **one** 403 `authzen_forbidden`, the same body for
-  every reason, so a caller learns nothing about which services exist. Any other credential — the token of a person included — is a 401. The person of a question is the body's `subject` (`subjectClaims`, the claims in `subject.properties`), never the
+  every reason, so a caller learns nothing about which services exist. Any other credential — the token of a person included — is a 401. The person of a question is the body's `subject` (`subjectProperties`, the properties in `subject.properties`), never the
   credential. `PEP__RATE_LIMIT`/`PEP__RATE_BURST` is a token bucket per
   client and per process (429 `authzen_rate_limited` + `Retry-After`; off by default; a global limit belongs to the ingress). The directory holds enabled
   clients only, so the key of a disabled client is a 401, not a 403. Tests: `core/server/authzen_pep_test.go`, `admin-api/tests/integration/api/pep_test.go`.
@@ -722,7 +668,7 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
   (`Cache-Control: no-store`) and nowhere else; a client has two active keys at most (409), and a revoked key, a disabled or a deleted client is refused by every replica
   within the revision poll interval (PEP02, `cluster/pep_test.go`).
 - **Simulation for administrators** (`core/server/simulate.go`, `admin-api/api/admin_ops.go`, tag `Simulation`): `POST /service/{service_id}/simulate/access/v1/{evaluation,evaluations,search/{resource,action,subject}}`
-  take the AuthZEN requests of the PDP and answer as it does, for the person and the claims the request names (`subject.properties` as they are given),
+  take the AuthZEN requests of the PDP and answer as it does, for the person and the properties the request names (`subject.properties` as they are given),
   with `consistency=higher` (the data as it is now) and the explanation always on (`context.reason_admin`). They run the code of the PDP routes on a
   synthetic caller (`authzenCaller.simulated`): no PEP authentication, no decision log; the policy is the read right on the service
   (`requireResource(PlatformService, read, "service_id")`). The old `simulate_check` and `simulate_permission` are gone. In the web interface
@@ -737,13 +683,13 @@ it returns the typed result `{type_name: sync | not_sync}` used by the PDP and t
 PEP tokens are verified by `core/pepauth` (`pepauth.Verifier`, key sets in `pepauth/jwks.go`): the algorithm allowlist, `aud` required, `exp`/`nbf` with leeway, `at+jwt` when the
 issuer asks; only transport failures of the key set are a 424. The same verifier checks the tokens of the administrators (`ADMIN_AUTH__*`).
 The PDP takes no token of a person and keeps no OAuth state (PKCE, tokens, refresh): the settings `AUTH__STATE_*`, `AUTH__TOKEN_L1_SIZE`,
-`AUTH__INVALID_TOKEN_TTL`, `DELEGATION__*` and `CORS__*` went with those features (`config.DeprecatedSettings` warns when one is still set). Freshness
+`AUTH__INVALID_TOKEN_TTL`, `DELEGATION__*` and `CORS__*` went with those features (the deprecated-setting catalog and warnings are removed). Freshness
 is asked for with `context.licetum.min_revision` only. The header `X-Authz-Sync: pending` stays until P5 (it goes with `ensure`).
 
 Claim values are compared as Python `str()` would render them (`service.PyStr`: `True`, `5`,
 `['a', 'b']`) so predicates written for the old implementation keep matching.
 
-Access log (`logAndRecover` in `internal/api/server.go`): one `request` line per HTTP request with `request_id`
+Access log (`logAndRecover` in `core/server/server.go`): one `request` line per HTTP request with `request_id`
 (the caller's `X-Request-ID` when it is sane, else a generated UUID; returned in the response), `operation`, `user`,
 status and duration. `user` is set only after the credential is verified (`SetRequestUser`, called by `platformAuth` and
 the PDP's `authzenAuth.caller`), so a forged token never shows up. Request bodies are never logged: they carry
@@ -759,8 +705,8 @@ description; in short:
   what a sign-in under way remembers lives in a second short-lived encrypted cookie. The browser reaches the admin API only through
   `src/app/api/admin/[...path]/route.ts`, which adds the token and renews it at the identity provider's token endpoint. The admin API
   needs no CORS setting for it; the redirect URI to register at the provider is `${APP_BASE_URL}/auth/callback`.
-- The API client is generated by orval from `backend/schema/admin.yaml` into `web/src/api` (not committed): `pnpm orval` /
-  `task web:orval` / `task generate`. After an API change run `task backend:schema`, then regenerate.
+- The API client is generated by orval from `admin-api/schema/admin.yaml` into `web/src/api` (not committed): `pnpm orval` /
+  `task web:orval` / `task generate`. After an API change run `task go:schema`, then regenerate.
 - `task web:lint` (format, orval, tsc, locale check, knip), `task web:test` (`pnpm test`, Jest in `web/tests`: the domain helpers,
   the grant form model, the schemas, the session cookie, the OIDC sign-in, and components rendered with mocked data), `pnpm build`. There is no
   e2e suite against a running stack: the interface is tested on mocks by decision of the owner.

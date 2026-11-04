@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/licetum/licetum/core/engine"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -40,7 +42,7 @@ func newWorld(t *testing.T) *world {
 	e := setup(t)
 	ctx := context.Background()
 	for _, table := range []string{"division", "rrs", "branch", "item"} {
-		if _, err := e.pool.Exec(ctx, `CREATE TABLE src_`+table+` (id text PRIMARY KEY, name text, parent_id text)`); err != nil {
+		if _, err := support.RawExec(ctx, e.pool, `CREATE TABLE src_`+table+` (id text PRIMARY KEY, name text, parent_id text)`); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -99,7 +101,7 @@ func (w *world) source(table string, values ...string) {
 		if values[i+2] != "" {
 			parent = &values[i+2]
 		}
-		if _, err := w.pool.Exec(context.Background(), `INSERT INTO src_`+table+` VALUES ($1, $2, $3)`,
+		if _, err := support.RawExec(context.Background(), w.pool, `INSERT INTO src_`+table+` VALUES ($1, $2, $3)`,
 			values[i], values[i+1], parent); err != nil {
 			w.t.Fatal(err)
 		}
@@ -108,7 +110,7 @@ func (w *world) source(table string, values ...string) {
 
 func (w *world) exec(sql string, args ...any) {
 	w.t.Helper()
-	if _, err := w.pool.Exec(context.Background(), sql, args...); err != nil {
+	if _, err := support.RawExec(context.Background(), w.pool, sql, args...); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -118,7 +120,7 @@ func (w *world) grant(rule map[string]any) string {
 	if _, ok := rule["access"]; !ok {
 		rule["access"] = []string{"read"}
 	}
-	if _, ok := rule["subject"]; !ok && rule["member_of_group_id"] == nil && rule["predicate"] == nil {
+	if _, ok := rule["subject"]; !ok && rule["member_of_group_id"] == nil && rule["subject_group_id"] == nil && rule["predicate"] == nil {
 		rule["subject"] = hierarchySubject
 	}
 	return w.must("POST", "/assignment_rule", rule)["id"].(string)
@@ -126,10 +128,10 @@ func (w *world) grant(rule map[string]any) string {
 
 // permission computes the access of hierarchySubject with higher consistency: neither the result
 // cache nor the source throttle is used (a source change does not bump the cache version by itself).
-func (w *world) permission(serviceID string, claims engine.Claims) engine.PermissionResult {
+func (w *world) permission(serviceID string, claims engine.Properties) engine.PermissionResult {
 	w.t.Helper()
 	if claims == nil {
-		claims = engine.Claims{}
+		claims = engine.Properties{}
 	}
 	out, err := w.app.GetPermission(context.Background(), uuid.MustParse(serviceID), hierarchySubject,
 		engine.NewEnv(claims, nil), engine.HigherConsistency)
@@ -185,18 +187,18 @@ func TestIntegrationHierarchyCascade(t *testing.T) {
 	}
 }
 
-func TestIntegrationHierarchyResourceFromClaim(t *testing.T) {
+func TestIntegrationHierarchyResourceFromProperty(t *testing.T) {
 	w := newWorld(t)
-	w.grant(map[string]any{"type_resource_id": w.rrs, "resource_from_claim": map[string]any{
-		"claim": "department", "lookup_type_resource_id": w.branch, "match_by": "name",
+	w.grant(map[string]any{"type_resource_id": w.rrs, "resource_from_property": map[string]any{
+		"property": "department", "lookup_type_resource_id": w.branch, "match_by": "name",
 	}})
 
 	// branch B3 -> its rrs R2 -> everything under R2
-	result := w.permission(w.org, engine.Claims{"department": "Branch 3"})
+	result := w.permission(w.org, engine.Properties{"department": "Branch 3"})
 	expectIDs(t, result, "rrs", "R2")
 	expectIDs(t, result, "branch", "B3")
 
-	if nothing := w.permission(w.org, engine.Claims{"department": "no such branch"}); len(nothing) != 0 {
+	if nothing := w.permission(w.org, engine.Properties{"department": "no such branch"}); len(nothing) != 0 {
 		t.Fatalf("an unknown claim value must grant nothing: %+v", nothing)
 	}
 }
@@ -292,27 +294,27 @@ func TestIntegrationHierarchyDeletedMiddleType(t *testing.T) {
 
 func TestIntegrationTypeModes(t *testing.T) {
 	w := newWorld(t)
-	// A permission without resources for a role matched by the position claim: the type has no
+	// A permission without resources for a role matched by the position property: the type has no
 	// synchronizer, so it is returned as not_sync.
 	capability := w.typeResource(w.appSvc, "advanced_mode", "")
-	role := w.must("POST", "/group", map[string]any{"name": "advanced-users"})["id"].(string)
+	role := w.must("POST", "/group", map[string]any{"service_id": w.appSvc, "name": "advanced-users"})["id"].(string)
 	w.must("POST", "/group/"+role+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "position", "op": "in", "value": []string{"manager"}}},
 	})
 	w.grant(map[string]any{"type_resource_id": capability, "member_of_group_id": role, "access": []string{"write", "read"}})
 	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1"})
 
-	manager := w.permission(w.appSvc, engine.Claims{"position": "manager"})
+	manager := w.permission(w.appSvc, engine.Properties{"position": "manager"})
 	expectIDs(t, manager, "item", "I1")
 	expectJSON(t, "advanced_mode", manager["advanced_mode"], `{"type":"not_sync","access":["read","write"]}`)
 
 	// Without an applicable rule a not_sync type is not in the response at all.
-	cashier := w.permission(w.appSvc, engine.Claims{"position": "cashier"})
+	cashier := w.permission(w.appSvc, engine.Properties{"position": "cashier"})
 	if _, ok := cashier["advanced_mode"]; ok || len(cashier) != 1 {
 		t.Fatalf("cashier must only see item: %+v", cashier)
 	}
 
-	// The check API tells the two modes apart. The result cache is keyed by subject, not by claims, so reset it after the
+	// The check API tells the two modes apart. The result cache is keyed by subject, not by properties, so reset it after the
 	// cashier computation above. A type with resources lists them, each with its levels; a type without resources lists
 	// none, and has its levels as a whole.
 	w.externalChange(context.Background())

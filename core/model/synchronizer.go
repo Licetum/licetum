@@ -297,6 +297,8 @@ type SourceTestResult struct {
 }
 
 type Synchronizer struct {
+	// RowVersion fences a fetched snapshot against any intervening source update.
+	RowVersion     string             `json:"-"`
 	ID             uuid.UUID          `json:"id" format:"uuid" doc:"Synchronizer id"`
 	TypeResourceID uuid.UUID          `json:"type_resource_id" format:"uuid" doc:"Resource type id"`
 	Config         SynchronizerConfig `json:"config" doc:"Source configuration"`

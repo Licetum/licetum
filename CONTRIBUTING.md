@@ -110,28 +110,24 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 - Add a new numbered Goose migration for schema changes. Do not rewrite an already-applied migration.
 - Run `task generate` after changing an API schema and verify that `task check` passes.
 
-### Migrations must work with the previous release
+### Schema-v2 migrations
 
-During a rolling update the new schema is applied (`licetum migrate`, which runs first) while pods of the **previous**
-release are still serving requests, and a rollback puts those pods back for good. So a migration must leave the schema
-usable by the release that came before it. Make every change in two steps, **expand** and **contract**, in two releases:
+Schema v2 is a fresh-database boundary. The released v0.1.x schema and public API have no upgrade path. `migrate` refuses a legacy
+`goose_db_version` on its search path before any write; `goose_db_version_v2` owns v2 history. For disposable local development data:
 
-1. **Expand** (release N): add what the new code needs, and change nothing the old code reads or writes. Add a column
-   as nullable or with a default, add a table or an index, add an enum value. The new code reads and writes both the old
-   and the new shape.
-2. **Contract** (release N+1 or later, once release N-1 can no longer run): drop the column, the table or the constraint
-   nothing uses any more, make a column `NOT NULL`, tighten a check.
+```sh
+docker compose down -v
+docker compose up
+```
 
-In particular, in one release do not: drop or rename a column, a table or an enum value; add a `NOT NULL` column without
-a default; narrow a column type; add a constraint that rows written by the old code can violate; change the meaning of
-an existing value. A rename is a new column, a copy, a switch of the readers, and a drop two releases later. Long
-statements (a table rewrite, an index on a large table) need `CREATE INDEX CONCURRENTLY` or batches, because they hold
-locks that the pods of the previous release wait on.
+The temporary P3 chain has been folded into `core/db/migrations/00001_init.sql` with [recorded schema equivalence](core/tests/integration/db/schema_v2_equivalence.md).
+From this point, add new numbered Goose files for schema changes and never rewrite an applied initializer or migration. Keep compatible-release changes in expand/contract steps;
+this rule does not create a v0.1.x upgrade path. The previous-release compatibility job is removed. Remove its old required status check from branch protection if configured.
+See [the approved P3 decisions](docs/adr/0001-regional-pdp.md#1171-p3-decisions).
 
-The PDP reports ready (`/readyz` on its ops port, `PDP__OPS_ADDR`, `:9090` by default) when the schema is **at least** the
-version it was built for, so pods of the previous release stay in service while the new schema is applied. `licetum migrate` takes an advisory lock, so several
-runs started together (one per pod) apply each migration once; it needs a connection that lasts for the whole run, which
-behind PgBouncer in transaction mode means `DB__MIGRATE_URI` pointing at PostgreSQL itself.
+`licetum migrate` takes an advisory lock, so several runs started together apply each migration once. It needs a
+connection that lasts for the whole run; behind PgBouncer in transaction mode, point `DB__MIGRATE_URI` at PostgreSQL
+itself. Readiness requires the schema version expected by the running binary; it does not establish v0.1.x compatibility.
 
 ### Interface changes
 
@@ -191,8 +187,8 @@ ghcr.io/licetum/licetum/web:1.2.3
 Stable releases also update the `latest` tag. Pre-releases such as `v1.2.3-rc.1` publish only
 SemVer tags and do not update `latest`.
 
-Use clear, descriptive commit messages in the imperative mood. There is no requirement to use a
-specific commit-message format, but unrelated changes should not be combined into one commit.
+Use clear conventional commit subjects for P3 and release-noted work (`feat`, `fix`, `refactor`, `docs`, `test`), with `!` for breaking changes so git-cliff records them.
+P3 task subjects end with their issue number and every commit is signed off. Keep unrelated changes in separate commits.
 
 ## License
 
@@ -217,3 +213,10 @@ it under the license of its part. Commit with `git commit -s`. The CI checks it 
 
 This is not a CLA: the project does not take the right to relicense your code. Only the author's own code may be offered
 under another license.
+
+### Policy writes in migrations
+
+Once the mandatory-outbox triggers exist, any migration that rewrites or truncates a covered policy table must also
+write an outbox entry in that transaction. Foreign-key cascades count too. Do not disable the triggers, use replica mode,
+or change expected checksums to make a migration pass. The folded v2 init inserts its initial rows before installing
+triggers. Test fixture SQL uses `core/testsupport.RawPolicyTx`; production writers use `PolicyTx` or `TakeRevision`.

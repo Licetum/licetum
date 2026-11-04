@@ -71,7 +71,7 @@ function api(levels: string[], extra: Record<string, unknown> = {}) {
     },
     'GET /service/s1/pep-clients': [apiKeyClient, jwtClient],
     'GET /service/s1/policy/properties': [
-      { name: 'department', source: 'claim', rules: 2, targets: 0, memberships: 1 },
+      { name: 'department', source: 'subject', rules: 2, targets: 0, memberships: 1 },
       { name: 'ip', source: 'context', rules: 1, targets: 0, memberships: 0 },
     ],
     'GET /platform/pep-issuers': [

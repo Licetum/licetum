@@ -9,9 +9,15 @@ package i18n
 // keep working.
 const (
 	// generic
-	InternalError    Key = "internal_error"
-	RouteNotFound    Key = "route_not_found"
-	ValidationFailed Key = "validation_failed"
+	RuleSubjectTypeInvalid     Key = "rule_subject_type_invalid"
+	SubjectTypeRequiresLiteral Key = "subject_type_requires_literal"
+	SubjectGroupReserved       Key = "subject_group_reserved"
+	RuleServiceRetarget        Key = "rule_service_retarget"
+	ServiceOwnershipMismatch   Key = "service_ownership_mismatch"
+	ServiceOwnershipImmutable  Key = "service_ownership_immutable"
+	InternalError              Key = "internal_error"
+	RouteNotFound              Key = "route_not_found"
+	ValidationFailed           Key = "validation_failed"
 	// availability: the 503 answers of a process that is not ready, cannot trust its copy of the policy, is overloaded or ran
 	// out of time for a request
 	NotReady          Key = "not_ready"
@@ -57,13 +63,14 @@ const (
 	LintRuleTargetDead            Key = "lint_rule_target_dead"
 	LintRuleLookupDead            Key = "lint_rule_lookup_dead"
 	LintRuleEveryone              Key = "lint_rule_everyone"
-	LintDenyMissingClaim          Key = "lint_deny_missing_claim"
+	LintDenyMissingProperty       Key = "lint_deny_missing_claim"
 	LintGroupEmpty                Key = "lint_group_empty"
 	LintExceptionNothingToLift    Key = "lint_exception_nothing_to_lift"
 	LintResourceWhereEmpty        Key = "lint_resource_where_empty"
 	LintRuleDuplicate             Key = "lint_rule_duplicate"
 	LintRoleUnused                Key = "lint_role_unused"
 	LintAccessGroupUnused         Key = "lint_access_group_unused"
+	PolicyV1NotImported           Key = "policy_v1_not_imported"
 	PolicyFormatInvalid           Key = "policy_format_invalid"
 	PolicyServiceMismatch         Key = "policy_service_mismatch"
 	PolicyNameDuplicate           Key = "policy_name_duplicate"
@@ -81,6 +88,7 @@ const (
 	ContextInvalid                Key = "context_invalid"
 	ResourceWhereAttrInvalid      Key = "resource_where_attr_invalid"
 	AccessEmpty                   Key = "access_empty"
+	ResourceTargetRetired         Key = "resource_target_retired"
 	ResourceTargetExclusive       Key = "resource_target_exclusive"
 	SubjectTargetExclusive        Key = "subject_target_exclusive"
 	ServiceUpdateEmpty            Key = "service_update_empty"
@@ -88,6 +96,7 @@ const (
 	GroupMemberExclusive          Key = "role_member_exclusive"
 	RoleAssignmentInlineExclusive Key = "role_assignment_inline_exclusive"
 	AssignmentRuleTargetRequired  Key = "assignment_rule_target_required"
+	ServiceSlugImmutable          Key = "service_slug_immutable"
 	ServiceSlugInvalid            Key = "service_slug_invalid"
 	ServiceSlugTaken              Key = "service_slug_taken"
 	SynchronizerRegionsInvalid    Key = "synchronizer_regions_invalid"
@@ -169,6 +178,12 @@ const (
 )
 
 var catalog = map[Key]Text{
+	RuleSubjectTypeInvalid:     {EN: "subject_type must be 1 to 64 characters, and not group", RU: "subject_type должен содержать от 1 до 64 символов и не быть group", ZH: "subject_type 必须为 1 到 64 个字符，且不能是 group"},
+	SubjectTypeRequiresLiteral: {EN: "subject_type is only valid with a literal subject", RU: "subject_type допустим только с конкретным subject", ZH: "subject_type 仅可与具体 subject 一起使用"},
+	SubjectGroupReserved:       {EN: "The group: subject prefix is reserved; use subject_group_id", RU: "Префикс субъекта group: зарезервирован; используйте subject_group_id", ZH: "group: 主体前缀为保留值；请使用 subject_group_id"},
+	RuleServiceRetarget:        {EN: "A rule cannot be retargeted into another service", RU: "Правило нельзя перенести в другой сервис", ZH: "不能将规则重新指向其他服务"},
+	ServiceOwnershipMismatch:   {EN: "Referenced entities must belong to the same service", RU: "Связанные сущности должны принадлежать одному сервису", ZH: "引用的实体必须属于同一服务"},
+	ServiceOwnershipImmutable:  {EN: "The owning service cannot be changed", RU: "Сервис-владелец нельзя изменить", ZH: "不能更改所属服务"},
 	InternalError: {
 		EN: "Internal server error",
 		RU: "Внутренняя ошибка сервера",
@@ -261,9 +276,9 @@ var catalog = map[Key]Text{
 		ZH: "ne 运算符只能与单个字符串比较，不能与列表比较",
 	},
 	PredicateSourceInvalid: {
-		EN: "Unknown source %q: expected claim, context or now",
-		RU: "Неизвестный источник %q: ожидается claim, context или now",
-		ZH: "未知的来源 %q：应为 claim、context 或 now",
+		EN: "Unknown source %q: expected subject, context or now; claim was replaced by subject",
+		RU: "Неизвестный источник %q: ожидается subject, context или now; вместо claim используйте subject",
+		ZH: "未知的来源 %q：应为 subject、context 或 now；请使用 subject 替代 claim",
 	},
 	PredicateNowAttrInvalid: {
 		EN: "Attribute %q of source now: expected hour (0-23) or weekday (1-7)",
@@ -365,12 +380,11 @@ var catalog = map[Key]Text{
 		RU: "Правило %s выдаёт доступ всем, кто входит в систему",
 		ZH: "规则 %s 向所有登录用户授予访问权限",
 	},
-	LintDenyMissingClaim: {
-		EN: "Rule %s denies on a claim that a token may lack: a token without it is denied",
-		RU: "Правило %s запрещает по клейму, которого может не быть в токене: токен без него получает запрет",
-		ZH: "规则 %s 依据可能缺失于令牌中的声明拒绝：没有该声明的令牌会被拒绝",
-	},
-	LintGroupEmpty: {
+	LintDenyMissingProperty: {
+		EN: "Rule %s denies on a property that a subject may lack: a subject without it is denied",
+		RU: "Правило %s запрещает доступ по свойству, которого может не быть у субъекта: без свойства доступ запрещён",
+		ZH: "规则 %s 依据主体可能缺少的属性拒绝访问：缺少该属性的主体会被拒绝",
+	}, LintGroupEmpty: {
 		EN: "Rule %s names a group that has no members: nobody gets through it",
 		RU: "Правило %s указывает группу без участников: через него никто не пройдёт",
 		ZH: "规则 %s 指向一个没有成员的组：没有人能通过它",
@@ -400,10 +414,15 @@ var catalog = map[Key]Text{
 		RU: "Группа действий %s не используется ни одним правилом и ни одним элементом роли",
 		ZH: "访问组 %s 未被任何规则或角色项使用",
 	},
+	PolicyV1NotImported: {
+		EN: "Documents in licetum.policy/v1 are not imported; use licetum.policy/v2",
+		RU: "Документы формата licetum.policy/v1 не импортируются; используйте licetum.policy/v2",
+		ZH: "不导入 licetum.policy/v1 文档；请使用 licetum.policy/v2",
+	},
 	PolicyFormatInvalid: {
-		EN: "The document format is %q: expected licetum.policy/v1",
-		RU: "Формат документа %q: ожидается licetum.policy/v1",
-		ZH: "文档格式为 %q：应为 licetum.policy/v1",
+		EN: "The document format is %q: expected licetum.policy/v2",
+		RU: "Формат документа %q: ожидается licetum.policy/v2",
+		ZH: "文档格式为 %q：应为 licetum.policy/v2",
 	},
 	PolicyServiceMismatch: {
 		EN: "The document is for the service %q, not for %q",
@@ -505,20 +524,25 @@ var catalog = map[Key]Text{
 		RU: "Поле access должно содержать хотя бы один уровень доступа",
 		ZH: "字段 access 必须至少包含一个访问级别",
 	},
+	ResourceTargetRetired: {
+		EN: "Field %q has been replaced by %q",
+		RU: "Поле %q заменено на %q",
+		ZH: "字段 %q 已被 %q 替代",
+	},
 	ResourceTargetExclusive: {
-		EN: "Specify at most one of: resource_id or resource_from_claim",
-		RU: "Укажите не более одного из: resource_id или resource_from_claim",
-		ZH: "resource_id 和 resource_from_claim 最多只能指定一个",
+		EN: "Specify at most one of: resource_id or resource_from_property",
+		RU: "Укажите не более одного из: resource_id или resource_from_property",
+		ZH: "resource_id 和 resource_from_property 最多只能指定一个",
 	},
 	SubjectTargetExclusive: {
-		EN: "Specify at most one of: subject, member_of_group_id or predicate",
-		RU: "Укажите не более одного из: subject, member_of_group_id или predicate",
-		ZH: "subject、member_of_group_id 和 predicate 最多只能指定一个",
+		EN: "Specify at most one of: subject, subject_group_id, member_of_group_id or predicate",
+		RU: "Укажите не более одного из: subject, subject_group_id, member_of_group_id или predicate",
+		ZH: "subject、subject_group_id、member_of_group_id 和 predicate 最多只能指定一个",
 	},
 	RoleAssignmentInlineExclusive: {
-		EN: "With role_id do not set type_resource_id, resource_id, resource_from_claim or access: the permissions come from the role",
-		RU: "С role_id нельзя задавать type_resource_id, resource_id, resource_from_claim и access: права берутся из роли",
-		ZH: "指定 role_id 时不能设置 type_resource_id、resource_id、resource_from_claim 或 access：权限来自角色",
+		EN: "With role_id do not set type_resource_id, resource_id, resource_from_property or access: the permissions come from the role",
+		RU: "С role_id нельзя задавать type_resource_id, resource_id, resource_from_property и access: права берутся из роли",
+		ZH: "指定 role_id 时不能设置 type_resource_id、resource_id、resource_from_property 或 access：权限来自角色",
 	},
 	AssignmentRuleTargetRequired: {
 		EN: "Specify role_id, or type_resource_id with access",
@@ -724,6 +748,11 @@ var catalog = map[Key]Text{
 		RU: "Пункт роли %s не найден",
 		ZH: "未找到角色权限项 %s",
 	},
+	ServiceSlugImmutable: {
+		EN: "A service slug cannot be changed after creation",
+		RU: "Slug сервиса нельзя изменить после создания",
+		ZH: "服务创建后不能更改 slug",
+	},
 	ServiceSlugTaken: {
 		EN: "A service with slug %q already exists",
 		RU: "Сервис со slug %q уже существует",
@@ -735,9 +764,9 @@ var catalog = map[Key]Text{
 		ZH: "未找到授权规则 %s",
 	},
 	AssignmentRuleNeedsSynchronizer: {
-		EN: "Resource type %s has no synchronizer and hence no resources: a rule or a role permission can only point at the type as a whole, without resource_id and resource_from_claim",
-		RU: "У типа ресурса %s нет синхронизатора, а значит и ресурсов: правило или пункт роли выдаются только на тип целиком, без resource_id и resource_from_claim",
-		ZH: "资源类型 %s 没有同步器，因此没有资源：规则或角色权限项只能授予整个类型，不能指定 resource_id 或 resource_from_claim",
+		EN: "Resource type %s has no synchronizer and hence no resources: a rule or a role permission can only point at the type as a whole, without resource_id and resource_from_property",
+		RU: "У типа ресурса %s нет синхронизатора, а значит и ресурсов: правило или пункт роли выдаются только на тип целиком, без resource_id и resource_from_property",
+		ZH: "资源类型 %s 没有同步器，因此没有资源：规则或角色权限项只能授予整个类型，不能指定 resource_id 或 resource_from_property",
 	},
 
 	AdminAuthNotConfigured: {

@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +15,10 @@ import (
 // and entities nothing uses. It reads the policy as it is written and the data as it is now. Every finding names what
 // it is about, and its message is in the language of the request.
 func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport, error) {
+	ctx, err := a.CurrentReadContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rules, err := a.serviceRulesAll(ctx, serviceID)
 	if err != nil {
 		return nil, err
@@ -65,8 +68,8 @@ func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport,
 		// a duplicate or a guard on an empty group is worth knowing when the synchronizer comes back.
 		if r.RoleID == nil && hasResourceTarget(r) && !synced[*r.TypeResourceID] {
 			lint.add(model.LintError, i18n.LintRuleTargetDead, &id, nil, nil, label)
-		} else if r.RoleID == nil && r.ResourceFromClaim != nil && g.LookupCut(r.ResourceFromClaim.LookupTypeResourceID, *r.TypeResourceID) {
-			// The type is there, but the claim is looked up in a type without resources, or the climb passes one: the
+		} else if r.RoleID == nil && r.ResourceFromProperty != nil && g.LookupCut(r.ResourceFromProperty.LookupTypeResourceID, *r.TypeResourceID) {
+			// The type is there, but the property is looked up in a type without resources, or the climb passes one: the
 			// rule finds nothing there (a denial keeps an absent anchor, see engine.TypeGraph.LookupCut).
 			lint.add(model.LintError, i18n.LintRuleLookupDead, &id, nil, nil, label)
 		}
@@ -74,8 +77,8 @@ func (a *App) Lint(ctx context.Context, serviceID uuid.UUID) (*model.LintReport,
 		if r.Effect != model.EffectDeny && everyoneRule(r) {
 			lint.add(model.LintWarning, i18n.LintRuleEveryone, &id, nil, nil, label)
 		}
-		if r.Effect == model.EffectDeny && r.OnMissingAttribute == model.OnMissingApply && claimCondition(r.Predicate, r.RequiresPredicate) {
-			lint.add(model.LintInfo, i18n.LintDenyMissingClaim, &id, nil, nil, label)
+		if r.Effect == model.EffectDeny && r.OnMissingAttribute == model.OnMissingApply && propertyCondition(r.Predicate, r.RequiresPredicate) {
+			lint.add(model.LintInfo, i18n.LintDenyMissingProperty, &id, nil, nil, label)
 		}
 		for _, g := range groupsOfRule(r) {
 			if !withMembers[g] {
@@ -139,13 +142,13 @@ func ruleLabel(r model.AssignmentRule) string {
 
 // hasResourceTarget reports whether a rule names resources (and so needs a synchronizer to take effect).
 func hasResourceTarget(r model.AssignmentRule) bool {
-	return r.ResourceID != nil || r.ResourceFromClaim != nil || len(r.ResourceWhere) > 0
+	return r.ResourceID != nil || r.ResourceFromProperty != nil || len(r.ResourceWhere) > 0
 }
 
-// everyoneRule reports whether a rule covers every subject: no subject, group or claim condition narrows it, and no guard
+// everyoneRule reports whether a rule covers every subject: no subject, group or property condition narrows it, and no guard
 // does either.
 func everyoneRule(r model.AssignmentRule) bool {
-	return r.Subject == nil && r.MemberOfGroupID == nil && len(r.Predicate) == 0 &&
+	return r.Subject == nil && r.SubjectGroupID == nil && r.MemberOfGroupID == nil && len(r.Predicate) == 0 &&
 		len(r.RequiresPredicate) == 0 && r.RequiresGroupID == nil
 }
 
@@ -158,19 +161,17 @@ func groupsOfRule(r model.AssignmentRule) []uuid.UUID {
 	if r.RequiresGroupID != nil {
 		out = append(out, *r.RequiresGroupID)
 	}
-	if r.Subject != nil && strings.HasPrefix(*r.Subject, model.GroupSubjectPrefix) {
-		if id, err := uuid.Parse(strings.TrimPrefix(*r.Subject, model.GroupSubjectPrefix)); err == nil {
-			out = append(out, id)
-		}
+	if r.SubjectGroupID != nil {
+		out = append(out, *r.SubjectGroupID)
 	}
 	return out
 }
 
-// claimCondition reports whether a condition reads a claim of the token (the default source).
-func claimCondition(lists ...[]model.PredicateCondition) bool {
+// propertyCondition reports whether a condition reads a property of the token (the default source).
+func propertyCondition(lists ...[]model.PredicateCondition) bool {
 	for _, conds := range lists {
 		for _, c := range conds {
-			if c.Source == "" || c.Source == model.SourceClaim {
+			if c.Source == "" || c.Source == model.SourceSubject {
 				return true
 			}
 		}
@@ -183,12 +184,12 @@ func claimCondition(lists ...[]model.PredicateCondition) bool {
 func ruleSignature(r model.AssignmentRule) string {
 	raw, _ := json.Marshal(struct {
 		Type, Role, Resource, Subject, Member, RequiresGroup any
-		Claim                                                any
+		Property                                             any
 		Where, Access, Predicate, Requires                   any
 		Effect, Exception, OnMissing                         any
 	}{
 		Type: r.TypeResourceID, Role: r.RoleID, Resource: r.ResourceID, Subject: r.Subject,
-		Member: r.MemberOfGroupID, RequiresGroup: r.RequiresGroupID, Claim: r.ResourceFromClaim,
+		Member: r.MemberOfGroupID, RequiresGroup: r.RequiresGroupID, Property: r.ResourceFromProperty,
 		Where: r.ResourceWhere, Access: r.Access, Predicate: r.Predicate, Requires: r.RequiresPredicate,
 		Effect: r.Effect, Exception: r.Exception, OnMissing: r.OnMissingAttribute,
 	})
@@ -219,10 +220,8 @@ func (a *App) groupsWithMembers(ctx context.Context, groupIDs []uuid.UUID) (map[
 // unusedRoles returns the roles with items on the resource types of a service that no rule grants.
 func (a *App) unusedRoles(ctx context.Context, serviceID uuid.UUID) ([]model.Role, error) {
 	rows, err := a.DB.Query(ctx, `
-		SELECT DISTINCT ro.id, ro.name FROM role ro
-		JOIN role_permission rp ON rp.role_id = ro.id
-		JOIN type_resource t ON t.id = rp.type_resource_id
-		WHERE t.service_id = $1 AND t.deleted_at IS NULL
+		SELECT ro.service_id,ro.id, ro.name FROM role ro
+ WHERE ro.service_id=$1
 		  AND NOT EXISTS (SELECT 1 FROM assignment_rule ar WHERE ar.role_id = ro.id)
 		ORDER BY ro.name`, serviceID)
 	if err != nil {
@@ -232,7 +231,7 @@ func (a *App) unusedRoles(ctx context.Context, serviceID uuid.UUID) ([]model.Rol
 	var out []model.Role
 	for rows.Next() {
 		var r model.Role
-		if err := rows.Scan(&r.ID, &r.Name); err != nil {
+		if err := rows.Scan(&r.ServiceID, &r.ID, &r.Name); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -33,9 +33,9 @@ rules:
   - {name: di-part, subject: denied-item, type: part, access: [read]}
   - {name: di-deny-I1, subject: denied-item, type: item, resource: I1, access: ["*"], deny: true}
   # Claims looked up among the resources of item, among those of part below it, and among the branches.
-  - {name: branch-of-item, subject: by-claim, type: branch, access: [read], from_claim: {claim: item_name, lookup_type: item, match_by: name}}
-  - {name: branch-of-part, subject: by-claim, type: branch, access: [read], from_claim: {claim: part_name, lookup_type: part, match_by: name}}
-  - {name: branch-by-name, subject: by-claim, type: branch, access: [read], from_claim: {claim: branch_name, lookup_type: branch, match_by: name}}
+  - {name: branch-of-item, subject: by-claim, type: branch, access: [read], from_property: {property: item_name, lookup_type: item, match_by: name}}
+  - {name: branch-of-part, subject: by-claim, type: branch, access: [read], from_property: {property: part_name, lookup_type: part, match_by: name}}
+  - {name: branch-by-name, subject: by-claim, type: branch, access: [read], from_property: {property: branch_name, lookup_type: branch, match_by: name}}
 cases:
   - name: the grant on D1 no longer reaches P1 through I1, which is not there
     subject: above
@@ -66,7 +66,7 @@ cases:
   - name: a claim is not matched among the resources item had, and a match below item does not climb through them
     subject: by-claim
     service: org
-    claims: {item_name: Item 1, part_name: Part 1, branch_name: Branch 2}
+    properties: {item_name: Item 1, part_name: Part 1, branch_name: Branch 2}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [branch-by-name]}

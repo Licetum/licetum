@@ -138,7 +138,7 @@ func (w warmer) evaluations(n int) authzenreq.Request {
 	return authzenreq.Evaluations(serviceSlug, subjectName(warmSubject), questions, w.options()...)
 }
 
-// options are those of every request about subject 0: its claims.
+// options are those of every request about subject 0: its properties.
 func (w warmer) options() []authzenreq.Option {
 	return []authzenreq.Option{w.profile.asPerson(warmSubject)}
 }

@@ -35,7 +35,7 @@ func (a *App) checkParents(ctx context.Context, q db.Querier, parents []model.Ty
 			WITH RECURSIVE ancestors(id) AS (
 				SELECT $1::uuid
 				UNION
-				SELECT p.parent_id FROM type_resource_parent p JOIN ancestors a ON p.type_resource_id = a.id
+				SELECT p.parent_id FROM type_resource_parent p JOIN ancestors a ON p.type_resource_id = a.id WHERE p.live
 			)
 			SELECT EXISTS (SELECT 1 FROM ancestors WHERE id = $2)`,
 			p.TypeResourceID, *selfID,
@@ -57,7 +57,8 @@ func replaceTypeParents(ctx context.Context, q db.Querier, typeID uuid.UUID, par
 	}
 	for _, p := range parents {
 		if _, err := q.Exec(ctx,
-			`INSERT INTO type_resource_parent (type_resource_id, parent_id, inherit) VALUES ($1, $2, $3)`,
+			`INSERT INTO type_resource_parent (type_resource_id,parent_id,identity_domain_id,inherit,live,eff_inherit,eff_live)
+ VALUES ($1,$2,(SELECT identity_domain_id FROM type_resource WHERE id=$1),$3,true,$3,true)`,
 			typeID, p.TypeResourceID, p.Inherit); err != nil {
 			return err
 		}
@@ -91,7 +92,7 @@ func nameTakenOnRace(err error, name string) error {
 
 func (a *App) CreateTypeResource(ctx context.Context, serviceID uuid.UUID, in *model.TypeResourceInput) (*model.TypeResource, error) {
 	var t *model.TypeResource
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		if _, err := a.GetExistingService(ctx, q, serviceID); err != nil {
 			return change{}, err
 		}
@@ -104,8 +105,8 @@ func (a *App) CreateTypeResource(ctx context.Context, serviceID uuid.UUID, in *m
 
 		var err error
 		t, err = engine.ScanTypeResource(q.QueryRow(ctx, `
-			INSERT INTO type_resource (service_id, name, access_implies)
-			VALUES ($1, $2, $3::jsonb)
+			INSERT INTO type_resource (service_id, name, access_implies, identity_domain_id)
+			VALUES ($1, $2, $3::jsonb, (SELECT identity_domain_id FROM service WHERE id=$1))
 			RETURNING `+engine.TypeResourceColumns,
 			serviceID, in.Name, engine.MustJSON(in.AccessImplies),
 		))
@@ -200,7 +201,7 @@ func (a *App) ListAllTypeResources(ctx context.Context) ([]model.TypeResourceWit
 
 func (a *App) UpdateTypeResource(ctx context.Context, serviceID, typeResourceID uuid.UUID, in *model.TypeResourceInput) (*model.TypeResource, error) {
 	var t *model.TypeResource
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingTypeResource(ctx, q, serviceID, typeResourceID)
 		if err != nil {
 			return change{}, err
@@ -240,7 +241,7 @@ func (a *App) UpdateTypeResource(ctx context.Context, serviceID, typeResourceID 
 }
 
 func (a *App) DeleteTypeResource(ctx context.Context, serviceID, typeResourceID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingTypeResource(ctx, q, serviceID, typeResourceID)
 		if err != nil {
 			return change{}, err
@@ -254,13 +255,13 @@ func (a *App) DeleteTypeResource(ctx context.Context, serviceID, typeResourceID 
 			sql  string
 		}{
 			{"synchronizer", `SELECT 1 FROM synchronizer WHERE type_resource_id = $1 AND deleted_at IS NULL`},
-			// A type is also referenced as the lookup type of a claim-based target (resource_from_claim).
+			// A type is also referenced as the lookup type of a property-based target (resource_from_property).
 			{"assignment_rule", `SELECT 1 FROM assignment_rule WHERE type_resource_id = $1
-				OR resource_from_claim->>'lookup_type_resource_id' = $1::text`},
+				OR resource_from_property->>'lookup_type_resource_id' = $1::text`},
 			{"role_permission", `SELECT 1 FROM role_permission WHERE type_resource_id = $1
-				OR resource_from_claim->>'lookup_type_resource_id' = $1::text`},
+				OR resource_from_property->>'lookup_type_resource_id' = $1::text`},
 			{"type_resource", `SELECT 1 FROM type_resource_parent p JOIN type_resource c ON c.id = p.type_resource_id
-				WHERE p.parent_id = $1 AND c.deleted_at IS NULL`},
+				WHERE p.parent_id = $1 AND (p.live OR p.eff_live) AND c.deleted_at IS NULL`},
 		}
 		var blockedBy []string
 		for _, c := range checks {
@@ -276,6 +277,9 @@ func (a *App) DeleteTypeResource(ctx context.Context, serviceID, typeResourceID 
 			return change{}, apperr.BlockedBy(blockedBy, i18n.TypeResourceDeleteBlocked, typeResourceID)
 		}
 
+		if _, err := q.Exec(ctx, `DELETE FROM type_resource_parent WHERE type_resource_id=$1`, typeResourceID); err != nil {
+			return change{}, err
+		}
 		if _, err := q.Exec(ctx, `UPDATE type_resource SET deleted_at = now() WHERE id = $1`, typeResourceID); err != nil {
 			return change{}, err
 		}

@@ -32,7 +32,7 @@ type DirectoryEntryInput struct {
 	Type       string         `json:"type,omitempty" required:"false" maxLength:"64" doc:"The type of the subject (the subject.type of AuthZEN); absent: user" example:"user"`
 	ID         string         `json:"id" minLength:"1" maxLength:"512" doc:"The id of the subject as the rules name it and the PEPs send it (subject.id)" example:"alice"`
 	Name       string         `json:"name,omitempty" required:"false" maxLength:"256" doc:"The name to show for the subject; it is what a subject search returns as properties.name" example:"Alice Liddell"`
-	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The properties of the subject (subject.properties): the claims the rules read, stored as sent, at most 100 of them and 16 KiB in all"`
+	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The properties of the subject (subject.properties): the properties the rules read, stored as sent, at most 100 of them and 16 KiB in all"`
 }
 
 // Validate checks the entry and gives it its type.

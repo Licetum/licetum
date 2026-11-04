@@ -15,16 +15,16 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// ChangeIDPath names a record of the change log.
-type ChangeIDPath struct {
-	ChangeID int64 `path:"change_id" minimum:"1" doc:"Id of the change record (see GET /changes)"`
+// ChangeRevisionPath names a record of the change log.
+type ChangeRevisionPath struct {
+	Revision int64 `path:"revision" minimum:"1" doc:"The global revision to revert (see GET /changes)"`
 }
 
 // registerBatch registers the batch executor and the history of the policy: reverting one change, and rolling back
 // to a position of the change log. A batch and a history write are checked operation by operation, with the policy
 // of the admin route that does the same write.
 func (h *adminHandlers) registerBatch(api huma.API) {
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "run_batch",
 		Method:      http.MethodPost,
 		Path:        "/batch",
@@ -32,7 +32,7 @@ func (h *adminHandlers) registerBatch(api huma.API) {
 		Description: "Applies the operations in order, in one transaction: all of them take effect, or none. Each operation is a create, an update or a delete of an assignment rule, a group, a group member, a role, a role item or an access group, with the same body its endpoint takes. The caller needs the policy of each write, as on the admin routes. A failing operation answers with its index in extra.operation, and nothing is applied. The change log records every operation, and the cache is invalidated once, after the commit.",
 		Errors:      []int{http.StatusConflict, http.StatusUnprocessableEntity},
 		Tags:        []string{"Batch"},
-	}, signedIn()), func(ctx context.Context, in *struct{ Body model.BatchInput }) (*server.Out[model.BatchResponse], error) {
+	}, []string{"{operations}"}, "operations"), signedIn()), func(ctx context.Context, in *struct{ Body model.BatchInput }) (*server.Out[model.BatchResponse], error) {
 		if err := service.CheckOperations(in.Body.Operations); err != nil {
 			return nil, err
 		}
@@ -46,26 +46,26 @@ func (h *adminHandlers) registerBatch(api huma.API) {
 		return server.OK(model.BatchResponse{Results: results})
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "revert_change",
 		Method:      http.MethodPost,
-		Path:        "/changes/{change_id}/revert",
-		Summary:     "Revert one change",
-		Description: "Puts the entity of one record of the change log back as it was before the change: a create is deleted, a delete is created again with its id (and, for a role, its items), an update is written back with its previous body. The revert is a change of its own, in the log. Only the entities a batch writes can be reverted (409 otherwise). With dry_run, the operation is returned and nothing is applied.",
+		Path:        "/changes/{revision}/revert",
+		Summary:     "Revert one revision",
+		Description: "Reverts every record of the revision, newest sequence first, in one transaction. An unsupported entity makes the whole revert fail with 409. With dry_run, return the plan without applying it.",
 		Errors:      []int{http.StatusConflict, http.StatusNotFound, http.StatusUnprocessableEntity},
 		Tags:        []string{"Batch"},
-	}, signedIn()), func(ctx context.Context, in *struct {
-		ChangeIDPath
+	}, []string{"{operations}"}, "operations"), signedIn()), func(ctx context.Context, in *struct {
+		ChangeRevisionPath
 		Body model.RevertInput
 	}) (*server.Out[model.RevertResponse], error) {
-		ops, err := h.app.PlanRevert(ctx, in.ChangeID)
+		ops, err := h.app.PlanRevert(ctx, in.Revision)
 		if err != nil {
 			return nil, err
 		}
 		return applyPlan(ctx, h.app, ops, in.Body.DryRun)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "rollback_changes",
 		Method:      http.MethodPost,
 		Path:        "/changes/rollback",
@@ -73,7 +73,7 @@ func (h *adminHandlers) registerBatch(api huma.API) {
 		Description: "Undoes every change after the position `to`, newest first, so that the policy goes back to what it was at that position. All of it happens in one transaction: if one change cannot be undone (a change to a service, a resource type or a synchronizer is not a batch entity), nothing is applied and the answer is 409. The undo is recorded in the change log like any write. With dry_run, the operations are returned and nothing is applied.",
 		Errors:      []int{http.StatusConflict, http.StatusUnprocessableEntity},
 		Tags:        []string{"Batch"},
-	}, signedIn()), func(ctx context.Context, in *struct{ Body model.RollbackInput }) (*server.Out[model.RevertResponse], error) {
+	}, []string{"{operations}"}, "operations"), signedIn()), func(ctx context.Context, in *struct{ Body model.RollbackInput }) (*server.Out[model.RevertResponse], error) {
 		ops, err := h.app.PlanRollback(ctx, in.Body.To)
 		if err != nil {
 			return nil, err

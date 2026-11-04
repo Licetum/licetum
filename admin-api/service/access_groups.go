@@ -21,11 +21,11 @@ import (
 // of the permissions of the type. A group that a rule or an item still names cannot be renamed or deleted: the
 // reference would dangle.
 
-const accessGroupColumns = `id, type_resource_id, name, levels`
+const accessGroupColumns = `service_id,id, type_resource_id, name, levels`
 
 func scanAccessGroup(row pgx.Row) (*model.AccessGroup, error) {
 	var g model.AccessGroup
-	if err := row.Scan(&g.ID, &g.TypeResourceID, &g.Name, &g.Levels); err != nil {
+	if err := row.Scan(&g.ServiceID, &g.ID, &g.TypeResourceID, &g.Name, &g.Levels); err != nil {
 		return nil, err
 	}
 	return &g, nil
@@ -114,7 +114,7 @@ func (a *App) CreateAccessGroup(ctx context.Context, typeResourceID uuid.UUID, i
 // createAccessGroup creates a group with the given id, or with a new one when id is nil (see createAssignmentRule).
 func (a *App) createAccessGroup(ctx context.Context, typeResourceID uuid.UUID, in *model.AccessGroupInput, id *uuid.UUID) (*model.AccessGroup, error) {
 	var g *model.AccessGroup
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		if _, err := a.GetExistingTypeResourceAnyService(ctx, q, typeResourceID); err != nil {
 			return change{}, err
 		}
@@ -123,7 +123,7 @@ func (a *App) createAccessGroup(ctx context.Context, typeResourceID uuid.UUID, i
 			return change{}, err
 		}
 		g, err = scanAccessGroup(q.QueryRow(ctx, `
-			INSERT INTO access_group (id, type_resource_id, name, levels) VALUES (COALESCE($4::uuid, gen_random_uuid()), $1, $2, $3)
+			INSERT INTO access_group (service_id,id, type_resource_id, name, levels) VALUES ((SELECT service_id FROM type_resource WHERE id=$1),COALESCE($4::uuid, gen_random_uuid()), $1, $2, $3)
 			RETURNING `+accessGroupColumns, typeResourceID, in.Name, in.Levels, id))
 		if db.IsPrimaryKeyViolation(err) {
 			return change{}, idTaken(id)
@@ -144,7 +144,7 @@ func (a *App) createAccessGroup(ctx context.Context, typeResourceID uuid.UUID, i
 
 func (a *App) UpdateAccessGroup(ctx context.Context, typeResourceID, groupID uuid.UUID, in *model.AccessGroupInput) (*model.AccessGroup, error) {
 	var g *model.AccessGroup
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingAccessGroup(ctx, q, typeResourceID, groupID)
 		if err != nil {
 			return change{}, err
@@ -177,7 +177,7 @@ func (a *App) UpdateAccessGroup(ctx context.Context, typeResourceID, groupID uui
 }
 
 func (a *App) DeleteAccessGroup(ctx context.Context, typeResourceID, groupID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingAccessGroup(ctx, q, typeResourceID, groupID)
 		if err != nil {
 			return change{}, err

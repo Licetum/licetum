@@ -26,7 +26,7 @@ const (
 
 // checkResultFormat is the version of the cached check answers (see cachedAnswer): it changes with their format and
 // with the decisions.
-const checkResultFormat = "t5"
+const checkResultFormat = "t8"
 
 // CheckAccess answers the questions "may the caller do X with Y" without building the whole permission map: the
 // rules are loaded once, and the questions are answered together, each from the ancestors of its resource. The
@@ -39,18 +39,18 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 	}
 	sum := sha256.Sum256(questions)
 	state := a.cacheState(ctx).forConsistency(ctx, consistency)
-	key := fmt.Sprintf("authz:check:%s:r%d:%s:%s:%s:%t:%s", checkResultFormat, state.version, serviceID, subject,
+	key := fmt.Sprintf("authz:check:%s:e%d:r%d:%s:st%x:%s:%s:%t:%s", checkResultFormat, state.epoch, state.version, serviceID, env.subjectType(), subject,
 		a.requestFingerprint(ctx, state, env), explain, hex.EncodeToString(sum[:]))
 	results, err := cachedAnswer(ctx, a, key, state, consistency, a.metrics.checkCache,
 		func(ctx context.Context) (computed[[]model.CheckResult], error) {
 			if err := a.serviceExists(ctx, state, serviceID); err != nil {
 				return computed[[]model.CheckResult]{}, err
 			}
-			results, deps, ttl, hold, err := a.checkAccess(ctx, serviceID, subject, env, requests, explain, state, consistency)
+			results, ttl, hold, err := a.checkAccess(ctx, serviceID, subject, env, requests, explain, state, consistency)
 			if err != nil {
 				return computed[[]model.CheckResult]{}, err
 			}
-			return computed[[]model.CheckResult]{value: results, deps: deps, ttl: ttl, hold: hold}, nil
+			return computed[[]model.CheckResult]{value: results, ttl: ttl, hold: hold}, nil
 		})
 	if err != nil {
 		return nil, err
@@ -66,20 +66,20 @@ func (a *App) CheckAccess(ctx context.Context, serviceID uuid.UUID, subject stri
 }
 
 // checkAccess computes the answers of one request (the cache around it is in CheckAccess).
-func (a *App) checkAccess(ctx context.Context, serviceID uuid.UUID, subject string, env Env, requests []model.CheckRequest, explain bool, state cacheState, consistency Consistency) ([]model.CheckResult, map[string]int64, time.Duration, time.Duration, error) {
+func (a *App) checkAccess(ctx context.Context, serviceID uuid.UUID, subject string, env Env, requests []model.CheckRequest, explain bool, state cacheState, consistency Consistency) ([]model.CheckResult, time.Duration, time.Duration, error) {
 	asked := make([]string, len(requests))
 	for i, r := range requests {
 		asked[i] = r.Type
 	}
 	p, err := a.prepare(ctx, serviceID, subject, env, state, consistency, asked)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, 0, 0, err
 	}
 	results, err := a.decideChecks(ctx, p, serviceID, requests, explain)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, 0, 0, err
 	}
-	return results, p.deps, p.ttl, p.hold, nil
+	return results, p.ttl, p.hold, nil
 }
 
 // checkInputs is what the questions of one request are answered from, read once for all of them.
@@ -261,7 +261,7 @@ func (p *Prepared) explanation(decision string, lv *levelVerdict) *model.Explana
 	return e
 }
 
-// RefOf is ruleRef for an instance that is not in the list (a rule found by a claim).
+// RefOf is ruleRef for an instance that is not in the list (a rule found by a property).
 func (p *Prepared) RefOf(in *Instance) model.RuleRef {
 	typeName := in.AnchorType.String()
 	if n, ok := p.Graph.Node(in.AnchorType); ok {

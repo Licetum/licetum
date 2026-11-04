@@ -76,7 +76,7 @@ contracts:
     phase: P1
     status: active
   - id: DEC10
-    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_claim (resource_from_property after P3) matches by name, id and meta attributes and anchors at the matched resource's ancestors of the rule's type through the resource links, whatever the inherit masks.
+    statement: requires_predicate and requires_group guard any rule; resource_where matches scalars and list elements; resource_from_property (resource_from_property after P3) matches by name, id and meta attributes and anchors at the matched resource's ancestors of the rule's type through the resource links, whatever the inherit masks.
     oracle: decision tables
     level: pg
     phase: P1
@@ -110,6 +110,13 @@ contracts:
     oracle: core/testsupport/refeval (builds reachability from the edges itself, shares no code with the engine)
     level: pg
     phase: P1
+    status: active
+
+  - id: DEC15
+    statement: A literal-subject rule matches only the same subject id and, when subject_type is set, the same subject type; a null subject_type matches any type. Group subjects are matched through subject_group_id, not a group-prefixed literal.
+    oracle: decision tables and core/testsupport/refeval
+    level: pg
+    phase: P3
     status: active
 
   # ---------- ST: read model stores (core/readmodel/storetest against every adapter) ----------
@@ -216,7 +223,7 @@ contracts:
     oracle: the outbox
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: PUB03
     statement: "Heartbeat: every commit before pg_time has a revision at most the heartbeat's position."
     oracle: snapshots of PostgreSQL
@@ -234,7 +241,7 @@ contracts:
     oracle: the records encoded, decoded again chunk by chunk
     level: unit
     phase: P3
-    status: planned
+    status: active
   - id: APP01
     statement: The applier never moves past a missing or mismatching entry; late, duplicate or reordered headers and chunks never produce a torn application; a missing chunk is read from another data center.
     oracle: injected log
@@ -310,37 +317,37 @@ contracts:
     oracle: the outbox and revision_state
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR02
     statement: "A transaction that changed rows of a covered policy table (ADR 0001, 4.7), or truncated one, without an outbox row fails at COMMIT (raw SQL, cascades, the seed and restore-admin included). Only tuples actually changed count, so a statement that changed no row does not; the resource tables get the same check in P5. A bypass is not claimed impossible: REC01 reports it."
     oracle: the commit result
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR03
     statement: The outbox images reproduce exactly the rows a write changed.
     oracle: a diff of the tables around the operation
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR04
     statement: Concurrent writes cannot together remove the last platform admin, create a cycle of types, or delete an entity in use.
     oracle: the final state
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR05
     statement: Each write route produces exactly its streams and affected services (generated from the route table).
     oracle: the route table
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR06
     statement: An admin write takes at most a measured budget of round trips to PostgreSQL.
     oracle: the traced round trips
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: WR07
     statement: A synchronization never waits for an admin transaction longer than its commit (lock order).
     oracle: timings under contention
@@ -352,7 +359,7 @@ contracts:
     oracle: the state after the batch
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: HIS02
     statement: "Revert and rollback stay within one service. Records of the service's types, synchronizers and type links are reverted through the batch; one that cannot be restored exactly (a secret changed) is planned as partial, and the plan is applied only with allow_partial: true, otherwise 409 change_not_revertible names the records (ADR 0001, 8.7)."
     oracle: the change log of the service
@@ -370,13 +377,13 @@ contracts:
     oracle: status code
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: HIS05
     statement: A reader of the change feed ordered by (revision, seq) never skips a record.
     oracle: the records committed
     level: pg
     phase: P3
-    status: planned
+    status: active
 
   # ---------- SYN: synchronization of sources ----------
   - id: SYN01
@@ -714,7 +721,7 @@ contracts:
     oracle: status codes
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: ADM12
     statement: Only callers whose roles in S include directory_writer (a machine client of the admin IdP, or an editor of S through the role closure of ADR 0001, 8.2) write the directory of S, at a limited rate and without the admin_write lock; an unchanged batch takes no revision, directory_writer allows nothing else, and a role of one service cannot read the directory of another.
     oracle: status codes and lock waits
@@ -781,7 +788,7 @@ contracts:
     oracle: the schema versions
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: OPS05
     statement: A PDP in CQL mode connects only to the nodes of its data center and has no PostgreSQL credentials.
     oracle: the sockets of the process (/proc/net/tcp)
@@ -805,7 +812,7 @@ contracts:
     oracle: the error and the untouched database
     level: pg
     phase: P3
-    status: planned
+    status: active
   - id: OPS09
     statement: The subject-hash salt is in no outbox entry, checkpoint or regional row, and every process hashes a subject to the same value from the same LOG__SUBJECT_SALT. Phase P5 covers the outbox and the decision log, P6 the checkpoints and the regional rows.
     oracle: the replicated state and the decision log

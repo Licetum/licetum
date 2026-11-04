@@ -30,15 +30,15 @@ func (a *App) VerifyAdminToken(ctx context.Context, token string) (pepauth.Verif
 	return verified, nil
 }
 
-// AdminSubject names the administrator whose token was verified: the claim of ADMIN_AUTH__SUBJECT_CLAIM when the token has it,
+// AdminSubject names the administrator whose token was verified: the property of ADMIN_AUTH__SUBJECT_CLAIM when the token has it,
 // else its sub. A token with neither is a 401.
-func (a *App) AdminSubject(claims Claims) (string, error) {
+func (a *App) AdminSubject(properties Properties) (string, error) {
 	if name := a.Cfg.AdminAuth.SubjectClaim; name != "" && name != "sub" {
-		if v := claims[name]; PyTruthy(v) {
+		if v := properties[name]; PyTruthy(v) {
 			return PyStr(v), nil
 		}
 	}
-	if v, ok := claims["sub"]; ok && v != nil {
+	if v, ok := properties["sub"]; ok && v != nil {
 		return PyStr(v), nil
 	}
 	return "", apperr.InvalidToken(i18n.TokenNoSubject)

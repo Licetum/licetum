@@ -30,7 +30,7 @@ export function CondEditor(props: {
   label: string;
 }) {
   const { t } = useTranslation();
-  const sources = props.sources ?? ['claim'];
+  const sources = props.sources ?? ['subject'];
   const update = (id: string, patch: Partial<Cond>) =>
     props.onChange(props.value.map((c) => (c.id === id ? { ...c, ...patch } : c)));
 

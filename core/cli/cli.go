@@ -49,12 +49,10 @@ func Migrate(ctx context.Context) error {
 	return db.RunMigrate(ctx, cfg)
 }
 
-// Failover raises every revision of the policy by a jump (-jump, default db.DefaultFailoverJump), in one transaction, against the
-// primary the process connects to. Run it once after a replica has been promoted, before the traffic is sent to it (see
-// docs/deployment.md): the regions then see revisions above everything they used, and drop what they kept under older ones.
+// Failover starts a new global epoch on the promoted primary before traffic resumes.
 func Failover(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("failover", flag.ExitOnError)
-	jump := fs.Int64("jump", db.DefaultFailoverJump, "how much to add to every revision")
+	jump := fs.Int64("jump", db.DefaultFailoverJump, "how much to add to the global revision")
 	_ = fs.Parse(args)
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -65,17 +63,14 @@ func Failover(ctx context.Context, args []string) error {
 		return err
 	}
 	defer pool.Close()
-	var revisions map[string]int64
+	var position db.Position
 	if err := db.InTx(ctx, pool, func(tx pgx.Tx) (err error) {
-		revisions, err = db.BumpAllRevisions(ctx, tx, *jump)
+		position, err = db.StartEpoch(ctx, tx, *jump)
 		return err
 	}); err != nil {
 		return err
 	}
-	for scope, revision := range revisions {
-		slog.InfoContext(ctx, "revision raised", "scope", scope, "revision", revision)
-	}
-	slog.InfoContext(ctx, "failover done: the regions replace their views and their cached answers within REVISION__POLL_INTERVAL", "jump", *jump)
+	slog.InfoContext(ctx, "failover epoch started: views reset within REVISION__POLL_INTERVAL", "epoch", position.Epoch, "revision", position.Revision, "jump", *jump)
 	return nil
 }
 
@@ -123,7 +118,6 @@ func Serve(ctx context.Context, name string, args []string, defaultAddr string, 
 	defer app.Close()
 	app.Logs = logs
 	app.Role = roleOf(name)
-	warnDeprecated(slog.Default())
 	if app.Role == engine.RoleAdmin {
 		// The admin API refreshes a single resource inline; it does so on the synchronization pool, not on the request pool.
 		syncPool, err := connectSyncPool(ctx, cfg)
@@ -247,18 +241,6 @@ func roleOf(name string) engine.Role {
 	return engine.RoleAny
 }
 
-// warnDeprecated logs one warning per removed setting that is still set, with the reason the catalog gives. Serve (the pdp
-// and admin processes) and Worker warn: they are the long-running processes whose logs a deployment watches. migrate,
-// failover, restore-admin and openapi do not: they are one-shot tools, migrate and failover run from a job with the same
-// environment as the serving processes, which already tell the operator, and a warning on the output of openapi would
-// corrupt what a script reads (the logger writes to stdout, like the specification).
-func warnDeprecated(log *slog.Logger) {
-	for _, name := range config.DeprecatedSettings() {
-		reason, _ := config.DeprecatedReason(name)
-		log.Warn("the setting no longer has an effect", "setting", name, "reason", reason)
-	}
-}
-
 // connectionBudget is the most connections to PostgreSQL a process may hold: the request pool (DB__POOL_SIZE +
 // DB__MAX_OVERFLOW), the pool of the synchronization transactions where the process has one (DB__SYNC_POOL_SIZE: the
 // worker and the admin API) and the pool of the DBOS client (SYNC__DBOS_POOL_SIZE, outside the others). The connections of
@@ -345,7 +327,6 @@ func Worker(ctx context.Context, args []string, defaultAddr string, logs *logx.S
 	app.Logs = logs
 	app.Role = engine.RoleWorker
 	app.SyncDB = syncPool
-	warnDeprecated(slog.Default())
 	if err := app.LoadLogSettings(ctx); err != nil {
 		slog.WarnContext(ctx, "the stored log settings are not applied, the defaults stay in force", "error", err)
 	}

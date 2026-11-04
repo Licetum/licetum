@@ -39,7 +39,7 @@ func seededPool(t *testing.T) (context.Context, *pgxpool.Pool, *config.Config) {
 
 // TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings: with ADMIN_AUTH__* and no OAuth variable of PLATFORM__*
 // the self-service is seeded (its service row carries no OAuth client), and restore-admin puts the access back and matches
-// its users by the claim of ADMIN_AUTH__SUBJECT_CLAIM.
+// its users by the property of ADMIN_AUTH__SUBJECT_CLAIM.
 func TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings(t *testing.T) {
 	t.Setenv("ADMIN_AUTH__ISSUER", "https://idp.test")
 	t.Setenv("ADMIN_AUTH__AUDIENCE", "licetum-admin")
@@ -57,13 +57,12 @@ func TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings(t *te
 		model.PlatformServiceID).Scan(&policies); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM service WHERE id = $1 AND authorization_url IS NULL AND token_url IS NULL
-		AND jwks_url IS NULL AND issuer IS NULL AND client_id IS NULL AND client_secret IS NULL`,
-		model.PlatformServiceID).Scan(&oauth); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='service'
+   AND column_name IN ('authorization_url','token_url','jwks_url','issuer','client_id','client_secret','trusted_clients')`).Scan(&oauth); err != nil {
 		t.Fatal(err)
 	}
-	if policies != len(model.PlatformTypes) || oauth != 1 {
-		t.Fatalf("the seed made %d of %d policies, and the platform service without an OAuth client is %d", policies, len(model.PlatformTypes), oauth)
+	if policies != len(model.PlatformTypes) || oauth != 0 {
+		t.Fatalf("the seed made %d of %d policies, and the service has %d retired OAuth columns", policies, len(model.PlatformTypes), oauth)
 	}
 	var attr string
 	if err := pool.QueryRow(ctx, `SELECT predicate->0->>'attr' FROM group_member WHERE id = $1`, model.PlatformAdminGroupMemberID).Scan(&attr); err != nil {
@@ -75,7 +74,7 @@ func TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings(t *te
 
 	// Nobody can manage the platform: the group is emptied and its rules are gone.
 	for _, stmt := range []string{`DELETE FROM group_member`, `DELETE FROM assignment_rule`} {
-		if _, err := pool.Exec(ctx, stmt); err != nil {
+		if _, err := support.RawExec(ctx, pool, stmt); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -87,7 +86,7 @@ func TestContract_ADM13_TheSeedAndRestoreAdminNeedOnlyTheAdminAuthSettings(t *te
 		t.Errorf("restored %d memberships, want 2 (the claim values and the user)", report.Members)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assignment_rule WHERE enabled AND effect = 'allow' AND resource_id IS NULL
-		AND subject = $1`, model.GroupSubject(model.PlatformAdminGroupID)).Scan(&rules); err != nil {
+		AND subject_group_id = $1`, model.PlatformAdminGroupID).Scan(&rules); err != nil {
 		t.Fatal(err)
 	}
 	if rules != len(model.PlatformTypes) {

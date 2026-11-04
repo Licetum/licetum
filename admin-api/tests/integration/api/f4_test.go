@@ -38,67 +38,71 @@ func (w *world) countRows(query string, args ...any) int {
 	return n
 }
 
+// seedRetainedDirectory creates old directory content in bulk without paying
+// one fixture API call per subject; the explicit fixture header covers the rows.
+func seedRetainedDirectory(w *world, old int) {
+	w.t.Helper()
+	w.must("PUT", "/service/"+w.org+"/subjects/settings", map[string]any{"retention_days": 90})
+	w.exec(`INSERT INTO subject_directory(service_id,subject_type,subject_id)
+  SELECT $1::uuid,'user','s'||g FROM generate_series(1,$2) g
+  UNION ALL SELECT $1::uuid,'user','fresh'`, w.org, old)
+	// Give the FK probes of the bulk seen-time insert current table statistics.
+	w.exec(`ANALYZE subject_directory`)
+	w.exec(`INSERT INTO subject_directory_seen(service_id,subject_type,subject_id,seen_at)
+  SELECT service_id,subject_type,subject_id,
+   CASE WHEN subject_id='fresh' THEN now() ELSE now()-interval '400 days' END
+  FROM subject_directory WHERE service_id=$1`, w.org)
+}
+
 func TestF4_4_RetentionRemovesOldRecordsInChunks(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	if _, err := w.pool.Exec(ctx, `
-		INSERT INTO known_subject (subject, last_seen)
-		SELECT 's' || g, now() - interval '400 days' FROM generate_series(1, 25000) g`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject) VALUES ('fresh')`); err != nil {
-		t.Fatal(err)
-	}
+	seedRetainedDirectory(w, 25000)
 	app := w.replica(func(c *config.Config) {})
 	app.RunRetention(ctx)
-	if got := w.countRows(`SELECT count(*) FROM known_subject`); got != 1 {
-		t.Fatalf("%d records left, want only the fresh one", got)
+	if got := w.countRows(`SELECT count(*) FROM subject_directory WHERE service_id=$1`, w.org); got != 1 {
+		t.Fatalf("%d directory rows left, want only the fresh one", got)
 	}
 }
 
-// The registry of known subjects is retired: nothing writes its table, and what the previous release left in it is dropped after
-// 90 days, with no setting.
-func TestF4_4_RetentionDropsWhatIsLeftOfTheRetiredRegistryAfterNinetyDays(t *testing.T) {
+func TestF4_4_DirectoryRetentionCanKeepEntriesWithoutExpiry(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject, last_seen) VALUES ('old', now() - interval '200 days'), ('fresh', now())`); err != nil {
-		t.Fatal(err)
-	}
+	seedRetainedDirectory(w, 1)
+	path := "/service/" + w.org + "/subjects/settings"
+	w.must("PUT", path, map[string]any{"retention_days": nil})
 	app := w.replica(func(c *config.Config) {})
 	app.RunRetention(ctx)
-	if got := w.countRows(`SELECT count(*) FROM known_subject WHERE subject IN ('old', 'fresh')`); got != 1 {
-		t.Fatalf("%d subjects left, want only the fresh one", got)
+	if got := w.countRows(`SELECT count(*) FROM subject_directory WHERE service_id=$1`, w.org); got != 2 {
+		t.Fatalf("retention disabled: %d rows, want 2", got)
+	}
+	w.must("PUT", path, map[string]any{"retention_days": 90})
+	app.RunRetention(ctx)
+	if got := w.countRows(`SELECT count(*) FROM subject_directory WHERE service_id=$1`, w.org); got != 1 {
+		t.Fatalf("retention enabled: %d rows, want 1", got)
 	}
 }
 
-// Every worker applies the retention at its start and then every interval; there is no lock that makes it run once. Two workers that
-// start together divide the old rows and neither waits for the other: all of them are gone, and each was deleted by one.
+// Workers divide expired directory entries with SKIP LOCKED and publish their
+// own chunks; a newly sent subject must survive their overlapping runs.
 func TestF4_4_WorkersApplyTheRetentionAtTheSameTimeAndDivideTheWork(t *testing.T) {
 	w := newWorld(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if _, err := w.pool.Exec(ctx, `
-		INSERT INTO known_subject (subject, last_seen)
-		SELECT 's' || g, now() - interval '400 days' FROM generate_series(1, 30000) g`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.pool.Exec(ctx, `INSERT INTO known_subject (subject) VALUES ('fresh')`); err != nil {
-		t.Fatal(err)
-	}
+	seedRetainedDirectory(w, 30000)
 	tune := func(c *config.Config) {}
 	a, b := w.replica(tune), w.replica(tune)
-
 	started := time.Now()
 	go a.WatchRetention(ctx)
 	go b.WatchRetention(ctx)
-	for w.countRows(`SELECT count(*) FROM known_subject`) != 1 {
+	for w.countRows(`SELECT count(*) FROM subject_directory WHERE service_id=$1`, w.org) != 1 {
 		if time.Since(started) > 30*time.Second {
-			t.Fatalf("%d records left, want only the fresh one", w.countRows(`SELECT count(*) FROM known_subject`))
+			t.Fatal("directory retention did not drain the expired entries")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if got := w.countRows(`SELECT count(*) FROM known_subject WHERE subject = 'fresh'`); got != 1 {
-		t.Fatal("the fresh record was deleted")
+	if got := w.countRows(`SELECT count(*) FROM subject_directory WHERE service_id=$1 AND subject_id='fresh'`, w.org); got != 1 {
+		t.Fatal("the fresh directory entry was deleted")
 	}
 }
 
@@ -148,7 +152,7 @@ func TestF4_6_WaitersOfTheChangeLogShareOnePoller(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			out, err := w.app.WaitChanges(ctx, service.ChangeFilter{After: 1 << 40, Limit: 10}, 3*time.Second)
+			out, err := w.app.WaitChanges(ctx, service.ChangeFilter{AfterSeq: 2147483647, AfterRevision: 1 << 40, Limit: 10}, 3*time.Second)
 			if err != nil {
 				t.Error(err)
 			}
@@ -172,7 +176,7 @@ func TestF4_6_AWaiterSeesARecordThatComesWhileItWaits(t *testing.T) {
 	w := newWorld(t)
 	done := make(chan []string, 1)
 	go func() {
-		out, _ := w.app.WaitChanges(context.Background(), service.ChangeFilter{After: w.lastChange(), Limit: 10}, 10*time.Second)
+		out, _ := w.app.WaitChanges(context.Background(), service.ChangeFilter{AfterSeq: 2147483647, AfterRevision: w.lastChange(), Limit: 10}, 10*time.Second)
 		ids := []string{}
 		for _, c := range out {
 			ids = append(ids, c.Entity)
@@ -180,7 +184,7 @@ func TestF4_6_AWaiterSeesARecordThatComesWhileItWaits(t *testing.T) {
 		done <- ids
 	}()
 	time.Sleep(300 * time.Millisecond)
-	w.must("POST", "/group", map[string]any{"name": "late"})
+	w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "late"})
 	select {
 	case ids := <-done:
 		if len(ids) == 0 {
@@ -193,7 +197,7 @@ func TestF4_6_AWaiterSeesARecordThatComesWhileItWaits(t *testing.T) {
 
 func (w *world) lastChange() int64 {
 	var id int64
-	if err := w.pool.QueryRow(context.Background(), `SELECT COALESCE(max(id), 0) FROM authz_change`).Scan(&id); err != nil {
+	if err := w.pool.QueryRow(context.Background(), `SELECT COALESCE(max(revision), 0) FROM change_log`).Scan(&id); err != nil {
 		w.t.Fatal(err)
 	}
 	return id

@@ -31,7 +31,7 @@ func SubjectOf(token string) string {
 	return claimText(claims["sub"])
 }
 
-// claimText is a claim as the server reads it: strings and numbers; anything else names nobody.
+// claimText is a property as the server reads it: strings and numbers; anything else names nobody.
 func claimText(v any) string {
 	switch v := v.(type) {
 	case string:

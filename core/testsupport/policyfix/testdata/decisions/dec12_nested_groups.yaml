@@ -121,12 +121,12 @@ cases:
       - {type: cap, action: diamond, allowed: true, decision: allowed, granted_by: [diamond]}
   - name: a membership by a predicate passes through the nesting
     subject: auditor
-    claims: {team: audit}
+    properties: {team: audit}
     questions:
       - {type: cap, action: review, allowed: true, decision: allowed, granted_by: [review]}
   - name: a claim that does not match the predicate gives no nested membership
     subject: developer
-    claims: {team: dev}
+    properties: {team: dev}
     questions:
       - {type: cap, action: review, allowed: false, decision: no_access, granted_by: []}
   - name: a grant and a denial reach the members of nested groups

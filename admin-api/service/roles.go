@@ -24,9 +24,15 @@ func (a *App) CreateRole(ctx context.Context, in *model.RoleInput) (*model.Role,
 // createRole creates a role with the given id, or with a new one when id is nil (see createAssignmentRule).
 func (a *App) createRole(ctx context.Context, in *model.RoleInput, id *uuid.UUID) (*model.Role, error) {
 	var r model.Role
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
-		err := q.QueryRow(ctx, `INSERT INTO role (id, name) VALUES (COALESCE($2::uuid, gen_random_uuid()), $1) RETURNING id, name`,
-			in.Name, id).Scan(&r.ID, &r.Name)
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
+		if in.ServiceID == nil {
+			return change{}, apperr.Unprocessable(i18n.FieldRequired, "service_id")
+		}
+		if _, err := a.GetExistingService(ctx, q, *in.ServiceID); err != nil {
+			return change{}, err
+		}
+		err := q.QueryRow(ctx, `INSERT INTO role (id, name, service_id) VALUES (COALESCE($2::uuid, gen_random_uuid()), $1,$3) RETURNING service_id,id,name`,
+			in.Name, id, *in.ServiceID).Scan(&r.ServiceID, &r.ID, &r.Name)
 		if db.IsPrimaryKeyViolation(err) {
 			return change{}, idTaken(id)
 		}
@@ -36,7 +42,7 @@ func (a *App) createRole(ctx context.Context, in *model.RoleInput, id *uuid.UUID
 		if err != nil {
 			return change{}, err
 		}
-		return change{entity: "role", entityID: r.ID, action: actionCreate, after: r}, nil
+		return change{entity: "role", entityID: r.ID, serviceID: &r.ServiceID, action: actionCreate, after: r}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -44,8 +50,12 @@ func (a *App) createRole(ctx context.Context, in *model.RoleInput, id *uuid.UUID
 	return &r, nil
 }
 
-func (a *App) ListRoles(ctx context.Context) ([]model.Role, error) {
-	rows, err := a.DB.Query(ctx, `SELECT id, name FROM role ORDER BY name`)
+func (a *App) ListRoles(ctx context.Context, serviceID ...*uuid.UUID) ([]model.Role, error) {
+	var owner *uuid.UUID
+	if len(serviceID) > 0 {
+		owner = serviceID[0]
+	}
+	rows, err := a.DB.Query(ctx, `SELECT service_id,id,name FROM role WHERE ($1::uuid IS NULL OR service_id=$1) ORDER BY name,id`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -58,20 +68,23 @@ func (a *App) ListRoles(ctx context.Context) ([]model.Role, error) {
 
 func (a *App) UpdateRole(ctx context.Context, roleID uuid.UUID, in *model.RoleInput) (*model.Role, error) {
 	var r model.Role
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingRole(ctx, q, roleID)
 		if err != nil {
 			return change{}, err
 		}
-		err = q.QueryRow(ctx, `UPDATE role SET name = $2 WHERE id = $1 RETURNING id, name`, roleID, in.Name).
-			Scan(&r.ID, &r.Name)
+		if in.ServiceID != nil && *in.ServiceID != old.ServiceID {
+			return change{}, apperr.Unprocessable(i18n.ServiceOwnershipImmutable)
+		}
+		err = q.QueryRow(ctx, `UPDATE role SET name = $2 WHERE id = $1 RETURNING service_id,id,name`, roleID, in.Name).
+			Scan(&r.ServiceID, &r.ID, &r.Name)
 		if db.IsUniqueViolation(err) {
 			return change{}, apperr.Conflict(i18n.RoleNameTaken, in.Name)
 		}
 		if err != nil {
 			return change{}, err
 		}
-		return change{entity: "role", entityID: roleID, action: actionUpdate, before: old, after: r}, nil
+		return change{entity: "role", entityID: roleID, serviceID: &old.ServiceID, action: actionUpdate, before: old, after: r}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -81,7 +94,7 @@ func (a *App) UpdateRole(ctx context.Context, roleID uuid.UUID, in *model.RoleIn
 
 // DeleteRole is not allowed while rules grant the role (409, extra.blocked_by). Its items go with it.
 func (a *App) DeleteRole(ctx context.Context, roleID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.GetExistingRole(ctx, q, roleID)
 		if err != nil {
 			return change{}, err
@@ -100,7 +113,7 @@ func (a *App) DeleteRole(ctx context.Context, roleID uuid.UUID) (uuid.UUID, erro
 		if _, err := q.Exec(ctx, `DELETE FROM role WHERE id = $1`, roleID); err != nil {
 			return change{}, err
 		}
-		return change{entity: "role", entityID: roleID, action: actionDelete, before: old}, nil
+		return change{entity: "role", entityID: roleID, serviceID: &old.ServiceID, action: actionDelete, before: old}, nil
 	})
 	if err != nil {
 		return uuid.Nil, err
@@ -120,18 +133,22 @@ func (a *App) getExistingRolePermission(ctx context.Context, q db.Querier, roleI
 }
 
 // checkRolePermissionRefs checks the entities an item points at and its target (see checkResourceTarget).
-func (a *App) checkRolePermissionRefs(ctx context.Context, q db.Querier, in *model.RolePermissionInput) error {
-	if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.TypeResourceID); err != nil {
+func (a *App) checkRolePermissionRefs(ctx context.Context, q db.Querier, owner uuid.UUID, in *model.RolePermissionInput) error {
+	target, err := a.GetExistingTypeResourceAnyService(ctx, q, in.TypeResourceID)
+	if err != nil {
 		return err
 	}
-	if err := a.checkResourceTarget(ctx, q, in.TypeResourceID, in.ResourceID, in.ResourceFromClaim, in.ResourceWhere); err != nil {
+	if target.ServiceID != owner {
+		return apperr.Unprocessable(i18n.ServiceOwnershipMismatch)
+	}
+	if err := a.checkResourceTarget(ctx, q, in.TypeResourceID, in.ResourceID, in.ResourceFromProperty, in.ResourceWhere); err != nil {
 		return err
 	}
 	if err := a.checkAccessGroupRefs(ctx, q, in.TypeResourceID, in.Access); err != nil {
 		return err
 	}
-	if in.ResourceFromClaim != nil {
-		if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromClaim.LookupTypeResourceID); err != nil {
+	if in.ResourceFromProperty != nil {
+		if _, err := a.GetExistingTypeResourceAnyService(ctx, q, in.ResourceFromProperty.LookupTypeResourceID); err != nil {
 			return err
 		}
 	}
@@ -183,23 +200,21 @@ func (a *App) CreateRolePermission(ctx context.Context, roleID uuid.UUID, in *mo
 // createRolePermission creates an item with the given id, or with a new one when id is nil (see createAssignmentRule).
 func (a *App) createRolePermission(ctx context.Context, roleID uuid.UUID, in *model.RolePermissionInput, id *uuid.UUID) (*model.RolePermission, error) {
 	var p *model.RolePermission
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
-		if _, err := a.GetExistingRole(ctx, q, roleID); err != nil {
-			return change{}, err
-		}
-		if err := a.checkRolePermissionRefs(ctx, q, in); err != nil {
-			return change{}, err
-		}
-		serviceID, err := itemServiceID(ctx, q, in.TypeResourceID)
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
+		owner, err := a.GetExistingRole(ctx, q, roleID)
 		if err != nil {
 			return change{}, err
 		}
+		if err := a.checkRolePermissionRefs(ctx, q, owner.ServiceID, in); err != nil {
+			return change{}, err
+		}
+		serviceID := &owner.ServiceID
 
 		p, err = engine.ScanRolePermission(q.QueryRow(ctx, `
-			INSERT INTO role_permission AS rp (id, role_id, type_resource_id, resource_id, resource_from_claim, access, resource_where)
-			VALUES (COALESCE($7::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6::jsonb)
+			INSERT INTO role_permission AS rp (service_id, id, role_id, type_resource_id, resource_id, resource_from_property, access, resource_where)
+			VALUES ((SELECT service_id FROM role WHERE id=$1),COALESCE($7::uuid, gen_random_uuid()), $1, $2, $3, $4::jsonb, $5, $6::jsonb)
 			RETURNING `+engine.RolePermissionColumns,
-			roleID, in.TypeResourceID, in.ResourceID, fromClaimParam(in.ResourceFromClaim), in.Access, whereParam(in.ResourceWhere), id,
+			roleID, in.TypeResourceID, in.ResourceID, fromPropertyParam(in.ResourceFromProperty), in.Access, whereParam(in.ResourceWhere), id,
 		))
 		if db.IsPrimaryKeyViolation(err) {
 			return change{}, idTaken(id)
@@ -221,9 +236,9 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 		return nil, err
 	}
 	rows, err := a.DB.Query(ctx, `
-		SELECT `+engine.RolePermissionColumns+`, t.service_id, s.name, t.name,
-		       (rp.resource_id IS NULL AND rp.resource_from_claim IS NULL AND rp.resource_where IS NULL)
-		       OR `+engine.LiveSynchronizerExists("t.id")+`
+		SELECT `+engine.RolePermissionColumns+`, s.name, t.name,
+		       (rp.resource_id IS NULL AND rp.resource_from_property IS NULL AND rp.resource_where IS NULL)
+		       OR `+model.TypeModeSQL("t")+`
 		FROM role_permission rp
 		JOIN type_resource t ON t.id = rp.type_resource_id
 		JOIN service s ON s.id = t.service_id
@@ -238,13 +253,13 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 	var graph lookupGraph
 	for rows.Next() {
 		var c model.RolePermissionWithContext
-		p, err := engine.ScanRolePermission(rows, &c.ServiceID, &c.ServiceName, &c.TypeResourceName, &c.TargetValid)
+		p, err := engine.ScanRolePermission(rows, &c.ServiceName, &c.TypeResourceName, &c.TargetValid)
 		if err != nil {
 			return nil, err
 		}
 		c.RolePermission = *p
-		if c.TargetValid && p.ResourceFromClaim != nil {
-			cut, err := graph.cut(ctx, a, p.ResourceFromClaim.LookupTypeResourceID, p.TypeResourceID)
+		if c.TargetValid && p.ResourceFromProperty != nil {
+			cut, err := graph.cut(ctx, a, p.ResourceFromProperty.LookupTypeResourceID, p.TypeResourceID)
 			if err != nil {
 				return nil, err
 			}
@@ -257,25 +272,26 @@ func (a *App) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]mode
 
 func (a *App) UpdateRolePermission(ctx context.Context, roleID, itemID uuid.UUID, in *model.RolePermissionInput) (*model.RolePermission, error) {
 	var p *model.RolePermission
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingRolePermission(ctx, q, roleID, itemID)
 		if err != nil {
 			return change{}, err
 		}
-		if err := a.checkRolePermissionRefs(ctx, q, in); err != nil {
-			return change{}, err
-		}
-		serviceID, err := itemServiceID(ctx, q, in.TypeResourceID)
+		owner, err := a.GetExistingRole(ctx, q, roleID)
 		if err != nil {
 			return change{}, err
 		}
+		if err := a.checkRolePermissionRefs(ctx, q, owner.ServiceID, in); err != nil {
+			return change{}, err
+		}
+		serviceID := &owner.ServiceID
 
 		p, err = engine.ScanRolePermission(q.QueryRow(ctx, `
 			UPDATE role_permission AS rp SET
-				type_resource_id = $3, resource_id = $4, resource_from_claim = $5::jsonb, access = $6, resource_where = $7::jsonb
+				type_resource_id = $3, resource_id = $4, resource_from_property = $5::jsonb, access = $6, resource_where = $7::jsonb
 			WHERE rp.id = $1 AND rp.role_id = $2
 			RETURNING `+engine.RolePermissionColumns,
-			itemID, roleID, in.TypeResourceID, in.ResourceID, fromClaimParam(in.ResourceFromClaim), in.Access, whereParam(in.ResourceWhere),
+			itemID, roleID, in.TypeResourceID, in.ResourceID, fromPropertyParam(in.ResourceFromProperty), in.Access, whereParam(in.ResourceWhere),
 		))
 		if err != nil {
 			return change{}, err
@@ -290,7 +306,7 @@ func (a *App) UpdateRolePermission(ctx context.Context, roleID, itemID uuid.UUID
 }
 
 func (a *App) DeleteRolePermission(ctx context.Context, roleID, itemID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingRolePermission(ctx, q, roleID, itemID)
 		if err != nil {
 			return change{}, err

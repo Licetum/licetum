@@ -153,7 +153,7 @@ tasks:
         if [ -z "${DOCKER_HOST:-}" ]; then
           export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
         fi
-        for m in core admin-api; do (cd $m && go test -race -count=1 -timeout 30m -tags integration ./tests/integration/...) || exit 1; done
+        for m in core admin-api; do (cd $m && go test -race -count=1 -p 1 -timeout 40m -tags integration ./...) || exit 1; done
 
   go:test:integration:pgbouncer:
     desc: The integration tests through PgBouncer in transaction mode (needs LICETUM_TEST_POSTGRES_URI and LICETUM_TEST_PGBOUNCER_ADDR, see admin-api/tests/integration/README.md)
@@ -162,7 +162,7 @@ tasks:
         for v in LICETUM_TEST_POSTGRES_URI LICETUM_TEST_PGBOUNCER_ADDR; do
           if [ -z "$(printenv $v)" ]; then echo "$v is not set: see admin-api/tests/integration/README.md"; exit 1; fi
         done
-        for m in core admin-api; do (cd $m && go test -race -count=1 -p 1 -timeout 40m -tags integration ./tests/integration/...) || exit 1; done
+        for m in core admin-api; do (cd $m && go test -race -count=1 -p 1 -timeout 40m -tags integration ./...) || exit 1; done
 
   go:test:multiregion:
     desc: The multi-region environment (three regions, latency between them, a primary and replicas) and the F6 scenarios, needs Docker
@@ -189,6 +189,8 @@ tasks:
         fi
         cd admin-api && go test -race -count=1 -timeout 30m -tags chaos ./tests/integration/...
 
+  # P3 adds exhaustive route/image and concurrency contracts to the API package. Its race-instrumented
+  # coverage run exceeds 30 minutes on CI; retain the complete suite with a bounded per-package budget.
   go:coverage:
     desc: Coverage profiles and HTML reports of both modules (unit and integration)
     cmds:
@@ -197,7 +199,7 @@ tasks:
           export DOCKER_HOST="$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' "$(docker context show)")"
         fi
         for m in core admin-api; do
-          (cd $m && mkdir -p reports && go test -race -count=1 -timeout 30m -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./httpx/...,./pepauth/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
+          (cd $m && mkdir -p reports && go test -race -count=1 -timeout 60m -tags integration -covermode=atomic -coverpkg=./cmd/...,./engine/...,./service/...,./server/...,./api/...,./db/...,./model/...,./config/...,./i18n/...,./logx/...,./httpx/...,./pepauth/...,./synchronizer/...,./apperr/... -coverprofile=reports/coverage.out ./... && go tool cover -func=reports/coverage.out > reports/coverage.txt && go tool cover -html=reports/coverage.out -o reports/coverage.html) || exit 1
         done
 
   go:schema:

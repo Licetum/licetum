@@ -2,14 +2,14 @@ package engine
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"log/slog"
 	"slices"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/licetum/licetum/core/outbox"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,12 +17,7 @@ import (
 	"github.com/licetum/licetum/core/db"
 )
 
-// The answers of the permission and check APIs are kept in the memory of the process. An answer is current while the rules
-// have not changed — the revision of the policy, part of its key — and while the resource data it was computed from has
-// not changed. Both numbers live in PostgreSQL, in the table revision_state, and change in the transaction that changes
-// the data they number: a write of an administrator bumps the revision 'rules', a synchronization that changed the data
-// of a service's types bumps 'data:<service>'. An answer records the data revisions of the services it read, so a change
-// in one service leaves in place the answers that do not read it.
+// Answers are keyed by the global (epoch, revision). P3 invalidates all answers on every write.
 
 const (
 	// computeTimeout bounds a computation that goes on after its first caller has gone away (singleflight).
@@ -34,14 +29,11 @@ const (
 type cacheState struct {
 	// ok is false when the revisions could not be read: the answer is computed and not kept.
 	ok      bool
-	version int64            // the revision of the rules
-	pep     int64            // the revision of the PEP directory (see PEPDirectory); no answer key depends on it
-	data    map[string]int64 // service id -> revision of its resource data (absent: 0)
+	version int64
+	epoch   int32
 	attrs   []string
 	// attrsOK says the attribute names are those of this revision (otherwise they are read from the rules).
 	attrsOK bool
-	// tag names the data versions the state holds (see dataTag).
-	tag string
 	// snap is the policy snapshot of the revision, when the process keeps the policy in memory (see localView).
 	snap *snapshot
 	// degraded says the revisions could not be read lately and the state is the last one this process read.
@@ -50,15 +42,14 @@ type cacheState struct {
 
 // readCacheState reads the revisions from PostgreSQL, in one statement. An error leaves the state not ok.
 func (a *App) readCacheState(ctx context.Context) cacheState {
-	rev, err := db.LoadRevisions(ctx, a.DB)
+	rev, err := db.LoadLocalVersions(ctx, a.DB)
 	if err != nil {
 		logDependency(ctx, slog.LevelWarn, "failed to read the revision of the policy", err)
 		return cacheState{}
 	}
-	a.noteLogSettingsRevision(rev.LogSettings)
-	state := cacheState{ok: true, version: rev.Rules, data: rev.Data, pep: rev.PEP}
-	state.tag = dataTag(state.data)
-	if memo := a.attrsMemo.Load(); memo != nil && memo.revision == rev.Rules {
+	a.noteLogSettingsRevision(rev.LogVersion)
+	state := cacheState{ok: true, version: rev.Revision, epoch: rev.Epoch}
+	if memo := a.attrsMemo.Load(); memo != nil && memo.revision == rev.Revision && memo.epoch == rev.Epoch {
 		state.attrs, state.attrsOK = memo.attrs, true
 	}
 	return state
@@ -66,6 +57,7 @@ func (a *App) readCacheState(ctx context.Context) cacheState {
 
 // attrsMemo remembers the attribute names of one revision of the rules, for the processes that do not keep the snapshot.
 type attrsMemo struct {
+	epoch    int32
 	revision int64
 	attrs    []string
 }
@@ -80,21 +72,10 @@ func (s cacheState) forConsistency(ctx context.Context, c Consistency) cacheStat
 	return s
 }
 
-// current reports whether an answer computed from the data versions deps is still current.
-func (s cacheState) current(deps map[string]int64) bool {
-	for svc, v := range deps {
-		if s.data[svc] != v {
-			return false
-		}
-	}
-	return true
-}
-
 // computed is an answer with what it depends on: the data versions it read, how long it is kept (ttl), and how long it stays
 // correct with respect to validity windows (hold, at least ttl: see validityUntil).
 type computed[T any] struct {
 	value T
-	deps  map[string]int64
 	ttl   time.Duration
 	hold  time.Duration
 }
@@ -104,7 +85,6 @@ type computed[T any] struct {
 // starts or ends before it): a process that cannot reach PostgreSQL serves the answer until then (see stale).
 type cachedEntry[T any] struct {
 	Value T
-	Deps  map[string]int64
 	Exp   int64
 	Hold  int64
 }
@@ -136,7 +116,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 	// The revision the answer is read at is the one the PDP reports (Licetum-Revision), even when the answer is computed from the
 	// data below: it then reflects at least this revision.
 	if t := TraceFrom(ctx); t != nil {
-		t.noteReadRevision(state.version)
+		t.noteReadPosition(state.epoch, state.version)
 	}
 
 	store := true
@@ -147,7 +127,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		store = false
 	}
 
-	flight := key + "|" + state.tag
+	flight := key
 	if consistency.fresh() {
 		results.WithLabelValues("bypass").Inc()
 		flight += ":fresh"
@@ -157,7 +137,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 			// While the revisions cannot be read an answer is served past its time, as long as no validity window has started or
 			// ended since: the process cannot compute another (the data it needs is in PostgreSQL), and the policy it holds is
 			// the one it was told to trust for POLICY__MAX_STALENESS.
-			if entry, ok := v.(*cachedEntry[T]); ok && state.current(entry.Deps) {
+			if entry, ok := v.(*cachedEntry[T]); ok {
 				switch {
 				case entry.fresh(now):
 					a.metrics.l1Lookup("answer", true)
@@ -199,7 +179,7 @@ func cachedAnswer[T any](ctx context.Context, a *App, key string, state cacheSta
 		written := a.now()
 		// Hold is counted from the start of the computation, which is not later than the moment its hold was measured from:
 		// an answer is never served stale after the boundary it was made to stop at, however long the computation took.
-		entry := cachedEntry[T]{Value: c.value, Deps: c.deps, Exp: written.Add(c.ttl).UnixMilli(),
+		entry := cachedEntry[T]{Value: c.value, Exp: written.Add(c.ttl).UnixMilli(),
 			Hold: started.Add(c.hold).UnixMilli()}
 		a.keepAnswerInMemory(key, &entry, written)
 		return c.value, nil
@@ -292,43 +272,49 @@ func (e *cachedEntry[T]) expiry() int64 { return e.Exp }
 
 func (e *cachedEntry[T]) holdTime() int64 { return e.Hold }
 
-// dataTag names the data versions of a state. Two requests share a computation only when they saw the same
-// versions: a computation that started before a change of the data must not answer a request that started after it.
-func dataTag(data map[string]int64) string {
-	svcs := make([]string, 0, len(data))
-	for svc := range data {
-		svcs = append(svcs, svc)
+// publishData publishes changed data streams and first-applied type images after all entity/fence writes.
+func publishData(ctx context.Context, tx pgx.Tx, g *TypeGraph, typeIDs []uuid.UUID, catalogTypes ...uuid.UUID) error {
+	if len(typeIDs) == 0 && len(catalogTypes) == 0 {
+		return nil
 	}
-	slices.Sort(svcs)
-	var b strings.Builder
-	for _, svc := range svcs {
-		b.WriteString(svc + "=" + strconv.FormatInt(data[svc], 10) + ";")
-	}
-	sum := sha256.Sum256([]byte(b.String()))
-	return hex.EncodeToString(sum[:8])
-}
-
-// dataServices are the services that own the given types, each once, in a fixed order.
-func dataServices(g *TypeGraph, typeIDs []uuid.UUID) []uuid.UUID {
-	seen := map[uuid.UUID]bool{}
-	var out []uuid.UUID
+	services := dataAffectedServices(g, slices.Concat(typeIDs, catalogTypes))
+	streams := make([]string, 0, len(typeIDs))
 	for _, id := range typeIDs {
-		if n, ok := g.Node(id); ok && !seen[n.ServiceID] {
-			seen[n.ServiceID] = true
-			out = append(out, n.ServiceID)
+		streams = append(streams, outbox.Data(id))
+	}
+	policy := map[string][]outbox.Image{}
+	if len(catalogTypes) > 0 {
+		streams = append(streams, outbox.Catalog)
+		for _, id := range catalogTypes {
+			image, err := outbox.Project(ctx, tx, "type_resource", map[string]any{"id": id})
+			if err != nil {
+				return err
+			}
+			policy[outbox.Catalog] = append(policy[outbox.Catalog], image)
 		}
 	}
-	slices.SortFunc(out, func(x, y uuid.UUID) int { return compareUUID(x, y) })
-	return out
+	slices.Sort(streams)
+	streams = slices.Compact(streams)
+	_, err := db.TakeRevision(ctx, tx, outbox.Entry{Kind: outbox.Change, Services: services, Streams: streams, Policy: policy})
+	return err
 }
-
-// bumpDataRevisions moves the revision of the resource data of every service that owns one of the given types. It runs in
-// the transaction that wrote the data, so the revision cannot reach a reader before the data does.
-func bumpDataRevisions(ctx context.Context, q db.Querier, g *TypeGraph, typeIDs []uuid.UUID) error {
-	for _, service := range dataServices(g, typeIDs) {
-		if _, err := db.BumpRevision(ctx, q, db.DataScope(service)); err != nil {
-			return err
+func dataAffectedServices(g *TypeGraph, typeIDs []uuid.UUID) []uuid.UUID {
+	owners := map[uuid.UUID]bool{}
+	for _, id := range typeIDs {
+		ids := []uuid.UUID{id}
+		for below := range g.DescendantsOf(id) {
+			ids = append(ids, below)
+		}
+		for _, id := range ids {
+			if n, ok := g.Node(id); ok {
+				owners[n.ServiceID] = true
+			}
 		}
 	}
-	return nil
+	out := make([]uuid.UUID, 0, len(owners))
+	for id := range owners {
+		out = append(out, id)
+	}
+	slices.SortFunc(out, func(a, b uuid.UUID) int { return compareUUID(a, b) })
+	return out
 }

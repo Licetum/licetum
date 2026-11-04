@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
+
+	"github.com/licetum/licetum/core/outbox"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The subject directory (migration 00008, ADR 0001, 8.8): the people of a service, sent by the application or an editor. A write
-// takes no revision and no change record: no decision reads the directory.
+// The subject directory (schema v2, ADR 0001, 8.8): the people of a service, sent by the application or an editor. A write
+// takes one revision and a directory-stream entry when its content changes. It
+// takes no policy-history record because no decision reads the directory.
 
 // DirectoryEntry is a person of a service as the directory holds it.
 type DirectoryEntry struct {
@@ -59,7 +63,9 @@ func UpsertDirectory(ctx context.Context, pool *pgxpool.Pool, serviceID uuid.UUI
 		types[i], ids[i], names[i], properties[i] = e.Type, e.ID, e.DisplayName, string(raw)
 	}
 	var out DirectoryWrite
-	err := pool.QueryRow(ctx, `
+	err := InTx(ctx, pool, func(tx pgx.Tx) error {
+		var changed []byte
+		err := tx.QueryRow(ctx, `
 		WITH input AS (
 			SELECT * FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS t(subject_type, subject_id, display_name, properties)
 		), written AS (
@@ -69,15 +75,27 @@ func UpsertDirectory(ctx context.Context, pool *pgxpool.Pool, serviceID uuid.UUI
 			    SET display_name = EXCLUDED.display_name, properties = EXCLUDED.properties, updated_at = now()
 			    WHERE subject_directory.display_name IS DISTINCT FROM EXCLUDED.display_name
 			       OR subject_directory.properties IS DISTINCT FROM EXCLUDED.properties
-			RETURNING (xmax = 0) AS inserted
+			RETURNING (xmax = 0) AS inserted,subject_type,subject_id
 		), sent AS (
 			INSERT INTO subject_directory_seen (service_id, subject_type, subject_id)
 			SELECT $1, subject_type, subject_id FROM input
 			ON CONFLICT (service_id, subject_type, subject_id) DO UPDATE SET seen_at = now()
 			    WHERE subject_directory_seen.seen_at < now() - interval '`+sentRefresh+`'
 		)
-		SELECT count(*) FILTER (WHERE inserted), count(*) FILTER (WHERE NOT inserted) FROM written`,
-		serviceID, types, ids, names, properties).Scan(&out.Created, &out.Updated)
+		SELECT count(*) FILTER (WHERE inserted), count(*) FILTER (WHERE NOT inserted),COALESCE(jsonb_agg(jsonb_build_object('subject_type',subject_type,'subject_id',subject_id)),'[]'::jsonb) FROM written`,
+			serviceID, types, ids, names, properties).Scan(&out.Created, &out.Updated, &changed)
+		if err != nil {
+			return err
+		}
+		var keys []directoryRowKey
+		if err := json.Unmarshal(changed, &keys); err != nil {
+			return err
+		}
+		for i := range keys {
+			keys[i].ServiceID = serviceID
+		}
+		return publishDirectory(ctx, tx, keys, false)
+	})
 	if err != nil {
 		return DirectoryWrite{}, err
 	}
@@ -115,16 +133,17 @@ func GetDirectoryEntry(ctx context.Context, q Querier, serviceID uuid.UUID, subj
 }
 
 // DeleteDirectoryEntry removes one entry of the service (its sending time goes with it), or is ErrDirectoryNotFound.
-func DeleteDirectoryEntry(ctx context.Context, q Querier, serviceID uuid.UUID, subjectType, subjectID string) error {
-	tag, err := q.Exec(ctx, `DELETE FROM subject_directory WHERE service_id = $1 AND subject_type = $2 AND subject_id = $3`,
-		serviceID, subjectType, subjectID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrDirectoryNotFound
-	}
-	return nil
+func DeleteDirectoryEntry(ctx context.Context, pool *pgxpool.Pool, serviceID uuid.UUID, subjectType, subjectID string) error {
+	return InTx(ctx, pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM subject_directory WHERE service_id=$1 AND subject_type=$2 AND subject_id=$3`, serviceID, subjectType, subjectID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrDirectoryNotFound
+		}
+		return publishDirectory(ctx, tx, []directoryRowKey{{ServiceID: serviceID, Type: subjectType, ID: subjectID}}, true)
+	})
 }
 
 // DirectoryAfter reads up to limit entries of the service of the given type (empty: any), in the order of the scans (type, then
@@ -225,10 +244,26 @@ func GetDirectorySettings(ctx context.Context, q Querier, serviceID uuid.UUID) (
 }
 
 // PutDirectorySettings replaces the settings of the service.
-func PutDirectorySettings(ctx context.Context, q Querier, serviceID uuid.UUID, s DirectorySettings) error {
-	_, err := q.Exec(ctx, `
-		INSERT INTO subject_directory_settings (service_id, retention_days) VALUES ($1, $2)
-		ON CONFLICT (service_id) DO UPDATE SET retention_days = EXCLUDED.retention_days`, serviceID, s.RetentionDays)
+func PutDirectorySettings(ctx context.Context, pool *pgxpool.Pool, serviceID uuid.UUID, s DirectorySettings) error {
+	_, err := PolicyTx(ctx, pool, nil, func(ctx context.Context, tx pgx.Tx) ([]Change, error) {
+		old, err := GetDirectorySettings(ctx, tx, serviceID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO subject_directory_settings(service_id,retention_days) VALUES($1,$2)
+   ON CONFLICT(service_id) DO UPDATE SET retention_days=EXCLUDED.retention_days`, serviceID, s.RetentionDays); err != nil {
+			return nil, err
+		}
+		before, err := json.Marshal(old)
+		if err != nil {
+			return nil, err
+		}
+		after, err := json.Marshal(s)
+		if err != nil {
+			return nil, err
+		}
+		return []Change{{Entity: "subject_directory_settings", ServiceID: &serviceID, Actor: publicationActor(ctx), Action: "update", Before: before, After: after, Touched: []Touched{{Table: "subject_directory_settings", Key: map[string]any{"service_id": serviceID}, ServiceID: &serviceID}}}}, nil
+	})
 	return err
 }
 
@@ -238,8 +273,10 @@ func PutDirectorySettings(ctx context.Context, q Querier, serviceID uuid.UUID, s
 // the record of its sending, in that order) with FOR UPDATE SKIP LOCKED, so each entry is deleted by one of them and none waits
 // for another. The order is the one of UpsertDirectory, which locks the entry before the record of its sending: taking them the
 // other way round would let a retention chunk and a sending of the same entry wait for each other's row.
-func PruneDirectory(ctx context.Context, q Querier, limit int) (int64, error) {
-	tag, err := q.Exec(ctx, `
+func PruneDirectory(ctx context.Context, pool *pgxpool.Pool, limit int) (int64, error) {
+	var keys []directoryRowKey
+	err := InTx(ctx, pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
 		WITH doomed AS (
 			SELECT d.service_id, d.subject_type, d.subject_id
 			FROM subject_directory_settings t
@@ -249,9 +286,64 @@ func PruneDirectory(ctx context.Context, q Querier, limit int) (int64, error) {
 			LIMIT $1
 			FOR UPDATE OF d, s SKIP LOCKED)
 		DELETE FROM subject_directory d USING doomed
-		WHERE d.service_id = doomed.service_id AND d.subject_type = doomed.subject_type AND d.subject_id = doomed.subject_id`, limit)
+		WHERE d.service_id = doomed.service_id AND d.subject_type = doomed.subject_type AND d.subject_id = doomed.subject_id RETURNING d.service_id,d.subject_type,d.subject_id`, limit)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var k directoryRowKey
+			if err := rows.Scan(&k.ServiceID, &k.Type, &k.ID); err != nil {
+				rows.Close()
+				return err
+			}
+			keys = append(keys, k)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return publishDirectory(ctx, tx, keys, true)
+	})
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	return int64(len(keys)), nil
+}
+
+type directoryRowKey struct {
+	ServiceID uuid.UUID `json:"service_id"`
+	Type      string    `json:"subject_type"`
+	ID        string    `json:"subject_id"`
+}
+
+func publishDirectory(ctx context.Context, tx pgx.Tx, keys []directoryRowKey, deleted bool) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	entry := outbox.Entry{Kind: outbox.Change, Policy: map[string][]outbox.Image{}}
+	for _, k := range keys {
+		key := map[string]any{"service_id": k.ServiceID, "subject_type": k.Type, "subject_id": k.ID}
+		var image outbox.Image
+		if deleted {
+			raw, err := outbox.Tombstone(key)
+			if err != nil {
+				return err
+			}
+			image = outbox.Image{Table: "subject_directory", Key: key, Row: raw}
+		} else {
+			var err error
+			image, err = outbox.Project(ctx, tx, "subject_directory", key)
+			if err != nil {
+				return err
+			}
+		}
+		name := outbox.Directory(k.ServiceID)
+		entry.Policy[name] = append(entry.Policy[name], image)
+	}
+	for name := range entry.Policy {
+		entry.Streams = append(entry.Streams, name)
+	}
+	slices.Sort(entry.Streams)
+	_, err := TakeRevision(ctx, tx, entry)
+	return err
 }

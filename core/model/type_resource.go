@@ -133,12 +133,13 @@ func ImpliedClosure(implies map[string][]string) map[string][]string {
 
 // TypeResource is a row of the type_resource table (soft-deleted rows excluded).
 type TypeResource struct {
-	ID                   uuid.UUID           `json:"id" format:"uuid" doc:"Resource type id"`
-	ServiceID            uuid.UUID           `json:"service_id" format:"uuid" doc:"Service id"`
-	Name                 string              `json:"name" doc:"Resource type name"`
-	Parents              []TypeParent        `json:"parents" nullable:"false" doc:"Parent resource types"`
-	TypeResourceParentID *uuid.UUID          `json:"type_resource_parent_id" format:"uuid" deprecated:"true" doc:"Deprecated: the parent id when the type has exactly one parent, otherwise null"`
-	AccessImplies        map[string][]string `json:"access_implies" nullable:"false" doc:"Access level hierarchy of this type"`
+	CanonicalParents     map[uuid.UUID]json.RawMessage `json:"-"`
+	ID                   uuid.UUID                     `json:"id" format:"uuid" doc:"Resource type id"`
+	ServiceID            uuid.UUID                     `json:"service_id" format:"uuid" doc:"Service id"`
+	Name                 string                        `json:"name" doc:"Resource type name"`
+	Parents              []TypeParent                  `json:"parents" nullable:"false" doc:"Parent resource types"`
+	TypeResourceParentID *uuid.UUID                    `json:"type_resource_parent_id" format:"uuid" deprecated:"true" doc:"Deprecated: the parent id when the type has exactly one parent, otherwise null"`
+	AccessImplies        map[string][]string           `json:"access_implies" nullable:"false" doc:"Access level hierarchy of this type"`
 }
 
 // ParentTypeIDs lists the ids of the parent types.
@@ -170,7 +171,7 @@ type Resource struct {
 	Name     string           `json:"name" doc:"Resource name" example:"Branch1"`
 	ParentID *string          `json:"parent_id" doc:"Parent resource id — for a resource type with a single parent type" example:"d1"`
 	Parents  []ResourceParent `json:"parents" required:"false" nullable:"false" doc:"Parents of the resource (a resource may have several, of different types)"`
-	Meta     map[string]any   `json:"meta" required:"false" nullable:"false" doc:"Attributes the source reported besides id, name and the parents: strings or arrays of strings. Rules can match a claim against them (match_by meta.<name>)"`
+	Meta     map[string]any   `json:"meta" required:"false" nullable:"false" doc:"Attributes the source reported besides id, name and the parents: strings or arrays of strings. Rules can match a property against them (match_by meta.<name>)"`
 	// Active is set in the answers of the admin API only (never by a source).
 	Active *bool `json:"active,omitempty" required:"false" doc:"false for a resource that disappeared from its source: it is kept, switched off, and listed only with include_inactive"`
 }
@@ -188,7 +189,7 @@ type ResourceRefresh struct {
 	Inactive  int `json:"inactive" doc:"Resources kept but switched off because the source no longer reports them"`
 }
 
-// A type's mode is derived, not stored: a type is sync when a live (not deleted) synchronizer
+// A type's mode is derived: it is sync after its first applied snapshot while a live synchronizer
 // points at it — it has resources, and the permission result lists them — otherwise it is not_sync, a
 // "permission without resources" (a capability such as advanced_working_mode): a rule with
 // resource_id = NULL grants access to the type as a whole.

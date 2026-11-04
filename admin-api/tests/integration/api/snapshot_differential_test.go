@@ -5,7 +5,7 @@ package api_test
 // F1-11: the policy snapshot must not change an answer. The same policy, generated at random, is asked of two engines on
 // one database: one reads the policy from memory (the snapshot, the default), the other reads it with queries for every
 // answer (SNAPSHOT__MAX_BYTES off, the code of before the fast read path). Their answers to the permission and to the
-// checks, with explanations, must be identical: for a policy with validity windows, claim-based rules, roles, nested
+// checks, with explanations, must be identical: for a policy with validity windows, property-based rules, roles, nested
 // groups, conditions on the request and on the clock, denials and exceptions; again after the policy was changed; and
 // again after some of its validity windows have passed without any change of the policy at all.
 
@@ -57,6 +57,19 @@ func (g *policyGenerator) level() []string {
 	return []string{"read", "write"}
 }
 
+// owner is the service of an inline target; generated roles belong to org.
+func (g *policyGenerator) owner(body map[string]any) string {
+	if _, ok := body["role_id"]; ok {
+		return g.w.org
+	}
+	for name, id := range g.w.typeByName {
+		if body["type_resource_id"] == id {
+			return g.w.serviceOfType[name]
+		}
+	}
+	return ""
+}
+
 // target returns the fields of a permission: the type and what it covers.
 func (g *policyGenerator) target(forRole bool) map[string]any {
 	typeName := g.pick(diffTypes...)
@@ -64,7 +77,7 @@ func (g *policyGenerator) target(forRole bool) map[string]any {
 	switch g.rng.Intn(10) {
 	case 0, 1, 2: // the whole type
 	case 3:
-		out["resource_from_claim"] = map[string]any{"claim": "branch_name", "lookup_type_resource_id": g.w.typeByName["branch"], "match_by": "name"}
+		out["resource_from_property"] = map[string]any{"property": "branch_name", "lookup_type_resource_id": g.w.typeByName["branch"], "match_by": "name"}
 		if typeName == "project" || typeName == "item" {
 			out["type_resource_id"] = g.w.typeByName["branch"]
 		}
@@ -124,11 +137,22 @@ func (g *policyGenerator) rule() string {
 	case 0, 1, 2, 3:
 		rule["subject"] = fmt.Sprintf("user-%d", g.rng.Intn(6))
 	case 4, 5:
-		rule["subject"] = "group:" + g.groups[g.rng.Intn(len(g.groups))]
+		if g.owner(rule) != g.w.org {
+			rule["subject"] = fmt.Sprintf("user-%d", g.rng.Intn(6))
+			break
+		}
+		rule["subject_group_id"] = g.groups[g.rng.Intn(len(g.groups))]
 	case 6, 7:
+		if g.owner(rule) != g.w.org {
+			rule["predicate"] = g.conditions()
+			break
+		}
 		rule["member_of_group_id"] = g.groups[g.rng.Intn(len(g.groups))]
 	default:
 		rule["predicate"] = g.conditions()
+	}
+	if _, literal := rule["subject"]; literal && g.chance(40) {
+		rule["subject_type"] = g.pick("user", "service", "agent")
 	}
 	// effect
 	switch n := g.rng.Intn(100); {
@@ -149,7 +173,7 @@ func (g *policyGenerator) rule() string {
 	if g.chance(10) {
 		rule["requires_predicate"] = g.conditions()
 	}
-	if g.chance(8) {
+	if g.chance(8) && g.owner(rule) == g.w.org {
 		rule["requires_group_id"] = g.groups[g.rng.Intn(len(g.groups))]
 	}
 	if g.chance(8) {
@@ -172,12 +196,12 @@ func (g *policyGenerator) setup() {
 		{"predicate": []any{map[string]any{"attr": "region", "op": "in", "value": []any{"eu", "us"}}}},
 		{"predicate": []any{map[string]any{"attr": "preferred_username", "op": "regex", "value": "^user-[3-5]$"}}},
 	} {
-		id := w.must("POST", "/group", map[string]any{"name": fmt.Sprintf("g%d", i)})["id"].(string)
+		id := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": fmt.Sprintf("g%d", i)})["id"].(string)
 		g.groups = append(g.groups, id)
 		w.must("POST", "/group/"+id+"/member", member)
 	}
 	// g3 is nested: whoever is in g0 or g1 is in g3.
-	nested := w.must("POST", "/group", map[string]any{"name": "g3"})["id"].(string)
+	nested := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "g3"})["id"].(string)
 	g.groups = append(g.groups, nested)
 	w.must("POST", "/group/"+nested+"/member", map[string]any{"member_group_id": g.groups[0]})
 	w.must("POST", "/group/"+nested+"/member", map[string]any{"member_group_id": g.groups[1]})
@@ -190,10 +214,13 @@ func (g *policyGenerator) setup() {
 		"valid_from": time.Now().Add(4 * time.Second).UTC().Format(time.RFC3339)})
 
 	for i := range 3 {
-		role := w.must("POST", "/role", map[string]any{"name": fmt.Sprintf("role-%d", i)})["id"].(string)
+		role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": fmt.Sprintf("role-%d", i)})["id"].(string)
 		g.roles = append(g.roles, role)
 		for range 2 + g.rng.Intn(2) {
 			item := g.target(true)
+			for g.owner(item) != w.org {
+				item = g.target(true)
+			}
 			w.must("POST", "/role/"+role+"/permission", item)
 		}
 	}
@@ -203,16 +230,17 @@ func (g *policyGenerator) setup() {
 }
 
 type diffCase struct {
-	subject string
-	claims  engine.Claims
-	context model.RequestContext
+	subjectType string
+	subject     string
+	claims      engine.Properties
+	context     model.RequestContext
 }
 
 func diffCases(rng *rand.Rand, n int) []diffCase {
 	var out []diffCase
 	for range n {
 		subject := fmt.Sprintf("user-%d", rng.Intn(7))
-		claims := engine.Claims{"preferred_username": subject}
+		claims := engine.Properties{"preferred_username": subject}
 		if rng.Intn(4) != 0 {
 			claims["department"] = []string{"sales", "eng", "ops"}[rng.Intn(3)]
 		}
@@ -229,7 +257,7 @@ func diffCases(rng *rand.Rand, n int) []diffCase {
 		case 1:
 			ctx = model.RequestContext{"ip": "8.8.8.8"}
 		}
-		out = append(out, diffCase{subject: subject, claims: claims, context: ctx})
+		out = append(out, diffCase{subjectType: []string{"user", "service", "agent"}[rng.Intn(3)], subject: subject, claims: claims, context: ctx})
 	}
 	return out
 }
@@ -313,7 +341,7 @@ func TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath(t *testing.T) {
 	compare := func(label string, cases []diffCase) {
 		t.Helper()
 		for _, c := range cases {
-			env := engine.NewEnv(c.claims, c.context)
+			env := engine.NewEnv(c.claims, c.context).WithSubjectType(c.subjectType)
 			for service, checks := range services {
 				id := uuid.MustParse(service)
 				want, err := legacy.GetPermission(ctx, id, c.subject, env, engine.MinimizeLatency)
@@ -376,7 +404,7 @@ func TestF1_11_TheSnapshotPathAnswersLikeTheQueryPath(t *testing.T) {
 	warm := func() {
 		t.Helper()
 		for _, c := range cases {
-			env := engine.NewEnv(c.claims, c.context)
+			env := engine.NewEnv(c.claims, c.context).WithSubjectType(c.subjectType)
 			for service, checks := range services {
 				id := uuid.MustParse(service)
 				for _, a := range []*engine.App{legacy, fast} {

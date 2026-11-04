@@ -78,10 +78,9 @@ executor: any worker may ask any source.
 
 ### The administration far from the database
 
-The admin API writes to PostgreSQL and reads it for every request (a person who has just saved a rule must see it). A write is six
-round trips at most (`chaos/f6_test.go` keeps it so); the authorization of the request and the refresh of the policy after a write add
-more. With 150 ms to the database an admin write takes about a second, and a page of the interface several. It works, but run the
-administration next to the database: that is the supported placement.
+The admin API writes to PostgreSQL and reads it for every request (a person who has just saved a rule must see it).
+[WR06 records measured budgets for each route](../admin-api/tests/integration/api/write_roundtrips.md), including authorization and the write transaction.
+Each database call pays the network round trip; graph changes cost more than simple policy writes. Run the administration next to the database: that is the supported placement.
 
 ### Limits per client
 
@@ -143,17 +142,19 @@ regional deployment (`admin-api/tests/multiregion`).
 
 ### Failing over the primary
 
-PostgreSQL replication is asynchronous: a promoted standby may be missing the last transactions of the old primary, **including
-revision bumps the pods have already seen**. After the promotion the new primary would number its next writes with
-revisions the pods already used for other content, and answers cached under such a revision would be wrong. Run, once, against the
-new primary and before the traffic is sent to it:
+A promoted asynchronous standby may have lost transactions and positions already observed by PDPs. Fence the old primary,
+stop writer traffic, promote the standby, then run once against the new primary before reopening traffic:
 
-```
-licetum failover            # raises every revision of revision_state by one jump (default 1 000 000), in one transaction
+```sh
+licetum failover             # epoch + 1; global revision + 1,000,000
+licetum failover -jump 2000000  # optional positive revision jump
 ```
 
-Every view and every cached answer is then older than the data, and is replaced within `REVISION__POLL_INTERVAL`. Check that
-`licetum_revision_regressions_total` stops growing (a process counts a revision that went backwards).
+One transaction updates the global position and appends an `epoch_start` outbox header with empty services and streams.
+PDPs discard answers and snapshots from the previous epoch within `REVISION__POLL_INTERVAL`; `Licetum-Revision` then carries
+the new `epoch.revision`. `licetum_epoch_resets_total` accounts for this reset. A revision falling within the same epoch
+still increments `licetum_revision_regressions_total` and needs investigation. P3 provides the epoch fence; automatic
+divergence detection, `base_position` and the full reconciliation payload are introduced in P6.
 
 ## Cells (no cross-border replication)
 
@@ -165,9 +166,13 @@ reachable. `deploy/helm/test.sh` checks that the network policy of the profile n
 
 ## Upgrading
 
+Schema v2 is a fresh-database boundary. **There is no upgrade from Licetum v0.1.x.** Install it into a new PostgreSQL database.
+`migrate` checks for the legacy `goose_db_version` on its search path before any write, reports the installed migration version and refuses to continue.
+The initial v2 schema is the single `core/db/migrations/00001_init.sql`; v2 migrations use `goose_db_version_v2`. For disposable Compose development databases, run `docker compose down -v` before starting the stack again; this deletes the old development data.
+
 1. **Migrations** run once, by the `migrate` Job of `helm upgrade` (a hook; the migrations take an advisory
-   lock, so a second run waits). Every migration works with the previous release (expand/contract, `CONTRIBUTING.md`).
-2. A new PDP pod is **not ready** until the schema its pool reads is at least the one of the release.
+   lock, so a second run waits). Later schema-v2 changes add numbered migrations; applied files are never rewritten.
+2. A PDP pod is **not ready** unless the schema version its pool reads matches the version expected by its binary.
 3. Roll out the admin and the worker, then the PDP pods. A rolling update of the PDP pods loses no
    request: `maxUnavailable: 0`, readiness, a `preStop` sleep of `shutdown.drain`, the drain of the process and
    `terminationGracePeriodSeconds` of `2 x drain + timeout + 10`.
@@ -180,14 +185,13 @@ before the PDP pods are upgraded; the chart's own probes and ServiceMonitor alre
 
 ### Upgrading to this release
 
-This release removes Redis, the routing of reads to a replica and the table synchronization engine. Nothing has to be migrated, but
-the configuration and the monitoring need a clean-up:
+This release installs schema v2 into a new database and removes the retired Redis, replica-routing and table-engine configuration.
+In addition to the database boundary above, clean up configuration and monitoring:
 
 - **Delete** `REDIS__URI` and `REDIS__HOT_TIMEOUT`, `DB__READ_URI`, `DB__MAX_REPLICA_LAG`, `DB__LAG_ACTION`, `DB__LAG_INTERVAL`,
   `SYNC__ENGINE`, `SYNC__FETCH_TTL`, `SYNC__LOCK_TTL`, `SYNC__LOCK_WAIT` and `WORKER__REGION` from the environment, and the
   matching chart values (`secrets.redisUri`, `secrets.dbReadUri`, `db.maxReplicaLag`, `db.lagAction`, `worker.engine`,
-  `worker.regionAware`, `networkPolicy.redisCidrs`, `networkPolicy.redisPort`). A process that still has them starts and logs one
-  warning per setting with the reason; the chart renders without them and says nothing.
+  `worker.regionAware`, `networkPolicy.redisCidrs`, `networkPolicy.redisPort`). A process that still has them starts and ignores them silently.
 - **Stop running Redis** for Licetum. Nothing reads it; the PDP keeps its answers in memory only, so after a restart a pod
   computes what it does not find.
 - **`SYNC__ENGINE=postgres`** users move to DBOS (the only engine). Put the workers next to the database: DBOS needs a fast
@@ -202,3 +206,61 @@ the configuration and the monitoring need a clean-up:
   gauge counts the DBOS queue). `/readyz` no longer fails with the reason `replica_lag`.
 - **Multi-region**: a PDP that read a regional replica now reads the PostgreSQL named by `DB__URI`; see
   [Several regions](#several-regions) before you upgrade such a deployment.
+
+### Subject hash salt
+
+Set `LOG__SUBJECT_SALT` from a deployment secret, using the same value in every process and region that logs subjects.
+The Helm chart accepts `secrets.logSubjectSalt`, or `LOG__SUBJECT_SALT` in `existingSecret`. The salt is not stored in PostgreSQL,
+returned by the admin API, or projected in the outbox. Hash mode without a salt omits subject fields and warns once; it never
+falls back to plain text. Rotate by updating the secret and restarting all processes together. Rotation intentionally breaks
+correlation between old and new subject hashes; retain any old secret only according to your log-retention policy.
+
+### Outbox retention
+
+Before P6 supplies publication, the worker retains the outbox by age (`OUTBOX__RETENTION`, default `1h`). It deletes old
+headers and their whole payloads in bounded transactions, always preserving the newest header. History has independent
+retention and is not deleted. `licetum_outbox_rows` and `licetum_outbox_oldest_age_seconds` describe retained data.
+
+### DBOS placement
+
+The DBOS system tables must be in schema `dbos` of the application database. `SYNC__DBOS_URI` may select a different host,
+port or pooler, but must name the same database as `DB__URI`; startup warns about a mismatch. DBOS owns its table DDL.
+`SYNC__DBOS_SCHEMA` defaults to `dbos`; isolated tests use a schema of their own in that same database.
+
+### Removed settings
+
+These settings are ignored silently when still set. Remove them from deployment configuration.
+
+| Setting | Replacement or reason |
+|---|---|
+| `SYNC__LOCK_TTL` | the Redis lock of the synchronization is gone; a synchronization is one job under a lease, timed by SYNC__LEASE, and this setting has not been read since the lock was removed |
+| `SYNC__LOCK_WAIT` | the Redis lock of the synchronization is gone; a synchronization is one job under a lease, timed by SYNC__LEASE, and this setting has not been read since the lock was removed |
+| `HTTP__PUBLIC_URL` | renamed PDP__PUBLIC_URL, which the pdp command requires; HTTP__PUBLIC_URL is not read |
+| `PLATFORM__AUTHORIZATION_URL` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__TOKEN_URL` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__JWKS_URL` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__ISSUER` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__CLIENT_ID` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `PLATFORM__CLIENT_SECRET` | the OAuth client of the self-service is gone; administrators sign in at the identity provider named by ADMIN_AUTH__ISSUER, ADMIN_AUTH__AUDIENCE and ADMIN_AUTH__JWKS_URL, with the web interface as the client |
+| `SUBJECTS__ENABLED` | the registry of known subjects is gone; each service has a subject directory with its own retention (PUT /service/{id}/subjects/settings) |
+| `SUBJECTS__RETENTION_DAYS` | the registry of known subjects is gone; each service has a subject directory with its own retention (PUT /service/{id}/subjects/settings) |
+| `AUTH__STATE_SECRET` | the PDP keeps no sign-in state: per-service OAuth was removed and administrators sign in through ADMIN_AUTH__* |
+| `AUTH__STATE_TTL` | the PDP keeps no sign-in state: per-service OAuth was removed and administrators sign in through ADMIN_AUTH__* |
+| `AUTH__TOKEN_L1_SIZE` | the PDP no longer verifies the token of a person against a service, so it keeps no cache of them; PEP clients authenticate with API keys or the tokens of a registered pep_issuer (AUTH__JWKS_TTL and AUTH__JWKS_MIN_REFRESH still apply to their key sets) |
+| `AUTH__INVALID_TOKEN_TTL` | the PDP no longer verifies the token of a person against a service, so it keeps no cache of them; PEP clients authenticate with API keys or the tokens of a registered pep_issuer (AUTH__JWKS_TTL and AUTH__JWKS_MIN_REFRESH still apply to their key sets) |
+| `DELEGATION__AUDIT_RETENTION_DAYS` | calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request |
+| `DELEGATION__AUDIT_MODE` | calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request |
+| `DELEGATION__AUDIT_BUFFER` | calls on behalf of a person and their audit were removed; the PEP sends the person as the subject of its AuthZEN request |
+| `CORS__ALLOW_ORIGINS` | the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server |
+| `CORS__ALLOW_CREDENTIALS` | the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server |
+| `CORS__ALLOW_METHODS` | the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server |
+| `CORS__ALLOW_HEADERS` | the PDP and the admin API send no CORS headers; the browser reaches the admin API through the web interface's server |
+| `SYNC__ENGINE` | DBOS is the only synchronization engine; a value of postgres no longer selects the sync_job table |
+| `WORKER__REGION` | a source with regions may be asked by any executor until regions are enforced again; the worker no longer filters the jobs by region |
+| `SYNC__FETCH_TTL` | the list a source returned is no longer kept between synchronizations, so a synchronizer's cache_ttl is ignored too; every synchronization asks the source, spaced by the backoff of sync_state and by SYNC__FRESH_MIN_INTERVAL for a fresh one |
+| `DB__READ_URI` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
+| `DB__MAX_REPLICA_LAG` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
+| `DB__LAG_ACTION` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
+| `DB__LAG_INTERVAL` | the PDP reads the policy from the one PostgreSQL named by DB__URI; routing the reads to a replica and measuring its lag are gone |
+| `REDIS__URI` | there is no Redis any more: the process keeps its answers in memory and no setting names a Redis server |
+| `REDIS__HOT_TIMEOUT` | there is no Redis any more: the process keeps its answers in memory and no setting names a Redis server |

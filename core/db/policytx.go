@@ -1,0 +1,190 @@
+package db
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"reflect"
+	"slices"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/licetum/licetum/core/outbox"
+)
+
+// AdminWriteLock serializes policy validation and writes across processes.
+const AdminWriteLock int64 = 0x6c6963657461646d
+
+// PolicyTx holds admin_write before validation, then takes one final revision for
+// the entire write. The optional recheck hook is filled by the P4 binding model.
+func PolicyTx(ctx context.Context, pool *pgxpool.Pool, recheck func(context.Context, pgx.Tx) error, write func(context.Context, pgx.Tx) ([]Change, error)) (Position, error) {
+	var position Position
+	err := pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		b := &pgx.Batch{}
+		b.Queue(`SELECT pg_advisory_xact_lock($1)`, AdminWriteLock)
+		if err := tx.SendBatch(ctx, b).Close(); err != nil {
+			return err
+		}
+		if recheck != nil {
+			if err := recheck(ctx, tx); err != nil {
+				return err
+			}
+		}
+		changes, err := write(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if len(changes) == 0 {
+			return nil
+		}
+		entry, err := ProjectChanges(ctx, tx, changes)
+		if err != nil {
+			return err
+		}
+		position, err = finishPolicy(ctx, tx, entry, changes)
+		return err
+	})
+	if err == nil && position.Revision > 0 {
+		notePublication(ctx, position)
+	}
+	return position, err
+}
+
+// ProjectChanges deduplicates touched rows and reads their final canonical images
+// before taking the revision lock. The final state of a batch is projected once.
+func ProjectChanges(ctx context.Context, q outbox.Reader, changes []Change) (outbox.Entry, error) {
+	entry := outbox.Entry{Kind: outbox.Change, Policy: map[string][]outbox.Image{}}
+	owners := []uuid.UUID{}
+	touched := map[string]Touched{}
+	for _, c := range changes {
+		entry.Streams = append(entry.Streams, c.Streams...)
+		entry.Services = append(entry.Services, c.Services...)
+		for _, t := range c.Touched {
+			key, err := json.Marshal(t.Key)
+			if err != nil {
+				return entry, err
+			}
+			identity := t.Table + string(key)
+			if first, ok := touched[identity]; ok && first.BeforeKnown {
+				t.BeforeKnown, t.BeforeFields = true, first.BeforeFields
+			}
+			touched[identity] = t
+		}
+	}
+	names := make([]string, 0, len(touched))
+	for key := range touched {
+		names = append(names, key)
+	}
+	slices.Sort(names)
+	for _, key := range names {
+		t := touched[key]
+		stream, err := outbox.Stream(t.Table, t.ServiceID)
+		if err != nil {
+			return entry, err
+		}
+		if stream == "" {
+			continue
+		}
+		var image outbox.Image
+		if t.Deleted {
+			raw, err := outbox.Tombstone(t.Key)
+			if err != nil {
+				return entry, err
+			}
+			image = outbox.Image{Table: t.Table, Key: t.Key, Row: raw}
+		} else {
+			image, err = outbox.Project(ctx, q, t.Table, t.Key)
+			if err != nil {
+				return entry, err
+			}
+		}
+		entry.Streams = append(entry.Streams, stream)
+		if !unchangedImage(t, image) {
+			entry.Policy[stream] = append(entry.Policy[stream], image)
+		}
+		if (stream == outbox.Catalog || len(stream) > 4 && stream[:4] == "svc:") && t.ServiceID != nil {
+			owners = append(owners, *t.ServiceID)
+		}
+	}
+	for stream := range entry.Policy {
+		entry.Streams = append(entry.Streams, stream)
+	}
+	slices.Sort(entry.Streams)
+	affected, err := outbox.ServicesBelow(ctx, q, owners)
+	entry.Services = append(entry.Services, affected...)
+	return entry, err
+}
+
+// FinishChanges finalizes a transaction whose lock is already held by its writer.
+func FinishChanges(ctx context.Context, tx pgx.Tx, changes []Change) (Position, error) {
+	entry, err := ProjectChanges(ctx, tx, changes)
+	if err != nil {
+		return Position{}, err
+	}
+	return finishPolicy(ctx, tx, entry, changes)
+}
+
+// unchangedImage compares the final image with fields read before the first
+// mutation, without mistaking API-only fields for stored columns. Hidden mutable
+// fields must be supplied by their writer, or BeforeKnown must remain false.
+func unchangedImage(t Touched, image outbox.Image) bool {
+	if !t.BeforeKnown {
+		return false
+	}
+	after, err := imageFields(image.Row)
+	if err != nil {
+		return false
+	}
+	if len(t.BeforeFields) == 0 || string(t.BeforeFields) == "null" {
+		return after["deleted"] == true
+	}
+	if after["deleted"] == true {
+		return false
+	}
+	before, err := imageFields(t.BeforeFields)
+	if err != nil {
+		return false
+	}
+	compared := 0
+	for key, old := range before {
+		next, ok := after[key]
+		if !ok {
+			continue
+		}
+		if !canonicalValueEqual(key, old, next) {
+			return false
+		}
+		compared++
+	}
+	return compared > 0
+}
+
+func canonicalValueEqual(column string, a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	switch column {
+	case "valid_from", "expires_at", "created_at", "updated_at", "fetched_at", "deleted_at", "synced_at", "revoked_at":
+	default:
+		return false
+	}
+	x, xok := a.(string)
+	y, yok := b.(string)
+	if xok && yok {
+		tx, ex := time.Parse(time.RFC3339Nano, x)
+		ty, ey := time.Parse(time.RFC3339Nano, y)
+		return ex == nil && ey == nil && tx.Equal(ty)
+	}
+	return false
+}
+
+func imageFields(raw json.RawMessage) (map[string]any, error) {
+	var fields map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	err := decoder.Decode(&fields)
+	return fields, err
+}

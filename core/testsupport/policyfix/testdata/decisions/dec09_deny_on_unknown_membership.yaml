@@ -66,7 +66,7 @@ cases:
   # from admin-api/tests/integration/api/escalation_test.go:TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies
   - name: a member of sales is denied B1
     subject: user-1
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales, missing_attribute: false}]}
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
@@ -75,7 +75,7 @@ cases:
   # from admin-api/tests/integration/api/escalation_test.go:TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies
   - name: known not to be a member, the subject gets B1 back
     subject: user-1
-    claims: {department: hr}
+    properties: {department: hr}
     questions:
       - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
@@ -89,7 +89,7 @@ cases:
       - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
   - name: a claim that is present but null is missing, so the denial applies
     subject: user-1
-    claims: {department: null}
+    properties: {department: null}
     questions:
       - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B1-sales, missing_attribute: true}]}
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
@@ -99,12 +99,12 @@ cases:
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [skipper-allow-branch], denials: []}
   - name: a denial set to skip applies once the membership is known to hold
     subject: skipper
-    claims: {team: audit}
+    properties: {team: audit}
     questions:
       - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [skipper-allow-branch], denials: [{rule: skip-deny-B2-auditors}]}
   - name: a denial set to skip does not apply when the membership is known not to hold
     subject: skipper
-    claims: {team: support}
+    properties: {team: support}
     questions:
       - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [skipper-allow-branch], denials: []}
   - name: an unknown membership makes the nesting group unknown, so its denial applies and its allow grants nothing
@@ -115,13 +115,13 @@ cases:
       - {type: branch, resource: B4, action: write, allowed: false, decision: no_access, granted_by: []}
   - name: known not to be in the nested group, neither the denial nor the allow of the nesting group applies
     subject: nester
-    claims: {department: hr}
+    properties: {department: hr}
     questions:
       - {type: branch, resource: B3, action: write, allowed: true, decision: allowed, granted_by: [nester-write-B3], denials: []}
       - {type: branch, resource: B4, action: write, allowed: false, decision: no_access, granted_by: []}
   - name: a member of the nested group is a member of the nesting group, for its denial and for its allow
     subject: nester
-    claims: {department: sales}
+    properties: {department: sales}
     questions:
       - {type: branch, resource: B3, action: write, allowed: false, decision: denied, granted_by: [nester-write-B3], denials: [{rule: deny-write-B3-sales-all}]}
       - {type: branch, resource: B4, action: write, allowed: true, decision: allowed, granted_by: [allow-write-B4-sales-all], denials: []}

@@ -84,9 +84,9 @@ rules:
   - {name: om-deny, subject: om, type: region, resource: north, access: [read], deny: true, requires_predicate: [{attr: country, op: eq, value: x, source: context}]}
   - {name: om2-allow, subject: om2, type: region, resource: north, access: [read]}
   - {name: om2-deny, subject: om2, type: region, resource: north, access: [read], deny: true, on_missing: skip, requires_predicate: [{attr: country, op: eq, value: x, source: context}]}
-  - {name: by-name, subject: fc, type: region, from_claim: {claim: store_name, lookup_type: store}, access: [read]}
-  - {name: by-owner, subject: bob, type: store, from_claim: {claim: preferred_username, lookup_type: store, match_by: meta.owner}, access: [write]}
-  - {name: by-id, subject: fcid, type: store, from_claim: {claim: store_id, lookup_type: store, match_by: id}, access: [read]}
+  - {name: by-name, subject: fc, type: region, from_property: {property: store_name, lookup_type: store}, access: [read]}
+  - {name: by-owner, subject: bob, type: store, from_property: {property: preferred_username, lookup_type: store, match_by: meta.owner}, access: [write]}
+  - {name: by-id, subject: fcid, type: store, from_property: {property: store_id, lookup_type: store, match_by: id}, access: [read]}
   - {name: tagged, subject: wh, type: store, where: [{attr: tags, op: eq, value: b}], access: [read]}
   - {name: star-allow, subject: star, type: store, access: [read, write]}
   - {name: star-deny, subject: star, type: store, resource: s1, access: ["*"], deny: true}
@@ -135,13 +135,13 @@ cases:
       - {type: reports, action: list, allowed: true, granted_by: [everyone-list]}
   - name: a member by predicate
     subject: carl
-    claims: {dept: sales}
+    properties: {dept: sales}
     questions:
       - {type: region, resource: north, action: read, allowed: true}
       - {type: region, resource: south, action: read, allowed: true}
   - name: not a member by predicate
     subject: dave
-    claims: {dept: hr}
+    properties: {dept: hr}
     questions:
       - {type: region, resource: north, action: read, allowed: false, decision: no_access}
   - name: a membership after its end
@@ -173,12 +173,12 @@ cases:
       - {type: store, resource: s9, action: read, allowed: false, decision: resource_not_found}
   - name: a numeric condition that holds
     subject: p1
-    claims: {level: 7}
+    properties: {level: 7}
     questions:
       - {type: region, resource: south, action: read, allowed: true, granted_by: [level-gt]}
   - name: a numeric condition that fails
     subject: p2
-    claims: {level: 3}
+    properties: {level: 3}
     questions:
       - {type: region, resource: south, action: read, allowed: false}
   - name: a numeric condition on a missing claim
@@ -197,7 +197,7 @@ cases:
       - {type: region, resource: north, action: read, allowed: false}
   - name: a guard by claims that holds
     subject: guarded
-    claims: {mfa: "yes"}
+    properties: {mfa: "yes"}
     questions:
       - {type: region, resource: north, action: read, allowed: true, granted_by: [guarded]}
   - name: a guard by claims that does not
@@ -210,7 +210,7 @@ cases:
       - {type: region, resource: north, action: read, allowed: false}
   - name: a guard by a group the subject is in
     subject: rg
-    claims: {dept: sales}
+    properties: {dept: sales}
     questions:
       - {type: region, resource: north, action: read, allowed: true, granted_by: [needs-staff, staff-north]}
   - name: inside the window of a rule
@@ -258,9 +258,9 @@ cases:
     subject: om2
     questions:
       - {type: region, resource: north, action: read, allowed: true, granted_by: [om2-allow], denials: []}
-  - name: a resource found by the name in a claim
+  - name: a resource found by the name in a property
     subject: fc
-    claims: {store_name: Store 2}
+    properties: {store_name: Store 2}
     questions:
       - {type: region, resource: south, action: read, allowed: true, granted_by: [by-name]}
       - {type: region, resource: north, action: read, allowed: false}
@@ -271,7 +271,7 @@ cases:
       - {type: store, resource: s1, action: write, allowed: false}
   - name: a resource found by its id
     subject: fcid
-    claims: {store_id: s1}
+    properties: {store_id: s1}
     questions:
       - {type: store, resource: s1, action: read, allowed: true, granted_by: [by-id]}
       - {type: store, resource: s2, action: read, allowed: false}

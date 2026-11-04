@@ -3,7 +3,7 @@ package model
 // The OpenID AuthZEN Authorization API 1.0, served per service: the service is in the path, the resource type is the
 // name of a resource type of that service, the resource id is the resource id in the external system ("*" — the type as
 // a whole), the action name is an access level. The subject is a person of the application that calls (a PEP client of the
-// service), with the claims the rules read given as subject.properties.
+// service), with the properties the rules read given as subject.properties.
 //
 // Each endpoint has its own request type. Validate checks a request as its endpoint states it: which fields are
 // required, which are ignored, and the bounds of the subject and of the context. A validation error is apperr 422; the
@@ -43,9 +43,9 @@ const (
 // AuthzenSubject is the subject of an evaluation or of a search.
 type AuthzenSubject struct {
 	_          struct{}       `additionalProperties:"true"`
-	Type       string         `json:"type" doc:"Subject type (not interpreted): 1 to 64 characters, and not group" example:"user"`
+	Type       string         `json:"type" doc:"Subject type used to match literal-subject rules: 1 to 64 characters, and not group" example:"user"`
 	ID         string         `json:"id" required:"false" doc:"Subject id: 1 to 256 characters, no control characters, and not a group (group:…). Required by evaluations and by the resource and action searches; ignored by the subject search, which returns it" example:"alice"`
-	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The claims of the person that the rules read (department, groups, ...): at most 100 claims and 16 KiB of JSON. preferred_username is the subject id unless it is given"`
+	Properties map[string]any `json:"properties,omitempty" required:"false" doc:"The properties of the person that the rules read (department, groups, ...): at most 100 properties and 16 KiB of JSON. preferred_username is the subject id unless it is given"`
 }
 
 // AuthzenResource is the resource of an evaluation or of a search.
@@ -66,7 +66,7 @@ type AuthzenAction struct {
 // AuthzenLicetum holds the settings of Licetum that an AuthZEN request carries in the top-level key licetum of its context.
 // A licetum nested in an attribute is an attribute like any other.
 type AuthzenLicetum struct {
-	MinRevision string `json:"min_revision,omitempty" doc:"The revision the answer must reflect: the Licetum-Revision header of an earlier answer (1.<r>) or the X-Authz-Revision header of an admin write, as a string. A bare decimal r is accepted too"`
+	MinRevision string `json:"min_revision,omitempty" doc:"The revision the answer must reflect: the Licetum-Revision header of an earlier answer (<epoch>.<revision>) or of an admin write, as a string. A bare decimal r is accepted too"`
 	Explain     bool   `json:"explain,omitempty" doc:"Return the explanation of the decision in context.reason_admin"`
 }
 
@@ -321,7 +321,7 @@ func checkEvaluationWith(field string, sub *AuthzenSubject, res *AuthzenResource
 
 // checkSubject checks the subject of a request: it is required, and its type is required and bounded. With withID, its id
 // is required and the subject is checked as PrepareSubject checks it; without it (the subject search, which returns the
-// ids) the type and the claims are checked. field names the subject in the errors.
+// ids) the type and the properties are checked. field names the subject in the errors.
 func checkSubject(field string, s *AuthzenSubject, withID bool) error {
 	if s == nil {
 		return authzenRequired(field)
@@ -386,21 +386,21 @@ func checkContext(raw map[string]any) error {
 
 // ---------- subjects ----------
 
-// PreparedSubject is a subject checked for a decision: the type and the id as they were given, and the claims the rules
+// PreparedSubject is a subject checked for a decision: the type and the id as they were given, and the properties the rules
 // read.
 type PreparedSubject struct {
-	Type   string
-	ID     string
-	Claims map[string]any
+	Type       string
+	ID         string
+	Properties map[string]any
 }
 
-// PrepareSubject checks a subject and builds the claims the decision reads from its properties. The type is checked when
-// it is given (an empty type is not checked). The claims are a copy of the properties, with preferred_username set to
+// PrepareSubject checks a subject and builds the properties the decision reads from its properties. The type is checked when
+// it is given (an empty type is not checked). The properties are a copy of the properties, with preferred_username set to
 // the id unless the properties hold a truthy one (the rules that name a
 // person read it).
 //
 // The id is 1 to 256 characters, holds no control character, and does not look like a group (group:…). The properties are at
-// most 100 claims and 16 KiB of JSON.
+// most 100 properties and 16 KiB of JSON.
 func PrepareSubject(typ, id string, properties map[string]any) (PreparedSubject, error) {
 	if typ != "" {
 		if err := checkSubjectType(typ); err != nil {
@@ -413,14 +413,14 @@ func PrepareSubject(typ, id string, properties map[string]any) (PreparedSubject,
 	if err := checkSubjectProperties(properties); err != nil {
 		return PreparedSubject{}, err
 	}
-	claims := make(map[string]any, len(properties)+1)
+	prepared := make(map[string]any, len(properties)+1)
 	for k, v := range properties {
-		claims[k] = v
+		prepared[k] = v
 	}
-	if !truthy(claims["preferred_username"]) {
-		claims["preferred_username"] = id
+	if !truthy(prepared["preferred_username"]) {
+		prepared["preferred_username"] = id
 	}
-	return PreparedSubject{Type: typ, ID: id, Claims: claims}, nil
+	return PreparedSubject{Type: typ, ID: id, Properties: prepared}, nil
 }
 
 // checkSubjectType checks the type of a subject: 1 to 64 characters, and not group.
@@ -431,7 +431,7 @@ func checkSubjectType(typ string) error {
 	return nil
 }
 
-// checkSubjectProperties checks the claims of a subject: at most 100 claims, and 16 KiB of JSON.
+// checkSubjectProperties checks the properties of a subject: at most 100 properties, and 16 KiB of JSON.
 func checkSubjectProperties(properties map[string]any) error {
 	if len(properties) > subjectPropertiesMax {
 		return apperr.Unprocessable(i18n.DelegationClaimsInvalid)
@@ -445,7 +445,7 @@ func checkSubjectProperties(properties map[string]any) error {
 	return nil
 }
 
-// truthy is the truth value of a claim as Python has it, which the rules and the AuthZEN subject properties follow (the same rule
+// truthy is the truth value of a property as Python has it, which the rules and the AuthZEN subject properties follow (the same rule
 // as engine.PyTruthy): "", 0, false, null and empty lists and objects are false.
 func truthy(v any) bool {
 	switch x := v.(type) {

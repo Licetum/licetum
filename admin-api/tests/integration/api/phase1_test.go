@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,15 @@ func (e *env) newService(name string) string {
 // changes reads the change log (the query string starts with "?" or is empty).
 func (e *env) changes(query string) []map[string]any {
 	e.t.Helper()
+	params, err := url.ParseQuery(strings.TrimPrefix(query, "?"))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if !params.Has("after_revision") {
+		params.Set("after_revision", strconv.FormatInt(e.seedRevision, 10))
+		params.Set("after_seq", "2147483647")
+	}
+	query = "?" + params.Encode()
 	status, raw := e.do(http.MethodGet, e.admin.URL+"/changes"+query, nil)
 	if status != http.StatusOK {
 		e.t.Fatalf("list changes: %d %s", status, raw)
@@ -95,7 +105,8 @@ func TestRuleNameAndDescriptionAreStored(t *testing.T) {
 
 func TestChangeLogRecordsEveryWriteWithItsActorAndMasksSecrets(t *testing.T) {
 	e := setup(t)
-	group := e.must("POST", "/group/", map[string]any{"name": "auditors"})["id"].(string)
+	owner := e.newService("audit-owner")
+	group := e.must("POST", "/group/", map[string]any{"service_id": owner, "name": "auditors"})["id"].(string)
 	e.must("PATCH", "/group/"+group, map[string]any{"name": "auditors-2"})
 	e.must("DELETE", "/group/"+group, nil)
 
@@ -148,7 +159,7 @@ func TestChangeLogRecordsEveryWriteWithItsActorAndMasksSecrets(t *testing.T) {
 	if got := e.changes("?entity=group"); len(got) != 3 {
 		t.Fatalf("filter by entity: %d records", len(got))
 	}
-	if got := e.changes("?after=" + jsonNumber(changes[1]["id"])); len(got) != len(changes)-2 {
+	if got := e.changes("?after_seq=2147483647&after_revision=" + jsonNumber(changes[1]["revision"])); len(got) != len(changes)-2 {
 		t.Fatalf("records after a position: %d of %d", len(got), len(changes))
 	}
 }
@@ -171,13 +182,13 @@ func TestWritesReturnARevisionThatReadsCanRequire(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("create rule: %d %s", status, raw)
 	}
-	revision := header.Get("X-Authz-Revision")
+	revision := header.Get("Licetum-Revision")
 	if revision == "" {
 		t.Fatal("a write returns the revision it produced")
 	}
 
 	// a read that asks for the revision sees the write: alice may read the flag, a type without resources, as a whole
-	rev, err := strconv.ParseInt(revision, 10, 64)
+	rev, err := strconv.ParseInt(strings.SplitN(revision, ".", 2)[1], 10, 64)
 	if err != nil {
 		t.Fatalf("the revision of a write is a number: %q", revision)
 	}
@@ -202,10 +213,10 @@ func TestWritesReturnARevisionThatReadsCanRequire(t *testing.T) {
 		t.Fatalf("a future revision: %d %s", status, raw)
 	}
 
-	// a read does not return a revision
+	// An authenticated administrative read reports its global read position.
 	status, header, _ = e.call(http.MethodGet, e.admin.URL+"/assignment_rule/", nil)
-	if status != http.StatusOK || header.Get("X-Authz-Revision") != "" {
-		t.Fatalf("a read carries no revision: %d %q", status, header.Get("X-Authz-Revision"))
+	if status != http.StatusOK || !strings.HasPrefix(header.Get("Licetum-Revision"), "1.") {
+		t.Fatalf("a read carries its epoch and revision: %d %q", status, header.Get("Licetum-Revision"))
 	}
 }
 

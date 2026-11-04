@@ -39,7 +39,7 @@ const migrateLockTries = 600
 // The lock belongs to the connection that took it, so a run needs a connection that stays the same for its whole
 // duration: PostgreSQL itself, or PgBouncer in session mode, not in transaction mode (see config.Database.MigrateURI).
 func newProvider(sqlDB *sql.DB, migrations fs.FS, locked bool) (*goose.Provider, error) {
-	var options []goose.ProviderOption
+	options := []goose.ProviderOption{goose.WithTableName("goose_db_version_v2")}
 	if locked {
 		locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, migrateLockTries))
 		if err != nil {
@@ -73,17 +73,38 @@ var latestMigration = sync.OnceValue(func() int64 {
 // LatestMigration is the version of the schema this binary was built for: the highest embedded migration.
 func LatestMigration() int64 { return latestMigration() }
 
+// rejectLegacySchema runs before constructing a goose provider or taking any
+// write lock. Unqualified lookup deliberately follows the configured search path.
+func rejectLegacySchema(ctx context.Context, q Querier) error {
+	var exists bool
+	if err := q.QueryRow(ctx, `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		return fmt.Errorf("inspect legacy schema: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	const guidance = "Licetum v0.1.x has no upgrade path to schema v2; install schema v2 into a new database. Recreate development databases with docker compose down -v"
+	var version int64
+	if err := q.QueryRow(ctx, `SELECT COALESCE(max(version_id),0) FROM goose_db_version WHERE is_applied`).Scan(&version); err != nil {
+		return fmt.Errorf("%s (legacy migration version could not be read: %w)", guidance, err)
+	}
+	return fmt.Errorf("%s (installed migration version %d)", guidance, version)
+}
+
 // SchemaVersion is the version of the schema the database is at: the highest migration applied. A database that was
 // never migrated has no version table, which is an error.
 func SchemaVersion(ctx context.Context, q Querier) (int64, error) {
 	var version int64
-	err := q.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied`).Scan(&version)
+	err := q.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version_v2 WHERE is_applied`).Scan(&version)
 	return version, err
 }
 
 // MigrateUpTo applies the migrations up to and including version, without seeding the self-service. It
-// lets a test bring a database to the schema of an earlier release, fill it, and migrate it on.
+// lets a test apply a specific schema-v2 version without platform seed data.
 func MigrateUpTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
+	if err := rejectLegacySchema(ctx, pool); err != nil {
+		return err
+	}
 	migrations, err := migrationsFS()
 	if err != nil {
 		return err
@@ -103,8 +124,11 @@ func MigrateUpTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
 }
 
 // MigrateDownTo rolls the schema back to version (the migrations above it are reverted). Tests use it to check
-// that the down migrations still reach the schema of the previous release.
+// that schema-v2 migrations can be reverted. Released v0.1 schemas are refused.
 func MigrateDownTo(ctx context.Context, pool *pgxpool.Pool, version int64) error {
+	if err := rejectLegacySchema(ctx, pool); err != nil {
+		return err
+	}
 	migrations, err := migrationsFS()
 	if err != nil {
 		return err
@@ -151,6 +175,9 @@ func RunMigrate(ctx context.Context, cfg *config.Config) error {
 
 // Migrate applies every embedded migration (goose) and then idempotently seeds the self-service.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) error {
+	if err := rejectLegacySchema(ctx, pool); err != nil {
+		return err
+	}
 	migrations, err := migrationsFS()
 	if err != nil {
 		return err
@@ -207,7 +234,7 @@ var adminAccess = []string{string(model.ActionRead), string(model.ActionWrite)}
 //     its own table of this very instance — without it a type would have no resources and hence no
 //     whole-type access (that is expanded into entries per resource);
 //   - the platform admin group (PLATFORM__ADMIN_GROUP_NAME), whose members are matched by a predicate
-//     over claims (PLATFORM__ADMIN_CLAIM in PLATFORM__ADMIN_CLAIM_VALUES);
+//     over properties (PLATFORM__ADMIN_CLAIM in PLATFORM__ADMIN_CLAIM_VALUES);
 //   - rules granting that group read+write on every policy type as a whole.
 //
 // Skipped, with a log line, if ADMIN_AUTH__* is not configured (nobody could sign in to the admin API it protects). The
@@ -223,12 +250,16 @@ func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) e
 	}
 
 	var created []model.PlatformType
-	err := InTx(ctx, pool, func(tx pgx.Tx) error {
+	_, err := PolicyTx(ctx, pool, nil, func(ctx context.Context, tx pgx.Tx) ([]Change, error) {
+		before, err := platformImages(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
 		created = nil
 		// Parallel runs of the seed (the pods of a release start together) take turns: the one that comes second finds the
 		// rows of the first and creates nothing. The lock is released with the transaction.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, seedLockKey); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO service (id, name, slug, url, icon)
@@ -236,27 +267,29 @@ func SeedPlatform(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) e
 			ON CONFLICT (id) DO NOTHING`,
 			model.PlatformServiceID, p.Name, model.PlatformSlug, p.URL, p.Icon,
 		); err != nil {
-			return err
+			return nil, err
 		}
 
 		for _, t := range model.PlatformTypes {
 			ok, err := seedPlatformType(ctx, tx, cfg.DB.URI, t)
 			if err != nil {
-				return fmt.Errorf("policy %s: %w", t, err)
+				return nil, fmt.Errorf("policy %s: %w", t, err)
 			}
 			if ok {
 				created = append(created, t)
 			}
 		}
 		if len(created) == 0 {
-			return nil
+			return nil, nil
 		}
 		if err := seedAdminGroup(ctx, tx, p); err != nil {
-			return err
+			return nil, err
 		}
-		// New policies and an admin group: the replicas that run already must read the rules again.
-		_, err := BumpRevision(ctx, tx, ScopeRules)
-		return err
+		after, err := platformImages(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		return platformChanges(before, after, "system:seed"), nil
 	})
 	if err != nil {
 		return fmt.Errorf("seed self-service: %w", err)
@@ -303,7 +336,7 @@ func seedPlatformType(ctx context.Context, tx pgx.Tx, dsn string, t model.Platfo
 }
 
 func seedAdminGroup(ctx context.Context, tx pgx.Tx, p config.Platform) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO user_group (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+	if _, err := tx.Exec(ctx, `INSERT INTO user_group (id, name,service_id) VALUES ($1, $2,(SELECT id FROM service WHERE slug='licetum')) ON CONFLICT (id) DO NOTHING`,
 		model.PlatformAdminGroupID, p.AdminGroupName); err != nil {
 		if IsUniqueViolation(err) {
 			return fmt.Errorf("a group named %q already exists — set another PLATFORM__ADMIN_GROUP_NAME", p.AdminGroupName)
@@ -312,16 +345,16 @@ func seedAdminGroup(ctx context.Context, tx pgx.Tx, p config.Platform) error {
 	}
 
 	if len(p.AdminClaimValues) > 0 {
-		// Who belongs to the group: the claim takes one of the configured values.
+		// Who belongs to the group: the property takes one of the configured values.
 		predicate, err := json.Marshal([]model.PredicateCondition{
-			{Attr: p.AdminClaim, Op: model.OpIn, Value: model.PredicateValue{List: p.AdminClaimValues, IsList: true}},
+			{Source: model.SourceSubject, Attr: p.AdminClaim, Op: model.OpIn, Value: model.PredicateValue{List: p.AdminClaimValues, IsList: true}},
 		})
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO group_member (id, group_id, member_group_id, predicate, enabled)
-			VALUES ($1, $2, NULL, $3::jsonb, true)
+			INSERT INTO group_member (service_id,id, group_id, member_group_id, predicate, enabled)
+			VALUES ((SELECT service_id FROM user_group WHERE id=$2),$1, $2, NULL, $3::jsonb, true)
 			ON CONFLICT (id) DO NOTHING`,
 			model.PlatformAdminGroupMemberID, model.PlatformAdminGroupID, string(predicate),
 		); err != nil {
@@ -335,11 +368,11 @@ func seedAdminGroup(ctx context.Context, tx pgx.Tx, p config.Platform) error {
 	// The group gets access to every platform type as a whole (resource_id = NULL).
 	for _, t := range model.PlatformTypes {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO assignment_rule (id, type_resource_id, resource_id, access, subject, predicate, enabled)
-			VALUES ($1, $2, NULL, $3, $4, '[]'::jsonb, true)
+			INSERT INTO assignment_rule (service_id,id, type_resource_id, resource_id, access, subject_group_id, predicate, enabled)
+			VALUES ((SELECT service_id FROM type_resource WHERE id=$2),$1, $2, NULL, $3, $4, '[]'::jsonb, true)
 			ON CONFLICT (id) DO NOTHING`,
 			model.PlatformAdminRuleID(t), model.PlatformTypeResourceID(t), adminAccess,
-			model.GroupSubject(model.PlatformAdminGroupID),
+			model.PlatformAdminGroupID,
 		); err != nil {
 			return err
 		}

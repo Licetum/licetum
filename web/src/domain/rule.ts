@@ -51,8 +51,8 @@ export function describeWho(
       label: groupName(rule.member_of_group_id) ?? t('rule.unknownGroup'),
     };
   }
-  if (rule.subject?.startsWith('group:')) {
-    const id = rule.subject.slice('group:'.length);
+  if (hasId(rule.subject_group_id)) {
+    const id = rule.subject_group_id;
     return { kind: 'group', groupId: id, label: groupName(id) ?? t('rule.unknownGroup') };
   }
   if (rule.subject) return { kind: 'person', username: rule.subject, label: rule.subject };
@@ -87,8 +87,8 @@ export function describeWhere(
   if (rule.resource_id) {
     const name = resourceName?.(rule.type_resource_id, rule.resource_id);
     target = name ? `«${name}»` : rule.resource_id;
-  } else if (rule.resource_from_claim) {
-    target = t('rule.fromClaim', { claim: rule.resource_from_claim.claim });
+  } else if (rule.resource_from_property) {
+    target = t('rule.fromProperty', { property: rule.resource_from_property.property });
   } else if (rule.resource_where?.length) {
     target = t('rule.where', { cond: describeConditions(rule.resource_where) });
   } else {
@@ -132,8 +132,8 @@ export function ruleToInput(rule: Rule): AssignmentRuleInput {
   if (rule.effect === 'deny') input.on_missing_attribute = rule.on_missing_attribute;
   if (hasId(rule.member_of_group_id)) input.member_of_group_id = rule.member_of_group_id;
   if (rule.subject) input.subject = rule.subject;
-  if (rule.subject_kind)
-    input.subject_kind = rule.subject_kind as AssignmentRuleInput['subject_kind'];
+  if (hasId(rule.subject_group_id)) input.subject_group_id = rule.subject_group_id;
+  if (rule.subject && rule.subject_type) input.subject_type = rule.subject_type;
   if (rule.predicate?.length) input.predicate = rule.predicate;
   if (hasId(rule.requires_group_id)) input.requires_group_id = rule.requires_group_id;
   if (hasId(rule.role_id)) {
@@ -142,7 +142,7 @@ export function ruleToInput(rule: Rule): AssignmentRuleInput {
     input.type_resource_id = rule.type_resource_id;
     input.access = rule.access ?? [];
     if (rule.resource_id) input.resource_id = rule.resource_id;
-    if (rule.resource_from_claim) input.resource_from_claim = rule.resource_from_claim;
+    if (rule.resource_from_property) input.resource_from_property = rule.resource_from_property;
     if (rule.resource_where?.length) input.resource_where = rule.resource_where;
   }
   return input;

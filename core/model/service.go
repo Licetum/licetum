@@ -2,6 +2,7 @@ package model
 
 import (
 	"regexp"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -26,7 +27,7 @@ func ValidSlug(s string) bool {
 type ServiceInput struct {
 	_    struct{} `additionalProperties:"true"`
 	Name string   `json:"name" doc:"Service name" example:"filials"`
-	Slug string   `json:"slug" maxLength:"64" pattern:"^[a-z0-9][a-z0-9_-]*$" doc:"Service slug: lowercase Latin letters, digits, '-' and '_', unique among live services. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID" example:"filials"`
+	Slug string   `json:"slug" maxLength:"64" pattern:"^[a-z0-9][a-z0-9_-]*$" doc:"Service slug: lowercase Latin letters, digits, '-' and '_', unique across all services, including deleted ones. The PDP names the service by it in its paths (/service/<slug>/access/v1/...); it is not a UUID" example:"filials"`
 	URL  *string  `json:"url" required:"false" nullable:"true" format:"uri" doc:"Application URL; optional, it is only shown in the interface and is not requested" example:"https://app.example.com"`
 	Icon *string  `json:"icon" required:"false" nullable:"true" format:"uri" doc:"Icon URL; optional, it is only shown in the interface and is not requested" example:"https://app.example.com/icon.png"`
 }
@@ -57,7 +58,7 @@ func (s *ServiceInput) Validate() error {
 type ServiceUpdate struct {
 	_    struct{} `additionalProperties:"true"`
 	Name *string  `json:"name" required:"false" doc:"Service name"`
-	Slug *string  `json:"slug" required:"false" maxLength:"64" pattern:"^[a-z0-9][a-z0-9_-]*$" doc:"Service slug (see POST /service)"`
+	Slug *string  `json:"slug" required:"false" maxLength:"64" pattern:"^[a-z0-9][a-z0-9_-]*$" doc:"Immutable service slug: sending the current value is accepted; changing it is rejected with 422"`
 	URL  *string  `json:"url" required:"false" doc:"Application URL (an http or https address); an empty string removes it"`
 	Icon *string  `json:"icon" required:"false" doc:"Icon URL (an http or https address); an empty string removes it"`
 }
@@ -88,11 +89,13 @@ func (s *ServiceUpdate) Validate() error {
 
 // Service is a row of the service table.
 type Service struct {
-	ID   uuid.UUID
-	Name string
-	Slug string
-	URL  string
-	Icon string
+	IdentityDomainID uuid.UUID
+	CreatedAt        time.Time
+	ID               uuid.UUID
+	Name             string
+	Slug             string
+	URL              string
+	Icon             string
 }
 
 // ServiceResponse is a service as the admin API returns it.

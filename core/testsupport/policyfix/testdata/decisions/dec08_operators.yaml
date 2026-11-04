@@ -33,31 +33,31 @@ cases:
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationNeAndNotInPredicates
   - name: petrov of sales, a senior, matches eq, ne and not_in together
     subject: petrov
-    claims: {department: sales, username: petrov, grade: senior}
+    properties: {department: sales, username: petrov, grade: senior}
     questions:
       - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [sales-except-ivanovich-and-interns]}
       - {type: division, resource: D2, action: read, allowed: false, decision: no_access}
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationNeAndNotInPredicates
   - name: ivanovich fails ne
     subject: ivanovich
-    claims: {department: sales, username: ivanovich, grade: senior}
+    properties: {department: sales, username: ivanovich, grade: senior}
     questions:
       - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationNeAndNotInPredicates
   - name: an intern fails not_in
     subject: petrov
-    claims: {department: sales, username: petrov, grade: intern}
+    properties: {department: sales, username: petrov, grade: intern}
     questions:
       - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
   # from admin-api/tests/integration/api/graph_test.go:TestIntegrationNeAndNotInPredicates
   - name: a missing claim does not satisfy ne
     subject: petrov
-    claims: {department: sales, grade: senior}
+    properties: {department: sales, grade: senior}
     questions:
       - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
   - name: every condition holds
     subject: petrov
-    claims: {department: sales, username: petrov, grade: senior, email: petrov@example.com, title: senior manager, age: 30, ip: 10.1.1.1}
+    properties: {department: sales, username: petrov, grade: senior, email: petrov@example.com, title: senior manager, age: 30, ip: 10.1.1.1}
     context: {ip: 10.1.2.3}
     questions:
       - {type: feature, action: eq, allowed: true, decision: allowed, granted_by: [eq-sales]}
@@ -75,7 +75,7 @@ cases:
       - {type: feature, action: in_cidr_claim, allowed: true, decision: allowed, granted_by: [cidr-from-claim]}
   - name: values that do not match
     subject: ivanovich
-    claims: {department: Sales, username: ivanovich, grade: intern, email: ivanovich@example.org, title: Manager, age: 30}
+    properties: {department: Sales, username: ivanovich, grade: intern, email: ivanovich@example.org, title: Manager, age: 30}
     context: {ip: 192.168.2.1}
     questions:
       - {type: feature, action: eq, allowed: false, decision: no_access}
@@ -105,14 +105,14 @@ cases:
       - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
   - name: a null claim is missing, not the string None
     subject: nobody
-    claims: {username: null, grade: null, age: null}
+    properties: {username: null, grade: null, age: null}
     questions:
       - {type: feature, action: ne, allowed: false, decision: no_access}
       - {type: feature, action: not_in, allowed: false, decision: no_access}
       - {type: feature, action: lt, allowed: false, decision: no_access}
   - name: the boundary itself satisfies ge and le only
     subject: petrov
-    claims: {age: 18}
+    properties: {age: 18}
     questions:
       - {type: feature, action: gt, allowed: false, decision: no_access}
       - {type: feature, action: ge, allowed: true, decision: allowed}
@@ -120,14 +120,14 @@ cases:
       - {type: feature, action: le, allowed: true, decision: allowed}
   - name: a number given as a string compares as the number
     subject: petrov
-    claims: {age: "18"}
+    properties: {age: "18"}
     questions:
       - {type: feature, action: gt, allowed: false, decision: no_access}
       - {type: feature, action: ge, allowed: true, decision: allowed}
       - {type: feature, action: le, allowed: true, decision: allowed}
   - name: one below the boundary
     subject: petrov
-    claims: {age: 17}
+    properties: {age: 17}
     questions:
       - {type: feature, action: gt, allowed: false, decision: no_access}
       - {type: feature, action: ge, allowed: false, decision: no_access}
@@ -135,13 +135,13 @@ cases:
       - {type: feature, action: le, allowed: true, decision: allowed}
   - name: 9 is less than 18 as a number although "9" sorts after "18"
     subject: petrov
-    claims: {age: 9}
+    properties: {age: 9}
     questions:
       - {type: feature, action: gt, allowed: false, decision: no_access}
       - {type: feature, action: lt, allowed: true, decision: allowed}
   - name: a fraction above the boundary
     subject: petrov
-    claims: {age: 18.5}
+    properties: {age: 18.5}
     questions:
       - {type: feature, action: gt, allowed: true, decision: allowed}
       - {type: feature, action: ge, allowed: true, decision: allowed}
@@ -149,7 +149,7 @@ cases:
       - {type: feature, action: le, allowed: false, decision: no_access}
   - name: a value that is not a number satisfies no numeric operator
     subject: petrov
-    claims: {age: abc}
+    properties: {age: abc}
     questions:
       - {type: feature, action: gt, allowed: false, decision: no_access}
       - {type: feature, action: ge, allowed: false, decision: no_access}
@@ -157,7 +157,7 @@ cases:
       - {type: feature, action: le, allowed: false, decision: no_access}
   - name: an anchored pattern does not match a longer value, an unanchored one matches inside it
     subject: petrov
-    claims: {email: petrov@example.com.evil.org, title: the manager of sales}
+    properties: {email: petrov@example.com.evil.org, title: the manager of sales}
     questions:
       - {type: feature, action: regex, allowed: false, decision: no_access}
       - {type: feature, action: regex_search, allowed: true, decision: allowed}
@@ -178,7 +178,7 @@ cases:
       - {type: feature, action: in_cidr, allowed: false, decision: no_access}
   - name: a claim does not stand in for a request attribute of the same name, nor the other way round
     subject: petrov
-    claims: {ip: 10.1.1.1}
+    properties: {ip: 10.1.1.1}
     questions:
       - {type: feature, action: in_cidr, allowed: false, decision: no_access}
       - {type: feature, action: in_cidr_claim, allowed: true, decision: allowed}

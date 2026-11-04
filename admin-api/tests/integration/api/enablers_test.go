@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/db"
@@ -239,7 +241,7 @@ func TestTheLastAdminAccessIsProtected(t *testing.T) {
 	requireErrorCode(t, status, raw, http.StatusConflict, "last_admin_access")
 	status, raw = e.do("PATCH", e.admin.URL+"/assignment_rule/"+adminRule, map[string]any{
 		"type_resource_id": model.PlatformTypeResourceID(model.PlatformAssignmentRule).String(),
-		"access":           []string{"read"}, "subject": "group:" + model.PlatformAdminGroupID.String(),
+		"access":           []string{"read"}, "subject_group_id": model.PlatformAdminGroupID.String(),
 	})
 	requireErrorCode(t, status, raw, http.StatusConflict, "last_admin_access")
 
@@ -266,11 +268,11 @@ func TestRestoreAdminAccessPutsTheAdminsBack(t *testing.T) {
 	typeID := model.PlatformTypeResourceID(model.PlatformAssignmentRule)
 
 	// Locked out behind the API's back: the rules are off, and a denial covers the policy.
-	if _, err := e.pool.Exec(ctx, `UPDATE assignment_rule SET enabled = false`); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, `UPDATE assignment_rule SET enabled = false`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.pool.Exec(ctx, `INSERT INTO assignment_rule (type_resource_id, access, subject, predicate, enabled, effect)
-	        VALUES ($1, ARRAY['*'], 'admin', '[]'::jsonb, true, 'deny')`, typeID); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, `INSERT INTO assignment_rule (service_id,type_resource_id, access, subject, predicate, enabled, effect)
+	        VALUES ((SELECT service_id FROM type_resource WHERE id=$1),$1, ARRAY['*'], 'admin', '[]'::jsonb, true, 'deny')`, typeID); err != nil {
 		t.Fatal(err)
 	}
 	e.externalChange(ctx)
@@ -350,7 +352,7 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 // salesWorld is the hierarchy world with a group of everyone from sales, and a person of it in the directory of the service org.
 func salesWorld(t *testing.T) (w *world, group string) {
 	w = newWorld(t)
-	group = w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	group = w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+group+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}})
 	w.sendPeople(w.org, person("dave", "Dave Sales", map[string]any{"department": "sales", "secret_claim": "x"}))
@@ -414,9 +416,9 @@ func TestWhoHasAccessListsTheRulesAndThePeople(t *testing.T) {
 	status, raw := w.do("GET", w.admin.URL+w.typePath("branch")+"/access?resource_id=NOPE", nil)
 	requireErrorCode(t, status, raw, http.StatusNotFound, "resource_not_found")
 
-	// A rule that finds its resource by a claim is listed apart.
+	// A rule that finds its resource by a property is listed apart.
 	dynamic := w.grant(map[string]any{"type_resource_id": w.branch, "subject": "walker", "access": []string{"read"},
-		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": w.branch}})
+		"resource_from_property": map[string]any{"property": "branch_name", "lookup_type_resource_id": w.branch}})
 	res = look("?resource_id=B1")
 	dyn := res["dynamic"].([]any)
 	if len(dyn) != 1 || dyn[0].(map[string]any)["rule"].(map[string]any)["rule_id"] != dynamic {
@@ -584,9 +586,9 @@ func TestPreviewGrantSaysWhatARuleWouldDo(t *testing.T) {
 		t.Fatalf("capability: %s", mustJSON(res))
 	}
 
-	// A rule that finds its resource by a claim cannot be counted.
+	// A rule that finds its resource by a property cannot be counted.
 	res = preview(map[string]any{"type_resource_id": w.branch, "subject": "walker", "access": []string{"read"},
-		"resource_from_claim": map[string]any{"claim": "branch_name", "lookup_type_resource_id": w.branch}})
+		"resource_from_property": map[string]any{"property": "branch_name", "lookup_type_resource_id": w.branch}})
 	if res["dynamic"] != true {
 		t.Fatalf("dynamic: %s", mustJSON(res))
 	}
@@ -618,7 +620,10 @@ func uuidNil() string { return "00000000-0000-0000-0000-000000000000" }
 func TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsServices(t *testing.T) {
 	w, group := salesWorld(t) // dave is in the directory of org, from sales
 	branchRule := w.grant(map[string]any{"type_resource_id": w.branch, "member_of_group_id": group, "access": []string{"write"}})
-	itemRule := w.grant(map[string]any{"type_resource_id": w.item, "member_of_group_id": group, "access": []string{"read"}})
+	appGroup := w.must("POST", "/group", map[string]any{"service_id": w.appSvc, "name": "app-sales"})["id"].(string)
+	w.must("POST", "/group/"+appGroup+"/member", map[string]any{"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
+	w.expect(http.StatusUnprocessableEntity, "POST", "/assignment_rule", map[string]any{"type_resource_id": w.item, "member_of_group_id": group, "access": []string{"read"}})
+	itemRule := w.grant(map[string]any{"type_resource_id": w.item, "member_of_group_id": appGroup, "access": []string{"read"}})
 
 	peopleOf := func(res map[string]any, rule string) (int, []string) {
 		for _, x := range res["entries"].([]any) {
@@ -662,12 +667,12 @@ func TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsS
 		t.Fatalf("the rules were tried on %v people, want the 3 of the two directories", info["registry"])
 	}
 
-	// A role with items in both services reaches the people of both, a person of both counted once.
-	role := w.must("POST", "/role", map[string]any{"name": "both"})["id"].(string)
-	w.must("POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.branch, "access": []string{"read"}})
+	// Roles stay within one service; preview counts that service's directory only.
+	role := w.must("POST", "/role", map[string]any{"service_id": w.appSvc, "name": "app-readers"})["id"].(string)
+	w.expect(http.StatusUnprocessableEntity, "POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.branch, "access": []string{"read"}})
 	w.must("POST", "/role/"+role+"/permission", map[string]any{"type_resource_id": w.item, "access": []string{"read"}})
 	w.sendPeople(w.appSvc, person("dave", "Dave of app", map[string]any{"department": "sales"}))
-	preview := w.must("POST", "/assignment_rule/preview", map[string]any{"role_id": role, "member_of_group_id": group})
+	preview := w.must("POST", "/assignment_rule/preview", map[string]any{"role_id": role, "member_of_group_id": appGroup})
 	people := preview["people"].(map[string]any)
 	var sample []string
 	for _, p := range people["sample"].([]any) {
@@ -681,7 +686,9 @@ func TestContract_DIR03_ThePeopleARuleReachesAreTheEntriesOfTheDirectoriesOfItsS
 	// The preview of a rule on a type of a service nobody sent people to: nobody, and nothing is said about people.
 	third := w.newService("quiet")
 	quiet := w.typeResource(third, "doc", "")
-	none := w.must("POST", "/assignment_rule/preview", map[string]any{"type_resource_id": quiet, "member_of_group_id": group, "access": []string{"read"}})
+	quietGroup := w.must("POST", "/group", map[string]any{"service_id": third, "name": "sales"})["id"].(string)
+	w.must("POST", "/group/"+quietGroup+"/member", map[string]any{"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
+	none := w.must("POST", "/assignment_rule/preview", map[string]any{"type_resource_id": quiet, "member_of_group_id": quietGroup, "access": []string{"read"}})
 	if p := none["people"].(map[string]any); p["total"] != float64(0) || p["registry"] != float64(0) {
 		t.Fatalf("a service with an empty directory has people: %+v", p)
 	}

@@ -54,8 +54,8 @@ resource.type is the name of a resource type of the service, and resource.id the
 "*" names the type as a whole, not a resource. action.name is an access level.
 
 The caller is a PEP client of the service. It authenticates with an API key, or with a token of an issuer registered for PEPs, and
-it speaks for the people of its application: the person of a question is the subject of the body, whose claims are in
-subject.properties (at most 100 claims and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
+it speaks for the people of its application: the person of a question is the subject of the body, whose properties are in
+subject.properties (at most 100 properties and 16 KiB of JSON; preferred_username defaults to subject.id). The client needs the
 operation of the route (evaluate, search_resource, search_action or search_subject, and explain as well to ask for an explanation).
 Whatever it lacks, an unknown service included, the answer is the same 403. A client over its rate limit gets a 429 with Retry-After.
 

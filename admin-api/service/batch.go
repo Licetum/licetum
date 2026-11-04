@@ -21,37 +21,34 @@ func (a *App) RunBatch(ctx context.Context, ops []model.BatchOperation) ([]model
 		return nil, err
 	}
 	results := make([]model.BatchResult, 0, len(ops))
-	var revision int64
-	err := db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
+	position, err := db.PolicyTx(ctx, a.DB, nil, func(ctx context.Context, tx pgx.Tx) ([]db.Change, error) {
 		bctx, run := withBatch(ctx, tx)
 		for i, op := range ops {
 			id, err := a.applyOperation(bctx, op)
 			if err != nil {
 				if e, ok := apperr.As(err); ok {
-					return e.AtOperation(i)
+					return nil, e.AtOperation(i)
 				}
-				return err
+				return nil, err
 			}
 			results = append(results, model.BatchResult{Index: i, Op: op.Op, Entity: op.Entity, ID: id})
 		}
 		// The operations may replace the admin access one by the other; what counts is what is left at the end.
 		if run.adminTouched {
 			if err := a.guardAdminAccess(ctx, tx); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if len(ops) == 0 {
-			return nil
+			return nil, nil
 		}
-		var err error
-		revision, err = db.BumpRevision(ctx, tx, db.ScopeRules)
-		return err
+		return publicationChanges(bctx, run.changes)
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(ops) > 0 {
-		a.AfterWrite(ctx, revision)
+		a.AfterWrite(ctx, position.Revision, position.Epoch)
 	}
 	return results, nil
 }

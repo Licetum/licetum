@@ -1,0 +1,596 @@
+{
+  "create_access_group": {
+    "method": "POST",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}/access_group",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 13,
+      "write": 10,
+      "transactions": 1
+    }
+  },
+  "create_assignment_rule": {
+    "method": "POST",
+    "path": "/assignment_rule",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 12,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "create_group": {
+    "method": "POST",
+    "path": "/group",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "create_group_member": {
+    "method": "POST",
+    "path": "/group/{group_id}/member",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "create_pep_client": {
+    "method": "POST",
+    "path": "/service/{service_id}/pep-clients",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 12,
+      "write": 9,
+      "transactions": 1
+    }
+  },
+  "create_policy_scenario": {
+    "method": "POST",
+    "path": "/service/{service_id}/policy/scenarios",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 4,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "create_role": {
+    "method": "POST",
+    "path": "/role",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "create_role_permission": {
+    "method": "POST",
+    "path": "/role/{role_id}/permission",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 14,
+      "write": 10,
+      "transactions": 1
+    }
+  },
+  "create_service": {
+    "method": "POST",
+    "path": "/service",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 10,
+      "write": 7,
+      "transactions": 1
+    }
+  },
+  "create_synchronizer": {
+    "method": "POST",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}/resource/synchronizer",
+    "class": "change_mode",
+    "samples": 2,
+    "maximum": {
+      "total": 21,
+      "write": 15,
+      "transactions": 1
+    }
+  },
+  "create_type_resource": {
+    "method": "POST",
+    "path": "/service/{service_id}/type_resource",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 18,
+      "write": 15,
+      "transactions": 1
+    }
+  },
+  "delete_access_group": {
+    "method": "DELETE",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}/access_group/{access_group_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 13,
+      "write": 10,
+      "transactions": 1
+    }
+  },
+  "delete_assignment_rule": {
+    "method": "DELETE",
+    "path": "/assignment_rule/{rule_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 14,
+      "write": 9,
+      "transactions": 1
+    }
+  },
+  "delete_directory_entry": {
+    "method": "DELETE",
+    "path": "/service/{service_id}/subjects/{subject_type}/{subject_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 7,
+      "write": 4,
+      "transactions": 1
+    }
+  },
+  "delete_group": {
+    "method": "DELETE",
+    "path": "/group/{group_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 14,
+      "write": 11,
+      "transactions": 1
+    }
+  },
+  "delete_group_member": {
+    "method": "DELETE",
+    "path": "/group/{group_id}/member/{member_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "delete_pep_client": {
+    "method": "DELETE",
+    "path": "/service/{service_id}/pep-clients/{client_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 15,
+      "write": 13,
+      "transactions": 1
+    }
+  },
+  "delete_pep_issuer": {
+    "method": "DELETE",
+    "path": "/platform/pep-issuers",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 9,
+      "transactions": 1
+    }
+  },
+  "delete_policy_scenario": {
+    "method": "DELETE",
+    "path": "/service/{service_id}/policy/scenarios/{scenario_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 3,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "delete_role": {
+    "method": "DELETE",
+    "path": "/role/{role_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 14,
+      "write": 11,
+      "transactions": 1
+    }
+  },
+  "delete_role_permission": {
+    "method": "DELETE",
+    "path": "/role/{role_id}/permission/{permission_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 14,
+      "write": 9,
+      "transactions": 1
+    }
+  },
+  "delete_service": {
+    "method": "DELETE",
+    "path": "/service/{service_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "delete_synchronizer": {
+    "method": "DELETE",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}/resource/synchronizer/{synchronizer_id}",
+    "class": "change_mode",
+    "samples": 2,
+    "maximum": {
+      "total": 26,
+      "write": 23,
+      "transactions": 1
+    }
+  },
+  "delete_type_resource": {
+    "method": "DELETE",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 17,
+      "write": 14,
+      "transactions": 1
+    }
+  },
+  "import_policy": {
+    "method": "POST",
+    "path": "/service/{service_id}/policy/import",
+    "class": "compound",
+    "samples": 2,
+    "maximum": {
+      "total": 17,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "issue_pep_key": {
+    "method": "POST",
+    "path": "/service/{service_id}/pep-clients/{client_id}/keys",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 17,
+      "write": 12,
+      "transactions": 1
+    }
+  },
+  "preview_assignment_rule": {
+    "method": "POST",
+    "path": "/assignment_rule/preview",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 15,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "put_directory": {
+    "method": "PUT",
+    "path": "/service/{service_id}/subjects",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 8,
+      "write": 5,
+      "transactions": 1
+    }
+  },
+  "put_directory_settings": {
+    "method": "PUT",
+    "path": "/service/{service_id}/subjects/settings",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 9,
+      "write": 6,
+      "transactions": 1
+    }
+  },
+  "put_log_settings": {
+    "method": "PUT",
+    "path": "/settings/logs",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 10,
+      "write": 7,
+      "transactions": 1
+    }
+  },
+  "put_pep_issuer": {
+    "method": "PUT",
+    "path": "/platform/pep-issuers",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 10,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "refresh_resources_of_type": {
+    "method": "POST",
+    "path": "/type_resource/{type_resource_id}/resource/refresh",
+    "class": "synchronization",
+    "samples": 2,
+    "maximum": {
+      "total": 8,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "revert_change": {
+    "method": "POST",
+    "path": "/changes/{revision}/revert",
+    "class": "compound",
+    "samples": 2,
+    "maximum": {
+      "total": 15,
+      "write": 11,
+      "transactions": 1
+    }
+  },
+  "revoke_pep_key": {
+    "method": "DELETE",
+    "path": "/service/{service_id}/pep-clients/{client_id}/keys/{key_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 13,
+      "write": 10,
+      "transactions": 1
+    }
+  },
+  "rollback_changes": {
+    "method": "POST",
+    "path": "/changes/rollback",
+    "class": "compound",
+    "samples": 2,
+    "maximum": {
+      "total": 15,
+      "write": 11,
+      "transactions": 1
+    }
+  },
+  "run_batch": {
+    "method": "POST",
+    "path": "/batch",
+    "class": "compound",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "run_policy_tests": {
+    "method": "POST",
+    "path": "/service/{service_id}/policy/test",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 14,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "simulate_evaluation": {
+    "method": "POST",
+    "path": "/service/{service_id}/simulate/access/v1/evaluation",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 16,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "simulate_evaluations": {
+    "method": "POST",
+    "path": "/service/{service_id}/simulate/access/v1/evaluations",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 16,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "simulate_search_action": {
+    "method": "POST",
+    "path": "/service/{service_id}/simulate/access/v1/search/action",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "simulate_search_resource": {
+    "method": "POST",
+    "path": "/service/{service_id}/simulate/access/v1/search/resource",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 11,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "simulate_search_subject": {
+    "method": "POST",
+    "path": "/service/{service_id}/simulate/access/v1/search/subject",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 17,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "test_synchronizer": {
+    "method": "POST",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}/resource/synchronizer/test",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 9,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "update_access_group": {
+    "method": "PATCH",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}/access_group/{access_group_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 14,
+      "write": 11,
+      "transactions": 1
+    }
+  },
+  "update_assignment_rule": {
+    "method": "PATCH",
+    "path": "/assignment_rule/{rule_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 16,
+      "write": 10,
+      "transactions": 1
+    }
+  },
+  "update_group": {
+    "method": "PATCH",
+    "path": "/group/{group_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 12,
+      "write": 9,
+      "transactions": 1
+    }
+  },
+  "update_group_member": {
+    "method": "PATCH",
+    "path": "/group/{group_id}/member/{member_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 12,
+      "write": 9,
+      "transactions": 1
+    }
+  },
+  "update_pep_client": {
+    "method": "PATCH",
+    "path": "/service/{service_id}/pep-clients/{client_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 12,
+      "write": 10,
+      "transactions": 1
+    }
+  },
+  "update_policy_scenario": {
+    "method": "PUT",
+    "path": "/service/{service_id}/policy/scenarios/{scenario_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 3,
+      "write": 0,
+      "transactions": 0
+    }
+  },
+  "update_role": {
+    "method": "PATCH",
+    "path": "/role/{role_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 12,
+      "write": 9,
+      "transactions": 1
+    }
+  },
+  "update_role_permission": {
+    "method": "PATCH",
+    "path": "/role/{role_id}/permission/{permission_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 18,
+      "write": 12,
+      "transactions": 1
+    }
+  },
+  "update_service": {
+    "method": "PATCH",
+    "path": "/service/{service_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 12,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "update_synchronizer": {
+    "method": "PATCH",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}/resource/synchronizer/{synchronizer_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 14,
+      "write": 8,
+      "transactions": 1
+    }
+  },
+  "update_type_resource": {
+    "method": "PATCH",
+    "path": "/service/{service_id}/type_resource/{type_resource_id}",
+    "class": "standalone",
+    "samples": 2,
+    "maximum": {
+      "total": 16,
+      "write": 13,
+      "transactions": 1
+    }
+  }
+}

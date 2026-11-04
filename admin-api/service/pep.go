@@ -19,19 +19,23 @@ import (
 
 // PutPEPIssuer creates the issuer, or replaces its settings.
 func (a *App) PutPEPIssuer(ctx context.Context, in *model.PEPIssuer) (*model.PEPIssuer, error) {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	issuer := db.PEPIssuer{Issuer: in.Issuer, JWKSURL: in.JWKSURL, Audiences: in.Audiences, Algs: in.Algs, RequireTyp: in.RequireTyp}
 	if err := db.UpsertIssuer(ctx, a.DB, issuer); err != nil {
 		return nil, pepError(err, in.Issuer)
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	a.AfterPEPWrite()
 	return in, nil
 }
 
 // DeletePEPIssuer deletes an issuer that no client uses.
 func (a *App) DeletePEPIssuer(ctx context.Context, issuer string) error {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	if err := db.DeleteIssuer(ctx, a.DB, issuer); err != nil {
 		return pepError(err, issuer)
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	a.AfterPEPWrite()
 	return nil
 }
@@ -64,6 +68,7 @@ func (a *App) GetPEPClient(ctx context.Context, serviceID, clientID uuid.UUID) (
 
 // CreatePEPClient adds a client to a service, which must be live. The body is validated.
 func (a *App) CreatePEPClient(ctx context.Context, serviceID uuid.UUID, in *model.PEPClientInput) (*model.PEPClient, error) {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	if err := a.requireLiveService(ctx, serviceID); err != nil {
 		return nil, err
 	}
@@ -73,6 +78,7 @@ func (a *App) CreatePEPClient(ctx context.Context, serviceID uuid.UUID, in *mode
 	if err != nil {
 		return nil, pepError(err, c.Name)
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	a.AfterPEPWrite()
 	out := pepClientResponse(stored)
 	return &out, nil
@@ -80,6 +86,7 @@ func (a *App) CreatePEPClient(ctx context.Context, serviceID uuid.UUID, in *mode
 
 // UpdatePEPClient changes the fields of a client of the service that the patch carries. The kind is not changed.
 func (a *App) UpdatePEPClient(ctx context.Context, serviceID, clientID uuid.UUID, p *model.PEPClientPatch) (*model.PEPClient, error) {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	stored, err := db.ModifyPEPClient(ctx, a.DB, serviceID, clientID, func(c *db.PEPClient) error {
 		if p.Name != nil {
 			c.Name = *p.Name
@@ -101,6 +108,7 @@ func (a *App) UpdatePEPClient(ctx context.Context, serviceID, clientID uuid.UUID
 	if err != nil {
 		return nil, pepError(err, clientID.String())
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	a.AfterPEPWrite()
 	out := pepClientResponse(stored)
 	return &out, nil
@@ -108,9 +116,11 @@ func (a *App) UpdatePEPClient(ctx context.Context, serviceID, clientID uuid.UUID
 
 // DeletePEPClient deletes a client of the service, and revokes its keys.
 func (a *App) DeletePEPClient(ctx context.Context, serviceID, clientID uuid.UUID) error {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	if err := db.DeletePEPClient(ctx, a.DB, serviceID, clientID); err != nil {
 		return pepError(err, clientID.String())
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	a.AfterPEPWrite()
 	return nil
 }
@@ -132,6 +142,7 @@ func (a *App) ListPEPKeys(ctx context.Context, serviceID, clientID uuid.UUID) ([
 // IssuePEPKey issues a key to an api_key client of the service. The key is in the answer and nowhere else: it is not stored, so a
 // key that was lost is revoked and issued again.
 func (a *App) IssuePEPKey(ctx context.Context, serviceID, clientID uuid.UUID) (*model.PEPKeyIssued, error) {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	if _, err := db.GetPEPClient(ctx, a.DB, serviceID, clientID); err != nil {
 		return nil, pepError(err, clientID.String())
 	}
@@ -139,6 +150,7 @@ func (a *App) IssuePEPKey(ctx context.Context, serviceID, clientID uuid.UUID) (*
 	if err != nil {
 		return nil, pepError(err, clientID.String())
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	a.AfterPEPWrite()
 	keys, err := db.ListPEPKeys(ctx, a.DB, serviceID, clientID)
 	if err != nil {
@@ -155,6 +167,7 @@ func (a *App) IssuePEPKey(ctx context.Context, serviceID, clientID uuid.UUID) (*
 // RevokePEPKey revokes a key of a client of the service; a key that is revoked already stays so. A key of another client, or of
 // another service, does not exist for this route.
 func (a *App) RevokePEPKey(ctx context.Context, serviceID, clientID uuid.UUID, keyID string) error {
+	ctx, position := db.WithPublication(ctx, engine.ActorFrom(ctx))
 	owned, err := engine.Exists(ctx, a.DB, `
 		SELECT 1 FROM pep_credential k JOIN pep_client c ON c.id = k.client_id
 		WHERE k.key_id = $1 AND c.id = $2 AND c.service_id = $3 AND c.deleted_at IS NULL`, keyID, clientID, serviceID)
@@ -167,6 +180,7 @@ func (a *App) RevokePEPKey(ctx context.Context, serviceID, clientID uuid.UUID, k
 	if err := db.RevokeAPIKey(ctx, a.DB, keyID); err != nil {
 		return pepError(err, keyID)
 	}
+	a.NoteCommittedPosition(ctx, *position)
 	a.AfterPEPWrite()
 	return nil
 }

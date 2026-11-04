@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -115,23 +117,23 @@ func readSeedState(ctx context.Context, t *testing.T, uri string) seedState {
 	defer pool.Close()
 	var s seedState
 	for query, dest := range map[string]*int{
-		`SELECT count(*) FROM service`:                                              &s.services,
-		`SELECT count(*) FROM user_group`:                                           &s.groups,
-		`SELECT count(*) FROM group_member`:                                         &s.members,
-		`SELECT count(*) FROM type_resource`:                                        &s.policies,
-		`SELECT count(*) FROM assignment_rule`:                                      &s.rules,
-		`SELECT count(*) FROM goose_db_version WHERE is_applied AND version_id > 0`: &s.appliedMigrations,
-		`SELECT count(*) FROM goose_db_version WHERE version_id > 0`:                &s.versionRows,
+		`SELECT count(*) FROM service`:                                                 &s.services,
+		`SELECT count(*) FROM user_group`:                                              &s.groups,
+		`SELECT count(*) FROM group_member`:                                            &s.members,
+		`SELECT count(*) FROM type_resource`:                                           &s.policies,
+		`SELECT count(*) FROM assignment_rule`:                                         &s.rules,
+		`SELECT count(*) FROM goose_db_version_v2 WHERE is_applied AND version_id > 0`: &s.appliedMigrations,
+		`SELECT count(*) FROM goose_db_version_v2 WHERE version_id > 0`:                &s.versionRows,
 	} {
 		if err := pool.QueryRow(ctx, query).Scan(dest); err != nil {
 			t.Fatalf("%s: %v", query, err)
 		}
 	}
-	rev, err := db.LoadRevisions(ctx, pool)
+	rev, err := db.LoadLocalVersions(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.rulesRevision = rev.Rules
+	s.rulesRevision = rev.Revision
 	return s
 }
 
@@ -157,11 +159,12 @@ func freshSchemaURI(ctx context.Context, t *testing.T, uri, schema string) strin
 	return u.String()
 }
 
-// TestF5_10_ParallelMigrateRunsApplyEachMigrationOnce starts five `migrate` runs at the same moment on an empty database,
+// The PostgreSQL half of OPS04 is proved in P3; P6 adds the CQL-store variant.
+// TestContract_OPS04_ParallelPostgresMigrationsApplyEachMigrationOnce starts five `migrate` runs at the same moment on an empty database,
 // as the pods of a release do: every run finishes without an error, each migration is applied by exactly one of them, and
 // the seed of the self-service is made once (one admin group, one set of policies, the revision bumped once). Without the
 // lock the runs collide only now and then, so the scenario is repeated.
-func TestF5_10_ParallelMigrateRunsApplyEachMigrationOnce(t *testing.T) {
+func TestContract_OPS04_ParallelPostgresMigrationsApplyEachMigrationOnce(t *testing.T) {
 	ctx := context.Background()
 	infrastructure, err := support.Start(ctx)
 	if err != nil {
@@ -181,8 +184,27 @@ func TestF5_10_ParallelMigrateRunsApplyEachMigrationOnce(t *testing.T) {
 	}
 	pool.Close()
 	want := readSeedState(ctx, t, aloneURI)
-	if want.appliedMigrations != int(db.LatestMigration()) {
-		t.Fatalf("the reference run applied %d migrations, the latest is %d", want.appliedMigrations, db.LatestMigration())
+	entries, err := os.ReadDir("../../../db/migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".sql") {
+			expected++
+		}
+	}
+	if want.appliedMigrations != expected {
+		t.Fatalf("applied %d migrations, catalog has %d", want.appliedMigrations, expected)
+	}
+	checkPool, err := db.Connect(ctx, cfg.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := db.SchemaVersion(ctx, checkPool)
+	checkPool.Close()
+	if err != nil || version != db.LatestMigration() {
+		t.Fatalf("schema version %d, want %d: %v", version, db.LatestMigration(), err)
 	}
 
 	const runs, rounds = 5, 4
@@ -362,7 +384,7 @@ func TestF5_10_TheTestHelpersTakeNoSessionLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- db.MigrateUpTo(ctx, pool, 2) }()
+	go func() { done <- db.MigrateUpTo(ctx, pool, db.LatestMigration()) }()
 	select {
 	case err := <-done:
 		if err != nil {

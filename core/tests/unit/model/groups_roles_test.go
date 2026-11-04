@@ -45,7 +45,7 @@ func TestRolePermissionItemTakesAnAccessLevelAndOneTarget(t *testing.T) {
 		"no access":   `{"type_resource_id":"` + someTypeID + `","access":[]}`,
 		"wildcard":    `{"type_resource_id":"` + someTypeID + `","access":["*"]}`,
 		"empty level": `{"type_resource_id":"` + someTypeID + `","access":[""]}`,
-		"two targets": `{"type_resource_id":"` + someTypeID + `","resource_id":"b1","resource_from_claim":{"claim":"c","lookup_type_resource_id":"` + someTypeID + `"},"access":["read"]}`,
+		"two targets": `{"type_resource_id":"` + someTypeID + `","resource_id":"b1","resource_from_property":{"property":"c","lookup_type_resource_id":"` + someTypeID + `"},"access":["read"]}`,
 	}
 	for name, raw := range invalid {
 		t.Run(name, func(t *testing.T) {

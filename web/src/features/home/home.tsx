@@ -328,13 +328,13 @@ export function Home({ name }: { name: string }) {
             ) : (
               recent.map((r) => (
                 <Flex
-                  key={r.id}
+                  key={`${r.revision}.${r.seq}`}
                   align="center"
                   gap={8}
                   style={{ padding: '8px 0', borderBottom: '1px solid var(--licetum-border)' }}
                 >
                   <Link
-                    href={`/history?change=${r.id}`}
+                    href={`/history?change=${r.revision}.${r.seq}`}
                     style={{ flex: 1, minWidth: 0, color: 'var(--licetum-text)' }}
                   >
                     <span style={{ color: 'var(--licetum-muted)' }}>{formatTime(r.at, lang)}</span>{' '}
@@ -346,7 +346,7 @@ export function Home({ name }: { name: string }) {
                       <Button
                         size="small"
                         disabled={revert.busy}
-                        onClick={() => void revert.applyOne(r.id)}
+                        onClick={() => void revert.applyOne(r.revision)}
                       >
                         {t('undo.action')}
                       </Button>
