@@ -1,0 +1,148 @@
+# DEC10: resource_where covers the resources of the rule's type whose attributes, as their source reported them, match
+# every condition, and their descendants as a point rule on each of them would. A list attribute counts through its items:
+# eq, in and regex hold when one item does, ne and not_in when every item does. An attribute a resource does not report
+# matches no condition, ne and not_in included. A rule with resource_where is anchored at resources, never at the type as
+# a whole.
+contracts: [DEC10]
+description: resource_where over scalar and list attributes, with every operator, several conditions, descendants and denials.
+services: [org]
+types:
+  - {name: project, service: org, sync: true}
+  - {name: task, service: org, sync: true, parents: [{type: project}]}
+  - {name: asset, service: org, sync: true}
+resources:
+  # The projects of TestIntegrationResourceWhereCoversTheResourcesWhoseAttributesMatch, and a task under each.
+  - {type: project, id: P1, name: Project 1, meta: {owner: alice, tier: gold}}
+  - {type: project, id: P2, name: Project 2, meta: {owner: bob, tier: silver}}
+  - {type: project, id: P3, name: Project 3, meta: {owner: alice, tier: silver}}
+  - {type: task, id: T1, parents: [{type: project, id: P1}]}
+  - {type: task, id: T2, parents: [{type: project, id: P2}]}
+  - {type: task, id: T3, parents: [{type: project, id: P3}]}
+  - {type: asset, id: A1, meta: {owner: alice, tags: [red, blue], size: "12"}}
+  - {type: asset, id: A2, meta: {owner: bob, tags: [blue], size: "3"}}
+  - {type: asset, id: A3, meta: {owner: alice, tags: [green], size: "10"}}
+  - {type: asset, id: A4, meta: {owner: carol}}
+  - {type: asset, id: A5, meta: {owner: dave, tags: red, size: abc}}
+rules:
+  # The rules of TestIntegrationResourceWhereCoversTheResourcesWhoseAttributesMatch.
+  - {name: read-alice-projects, subject: user-1, type: project, access: [read], where: [{attr: owner, op: eq, value: alice}]}
+  - {name: write-gold-projects, subject: user-1, type: project, access: [write], where: [{attr: tier, op: in, value: [gold]}]}
+  - {name: read-team-x-projects, subject: user-1, type: project, access: [read], where: [{attr: team, op: eq, value: x}]}
+  # One level per condition over the assets.
+  - {name: tags-eq-blue, subject: asset-user, type: asset, access: [tag_eq], where: [{attr: tags, op: eq, value: blue}]}
+  - {name: tags-in-red-green, subject: asset-user, type: asset, access: [tag_in], where: [{attr: tags, op: in, value: [red, green]}]}
+  - {name: tags-ne-red, subject: asset-user, type: asset, access: [tag_ne], where: [{attr: tags, op: ne, value: red}]}
+  - {name: tags-not-in-red-green, subject: asset-user, type: asset, access: [tag_not_in], where: [{attr: tags, op: not_in, value: [red, green]}]}
+  - {name: tags-regex-gr, subject: asset-user, type: asset, access: [tag_regex], where: [{attr: tags, op: regex, value: ^gr}]}
+  - {name: size-gt-10, subject: asset-user, type: asset, access: [size_gt], where: [{attr: size, op: gt, value: "10"}]}
+  - {name: size-le-10, subject: asset-user, type: asset, access: [size_le], where: [{attr: size, op: le, value: "10"}]}
+  - {name: alice-and-blue, subject: asset-user, type: asset, access: [both], where: [{attr: owner, op: eq, value: alice}, {attr: tags, op: eq, value: blue}]}
+  - {name: owner-in-alice-carol, subject: asset-user, type: asset, access: [owner_in], where: [{attr: owner, op: in, value: [alice, carol]}]}
+  - {name: team-ne-x, subject: asset-user, type: asset, access: [team_ne], where: [{attr: team, op: ne, value: x}]}
+  # A denial by attributes under a grant on the whole type.
+  - {name: delete-assets, subject: asset-user, type: asset, access: [delete]}
+  - {name: deny-delete-red, subject: asset-user, type: asset, access: [delete], deny: true, where: [{attr: tags, op: eq, value: red}]}
+cases:
+  # from admin-api/tests/integration/api/conditions_test.go:TestIntegrationResourceWhereCoversTheResourcesWhoseAttributesMatch
+  - name: the projects whose attributes match, level by level
+    subject: user-1
+    questions:
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [read-alice-projects]}
+      - {type: project, resource: P1, action: write, allowed: true, decision: allowed, granted_by: [write-gold-projects]}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P2, action: write, allowed: false, decision: no_access}
+      - {type: project, resource: P3, action: read, allowed: true, decision: allowed, granted_by: [read-alice-projects]}
+      - {type: project, resource: P3, action: write, allowed: false, decision: no_access}
+  - name: the descendants of a matching resource are covered as by a point rule on it
+    subject: user-1
+    questions:
+      - {type: task, resource: T1, action: read, allowed: true, decision: allowed, granted_by: [read-alice-projects]}
+      - {type: task, resource: T1, action: write, allowed: true, decision: allowed, granted_by: [write-gold-projects]}
+      - {type: task, resource: T2, action: read, allowed: false, decision: no_access}
+      - {type: task, resource: T3, action: read, allowed: true, decision: allowed}
+      - {type: task, resource: T3, action: write, allowed: false, decision: no_access}
+  - name: a rule by attributes grants nothing on the type as a whole
+    subject: user-1
+    questions:
+      - {type: project, action: read, allowed: false, decision: no_access}
+  - name: eq on a list holds when one item is equal
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: tag_eq, allowed: true, decision: allowed, granted_by: [tags-eq-blue]}
+      - {type: asset, resource: A2, action: tag_eq, allowed: true, decision: allowed}
+      - {type: asset, resource: A3, action: tag_eq, allowed: false, decision: no_access}
+      - {type: asset, resource: A4, action: tag_eq, allowed: false, decision: no_access}
+      - {type: asset, resource: A5, action: tag_eq, allowed: false, decision: no_access}
+  - name: in holds for a list with one item among the values and for a scalar among them
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: tag_in, allowed: true, decision: allowed, granted_by: [tags-in-red-green]}
+      - {type: asset, resource: A2, action: tag_in, allowed: false, decision: no_access}
+      - {type: asset, resource: A3, action: tag_in, allowed: true, decision: allowed}
+      - {type: asset, resource: A4, action: tag_in, allowed: false, decision: no_access}
+      - {type: asset, resource: A5, action: tag_in, allowed: true, decision: allowed}
+  - name: ne on a list holds only when every item differs, and never on a missing attribute
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: tag_ne, allowed: false, decision: no_access}
+      - {type: asset, resource: A2, action: tag_ne, allowed: true, decision: allowed, granted_by: [tags-ne-red]}
+      - {type: asset, resource: A3, action: tag_ne, allowed: true, decision: allowed}
+      - {type: asset, resource: A4, action: tag_ne, allowed: false, decision: no_access}
+      - {type: asset, resource: A5, action: tag_ne, allowed: false, decision: no_access}
+  - name: not_in on a list holds only when no item is among the values
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: tag_not_in, allowed: false, decision: no_access}
+      - {type: asset, resource: A2, action: tag_not_in, allowed: true, decision: allowed, granted_by: [tags-not-in-red-green]}
+      - {type: asset, resource: A3, action: tag_not_in, allowed: false, decision: no_access}
+      - {type: asset, resource: A4, action: tag_not_in, allowed: false, decision: no_access}
+      - {type: asset, resource: A5, action: tag_not_in, allowed: false, decision: no_access}
+  - name: regex on a list holds when one item matches
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: tag_regex, allowed: false, decision: no_access}
+      - {type: asset, resource: A2, action: tag_regex, allowed: false, decision: no_access}
+      - {type: asset, resource: A3, action: tag_regex, allowed: true, decision: allowed, granted_by: [tags-regex-gr]}
+      - {type: asset, resource: A5, action: tag_regex, allowed: false, decision: no_access}
+  - name: numeric conditions compare numbers, the boundary included in le only
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: size_gt, allowed: true, decision: allowed, granted_by: [size-gt-10]}
+      - {type: asset, resource: A2, action: size_gt, allowed: false, decision: no_access}
+      - {type: asset, resource: A3, action: size_gt, allowed: false, decision: no_access}
+      - {type: asset, resource: A4, action: size_gt, allowed: false, decision: no_access}
+      - {type: asset, resource: A5, action: size_gt, allowed: false, decision: no_access}
+      - {type: asset, resource: A1, action: size_le, allowed: false, decision: no_access}
+      - {type: asset, resource: A2, action: size_le, allowed: true, decision: allowed, granted_by: [size-le-10]}
+      - {type: asset, resource: A3, action: size_le, allowed: true, decision: allowed}
+      - {type: asset, resource: A4, action: size_le, allowed: false, decision: no_access}
+      - {type: asset, resource: A5, action: size_le, allowed: false, decision: no_access}
+  - name: every condition must hold
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: both, allowed: true, decision: allowed, granted_by: [alice-and-blue]}
+      - {type: asset, resource: A2, action: both, allowed: false, decision: no_access}
+      - {type: asset, resource: A3, action: both, allowed: false, decision: no_access}
+  - name: in over a scalar attribute
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: owner_in, allowed: true, decision: allowed, granted_by: [owner-in-alice-carol]}
+      - {type: asset, resource: A2, action: owner_in, allowed: false, decision: no_access}
+      - {type: asset, resource: A3, action: owner_in, allowed: true, decision: allowed}
+      - {type: asset, resource: A4, action: owner_in, allowed: true, decision: allowed}
+      - {type: asset, resource: A5, action: owner_in, allowed: false, decision: no_access}
+  - name: an attribute no resource reports covers nothing, even with ne
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: team_ne, allowed: false, decision: no_access}
+      - {type: asset, resource: A4, action: team_ne, allowed: false, decision: no_access}
+  - name: a denial by attributes takes the level away from the resources that match only
+    subject: asset-user
+    questions:
+      - {type: asset, resource: A1, action: delete, allowed: false, decision: denied, granted_by: [delete-assets], denials: [{rule: deny-delete-red}]}
+      - {type: asset, resource: A2, action: delete, allowed: true, decision: allowed, denials: []}
+      - {type: asset, resource: A3, action: delete, allowed: true, decision: allowed, denials: []}
+      - {type: asset, resource: A4, action: delete, allowed: true, decision: allowed, denials: []}
+      - {type: asset, resource: A5, action: delete, allowed: false, decision: denied, denials: [{rule: deny-delete-red}]}
+      - {type: asset, action: delete, allowed: true, decision: allowed, granted_by: [delete-assets], denials: []}
+      - {type: asset, action: tag_eq, allowed: false, decision: no_access}

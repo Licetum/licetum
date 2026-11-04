@@ -1,0 +1,39 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/evaluations",
+  "body": {
+    "evaluations": [
+      {
+        "action": {
+          "name": "read"
+        },
+        "resource": {
+          "id": "b1",
+          "type": "branch"
+        }
+      },
+      {
+        "action": {
+          "name": "write"
+        },
+        "resource": {
+          "id": "b2",
+          "type": "branch"
+        }
+      },
+      {
+        "action": {
+          "name": "enabled"
+        },
+        "resource": {
+          "id": "*",
+          "type": "flag"
+        }
+      }
+    ],
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

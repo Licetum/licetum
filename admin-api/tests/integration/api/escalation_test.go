@@ -19,7 +19,7 @@ import (
 
 func TestIntegrationPointWriterCannotPutAPlatformPolicyIntoARoleThroughABatch(t *testing.T) {
 	w := newWorld(t)
-	role := w.must("POST", "/role", map[string]any{"name": "carol-role"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "carol-role"})["id"].(string)
 	// Carol may write this one role, and nothing of the platform as a whole.
 	w.grant(map[string]any{"type_resource_id": model.PlatformTypeResourceID(model.PlatformRole).String(),
 		"resource_id": role, "subject": "carol", "access": []string{"write"}})
@@ -44,7 +44,7 @@ func TestIntegrationPointWriterChangesWhatARuleAppliesToButNotItsTarget(t *testi
 	w.grant(map[string]any{"type_resource_id": model.PlatformTypeResourceID(model.PlatformAssignmentRule).String(),
 		"resource_id": rule, "subject": "carol", "access": []string{"write"}})
 	carol := "Bearer " + w.token(jwt.MapClaims{"preferred_username": "carol"})
-	role := w.must("POST", "/role", map[string]any{"name": "any-role"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "any-role"})["id"].(string)
 	url := w.admin.URL + "/assignment_rule/" + rule
 
 	// Who the rule applies to and its levels are its own to change: the target stays B1.
@@ -68,19 +68,19 @@ func TestIntegrationPointWriterChangesWhatARuleAppliesToButNotItsTarget(t *testi
 func TestIntegrationDenyOfAGroupWhoseMembershipReadsAMissingAttributeApplies(t *testing.T) {
 	w := newWorld(t)
 	w.rule("branch", "", map[string]any{"subject": hierarchySubject})
-	sales := w.must("POST", "/group", map[string]any{"name": "sales-team"})["id"].(string)
+	sales := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales-team"})["id"].(string)
 	w.must("POST", "/group/"+sales+"/member", map[string]any{
 		"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}})
-	// A new deny applies on a missing attribute: without the department claim the membership is unknown, so B1 stays
+	// A new deny applies on a missing attribute: without the department property the membership is unknown, so B1 stays
 	// denied. Known not to be a member, the subject gets B1 back.
 	w.rule("branch", "B1", map[string]any{"effect": "deny", "access": []string{"read"}, "member_of_group_id": sales})
 
 	claims := jwt.MapClaims{"preferred_username": hierarchySubject}
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, nil, "branch", "B2", "B3", "B4")
 	claims["department"] = "sales"
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, nil, "branch", "B2", "B3", "B4")
 	claims["department"] = "hr"
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, nil, "branch", "B1", "B2", "B3", "B4")
 }
 
 // An allow turned into a deny keeps the default of a new deny, not the skip of the allow: the denial applies on an
@@ -95,15 +95,15 @@ func TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute(t *test
 		"resource_id": "B2", "access": []string{"read"}, "predicate": cidr, "effect": "deny"})
 
 	claims := jwt.MapClaims{"preferred_username": hierarchySubject}
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch", "B1", "B3", "B4")
-	expectIDs(t, w.permissionWith(w.org, claims, map[string]any{"ip": "10.1.1.1"}), "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, nil, "branch", "B1", "B3", "B4")
+	w.expectVisible(w.org, claims, map[string]any{"ip": "10.1.1.1"}, "branch", "B1", "B2", "B3", "B4")
 }
 
 // A rule that grants a role with an item on the platform grants that item: a point write on the rule does not reach to
 // changing its subject, which would give the platform policy to whoever the subject becomes.
 func TestIntegrationPointWriterCannotGiveItselfARoleWithAPlatformItem(t *testing.T) {
 	w := newWorld(t)
-	role := w.must("POST", "/role", map[string]any{"name": "platform-reader"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": model.PlatformServiceID, "name": "platform-reader"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": model.PlatformTypeResourceID(model.PlatformGroup).String(), "access": []string{"read"}})
 	rule := w.must("POST", "/assignment_rule", map[string]any{"role_id": role, "subject": "dave"})["id"].(string)

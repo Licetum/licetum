@@ -61,13 +61,10 @@ var nameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
 // DefaultOptions is the configuration a process starts with, before the stored settings are read: JSON at the given
 // level, every event on, the subject hashed under a salt of this process, and every allowed decision logged.
 func DefaultOptions(level slog.Level) Options {
-	salt := make([]byte, 16)
-	_, _ = rand.Read(salt)
 	return Options{
 		Format:        "json",
 		Level:         level,
 		Subject:       "hash",
-		Salt:          hex.EncodeToString(salt),
 		SampleAllowed: 1,
 	}
 }
@@ -114,8 +111,9 @@ func (o Options) eventOn(category string) bool {
 
 // Switch is the handler of the process logger. It writes to one writer; Apply changes its configuration.
 type Switch struct {
-	out io.Writer
-	cur atomic.Pointer[current]
+	out          io.Writer
+	cur          atomic.Pointer[current]
+	warnedNoSalt atomic.Bool
 }
 
 type current struct {
@@ -137,7 +135,11 @@ func (s *Switch) Apply(opts Options) error {
 	if err := opts.Validate(); err != nil {
 		return err
 	}
-	s.cur.Store(&current{opts: opts, handler: build(s.out, opts)})
+	handler := build(s.out, opts)
+	s.cur.Store(&current{opts: opts, handler: handler})
+	if opts.Subject == "hash" && opts.Salt == "" && !s.warnedNoSalt.Swap(true) {
+		_ = handler.Handle(context.Background(), slog.NewRecord(time.Now(), slog.LevelWarn, "LOG__SUBJECT_SALT is empty: subject fields are omitted", 0))
+	}
 	return nil
 }
 
@@ -252,11 +254,16 @@ func replacer(opts Options) func([]string, slog.Attr) slog.Attr {
 			}
 			return a
 		}
-		if a.Key == "subject" || a.Key == "user" {
+		// A person is named by subject (the decision lines), user (the caller of the request) and on_behalf_of (the person a PEP
+		// client asked about): all three follow the setting.
+		if a.Key == "subject" || a.Key == "user" || a.Key == "on_behalf_of" {
 			switch opts.Subject {
 			case "omit":
 				return slog.Attr{}
 			case "hash":
+				if opts.Salt == "" {
+					return slog.Attr{}
+				}
 				// an anonymous request has no subject: nothing to hash, the empty value stays empty
 				if s := a.Value.String(); s != "" {
 					a.Value = slog.StringValue(hashSubject(opts.Salt, s))

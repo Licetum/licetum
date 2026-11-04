@@ -9,11 +9,12 @@ package api_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
+
+	support "github.com/licetum/licetum/core/testsupport"
 
 	"github.com/licetum/licetum/core/engine"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/licetum/licetum/core/model"
-	"github.com/licetum/licetum/core/redisx"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 const hierarchySubject = "user-1"
@@ -41,7 +42,7 @@ func newWorld(t *testing.T) *world {
 	e := setup(t)
 	ctx := context.Background()
 	for _, table := range []string{"division", "rrs", "branch", "item"} {
-		if _, err := e.pool.Exec(ctx, `CREATE TABLE src_`+table+` (id text PRIMARY KEY, name text, parent_id text)`); err != nil {
+		if _, err := support.RawExec(ctx, e.pool, `CREATE TABLE src_`+table+` (id text PRIMARY KEY, name text, parent_id text)`); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -55,8 +56,7 @@ func newWorld(t *testing.T) *world {
 	svc := func(name string) string {
 		return e.must("POST", "/service", map[string]any{
 			"name": name, "url": m + "/app", "icon": m + "/icon.png",
-			"authorization_url": m + "/realm/auth", "token_url": m + "/realm/token",
-			"jwks_url": m + "/jwks", "issuer": m + "/realm", "slug": name, "client_id": name, "client_secret": "s",
+			"slug": name,
 		})["id"].(string)
 	}
 	w.org, w.appSvc = svc("org"), svc("app")
@@ -101,7 +101,7 @@ func (w *world) source(table string, values ...string) {
 		if values[i+2] != "" {
 			parent = &values[i+2]
 		}
-		if _, err := w.pool.Exec(context.Background(), `INSERT INTO src_`+table+` VALUES ($1, $2, $3)`,
+		if _, err := support.RawExec(context.Background(), w.pool, `INSERT INTO src_`+table+` VALUES ($1, $2, $3)`,
 			values[i], values[i+1], parent); err != nil {
 			w.t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func (w *world) source(table string, values ...string) {
 
 func (w *world) exec(sql string, args ...any) {
 	w.t.Helper()
-	if _, err := w.pool.Exec(context.Background(), sql, args...); err != nil {
+	if _, err := support.RawExec(context.Background(), w.pool, sql, args...); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -120,7 +120,7 @@ func (w *world) grant(rule map[string]any) string {
 	if _, ok := rule["access"]; !ok {
 		rule["access"] = []string{"read"}
 	}
-	if _, ok := rule["subject"]; !ok && rule["member_of_group_id"] == nil && rule["predicate"] == nil {
+	if _, ok := rule["subject"]; !ok && rule["member_of_group_id"] == nil && rule["subject_group_id"] == nil && rule["predicate"] == nil {
 		rule["subject"] = hierarchySubject
 	}
 	return w.must("POST", "/assignment_rule", rule)["id"].(string)
@@ -128,10 +128,10 @@ func (w *world) grant(rule map[string]any) string {
 
 // permission computes the access of hierarchySubject with higher consistency: neither the result
 // cache nor the source throttle is used (a source change does not bump the cache version by itself).
-func (w *world) permission(serviceID string, claims engine.Claims) engine.PermissionResult {
+func (w *world) permission(serviceID string, claims engine.Properties) engine.PermissionResult {
 	w.t.Helper()
 	if claims == nil {
-		claims = engine.Claims{}
+		claims = engine.Properties{}
 	}
 	out, err := w.app.GetPermission(context.Background(), uuid.MustParse(serviceID), hierarchySubject,
 		engine.NewEnv(claims, nil), engine.HigherConsistency)
@@ -177,25 +177,28 @@ func TestIntegrationHierarchyCascade(t *testing.T) {
 	}
 	// The hash of every synchronized source is kept, so an unchanged source is not written again.
 	for _, name := range []string{"division", "rrs", "branch", "item"} {
-		n, err := w.app.Redis.Exists(context.Background(), "authz:resource_sync:hash:"+w.typeByName[name]).Result()
+		var n int
+		err := w.pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM sync_state WHERE type_resource_id = $1 AND data_hash <> '' AND applied_at IS NOT NULL`,
+			w.typeByName[name]).Scan(&n)
 		if err != nil || n != 1 {
 			t.Fatalf("no sync hash for %s: %d %v", name, n, err)
 		}
 	}
 }
 
-func TestIntegrationHierarchyResourceFromClaim(t *testing.T) {
+func TestIntegrationHierarchyResourceFromProperty(t *testing.T) {
 	w := newWorld(t)
-	w.grant(map[string]any{"type_resource_id": w.rrs, "resource_from_claim": map[string]any{
-		"claim": "department", "lookup_type_resource_id": w.branch, "match_by": "name",
+	w.grant(map[string]any{"type_resource_id": w.rrs, "resource_from_property": map[string]any{
+		"property": "department", "lookup_type_resource_id": w.branch, "match_by": "name",
 	}})
 
 	// branch B3 -> its rrs R2 -> everything under R2
-	result := w.permission(w.org, engine.Claims{"department": "Branch 3"})
+	result := w.permission(w.org, engine.Properties{"department": "Branch 3"})
 	expectIDs(t, result, "rrs", "R2")
 	expectIDs(t, result, "branch", "B3")
 
-	if nothing := w.permission(w.org, engine.Claims{"department": "no such branch"}); len(nothing) != 0 {
+	if nothing := w.permission(w.org, engine.Properties{"department": "no such branch"}); len(nothing) != 0 {
 		t.Fatalf("an unknown claim value must grant nothing: %+v", nothing)
 	}
 }
@@ -291,39 +294,44 @@ func TestIntegrationHierarchyDeletedMiddleType(t *testing.T) {
 
 func TestIntegrationTypeModes(t *testing.T) {
 	w := newWorld(t)
-	// A permission without resources for a role matched by the position claim: the type has no
+	// A permission without resources for a role matched by the position property: the type has no
 	// synchronizer, so it is returned as not_sync.
 	capability := w.typeResource(w.appSvc, "advanced_mode", "")
-	role := w.must("POST", "/group", map[string]any{"name": "advanced-users"})["id"].(string)
+	role := w.must("POST", "/group", map[string]any{"service_id": w.appSvc, "name": "advanced-users"})["id"].(string)
 	w.must("POST", "/group/"+role+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "position", "op": "in", "value": []string{"manager"}}},
 	})
 	w.grant(map[string]any{"type_resource_id": capability, "member_of_group_id": role, "access": []string{"write", "read"}})
 	w.grant(map[string]any{"type_resource_id": w.division, "resource_id": "D1"})
 
-	manager := w.permission(w.appSvc, engine.Claims{"position": "manager"})
+	manager := w.permission(w.appSvc, engine.Properties{"position": "manager"})
 	expectIDs(t, manager, "item", "I1")
 	expectJSON(t, "advanced_mode", manager["advanced_mode"], `{"type":"not_sync","access":["read","write"]}`)
 
 	// Without an applicable rule a not_sync type is not in the response at all.
-	cashier := w.permission(w.appSvc, engine.Claims{"position": "cashier"})
+	cashier := w.permission(w.appSvc, engine.Properties{"position": "cashier"})
 	if _, ok := cashier["advanced_mode"]; ok || len(cashier) != 1 {
 		t.Fatalf("cashier must only see item: %+v", cashier)
 	}
 
-	// The check API returns the typed shape. The result cache is keyed by subject, not by claims, so
-	// reset it after the cashier computation above.
-	if _, err := redisx.BumpVersion(context.Background(), w.app.Redis); err != nil {
-		t.Fatal(err)
-	}
+	// The check API tells the two modes apart. The result cache is keyed by subject, not by properties, so reset it after the
+	// cashier computation above. A type with resources lists them, each with its levels; a type without resources lists
+	// none, and has its levels as a whole.
+	w.externalChange(context.Background())
 	token := w.token(jwt.MapClaims{"preferred_username": hierarchySubject, "position": "manager"})
-	status, perm := w.env.permission(w.appSvc, token)
-	if status != http.StatusOK {
-		t.Fatalf("check API: %d %v", status, perm)
+	expectJSON(t, "item", w.listedLevels("app", token, "item", "read", "write"),
+		`[{"id":"I1","name":"Item 1","access":["read"]}]`)
+	for _, action := range []string{"read", "write"} {
+		if status, ids := w.search("app", token, "advanced_mode", action); status != http.StatusOK || len(ids) != 0 {
+			t.Fatalf("a type without a synchronizer lists no resources, got %d %v for %s", status, ids, action)
+		}
 	}
-	expectJSON(t, "check API", perm, `{
-		"item": {"type":"sync","resources":[{"id":"I1","name":"Item 1","access":["read"]}]},
-		"advanced_mode": {"type":"not_sync","access":["read","write"]}}`)
+	status, body := w.ask(authzenreq.SearchAction("app", hierarchySubject, authzenreq.Whole("advanced_mode")), token)
+	levels, _, err := authzenreq.Actions(status, body)
+	if err != nil {
+		t.Fatalf("levels of the type as a whole: %v", err)
+	}
+	expectJSON(t, "advanced_mode", levels, `["read","write"]`)
 
 	// A specific resource can only be targeted on a type with a synchronizer.
 	status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
@@ -380,8 +388,7 @@ func TestIntegrationSynchronizerSecrets(t *testing.T) {
 	m := e.mock.URL
 	svcID := e.must("POST", "/service", map[string]any{
 		"name": "svc", "url": m + "/app", "icon": m + "/icon.png",
-		"authorization_url": m + "/realm/auth", "token_url": m + "/realm/token", "jwks_url": m + "/jwks",
-		"issuer": m + "/realm", "slug": "c", "client_id": "c", "client_secret": "s",
+		"slug": "c",
 	})["id"].(string)
 	typeID := e.must("POST", "/service/"+svcID+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
 	path := "/service/" + svcID + "/type_resource/" + typeID + "/resource/synchronizer"
@@ -438,52 +445,5 @@ func TestIntegrationSynchronizerSecrets(t *testing.T) {
 	_, raw = e.do("GET", e.admin.URL+"/type_resource/"+typeID+"/resource", nil)
 	if strings.Count(string(raw), `"id"`) != 3 {
 		t.Fatalf("resources of the closed source: %s", raw)
-	}
-}
-
-func TestIntegrationOAuthRefresh(t *testing.T) {
-	e := setup(t)
-	platform := model.PlatformServiceID.String()
-	refresh := func(token string) (int, []byte, http.Header) {
-		req, _ := http.NewRequest(http.MethodPost, e.admin.URL+"/service/"+platform+"/oauth/refresh",
-			strings.NewReader(`{"refresh_token":"`+token+`"}`))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, raw, resp.Header
-	}
-
-	status, raw, _ := refresh("good")
-	var tokens map[string]any
-	_ = json.Unmarshal(raw, &tokens)
-	if status != http.StatusOK {
-		t.Fatalf("refresh: %d %s", status, raw)
-	}
-	expectJSON(t, "refreshed tokens", tokens, `{"access_token":"new-access","token_type":"Bearer","expires_in":300,
-		"refresh_token":"new-refresh","refresh_expires_in":1800}`)
-
-	status, raw, headers := refresh("expired")
-	if status != http.StatusUnauthorized || !strings.Contains(string(raw), `"code":"refresh_token_invalid"`) ||
-		headers.Get("WWW-Authenticate") != `Bearer error="invalid_token"` {
-		t.Fatalf("an expired refresh token: %d %s %v", status, raw, headers)
-	}
-	// invalid_client (e.g. a changed client secret) is not a reason to log everybody out.
-	if status, raw, _ := refresh("other"); status != http.StatusFailedDependency {
-		t.Fatalf("invalid_client: want 424, got %d %s", status, raw)
-	}
-
-	// 401 from the admin API carries the Bearer challenge.
-	req, _ := http.NewRequest(http.MethodGet, e.admin.URL+"/service", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") != "Bearer" {
-		t.Fatalf("admin API without a token: %d %q", resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
 	}
 }

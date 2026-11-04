@@ -1,0 +1,29 @@
+# golangci-lint v2 for the spike module (a nested module: core's configuration does not apply).
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gosec
+    - copyloopvar
+    - errorlint
+    - misspell
+    - unconvert
+    - usestdlibvars
+  settings:
+    gosec:
+      excludes:
+        - G404 # the dataset and the keys read are deterministic on purpose (math/rand/v2 with a seed)
+        - G115 # integer conversions of values bounded by the dataset sizes
+  exclusions:
+    presets:
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/licetum/licetum

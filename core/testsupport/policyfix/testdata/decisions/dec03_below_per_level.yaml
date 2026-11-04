@@ -1,0 +1,83 @@
+# DEC03, the per-level side: "strictly below" holds for a level only when that level flows from the denial's anchor down
+# to the exception's anchor. A link that lets only read through puts the exception below the denial for read and not for
+# write, although the exception and the denial both cover the resource with both levels through another route. And for
+# two points, below means below in the lineage: an exception that covers the resource through another parent is not
+# below the denial.
+#
+# zone <- rack (the link lets only read through), host <- rack and host <- zone (all levels): a host is reached from its
+# zone directly with every level and through its rack with read only. Z1 ⊃ K1; Z2 ⊃ K2; H1 has the parents K1 and Z1;
+# H2 has the parents K2 and Z1, so K2 is not below Z1 although both cover H2. Each subject holds the rules of one pair of
+# anchor kinds: pp point/point, ww whole/whole, pw a point exception and a whole denial, wp a whole exception and a point
+# denial.
+contracts: [DEC03]
+description: Below is decided per level and, between points, by the lineage.
+services: [infra]
+types:
+  - {name: zone, service: infra, sync: true}
+  - {name: rack, service: infra, sync: true, parents: [{type: zone, inherit: [read]}]}
+  - {name: host, service: infra, sync: true, parents: [{type: rack}, {type: zone}]}
+resources:
+  - {type: zone, id: Z1}
+  - {type: zone, id: Z2}
+  - {type: rack, id: K1, parents: [{type: zone, id: Z1}]}
+  - {type: rack, id: K2, parents: [{type: zone, id: Z2}]}
+  - {type: host, id: H1, parents: [{type: rack, id: K1}, {type: zone, id: Z1}]}
+  - {type: host, id: H2, parents: [{type: rack, id: K2}, {type: zone, id: Z1}]}
+rules:
+  - {name: pp-allow-Z1, subject: pp, type: zone, resource: Z1, access: [read, write]}
+  - {name: pp-deny-Z1, subject: pp, type: zone, resource: Z1, access: [read, write], deny: true}
+  - {name: pp-except-K1, subject: pp, type: rack, resource: K1, access: [read, write], exception: true}
+  - {name: ww-allow-zone, subject: ww, type: zone, access: [read, write]}
+  - {name: ww-deny-zone, subject: ww, type: zone, access: [read, write], deny: true}
+  - {name: ww-except-rack, subject: ww, type: rack, access: [read, write], exception: true}
+  - {name: pw-allow-zone, subject: pw, type: zone, access: [read, write]}
+  - {name: pw-deny-zone, subject: pw, type: zone, access: [read, write], deny: true}
+  - {name: pw-except-K1, subject: pw, type: rack, resource: K1, access: [read, write], exception: true}
+  - {name: wp-allow-Z1, subject: wp, type: zone, resource: Z1, access: [read, write]}
+  - {name: wp-deny-Z1, subject: wp, type: zone, resource: Z1, access: [read, write], deny: true}
+  - {name: wp-except-rack, subject: wp, type: rack, access: [read, write], exception: true}
+  # An exception on a rack that covers H2 but lies under another zone than the denial.
+  - {name: lin-allow-Z1, subject: lineage, type: zone, resource: Z1, access: [read]}
+  - {name: lin-deny-Z1, subject: lineage, type: zone, resource: Z1, access: [read], deny: true}
+  - {name: lin-except-K2, subject: lineage, type: rack, resource: K2, access: [read], exception: true}
+cases:
+  - name: point below point — the rack is below the zone for read only
+    subject: pp
+    questions:
+      - {type: host, resource: H1, action: read, allowed: true, decision: allowed, granted_by: [pp-allow-Z1, pp-except-K1], denials: [{rule: pp-deny-Z1, lifted_by: [pp-except-K1]}]}
+      - {type: host, resource: H1, action: write, allowed: false, decision: denied, granted_by: [pp-allow-Z1, pp-except-K1], denials: [{rule: pp-deny-Z1}]}
+      - {type: rack, resource: K1, action: read, allowed: true, decision: allowed, granted_by: [pp-allow-Z1, pp-except-K1], denials: [{rule: pp-deny-Z1, lifted_by: [pp-except-K1]}]}
+      - {type: rack, resource: K1, action: write, allowed: true, decision: allowed, granted_by: [pp-except-K1]}
+      - {type: zone, resource: Z1, action: read, allowed: false, decision: denied, granted_by: [pp-allow-Z1], denials: [{rule: pp-deny-Z1}]}
+      - {type: host, resource: H2, action: read, allowed: false, decision: denied, granted_by: [pp-allow-Z1], denials: [{rule: pp-deny-Z1}]}
+      - {type: host, resource: H2, action: write, allowed: false, decision: denied}
+  - name: whole below whole — the rack type is below the zone type for read only
+    subject: ww
+    questions:
+      - {type: host, resource: H1, action: read, allowed: true, decision: allowed, granted_by: [ww-allow-zone, ww-except-rack], denials: [{rule: ww-deny-zone, lifted_by: [ww-except-rack]}]}
+      - {type: host, resource: H1, action: write, allowed: false, decision: denied, granted_by: [ww-allow-zone, ww-except-rack], denials: [{rule: ww-deny-zone}]}
+      - {type: host, resource: H2, action: read, allowed: true, decision: allowed}
+      - {type: host, resource: H2, action: write, allowed: false, decision: denied}
+      - {type: rack, resource: K1, action: read, allowed: true, decision: allowed, denials: [{rule: ww-deny-zone, lifted_by: [ww-except-rack]}]}
+      - {type: rack, resource: K1, action: write, allowed: true, decision: allowed, granted_by: [ww-except-rack]}
+      - {type: zone, resource: Z1, action: read, allowed: false, decision: denied, granted_by: [ww-allow-zone], denials: [{rule: ww-deny-zone}]}
+  - name: a point exception below a whole-type denial of a higher type — for read only
+    subject: pw
+    questions:
+      - {type: host, resource: H1, action: read, allowed: true, decision: allowed, granted_by: [pw-allow-zone, pw-except-K1], denials: [{rule: pw-deny-zone, lifted_by: [pw-except-K1]}]}
+      - {type: host, resource: H1, action: write, allowed: false, decision: denied, granted_by: [pw-allow-zone, pw-except-K1], denials: [{rule: pw-deny-zone}]}
+      - {type: host, resource: H2, action: read, allowed: false, decision: denied, granted_by: [pw-allow-zone], denials: [{rule: pw-deny-zone}]}
+      - {type: rack, resource: K1, action: write, allowed: true, decision: allowed, granted_by: [pw-except-K1]}
+  - name: a whole-type exception below a point denial of a higher type — for read only
+    subject: wp
+    questions:
+      - {type: host, resource: H1, action: read, allowed: true, decision: allowed, granted_by: [wp-allow-Z1, wp-except-rack], denials: [{rule: wp-deny-Z1, lifted_by: [wp-except-rack]}]}
+      - {type: host, resource: H1, action: write, allowed: false, decision: denied, granted_by: [wp-allow-Z1, wp-except-rack], denials: [{rule: wp-deny-Z1}]}
+      - {type: host, resource: H2, action: read, allowed: true, decision: allowed, granted_by: [wp-allow-Z1, wp-except-rack], denials: [{rule: wp-deny-Z1, lifted_by: [wp-except-rack]}]}
+      - {type: host, resource: H2, action: write, allowed: false, decision: denied}
+  - name: point below point is by the lineage, not by covering the same resource
+    subject: lineage
+    questions:
+      - {type: host, resource: H2, action: read, allowed: false, decision: denied, granted_by: [lin-allow-Z1, lin-except-K2], denials: [{rule: lin-deny-Z1}]}
+      - {type: rack, resource: K2, action: read, allowed: true, decision: allowed, granted_by: [lin-except-K2]}
+      - {type: host, resource: H1, action: read, allowed: false, decision: denied, granted_by: [lin-allow-Z1], denials: [{rule: lin-deny-Z1}]}

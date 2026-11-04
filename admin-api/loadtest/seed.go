@@ -6,18 +6,21 @@ import (
 	"fmt"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/licetum/licetum/core/db"
+	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/model"
 )
 
 const (
 	serviceSlug = "loadtest"
-	// backendClient is the client application that asks on behalf of people (POST .../on_behalf/check). Its token
-	// carries azp=backendClient, and the service trusts it.
-	backendClient = "loadtest-backend"
+	// pepClientName is the name of the PEP client the traffic asks as.
+	pepClientName = "loadtest"
 	// probe ids are the resources the synchronizers check their source with before they are saved.
 	folderProbe   = "f-0"
 	documentProbe = "d-0"
@@ -25,6 +28,7 @@ const (
 
 // fixture is what the seeding made, and what the traffic draws its requests from.
 type fixture struct {
+	serviceID    uuid.UUID
 	folderType   uuid.UUID
 	documentType uuid.UUID
 	folders      int
@@ -32,6 +36,8 @@ type fixture struct {
 	groups       []uuid.UUID
 	rules        int
 	phases       []phase
+	// apiKey is the key of the PEP client of the service: the credential of every request of the run.
+	apiKey string
 }
 
 // phase is the time one stage of a run took.
@@ -51,6 +57,7 @@ func seed(ctx context.Context, e *env, p Profile) (*fixture, error) {
 	}{
 		{"source tables", createSource},
 		{"service and types", createServiceAndTypes},
+		{"PEP client and key", createPEPClient},
 		{"groups", createGroups},
 		{"rules", createRules},
 	}
@@ -68,7 +75,7 @@ func seed(ctx context.Context, e *env, p Profile) (*fixture, error) {
 }
 
 // createSource fills the tables the synchronizers read: the folders, and the documents with their folder and owner.
-// The owner is the attribute the owner pattern rule matches the claims against (meta.owner).
+// The owner is the attribute the owner pattern rule matches the properties against (meta.owner).
 func createSource(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	return execAll(ctx, e.pool, []statement{
 		{`CREATE TABLE lt_folder (id text PRIMARY KEY, name text NOT NULL)`, nil},
@@ -84,18 +91,12 @@ func createSource(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	})
 }
 
-// createServiceAndTypes registers the service with the identity provider of the run, its two resource types (a
-// document belongs to a folder) and their synchronizers, which read the tables above.
+// createServiceAndTypes registers the service, its two resource types (a document belongs to a folder) and their
+// synchronizers, which read the tables above.
 func createServiceAndTypes(ctx context.Context, e *env, _ Profile, fx *fixture) error {
 	svcIn := &model.ServiceInput{
-		Name:             "Load test",
-		Slug:             serviceSlug,
-		AuthorizationURL: loadtestIssuer + "/authorize",
-		TokenURL:         loadtestIssuer + "/token",
-		JwksURL:          e.idp.jwksURL,
-		Issuer:           loadtestIssuer,
-		ClientID:         "licetum-loadtest",
-		TrustedClients:   []string{backendClient},
+		Name: "Load test",
+		Slug: serviceSlug,
 	}
 	if err := svcIn.Validate(); err != nil {
 		return fmt.Errorf("the service: %w", err)
@@ -104,6 +105,7 @@ func createServiceAndTypes(ctx context.Context, e *env, _ Profile, fx *fixture) 
 	if err != nil {
 		return fmt.Errorf("create the service: %w", err)
 	}
+	fx.serviceID = svc.ID
 	implies := map[string][]string{"write": {"read"}}
 
 	folderIn := &model.TypeResourceInput{Name: "folder", AccessImplies: implies}
@@ -161,12 +163,33 @@ func createServiceAndTypes(ctx context.Context, e *env, _ Profile, fx *fixture) 
 	return nil
 }
 
-// createGroups makes one group per department. A member is whoever carries the department claim: the membership is a
-// predicate over the claims, so a group has no list of people to keep.
+// loadtestOperations are what the PEP client of the run may do: every operation of the PDP.
+var loadtestOperations = []string{engine.PEPEvaluate, engine.PEPSearchResource, engine.PEPSearchAction, engine.PEPSearchSubject, engine.PEPExplain}
+
+// createPEPClient makes the one PEP client of the service and issues its API key, the credential of every request of the run:
+// the traffic names the person a question is about in the body, and brings the properties the rules read as the properties of the
+// subject. The check servers read the PEP directory from the database when they start, after the seeding; AfterPEPWrite makes
+// the engine of this process read it too.
+func createPEPClient(ctx context.Context, e *env, _ Profile, fx *fixture) error {
+	client, err := db.CreatePEPClient(ctx, e.pool, db.PEPClient{
+		ServiceID: fx.serviceID, Name: pepClientName, Kind: db.PEPKindAPIKey, Operations: loadtestOperations, Enabled: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create the PEP client: %w", err)
+	}
+	if fx.apiKey, _, err = db.IssueAPIKey(ctx, e.pool, client.ID); err != nil {
+		return fmt.Errorf("issue the API key: %w", err)
+	}
+	e.app.AfterPEPWrite()
+	return nil
+}
+
+// createGroups makes one group per department. A member is whoever carries the department property: the membership is a
+// predicate over the properties, so a group has no list of people to keep.
 func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	fx.groups = make([]uuid.UUID, p.Groups)
 	for g := range p.Groups {
-		group, err := e.admin.CreateGroup(ctx, &model.GroupInput{Name: departmentName(g)})
+		group, err := e.admin.CreateGroup(ctx, &model.GroupInput{ServiceID: &fx.serviceID, Name: departmentName(g)})
 		if err != nil {
 			return fmt.Errorf("create group %s: %w", departmentName(g), err)
 		}
@@ -182,24 +205,30 @@ func createGroups(ctx context.Context, e *env, p Profile, fx *fixture) error {
 	return nil
 }
 
-// createRules writes the assignment rules straight into the table with COPY. The check API reads the table and nothing
-// else of a rule, so each row needs the constraints of the table and the defaults of a new rule, and no more: the
-// change log and the cache versions belong to the admin API's writes, which the measured path does not make. The table
-// is analyzed afterwards, so the planner sees its real size, as it would after a few writes.
+// createRules loads fixture rows with COPY and publishes the fixture transaction's
+// revision atomically. Measured writes still go through the real admin API.
 func createRules(ctx context.Context, e *env, p Profile, fx *fixture) error {
-	columns := []string{"id", "type_resource_id", "resource_id", "resource_from_claim", "access", "subject", "predicate",
-		"member_of_group_id", "enabled", "effect", "exception", "on_missing_attribute", "requires_predicate"}
-	n, err := e.pool.CopyFrom(ctx, pgx.Identifier{"assignment_rule"}, columns,
-		pgx.CopyFromSlice(p.Rules, func(i int) ([]any, error) {
-			return ruleRow(ruleFor(i, p, fx))
+	columns := []string{"id", "type_resource_id", "resource_id", "resource_from_property", "access", "subject", "predicate",
+		"member_of_group_id", "enabled", "effect", "exception", "on_missing_attribute", "requires_predicate", "subject_group_id", "service_id"}
+	var n int64
+	err := support.RawPolicyTx(ctx, e.pool, func(tx pgx.Tx) error {
+		var err error
+		n, err = tx.CopyFrom(ctx, pgx.Identifier{"assignment_rule"}, columns, pgx.CopyFromSlice(p.Rules, func(i int) ([]any, error) {
+			row, err := ruleRow(ruleFor(i, p, fx))
+			if err != nil {
+				return nil, err
+			}
+			return append(row, fx.serviceID), nil
 		}))
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("copy the rules: %w", err)
 	}
 	if n != int64(p.Rules) {
 		return fmt.Errorf("copied %d rules, want %d", n, p.Rules)
 	}
-	if _, err := e.pool.Exec(ctx, `ANALYZE assignment_rule`); err != nil {
+	if _, err := support.RawExec(ctx, e.pool, `ANALYZE assignment_rule`); err != nil {
 		return fmt.Errorf("analyze the rules: %w", err)
 	}
 	return nil
@@ -212,13 +241,13 @@ func ruleRow(in *model.AssignmentRuleInput) ([]any, error) {
 	if predicate == nil {
 		predicate = []model.PredicateCondition{}
 	}
-	rawPredicate, err := json.Marshal(predicate)
+	rawPredicate, err := json.Marshal(model.SubjectPredicate(predicate))
 	if err != nil {
 		return nil, fmt.Errorf("encode a predicate: %w", err)
 	}
-	var claim any // NULL unless the rule takes its resource from a claim
-	if in.ResourceFromClaim != nil {
-		raw, err := json.Marshal(in.ResourceFromClaim)
+	var claim any // NULL unless the rule takes its resource from a property
+	if in.ResourceFromProperty != nil {
+		raw, err := json.Marshal(in.ResourceFromProperty)
 		if err != nil {
 			return nil, fmt.Errorf("encode a claim: %w", err)
 		}
@@ -234,12 +263,12 @@ func ruleRow(in *model.AssignmentRuleInput) ([]any, error) {
 	}
 	return []any{
 		uuid.New(), in.TypeResourceID, in.ResourceID, claim, in.Access, in.Subject, rawPredicate,
-		in.MemberOfGroupID, true, effect, in.Exception, onMissing, []byte("[]"),
+		in.MemberOfGroupID, true, effect, in.Exception, onMissing, []byte("[]"), in.SubjectGroupID,
 	}, nil
 }
 
 // ruleFor is the i-th rule of the policy. The mix is the one a service accumulates over time: departments read folders
-// (and so their documents), people read single documents, claims reach a folder, a department is denied a folder
+// (and so their documents), people read single documents, properties reach a folder, a department is denied a folder
 // and one document is excepted back below it. Rule 0 is the owner pattern: every subject reads and writes the
 // documents whose owner attribute is its own name.
 func ruleFor(i int, p Profile, fx *fixture) *model.AssignmentRuleInput {
@@ -253,11 +282,11 @@ func ruleFor(i int, p Profile, fx *fixture) *model.AssignmentRuleInput {
 
 	if i == 0 {
 		return &model.AssignmentRuleInput{
-			Name:              ptr("owner pattern"),
-			Predicate:         []model.PredicateCondition{{Attr: "preferred_username", Op: model.OpRegex, Value: model.PredicateValue{Str: "^user-"}}},
-			TypeResourceID:    ptr(fx.documentType),
-			ResourceFromClaim: &model.ResourceFromClaim{Claim: "preferred_username", LookupTypeResourceID: fx.documentType, MatchBy: "meta.owner"},
-			Access:            []string{"read", "write"},
+			Name:                 ptr("owner pattern"),
+			Predicate:            []model.PredicateCondition{{Attr: "preferred_username", Op: model.OpRegex, Value: model.PredicateValue{Str: "^user-"}}},
+			TypeResourceID:       ptr(fx.documentType),
+			ResourceFromProperty: &model.ResourceFromProperty{Property: "preferred_username", LookupTypeResourceID: fx.documentType, MatchBy: "meta.owner"},
+			Access:               []string{"read", "write"},
 		}
 	}
 	switch i % 10 {
@@ -310,7 +339,7 @@ type statement struct {
 
 func execAll(ctx context.Context, pool *pgxpool.Pool, stmts []statement) error {
 	for _, s := range stmts {
-		if _, err := pool.Exec(ctx, s.sql, s.args...); err != nil {
+		if _, err := support.RawExec(ctx, pool, s.sql, s.args...); err != nil {
 			return fmt.Errorf("exec %.40q: %w", s.sql, err)
 		}
 	}

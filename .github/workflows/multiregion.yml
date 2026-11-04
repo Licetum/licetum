@@ -1,0 +1,67 @@
+name: Multi-region
+
+# F6, tier R: the multi-region environment (admin-api/tests/multiregion): three regions, the latency of the links between them and the
+# primary, a streaming replica in each other region, and the scenarios of the issue. Nightly on the epic branch, and on demand.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit to test (default: the epic branch)'
+        required: false
+        default: epic/production-load-readiness
+      load_seconds:
+        description: 'Seconds of the 600 requests a second scenario (F6-8)'
+        required: false
+        default: '600'
+  # The nightly suite (nightly-suite.yml, started by the dispatcher on main) calls it with the ref of the epic branch.
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Branch or commit to test'
+        type: string
+        default: epic/production-load-readiness
+      load_seconds:
+        description: 'Seconds of the 600 requests a second scenario'
+        type: string
+        default: '600'
+
+permissions:
+  contents: read
+
+jobs:
+  # Switched off in P2-10 (ADR 0001, section 10.7): the multi-region environment is restored in P7 with the topology.
+  multiregion:
+    if: false
+    name: Three regions
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      LICETUM_F6_LOAD_SECONDS: ${{ inputs.load_seconds || '600' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || 'epic/production-load-readiness' }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scenarios
+        run: task go:test:multiregion
+
+      - name: State of the stack
+        if: failure()
+        run: |
+          docker ps -a
+          cd admin-api/tests/multiregion && docker compose -f compose.yml logs --tail=100

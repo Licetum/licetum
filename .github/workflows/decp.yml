@@ -1,0 +1,60 @@
+name: Decision property test
+
+# DECP of contracts.yaml on many generated policies: the engine of the PDP against the reference evaluator, over a
+# wider range of seeds than the pull request runs (seeds 1-20 there). Nightly through the nightly suite, and on demand; a
+# failure names the seed to run again with LICETUM_DECP_SEEDS.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test (default, the one the workflow is started on)
+        type: string
+        default: ""
+      seeds:
+        description: The seeds, one or first-last
+        type: string
+        default: "21-520"
+  workflow_call:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test
+        type: string
+        default: ""
+      seeds:
+        description: The seeds, one or first-last
+        type: string
+        default: "21-520"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: decp-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decp:
+    name: Engine against the reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            admin-api/go.sum
+
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: DECP over the seeds
+        env:
+          LICETUM_DECP_SEEDS: ${{ inputs.seeds || '21-520' }}
+        run: task go:test:decp

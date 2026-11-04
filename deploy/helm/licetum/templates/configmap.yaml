@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "licetum.fullname" . }}-config
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+  annotations:
+    # Hooks, so that they exist when the migration Job of a pre-install / pre-upgrade runs (a hook runs before the rest of the release
+    # is created). They are kept after the hook and replaced at every install and upgrade; `helm uninstall` does not remove them.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  DB__PGBOUNCER: {{ .Values.db.pgbouncer | quote }}
+  DB__POOL_SIZE: {{ .Values.db.poolSize | quote }}
+  DB__MAX_OVERFLOW: {{ .Values.db.maxOverflow | quote }}
+  DB__SYNC_POOL_SIZE: {{ .Values.db.syncPoolSize | quote }}
+  SHUTDOWN__DRAIN: {{ printf "%ds" (int .Values.shutdown.drain) | quote }}
+  SHUTDOWN__TIMEOUT: {{ printf "%ds" (int .Values.shutdown.timeout) | quote }}
+  {{- with .Values.policyMaxStaleness }}
+  POLICY__MAX_STALENESS: {{ . | quote }}
+  {{- end }}
+  PDP__PUBLIC_URL: {{ required "publicUrl is required: the PEPs name the PDP by it, for example https://licetum.example.com" .Values.publicUrl | quote }}
+  PLATFORM__NAME: {{ .Values.platform.name | quote }}
+  PLATFORM__URL: {{ .Values.platform.url | quote }}
+  PLATFORM__ICON: {{ .Values.platform.icon | quote }}
+  ADMIN_AUTH__ISSUER: {{ .Values.adminAuth.issuer | quote }}
+  ADMIN_AUTH__AUDIENCE: {{ .Values.adminAuth.audience | quote }}
+  ADMIN_AUTH__JWKS_URL: {{ .Values.adminAuth.jwksUrl | quote }}
+  ADMIN_AUTH__SUBJECT_CLAIM: {{ .Values.adminAuth.subjectClaim | quote }}
+  PLATFORM__ADMIN_GROUP_NAME: {{ .Values.platform.adminGroupName | quote }}
+  PLATFORM__ADMIN_CLAIM: {{ .Values.platform.adminClaim | quote }}
+  PLATFORM__ADMIN_CLAIM_VALUES: {{ .Values.platform.adminClaimValues | quote }}
+  {{- range $name, $value := .Values.env }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}

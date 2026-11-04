@@ -10,6 +10,8 @@ import (
 // App is the admin application: the engine of the core with the writes and the tools of the management on top.
 type App struct {
 	*engine.App
+	// changes tells the waiters of WaitChanges where the change log ends, with one query per changeHeadEvery.
+	changes changeHead
 }
 
 // New wraps an engine.

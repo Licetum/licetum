@@ -1,0 +1,190 @@
+# DEC04: access_implies works both ways — granting a level grants the levels it includes, denying a level denies the
+# levels that include it — and the denial level * denies every level, also one that no hierarchy names.
+#
+# The hierarchy that applies is the one of the type of the resource decided (access_implies is a property of a type),
+# and it is transitive. division → rrs → branch → report (service org): division and rrs have no hierarchy, branch has
+# write ⊃ read (as in graph_test.go:TestIntegrationAccessImplies), report has admin ⊃ write ⊃ read. bulk_edit is a
+# capability (no synchronizer, so only whole-type rules) with write ⊃ read.
+# D1 ⊃ R1, R2; R1 ⊃ B1, B2; R2 ⊃ B3; B1 ⊃ P1; B3 ⊃ P3. Each subject is one scenario.
+contracts: [DEC04]
+description: The level hierarchy of a type, both ways, and the wildcard denial, on resources and on whole types.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}], implies: {write: [read]}}
+  - {name: report, service: org, sync: true, parents: [{type: branch}], implies: {admin: [write], write: [read]}}
+  - {name: bulk_edit, service: org, sync: false, implies: {write: [read]}}
+resources:
+  - {type: division, id: D1}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: report, id: P1, parents: [{type: branch, id: B1}]}
+  - {type: report, id: P3, parents: [{type: branch, id: B3}]}
+rules:
+  # writer: write on B1 (graph_test.go:TestIntegrationAccessImplies, first step)
+  - {name: writer-write-B1, subject: writer, type: branch, resource: B1, access: [write]}
+  # write-denied-read: + a denial of read on B1 (graph_test.go:TestIntegrationAccessImplies, second step)
+  - {name: wdr-write-B1, subject: write-denied-read, type: branch, resource: B1, access: [write]}
+  - {name: wdr-deny-read-B1, subject: write-denied-read, type: branch, resource: B1, access: [read], deny: true}
+  # reader: read includes nothing
+  - {name: reader-read-B1, subject: reader, type: branch, resource: B1, access: [read]}
+  # write-denied-write: a denial of write leaves read, which the granted write includes
+  - {name: wdw-write-B1, subject: write-denied-write, type: branch, resource: B1, access: [write]}
+  - {name: wdw-deny-write-B1, subject: write-denied-write, type: branch, resource: B1, access: [write], deny: true}
+  # per-type: write on R1 — read is implied where the decided resource's type says so, not on rrs
+  - {name: pt-write-R1, subject: per-type, type: rrs, resource: R1, access: [write]}
+  # except-read: a denial of read on R1 denies the write of the branches below it; an exception on read lifts read only
+  - {name: xr-write-D1, subject: except-read, type: division, resource: D1, access: [write]}
+  - {name: xr-deny-read-R1, subject: except-read, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: xr-except-read-B1, subject: except-read, type: branch, resource: B1, access: [read], exception: true}
+  # transitive: admin ⊃ write ⊃ read on report
+  - {name: tr-admin-P1, subject: transitive, type: report, resource: P1, access: [admin]}
+  # transitive-denied: a denial of read denies admin through write
+  - {name: trd-admin-P1, subject: transitive-denied, type: report, resource: P1, access: [admin]}
+  - {name: trd-deny-read-B1, subject: transitive-denied, type: branch, resource: B1, access: [read], deny: true}
+  # star: * on B1 denies every granted level, audit (named by no hierarchy) included, and reaches below B1
+  - {name: star-grant-R1, subject: star, type: rrs, resource: R1, access: [read, write, audit]}
+  - {name: star-deny-B1, subject: star, type: branch, resource: B1, access: ["*"], deny: true}
+  # star-exceptions: * on R1; an exception lifts it for the levels it grants and the levels they include
+  - {name: sx-grant-D1, subject: star-exceptions, type: division, resource: D1, access: [read, write]}
+  - {name: sx-deny-R1, subject: star-exceptions, type: rrs, resource: R1, access: ["*"], deny: true}
+  - {name: sx-except-read-B1, subject: star-exceptions, type: branch, resource: B1, access: [read], exception: true}
+  - {name: sx-except-write-B2, subject: star-exceptions, type: branch, resource: B2, access: [write], exception: true}
+  # star-whole: * on the whole type branch, and the type below it
+  - {name: sw-grant-D1, subject: star-whole, type: division, resource: D1, access: [read, write]}
+  - {name: sw-deny-branch, subject: star-whole, type: branch, access: ["*"], deny: true}
+  # the capability: the same semantics on the type as a whole
+  - {name: cw-write, subject: cap-writer, type: bulk_edit, access: [write]}
+  - {name: cdr-write, subject: cap-denied-read, type: bulk_edit, access: [write]}
+  - {name: cdr-deny-read, subject: cap-denied-read, type: bulk_edit, access: [read], deny: true}
+  - {name: cs-grant, subject: cap-star, type: bulk_edit, access: [read, write, audit]}
+  - {name: cs-deny, subject: cap-star, type: bulk_edit, access: ["*"], deny: true}
+cases:
+  # from graph_test.go:TestIntegrationAccessImplies
+  - name: granting write grants read
+    subject: writer
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [writer-write-B1]}
+      - {type: branch, resource: B1, action: write, allowed: true, decision: allowed, granted_by: [writer-write-B1]}
+  - name: write granted on a branch flows down and is expanded by the hierarchy of the type below
+    subject: writer
+    questions:
+      - {type: report, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [writer-write-B1]}
+      - {type: report, resource: P1, action: write, allowed: true}
+      - {type: report, resource: P1, action: admin, allowed: false, decision: no_access}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+  # from graph_test.go:TestIntegrationAccessImplies
+  - name: denying read denies write as well
+    subject: write-denied-read
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [wdr-write-B1], denials: [{rule: wdr-deny-read-B1}]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, granted_by: [wdr-write-B1], denials: [{rule: wdr-deny-read-B1}]}
+  - name: granting read grants no level that includes read
+    subject: reader
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [reader-read-B1]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: no_access}
+  - name: denying write does not deny read, which the granted write includes
+    subject: write-denied-write
+    questions:
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, denials: [{rule: wdw-deny-write-B1}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [wdw-write-B1]}
+  - name: the hierarchy is the one of the decided resource's type
+    subject: per-type
+    questions:
+      # rrs has no hierarchy: write on R1 is write only
+      - {type: rrs, resource: R1, action: write, allowed: true, decision: allowed, granted_by: [pt-write-R1]}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+      # branch and report have one: the write that flows down includes read there
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [pt-write-R1]}
+      - {type: branch, resource: B2, action: read, allowed: true}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: report, resource: P1, action: read, allowed: true}
+      - {type: report, resource: P1, action: write, allowed: true}
+      - {type: report, resource: P1, action: admin, allowed: false, decision: no_access}
+  - name: a denial of read on a type without a hierarchy denies write below it, an exception on read lifts read only
+    subject: except-read
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [xr-write-D1, xr-except-read-B1], denials: [{rule: xr-deny-read-R1, lifted_by: [xr-except-read-B1]}]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, granted_by: [xr-write-D1], denials: [{rule: xr-deny-read-R1}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: xr-deny-read-R1}]}
+      - {type: branch, resource: B2, action: write, allowed: false, decision: denied, denials: [{rule: xr-deny-read-R1}]}
+      - {type: branch, resource: B3, action: read, allowed: true}
+      - {type: branch, resource: B3, action: write, allowed: true}
+  - name: on a type without a hierarchy a denial of read leaves write
+    subject: except-read
+    questions:
+      - {type: rrs, resource: R1, action: write, allowed: true, decision: allowed, granted_by: [xr-write-D1]}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+      - {type: division, resource: D1, action: write, allowed: true}
+      - {type: division, resource: D1, action: read, allowed: false, decision: no_access}
+  - name: the hierarchy is transitive when granting
+    subject: transitive
+    questions:
+      - {type: report, resource: P1, action: admin, allowed: true, decision: allowed, granted_by: [tr-admin-P1]}
+      - {type: report, resource: P1, action: write, allowed: true, decision: allowed, granted_by: [tr-admin-P1]}
+      - {type: report, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [tr-admin-P1]}
+      - {type: report, resource: P3, action: read, allowed: false, decision: no_access}
+  - name: the hierarchy is transitive when denying
+    subject: transitive-denied
+    questions:
+      - {type: report, resource: P1, action: admin, allowed: false, decision: denied, granted_by: [trd-admin-P1], denials: [{rule: trd-deny-read-B1}]}
+      - {type: report, resource: P1, action: write, allowed: false, decision: denied, denials: [{rule: trd-deny-read-B1}]}
+      - {type: report, resource: P1, action: read, allowed: false, decision: denied, denials: [{rule: trd-deny-read-B1}]}
+  - name: the wildcard denies every level, below its anchor too
+    subject: star
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [star-grant-R1], denials: [{rule: star-deny-B1}]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, denials: [{rule: star-deny-B1}]}
+      - {type: branch, resource: B1, action: audit, allowed: false, decision: denied, granted_by: [star-grant-R1], denials: [{rule: star-deny-B1}]}
+      - {type: report, resource: P1, action: read, allowed: false, decision: denied}
+      - {type: report, resource: P1, action: audit, allowed: false, decision: denied}
+      # a level that is granted nowhere stays without access, the wildcard has nothing to take
+      - {type: report, resource: P1, action: admin, allowed: false, decision: no_access}
+  - name: the wildcard takes nothing beside or above its anchor
+    subject: star
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true}
+      - {type: branch, resource: B2, action: write, allowed: true}
+      - {type: branch, resource: B2, action: audit, allowed: true, decision: allowed, granted_by: [star-grant-R1]}
+      - {type: rrs, resource: R1, action: audit, allowed: true}
+  - name: an exception lifts the wildcard for the level it grants and the levels that level includes
+    subject: star-exceptions
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [sx-grant-D1, sx-except-read-B1], denials: [{rule: sx-deny-R1, lifted_by: [sx-except-read-B1]}]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, granted_by: [sx-grant-D1], denials: [{rule: sx-deny-R1}]}
+      - {type: branch, resource: B2, action: write, allowed: true, decision: allowed, granted_by: [sx-grant-D1, sx-except-write-B2], denials: [{rule: sx-deny-R1, lifted_by: [sx-except-write-B2]}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [sx-grant-D1, sx-except-write-B2], denials: [{rule: sx-deny-R1, lifted_by: [sx-except-write-B2]}]}
+      - {type: branch, resource: B3, action: write, allowed: true}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, denials: [{rule: sx-deny-R1}]}
+      - {type: rrs, resource: R1, action: write, allowed: false, decision: denied}
+  - name: the wildcard on a whole type denies every level of its resources and of the lower types
+    subject: star-whole
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [sw-grant-D1], denials: [{rule: sw-deny-branch}]}
+      - {type: branch, resource: B2, action: write, allowed: false, decision: denied}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied}
+      - {type: report, resource: P1, action: read, allowed: false, decision: denied, denials: [{rule: sw-deny-branch}]}
+      - {type: rrs, resource: R1, action: read, allowed: true}
+      - {type: rrs, resource: R1, action: write, allowed: true}
+      - {type: division, resource: D1, action: write, allowed: true}
+  - name: a capability — granting write grants read on the type as a whole
+    subject: cap-writer
+    questions:
+      - {type: bulk_edit, action: read, allowed: true, decision: allowed, granted_by: [cw-write]}
+      - {type: bulk_edit, action: write, allowed: true, decision: allowed, granted_by: [cw-write]}
+  - name: a capability — denying read denies write on the type as a whole
+    subject: cap-denied-read
+    questions:
+      - {type: bulk_edit, action: read, allowed: false, decision: denied, granted_by: [cdr-write], denials: [{rule: cdr-deny-read}]}
+      - {type: bulk_edit, action: write, allowed: false, decision: denied, granted_by: [cdr-write], denials: [{rule: cdr-deny-read}]}
+  - name: a capability — the wildcard denies every level of the type as a whole
+    subject: cap-star
+    questions:
+      - {type: bulk_edit, action: read, allowed: false, decision: denied, denials: [{rule: cs-deny}]}
+      - {type: bulk_edit, action: write, allowed: false, decision: denied, denials: [{rule: cs-deny}]}
+      - {type: bulk_edit, action: audit, allowed: false, decision: denied, granted_by: [cs-grant], denials: [{rule: cs-deny}]}

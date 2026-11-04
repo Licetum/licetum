@@ -1,0 +1,46 @@
+# DEC05: levels flow along the type links as they are, not as the data was written for. The state of
+# hierarchy_test.go:TestIntegrationHierarchyTypeTreeChanges after the re-parenting: branch hangs right under division
+# (service org), rrs is still a child of division but no longer a parent of branch, and the source of branch still
+# reports the rrs ids R1–R3 as parents — which, read as division ids, name nothing (unresolved links). B5 is added with
+# a parent that is a real division. D1 ⊃ R1, R2; D2 ⊃ R3; D1 ⊃ B5.
+contracts: [DEC05]
+description: After a branch type is re-parented, only the new type link carries levels.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: division}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: division, id: R1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: division, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: division, id: R2}]}
+  - {type: branch, id: B4, name: Branch 4, parents: [{type: division, id: R3}]}
+  - {type: branch, id: B5, name: Branch 5, parents: [{type: division, id: D1}]}
+rules:
+  - {name: tree-D1, subject: user-1, type: division, resource: D1, access: [read]}
+  - {name: old-R1, subject: old-parent, type: rrs, resource: R1, access: [read]}
+cases:
+  # from hierarchy_test.go:TestIntegrationHierarchyTypeTreeChanges
+  - name: after re-parenting no branch the source put under an rrs is under D1
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+  - name: a branch linked to a division by the new type link gets the levels of D1
+    subject: user-1
+    questions:
+      - {type: branch, resource: B5, action: read, allowed: true, decision: allowed, granted_by: [tree-D1]}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R1, action: read, allowed: true}
+  - name: an rrs is no longer a parent type of branch, so nothing flows from it to a branch
+    subject: old-parent
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed, granted_by: [old-R1]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}

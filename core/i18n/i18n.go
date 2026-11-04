@@ -2,7 +2,7 @@
 // message catalog used for user-facing API errors.
 //
 // English is the default and the source language. Every catalog entry must have a
-// translation for every supported language — TestCatalogComplete enforces it.
+// translation for every supported language — TestContract_API02_CatalogComplete enforces it.
 package i18n
 
 import (

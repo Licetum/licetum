@@ -1,0 +1,144 @@
+# DEC09, a denial whose own predicate reads a request attribute (admin-api/tests/integration/api/escalation_test.go,
+# TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute): user-1 reads every branch, and whoever asks from
+# 10.99.0.0/16 (the context attribute ip) is denied B2. The test creates that rule as an allow and turns it into a deny with
+# a PATCH; an allow turned into a deny takes the default of a new deny (apply), not the skip of the allow. A fixture holds
+# one state and writes its rules as they are, so it holds the state after the PATCH: a deny rule with on_missing_attribute
+# left to its default, which is apply. The PATCH itself (that the default is not carried over from the allow) cannot be
+# expressed here. Without the address the denial applies (fail closed); from another network it does not.
+#
+# Around the test (DEC08, DEC09): the bounds of the network, an address that is not an address (known, so the condition
+# fails instead of being unknown), a null attribute (missing), the same denial set to skip, and the allow as it was before
+# the PATCH, which grants nothing without the address. That allow was on B2, where the denial is after the PATCH; the two
+# are states of one rule and never hold together, and here the allow is on B1 (for everyone from the network, as in the
+# test), so that it does not change the answers of the test on B2. visitor is a subject with no rules of its own.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4.
+contracts: [DEC08, DEC09]
+description: A denial over a request attribute applies when the request does not carry it, unless it is set to skip.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+rules:
+  # The test: read on every branch, and B2 denied to whoever asks from 10.99.0.0/16 (the rule after the PATCH).
+  - {name: allow-branch, subject: user-1, type: branch, access: [read]}
+  - name: deny-B2-network
+    predicate: [{attr: ip, source: context, op: in_cidr, value: 10.99.0.0/16}]
+    type: branch
+    resource: B2
+    access: [read]
+    deny: true
+  # The same denial on B3, set to skip a missing attribute.
+  - name: skip-deny-B3-network
+    predicate: [{attr: ip, source: context, op: in_cidr, value: 10.99.0.0/16}]
+    type: branch
+    resource: B3
+    access: [read]
+    deny: true
+    on_missing: skip
+  # The allow before the PATCH, on B1.
+  - name: allow-B1-network
+    predicate: [{attr: ip, source: context, op: in_cidr, value: 10.99.0.0/16}]
+    type: branch
+    resource: B1
+    access: [read]
+cases:
+  # from admin-api/tests/integration/api/escalation_test.go:TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute
+  - name: without the address the denial applies
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B2-network, missing_attribute: true}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+  # from admin-api/tests/integration/api/escalation_test.go:TestIntegrationAnAllowRuleTurnedIntoADenyAppliesOnAMissingAttribute
+  - name: from another network the denial does not apply
+    subject: user-1
+    context: {ip: 10.1.1.1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+  - name: from within the network both denials apply
+    subject: user-1
+    context: {ip: 10.99.3.4}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [allow-branch, allow-B1-network], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: deny-B2-network, missing_attribute: false}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [allow-branch], denials: [{rule: skip-deny-B3-network, missing_attribute: false}]}
+  - name: the first address of the network lies in it
+    subject: user-1
+    context: {ip: 10.99.0.0}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: deny-B2-network}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: skip-deny-B3-network}]}
+  - name: the last address of the network lies in it
+    subject: user-1
+    context: {ip: 10.99.255.255}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: deny-B2-network}]}
+  - name: the address just below the network lies outside it
+    subject: user-1
+    context: {ip: 10.98.255.255}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
+  - name: the address just above the network lies outside it
+    subject: user-1
+    context: {ip: 10.100.0.0}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, denials: []}
+  - name: a value that is not an address is known and lies in no network, so neither denial applies
+    subject: user-1
+    context: {ip: not-an-address}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, denials: []}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
+  - name: an attribute that is present but null is missing
+    subject: user-1
+    context: {ip: null}
+    questions:
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, denials: [{rule: deny-B2-network, missing_attribute: true}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, denials: []}
+  - name: the denial applied on a missing attribute reaches what lies below B2 only
+    subject: user-1
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed, granted_by: [allow-branch], denials: []}
+  - name: the allow before the PATCH grants nothing without the address
+    subject: visitor
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
+  - name: the allow before the PATCH grants from the network
+    subject: visitor
+    context: {ip: 10.99.1.1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [allow-B1-network], denials: []}
+  - name: the allow before the PATCH grants from the network, below B1 in another service too
+    subject: visitor
+    service: app
+    context: {ip: 10.99.1.1}
+    questions:
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [allow-B1-network]}
+  - name: the allow before the PATCH grants nothing from another network
+    subject: visitor
+    context: {ip: 10.1.1.1}
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}

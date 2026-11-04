@@ -27,22 +27,22 @@ Start the complete development stack:
 task dev
 ```
 
-This starts PostgreSQL, Redis, Dex, the Go services (`core/`, `admin-api/`) and the Next.js interface (`web/`). Open
+This starts PostgreSQL, Dex, the Go services (`core/`, `admin-api/`) and the Next.js interface (`web/`). Open
 <http://localhost:3000> and sign in with the development account:
 
 - Email: `admin@example.com`
 - Password: `password`
 
 The Dex client, credentials, and signing configuration are for local development only. Configure a
-real identity provider through `PLATFORM__*` variables before using Licetum outside the local
-Compose stack.
+real identity provider (`ADMIN_AUTH__*` of the admin API and `OIDC_*` of the web interface) before using Licetum outside the
+local Compose stack.
 
 ## Repository layout
 
-- `core/` — the MIT module: the engine, the check API, migrations, synchronizers and the check schema
+- `core/` — the MIT module: the engine, the PDP (the AuthZEN API), migrations, synchronizers and the PDP schema
 - `admin-api/` — the AGPL module: the admin API and the commands that go with it (depends on `core/`)
 - `web/` — the Next.js + Ant Design interface (see `web/README.md`)
-- `infra/` — Compose fragments for PostgreSQL, Redis, and Dex
+- `infra/` — Compose fragments for PostgreSQL and Dex
 - `core/schema/` and `admin-api/schema/` — committed OpenAPI schemas used to generate the API client of `web/`
 - `.github/workflows/ci.yml` — checks and tests run by GitHub Actions
 
@@ -80,9 +80,10 @@ after changing an API contract; the generated schemas in `core/schema/` and `adm
 ## Testing
 
 `task check` is the local equivalent of the CI quality job. It checks Go formatting and linting,
-module tidiness, OpenAPI schema drift, web formatting, TypeScript, and translations.
+that the code behind the build tags (`integration`, `chaos`, `multiregion`) compiles, module tidiness,
+OpenAPI schema drift, web formatting, TypeScript, and translations.
 
-Backend integration tests use disposable PostgreSQL and Redis containers:
+Backend integration tests use disposable PostgreSQL containers:
 
 ```bash
 task go:test:unit
@@ -91,7 +92,7 @@ task go:coverage
 ```
 
 Docker is required for integration and coverage runs. The suite creates disposable containers and
-its own database schema, so no shared PostgreSQL or Redis instance is needed. The integration and
+its own database schema, so no shared PostgreSQL instance is needed (a server named by `LICETUM_TEST_POSTGRES_URI` is used instead of a container when Docker is not available). The integration and
 coverage tasks resolve the active Docker context automatically; direct `go test` runs should set
 `DOCKER_HOST` when Docker Desktop or another non-default context is active.
 
@@ -99,8 +100,8 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
 
 ### Backend and API changes
 
-- Keep the dependency direction: `api` → `service` → `db`/`redisx`/`synchronizer` → `model`/`config`/`i18n`/`apperr`.
-- Keep HTTP concerns in `admin-api/api/` and `core/server/`; business logic belongs in `admin-api/service/` (admin) or `core/engine/` (check).
+- Keep the dependency direction: `admin-api/api` → `admin-api/service` → `core/engine`, and in the core `server` → `engine` → `db`/`synchronizer` → `model`/`config`/`i18n`/`apperr` (depguard enforces it). No package imports a Redis client: there is no Redis, and `task go:deps:check` (part of `task check`) fails on `github.com/redis/go-redis`.
+- Keep HTTP concerns in `admin-api/api/` and `core/server/`; business logic belongs in `admin-api/service/` (admin) or `core/engine/` (decisions, synchronization).
 - Register new Huma operations with an `OperationID`, summary, description, tags, documented errors,
   and model field documentation.
 - Write API descriptions and user-facing API messages in English first.
@@ -108,6 +109,25 @@ coverage tasks resolve the active Docker context automatically; direct `go test`
   change. Add error messages to all supported locales.
 - Add a new numbered Goose migration for schema changes. Do not rewrite an already-applied migration.
 - Run `task generate` after changing an API schema and verify that `task check` passes.
+
+### Schema-v2 migrations
+
+Schema v2 is a fresh-database boundary. The released v0.1.x schema and public API have no upgrade path. `migrate` refuses a legacy
+`goose_db_version` on its search path before any write; `goose_db_version_v2` owns v2 history. For disposable local development data:
+
+```sh
+docker compose down -v
+docker compose up
+```
+
+The temporary P3 chain has been folded into `core/db/migrations/00001_init.sql` with [recorded schema equivalence](core/tests/integration/db/schema_v2_equivalence.md).
+From this point, add new numbered Goose files for schema changes and never rewrite an applied initializer or migration. Keep compatible-release changes in expand/contract steps;
+this rule does not create a v0.1.x upgrade path. The previous-release compatibility job is removed. Remove its old required status check from branch protection if configured.
+See [the approved P3 decisions](docs/adr/0001-regional-pdp.md#1171-p3-decisions).
+
+`licetum migrate` takes an advisory lock, so several runs started together apply each migration once. It needs a
+connection that lasts for the whole run; behind PgBouncer in transaction mode, point `DB__MIGRATE_URI` at PostgreSQL
+itself. Readiness requires the schema version expected by the running binary; it does not establish v0.1.x compatibility.
 
 ### Interface changes
 
@@ -167,8 +187,8 @@ ghcr.io/licetum/licetum/web:1.2.3
 Stable releases also update the `latest` tag. Pre-releases such as `v1.2.3-rc.1` publish only
 SemVer tags and do not update `latest`.
 
-Use clear, descriptive commit messages in the imperative mood. There is no requirement to use a
-specific commit-message format, but unrelated changes should not be combined into one commit.
+Use clear conventional commit subjects for P3 and release-noted work (`feat`, `fix`, `refactor`, `docs`, `test`), with `!` for breaking changes so git-cliff records them.
+P3 task subjects end with their issue number and every commit is signed off. Keep unrelated changes in separate commits.
 
 ## License
 
@@ -193,3 +213,10 @@ it under the license of its part. Commit with `git commit -s`. The CI checks it 
 
 This is not a CLA: the project does not take the right to relicense your code. Only the author's own code may be offered
 under another license.
+
+### Policy writes in migrations
+
+Once the mandatory-outbox triggers exist, any migration that rewrites or truncates a covered policy table must also
+write an outbox entry in that transaction. Foreign-key cascades count too. Do not disable the triggers, use replica mode,
+or change expected checksums to make a migration pass. The folded v2 init inserts its initial rows before installing
+triggers. Test fixture SQL uses `core/testsupport.RawPolicyTx`; production writers use `PolicyTx` or `TakeRevision`.

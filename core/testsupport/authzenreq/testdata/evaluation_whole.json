@@ -1,0 +1,17 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/evaluation",
+  "body": {
+    "action": {
+      "name": "enabled"
+    },
+    "resource": {
+      "id": "*",
+      "type": "flag"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

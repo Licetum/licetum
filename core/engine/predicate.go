@@ -15,22 +15,29 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// Claims are the claims of a verified JWT. Numbers are json.Number (decoded with UseNumber), so
-// comparing "5" == claim gives the same result as in the Python version.
-type Claims map[string]any
-
-// Env is what a decision reads about one request besides the subject: the claims of its token, the attributes the
+// Env is what a decision reads about one request: the explicit subject type, its properties, the attributes the
 // request carries (its context) and the time of the decision. Conditions read them by their source (see
 // model.PredicateCondition).
 type Env struct {
-	Claims  Claims
-	Context Claims
-	Now     time.Time
+	SubjectType string
+	Properties  Properties
+	Context     Properties
+	Now         time.Time
 }
 
 // NewEnv returns the environment of a request at the current time.
-func NewEnv(claims Claims, context map[string]any) Env {
-	return Env{Claims: claims, Context: context, Now: time.Now()}
+func NewEnv(properties Properties, context map[string]any) Env {
+	return Env{SubjectType: "user", Properties: properties, Context: context, Now: time.Now()}
+}
+
+// WithSubjectType returns a copy for the explicit request subject namespace.
+func (e Env) WithSubjectType(typ string) Env { e.SubjectType = typ; return e }
+
+func (e Env) subjectType() string {
+	if e.SubjectType == "" {
+		return "user"
+	}
+	return e.SubjectType
 }
 
 // truth is the outcome of a condition. Unknown is what a condition reads from an attribute the request does not
@@ -92,7 +99,7 @@ func (e Env) lookup(c model.PredicateCondition) (any, bool) {
 		}
 		return nil, false
 	}
-	v, ok := e.Claims[c.Attr]
+	v, ok := e.Properties[c.Attr]
 	return v, ok && v != nil
 }
 
@@ -126,10 +133,10 @@ func evaluatePredicate(conds []model.PredicateCondition, e Env) truth {
 	return t
 }
 
-// EvaluatePredicate reports whether the conditions hold for the claims alone: the request carries no context, and an
+// EvaluatePredicate reports whether the conditions hold for the properties alone: the request carries no context, and an
 // attribute it lacks does not hold.
-func EvaluatePredicate(predicate []model.PredicateCondition, claims Claims) bool {
-	return evaluatePredicate(predicate, Env{Claims: claims, Now: time.Now()}) == Yes
+func EvaluatePredicate(predicate []model.PredicateCondition, properties Properties) bool {
+	return evaluatePredicate(predicate, Env{Properties: properties, Now: time.Now()}) == Yes
 }
 
 // resourceMatches reports whether a resource covers the conditions of a resource_where: the attributes are the ones
@@ -164,7 +171,7 @@ func matchElements(c model.PredicateCondition, actual any) bool {
 	return negative
 }
 
-// matchOne compares one value with a condition. Claims are compared as their str() renders them (see PyStr), so the
+// matchOne compares one value with a condition. Properties are compared as their str() renders them (see PyStr), so the
 // predicates written for the Python version keep matching.
 func matchOne(c model.PredicateCondition, actual any) bool {
 	s := PyStr(actual)
@@ -252,7 +259,7 @@ func compileCached(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
-// PyStr renders a claim value the way Python's str() did in the legacy version
+// PyStr renders a property value the way Python's str() did in the legacy version
 // (True/False for bool, ['a', 'b'] for lists, etc.), so rules written for the old
 // implementation keep matching the same way.
 func PyStr(v any) string {

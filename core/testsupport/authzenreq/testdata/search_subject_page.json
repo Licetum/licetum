@@ -1,0 +1,25 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/search/subject",
+  "header": {
+    "X-Test-Consistency": [
+      "higher"
+    ]
+  },
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "page": {
+      "limit": 50,
+      "token": "tok"
+    },
+    "resource": {
+      "id": "*",
+      "type": "branch"
+    },
+    "subject": {
+      "type": "user"
+    }
+  }
+}

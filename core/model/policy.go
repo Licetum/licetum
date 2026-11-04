@@ -18,13 +18,14 @@ type PolicyTestCheck struct {
 	Expect     string  `json:"expect" enum:"allow,deny" doc:"allow — the answer must be allowed; deny — it must not be"`
 }
 
-// PolicyTestCase is a scenario: a subject with the claims and the request attributes it has, and the answers it must get.
+// PolicyTestCase is a scenario: a subject with the properties and the request attributes it has, and the answers it must get.
 type PolicyTestCase struct {
-	Name    string            `json:"name" minLength:"1" maxLength:"200" doc:"What the scenario is about" example:"sales read the branches"`
-	Subject string            `json:"subject" minLength:"1" doc:"The subject, named as the rules name it (preferred_username, or sub)" example:"alice"`
-	Claims  map[string]any    `json:"claims,omitempty" doc:"The claims of its token"`
-	Context RequestContext    `json:"context,omitempty" doc:"The attributes of the request"`
-	Checks  []PolicyTestCheck `json:"checks" minItems:"1" maxItems:"100" nullable:"false" doc:"The answers the scenario must get"`
+	SubjectType string            `json:"subject_type,omitempty" required:"false" default:"user" maxLength:"64" doc:"Subject type used to match literal-subject rules: 1 to 64 characters, and not group"`
+	Name        string            `json:"name" minLength:"1" maxLength:"200" doc:"What the scenario is about" example:"sales read the branches"`
+	Subject     string            `json:"subject" minLength:"1" doc:"The subject, named as the rules name it (preferred_username, or sub)" example:"alice"`
+	Properties  map[string]any    `json:"properties,omitempty" doc:"The properties of the subject (subject.properties of an AuthZEN request)"`
+	Context     RequestContext    `json:"context,omitempty" doc:"The attributes of the request"`
+	Checks      []PolicyTestCheck `json:"checks" minItems:"1" maxItems:"100" nullable:"false" doc:"The answers the scenario must get"`
 }
 
 // PolicyScenario is a stored scenario of a service.
@@ -94,12 +95,12 @@ type LintReport struct {
 }
 
 // PolicyDocumentFormat is the version of the policy document.
-const PolicyDocumentFormat = "licetum.policy/v1"
+const PolicyDocumentFormat = "licetum.policy/v2"
 
 // PolicyDocument is the policy of one service in a file. Resource types are named service/type, groups and roles by
 // their names, and a rule by its name (a rule without one is named rule-<id>, and is matched by its id).
 type PolicyDocument struct {
-	Format       string              `json:"format" enum:"licetum.policy/v1" doc:"The version of the format: licetum.policy/v1"`
+	Format       string              `json:"format" enum:"licetum.policy/v2" doc:"The version of the format: licetum.policy/v2"`
 	Service      string              `json:"service" doc:"The slug of the service whose rules the document holds; an import for another service is refused" example:"org"`
 	AccessGroups []PolicyAccessGroup `json:"access_groups" required:"false" nullable:"true" doc:"Named sets of access levels of resource types"`
 	Groups       []PolicyGroup       `json:"groups" required:"false" nullable:"true" doc:"Groups of subjects, with their memberships"`
@@ -120,10 +121,10 @@ type PolicyGroup struct {
 	Members []PolicyGroupMember `json:"members" nullable:"false" doc:"The memberships of the group"`
 }
 
-// PolicyGroupMember is a membership: a predicate over the claims, or a group nested as a whole.
+// PolicyGroupMember is a membership: a predicate over the properties, or a group nested as a whole.
 type PolicyGroupMember struct {
 	Group     *string              `json:"group,omitempty" doc:"The name of a group nested as a whole; mutually exclusive with predicate"`
-	Predicate []PredicateCondition `json:"predicate,omitempty" doc:"AND conditions over the claims; an empty list matches any subject"`
+	Predicate []PredicateCondition `json:"predicate,omitempty" doc:"AND conditions over the properties; an empty list matches any subject"`
 	Enabled   *bool                `json:"enabled,omitempty" doc:"Whether the membership is active; absent — active"`
 	ValidFrom *time.Time           `json:"valid_from,omitempty" doc:"The membership starts at this moment"`
 	ExpiresAt *time.Time           `json:"expires_at,omitempty" doc:"The membership ends at this moment"`
@@ -137,42 +138,43 @@ type PolicyRole struct {
 
 // PolicyRoleItem is one permission of a role: access levels on a target inside a resource type.
 type PolicyRoleItem struct {
-	Type              string                   `json:"type" doc:"The resource type, as service/type" example:"org/branch"`
-	ResourceID        *string                  `json:"resource_id,omitempty" doc:"A resource of the type"`
-	ResourceFromClaim *PolicyResourceFromClaim `json:"resource_from_claim,omitempty" doc:"A resource computed from a claim of the subject"`
-	ResourceWhere     []PredicateCondition     `json:"resource_where,omitempty" doc:"The resources whose attributes match"`
-	Access            []string                 `json:"access" nullable:"false" doc:"Access levels, or access groups as @name"`
+	Type                 string                      `json:"type" doc:"The resource type, as service/type" example:"org/branch"`
+	ResourceID           *string                     `json:"resource_id,omitempty" doc:"A resource of the type"`
+	ResourceFromProperty *PolicyResourceFromProperty `json:"resource_from_property,omitempty" doc:"A resource computed from a property of the subject"`
+	ResourceWhere        []PredicateCondition        `json:"resource_where,omitempty" doc:"The resources whose attributes match"`
+	Access               []string                    `json:"access" nullable:"false" doc:"Access levels, or access groups as @name"`
 }
 
-// PolicyResourceFromClaim is resource_from_claim with the lookup type named.
-type PolicyResourceFromClaim struct {
-	Claim      string `json:"claim" doc:"The claim whose value is looked up"`
+// PolicyResourceFromProperty is resource_from_property with the lookup type named.
+type PolicyResourceFromProperty struct {
+	Property   string `json:"property" doc:"The property whose value is looked up"`
 	LookupType string `json:"lookup_type" doc:"The resource type the value is looked up in, as service/type"`
 	MatchBy    string `json:"match_by,omitempty" doc:"name, id or meta.<attribute>; absent — name"`
 }
 
 // PolicyRule is an assignment rule of the service, with names instead of ids.
 type PolicyRule struct {
-	Name               string                   `json:"name" minLength:"1" maxLength:"200" doc:"The name: unique in the document. A rule without one has the name rule-<id>"`
-	Description        *string                  `json:"description,omitempty" doc:"What the rule is for"`
-	Type               *string                  `json:"type,omitempty" doc:"The resource type of the inline permission, as service/type; absent for a role rule"`
-	Role               *string                  `json:"role,omitempty" doc:"The name of the role granted; absent for an inline rule"`
-	ResourceID         *string                  `json:"resource_id,omitempty" doc:"A resource of the type"`
-	ResourceFromClaim  *PolicyResourceFromClaim `json:"resource_from_claim,omitempty" doc:"A resource computed from a claim of the subject"`
-	ResourceWhere      []PredicateCondition     `json:"resource_where,omitempty" doc:"The resources whose attributes match"`
-	Access             []string                 `json:"access,omitempty" doc:"Access levels, or access groups as @name"`
-	Subject            *string                  `json:"subject,omitempty" doc:"A specific subject, or group:<id>"`
-	Predicate          []PredicateCondition     `json:"predicate,omitempty" doc:"AND conditions over the claims and the request"`
-	MemberOf           *string                  `json:"member_of,omitempty" doc:"The name of the group whose members the rule covers"`
-	Enabled            *bool                    `json:"enabled,omitempty" doc:"Whether the rule is active; absent — active"`
-	Effect             string                   `json:"effect,omitempty" enum:"allow,deny" doc:"allow or deny; absent — allow"`
-	Exception          bool                     `json:"exception,omitempty" doc:"An allow rule that lifts the denials above it"`
-	ValidFrom          *time.Time               `json:"valid_from,omitempty" doc:"The rule takes effect from this moment"`
-	ExpiresAt          *time.Time               `json:"expires_at,omitempty" doc:"The rule stops taking effect at this moment"`
-	OnMissingAttribute string                   `json:"on_missing_attribute,omitempty" enum:"skip,apply" doc:"What a denial does when an attribute is missing"`
-	RequiresPredicate  []PredicateCondition     `json:"requires_predicate,omitempty" doc:"Guard conditions"`
-	RequiresGroup      *string                  `json:"requires_group,omitempty" doc:"The name of a group the subject must belong to"`
-	SubjectKind        *string                  `json:"subject_kind,omitempty" enum:"user,service,agent,group" doc:"A label of the subject"`
+	SubjectGroup         *string                     `json:"subject_group,omitempty" doc:"The name of the group itself as the subject"`
+	Name                 string                      `json:"name" minLength:"1" maxLength:"200" doc:"The name: unique in the document. A rule without one has the name rule-<id>"`
+	Description          *string                     `json:"description,omitempty" doc:"What the rule is for"`
+	Type                 *string                     `json:"type,omitempty" doc:"The resource type of the inline permission, as service/type; absent for a role rule"`
+	Role                 *string                     `json:"role,omitempty" doc:"The name of the role granted; absent for an inline rule"`
+	ResourceID           *string                     `json:"resource_id,omitempty" doc:"A resource of the type"`
+	ResourceFromProperty *PolicyResourceFromProperty `json:"resource_from_property,omitempty" doc:"A resource computed from a property of the subject"`
+	ResourceWhere        []PredicateCondition        `json:"resource_where,omitempty" doc:"The resources whose attributes match"`
+	Access               []string                    `json:"access,omitempty" doc:"Access levels, or access groups as @name"`
+	Subject              *string                     `json:"subject,omitempty" doc:"A specific subject; group: is reserved"`
+	Predicate            []PredicateCondition        `json:"predicate,omitempty" doc:"AND conditions over the properties and the request"`
+	MemberOf             *string                     `json:"member_of,omitempty" doc:"The name of the group whose members the rule covers"`
+	Enabled              *bool                       `json:"enabled,omitempty" doc:"Whether the rule is active; absent — active"`
+	Effect               string                      `json:"effect,omitempty" enum:"allow,deny" doc:"allow or deny; absent — allow"`
+	Exception            bool                        `json:"exception,omitempty" doc:"An allow rule that lifts the denials above it"`
+	ValidFrom            *time.Time                  `json:"valid_from,omitempty" doc:"The rule takes effect from this moment"`
+	ExpiresAt            *time.Time                  `json:"expires_at,omitempty" doc:"The rule stops taking effect at this moment"`
+	OnMissingAttribute   string                      `json:"on_missing_attribute,omitempty" enum:"skip,apply" doc:"What a denial does when an attribute is missing"`
+	RequiresPredicate    []PredicateCondition        `json:"requires_predicate,omitempty" doc:"Guard conditions"`
+	RequiresGroup        *string                     `json:"requires_group,omitempty" doc:"The name of a group the subject must belong to"`
+	SubjectType          *string                     `json:"subject_type,omitempty" doc:"Subject type for a literal subject; null matches any type. The type group is reserved"`
 }
 
 // PolicyPlanCounts counts what an import does to the entities of the document.

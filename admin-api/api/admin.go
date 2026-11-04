@@ -2,11 +2,9 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"strings"
 
-	"github.com/licetum/licetum/core/engine"
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -19,21 +17,20 @@ import (
 )
 
 var adminTags = []*huma.Tag{
-	{Name: "Service", Description: "Client applications registered in Licetum and their OAuth2 configuration."},
+	{Name: "Service", Description: "Client applications registered in Licetum. The slug of a service names it in the paths of the PDP."},
 	{Name: "Type resource", Description: "Resource types of a service. The parent (type_resource_parent_id) may belong to another service and defines the permission inheritance chain."},
 	{Name: "Resource", Description: "Concrete resources of a type and the synchronizers that fetch them from the owning service (SQL query or HTTP)."},
-	{Name: "Group", Description: "Global groups of people: a group is a subject too (`group:<uuid>`), so it is granted permissions the same way as a user."},
-	{Name: "Group member", Description: "Who belongs to a group: by a predicate over token claims or by nesting another group."},
+	{Name: "Group", Description: "Service-owned groups of people: a rule refers to the group itself with subject_group_id."},
+	{Name: "Group member", Description: "Who belongs to a group: by a predicate over properties (the properties of the subject) or by nesting another group."},
 	{Name: "Role", Description: "Global roles: named sets of permissions. A role is not a subject: an assignment rule grants it (role_id)."},
 	{Name: "Role permission", Description: "The items of a role: access levels on a target of a resource type."},
 	{Name: "AssignmentRule", Description: "Rules granting access to a resource type or a specific resource."},
-	{Name: "OAuth", Description: "Sign-in via the service IdP (authorization code, PKCE for public clients)."},
 	{Name: "Platform", Description: "Self-service: Licetum registered within itself. The admin API is protected by its policies — the resource types service, type_resource (with its synchronizers and resources), group, group_member, role and assignment_rule: listing needs read on the entities (the list is filtered), changing an entity needs write on it, creating needs write on the whole type."},
 	{Name: "System", Description: "Service endpoints."},
 }
 
 // NewAdminHandler — admin API (services, type_resources, resources, groups, group_members, roles,
-// assignment_rules, oauth, platform). Port 8000 by default.
+// assignment_rules, platform). Port 8000 by default.
 func NewAdminHandler(app *service.App) http.Handler {
 	h, _ := NewAdminAPI(app)
 	return h
@@ -44,7 +41,7 @@ func NewAdminAPI(app *service.App) (http.Handler, huma.API) {
 	h := &adminHandlers{app: app}
 	tags := append(append([]*huma.Tag{}, adminTags...), adminOpsTags...)
 	return server.NewServer(app.App, "Licetum — admin", tags, func(api huma.API) {
-		server.AddBearerScheme(api, "Access token issued by the IdP of the Licetum self-service (PLATFORM__*). "+
+		httpx.AddBearerScheme(api, "Access token issued by the IdP of the Licetum self-service (PLATFORM__*). "+
 			"Permissions come from the platform policies: service, type_resource, group, group_member, role, assignment_rule.")
 		api.UseMiddleware(platformAuth(app))
 		h.registerServices(api)
@@ -54,12 +51,14 @@ func NewAdminAPI(app *service.App) (http.Handler, huma.API) {
 		h.registerGroups(api)
 		h.registerRoles(api)
 		h.registerAssignmentRules(api)
-		h.registerOAuth(api)
 		h.registerPlatform(api)
 		h.registerOperations(api)
 		h.registerBatch(api)
 		h.registerPolicy(api)
-		h.registerSubjects(api)
+		h.registerPEP(api)
+		h.registerDirectory(api)
+		h.registerSimulation(api)
+		validateOutboxDeclarations(api)
 	})
 }
 
@@ -110,14 +109,14 @@ func validate(v model.Validator) error { return v.Validate() }
 // ---------- Service ----------
 
 func (h *adminHandlers) registerServices(api huma.API) {
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_service",
 		Method:      http.MethodPost,
 		Path:        "/service",
 		Summary:     "Register a service",
-		Description: "Registers a service with its OAuth2 settings. The url and the icon are optional and are only shown in the interface: Licetum does not request them.",
+		Description: "Registers a service. Its slug names it in the paths of the PDP (/service/<slug>/access/v1/...). The url and the icon are optional and are only shown in the interface: Licetum does not request them.",
 		Tags:        []string{"Service"},
-	}, requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct {
+	}, []string{"catalog"}, "owner-and-descendants"), requireWholeType(model.PlatformService, model.ActionWrite)), func(ctx context.Context, in *struct {
 		Body model.ServiceInput
 	}) (*server.Out[*model.ServiceResponse], error) {
 		if err := validate(&in.Body); err != nil {
@@ -135,7 +134,7 @@ func (h *adminHandlers) registerServices(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service",
 		Summary:     "List services",
-		Description: "All services that are not deleted. client_secret is never returned.",
+		Description: "All services that are not deleted.",
 		Tags:        []string{"Service"},
 	}, requireAny(model.PlatformService, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.ServiceResponse], error) {
 		out, err := h.app.ListServices(ctx)
@@ -145,7 +144,7 @@ func (h *adminHandlers) registerServices(api huma.API) {
 		return server.OK(filterAllowed(ctx, model.PlatformService, out, func(s model.ServiceResponse) uuid.UUID { return s.ID }))
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_service",
 		Method:      http.MethodPatch,
 		Path:        "/service/{service_id}",
@@ -153,7 +152,7 @@ func (h *adminHandlers) registerServices(api huma.API) {
 		Description: "Partial update: the fields sent are replaced, the rest stay as they are. At least one field is required.",
 		Tags:        []string{"Service"},
 		Errors:      []int{http.StatusFailedDependency},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
+	}, []string{"catalog"}, "owner-and-descendants"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *struct {
 		ServicePath
 		Body model.ServiceUpdate
 	}) (*server.Out[*model.ServiceResponse], error) {
@@ -167,7 +166,7 @@ func (h *adminHandlers) registerServices(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_service",
 		Method:      http.MethodDelete,
 		Path:        "/service/{service_id}",
@@ -175,7 +174,7 @@ func (h *adminHandlers) registerServices(api huma.API) {
 		Description: "Soft delete. Not allowed while the service has active resource types (409, extra.blocked_by).",
 		Tags:        []string{"Service"},
 		Errors:      []int{http.StatusConflict},
-	}, requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *ServicePath) (*server.Out[uuid.UUID], error) {
+	}, []string{"catalog"}, "owner-and-descendants"), requireResource(model.PlatformService, model.ActionWrite, "service_id")), func(ctx context.Context, in *ServicePath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteService(ctx, in.ServiceID)
 		if err != nil {
 			return nil, err
@@ -187,15 +186,15 @@ func (h *adminHandlers) registerServices(api huma.API) {
 // ---------- TypeResource ----------
 
 func (h *adminHandlers) registerTypeResources(api huma.API) {
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_type_resource",
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/type_resource",
 		Summary:     "Create a resource type",
-		Description: "A type may have several parents (a DAG), each of any service; `inherit` on a parent limits the access levels that flow down along that link (grants and denials alike). A grant on a resource of a parent type cascades to the resources of the child type linked to it — set parents only where such inheritance is needed. `access_implies` defines the access level hierarchy of the type. The name is unique within the service (409). A type without a synchronizer has no resources: /permission returns it as not_sync, and rules on it grant access to the type as a whole.",
+		Description: "A type may have several parents (a DAG), each of any service; `inherit` on a parent limits the access levels that flow down along that link (grants and denials alike). A grant on a resource of a parent type cascades to the resources of the child type linked to it — set parents only where such inheritance is needed. `access_implies` defines the access level hierarchy of the type. The name is unique within the service (409). A type without a synchronizer has no resources (a not_sync type): rules on it grant access to the type as a whole.",
 		Errors:      []int{http.StatusConflict},
 		Tags:        []string{"Type resource"},
-	}, requireWholeType(model.PlatformTypeResource, model.ActionWrite)), func(ctx context.Context, in *struct {
+	}, []string{"catalog"}, "owner-and-descendants"), requireWholeType(model.PlatformTypeResource, model.ActionWrite)), func(ctx context.Context, in *struct {
 		ServicePath
 		Body model.TypeResourceInput
 	}) (*server.Out[*model.TypeResource], error) {
@@ -223,7 +222,7 @@ func (h *adminHandlers) registerTypeResources(api huma.API) {
 		return server.OK(filterAllowed(ctx, model.PlatformTypeResource, out, func(t model.TypeResource) uuid.UUID { return t.ID }))
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_type_resource",
 		Method:      http.MethodPatch,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}",
@@ -231,7 +230,7 @@ func (h *adminHandlers) registerTypeResources(api huma.API) {
 		Description: "Replaces the name, the parents and the level hierarchy. Cycles in the type graph are rejected (400), the name is unique within the service (409).",
 		Errors:      []int{http.StatusConflict},
 		Tags:        []string{"Type resource"},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
+	}, []string{"catalog"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
 		TypeResourcePath
 		Body model.TypeResourceInput
 	}) (*server.Out[*model.TypeResource], error) {
@@ -245,7 +244,7 @@ func (h *adminHandlers) registerTypeResources(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_type_resource",
 		Method:      http.MethodDelete,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}",
@@ -253,7 +252,7 @@ func (h *adminHandlers) registerTypeResources(api huma.API) {
 		Description: "Soft delete. Not allowed while the type is referenced by synchronizers, rules or child types (409, extra.blocked_by).",
 		Tags:        []string{"Type resource"},
 		Errors:      []int{http.StatusConflict},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *TypeResourcePath) (*server.Out[uuid.UUID], error) {
+	}, []string{"catalog"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *TypeResourcePath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteTypeResource(ctx, in.ServiceID, in.TypeResourceID)
 		if err != nil {
 			return nil, err
@@ -308,15 +307,15 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "refresh_resources_of_type",
 		Method:      http.MethodPost,
 		Path:        "/type_resource/{type_resource_id}/resource/refresh",
 		Summary:     "Refresh the resources of a type from its source now",
-		Description: "Asks the source of the type right away, skipping the cached source list, the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).",
+		Description: "Asks the source of the type right away, skipping the 30-second throttle and the background refresh, and brings the local copy up to date. 422 — the type has no source; 424 — the source did not answer (the data stays as it was).",
 		Tags:        []string{"Resource"},
 		Errors:      []int{http.StatusUnprocessableEntity, http.StatusFailedDependency},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
+	}, []string{"data:{moved-types}"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
 		TypeResourceID uuid.UUID `path:"type_resource_id" format:"uuid" doc:"Resource type id"`
 	}) (*server.Out[*model.ResourceRefresh], error) {
 		out, err := h.app.RefreshResources(ctx, in.TypeResourceID)
@@ -364,7 +363,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}/access",
 		Summary:     "Who has access to a resource",
-		Description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the registry of known subjects — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a claim are listed apart. Needs read on all assignment rules, because it shows them whatever their target.",
+		Description: "The reverse of a check: the rules in force that cover the resource (or, without resource_id, the type as a whole), denials first, each with the levels that reach it, whom it applies to and — from the subject directories of the services — the people it reaches. It lists rules, not decisions: a denial may be lifted by an exception, and a person may be reached by several rules; to know what one subject gets, ask the check. Rules that find their resource from a property are listed apart. Needs read on all assignment rules, because it shows them whatever their target.",
 		Tags:        []string{"Resource"},
 	}, requireWholeType(model.PlatformAssignmentRule, model.ActionRead)), func(ctx context.Context, in *struct {
 		TypeResourcePath
@@ -382,9 +381,9 @@ func (h *adminHandlers) registerResources(api huma.API) {
 	})
 
 	const syncPath = "/service/{service_id}/type_resource/{type_resource_id}/resource/synchronizer"
-	const syncDescription = "Before saving, the source is checked by fetching the resource probe_resource_id: if it is not found or the source is unavailable — 424. The single-resource SQL query uses the :id parameter and must return the columns id, name, parent_id; an HTTP source must serve GET {url}/{id} and GET {url}, optionally with the configured headers. Every other column (SQL) or field (HTTP) of a resource becomes its attribute (meta: strings or lists of strings) that rules can match a claim against (resource_from_claim.match_by = meta.<name>). Secrets (the password in the DSN, header values) are returned masked as ********; sending the mask back in an update keeps the stored value."
+	const syncDescription = "Before saving, the source is checked by fetching the resource probe_resource_id: if it is not found or the source is unavailable — 424. The single-resource SQL query uses the :id parameter and must return the columns id, name, parent_id; an HTTP source must serve GET {url}/{id} and GET {url}, optionally with the configured headers. Every other column (SQL) or field (HTTP) of a resource becomes its attribute (meta: strings or lists of strings) that rules can match a property against (resource_from_property.match_by = meta.<name>). Secrets (the password in the DSN, header values) are returned masked as ********; sending the mask back in an update keeps the stored value."
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_synchronizer",
 		Method:      http.MethodPost,
 		Path:        syncPath,
@@ -392,7 +391,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Description: syncDescription + " A resource type has one source: when it already has one the answer is 409 — change that one.",
 		Tags:        []string{"Resource"},
 		Errors:      []int{http.StatusConflict, http.StatusFailedDependency},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
+	}, []string{"catalog", "data:{moved-types}"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
 		TypeResourcePath
 		Body model.SynchronizerInput
 	}) (*server.Out[*model.Synchronizer], error) {
@@ -406,7 +405,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "test_synchronizer",
 		Method:      http.MethodPost,
 		Path:        syncPath + "/test",
@@ -414,7 +413,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Description: "Asks the configuration for its whole list and reports what Licetum would make of it: the number of resources, the first few, repeated ids, parents that are not known and the attributes. Nothing is saved. Send synchronizer_id when the configuration edits a saved source: a secret sent back masked is taken from it. 424 — the source did not answer.",
 		Tags:        []string{"Resource"},
 		Errors:      []int{http.StatusFailedDependency},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
+	}, nil, "none"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
 		TypeResourcePath
 		Body model.SynchronizerTestInput
 	}) (*server.Out[*model.SourceTestResult], error) {
@@ -442,7 +441,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_synchronizer",
 		Method:      http.MethodPatch,
 		Path:        syncPath + "/{synchronizer_id}",
@@ -450,7 +449,7 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		Description: syncDescription,
 		Tags:        []string{"Resource"},
 		Errors:      []int{http.StatusFailedDependency},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
+	}, []string{"catalog", "data:{moved-types}"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
 		SynchronizerPath
 		Body model.SynchronizerInput
 	}) (*server.Out[*model.Synchronizer], error) {
@@ -464,14 +463,14 @@ func (h *adminHandlers) registerResources(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_synchronizer",
 		Method:      http.MethodDelete,
 		Path:        syncPath + "/{synchronizer_id}",
 		Summary:     "Delete a synchronizer",
-		Description: "Soft delete. A type left without a synchronizer has no resources any more: /permission returns it as not_sync, and rules on its specific resources stop taking effect (target_valid=false).",
+		Description: "Soft delete. A type left without a synchronizer has no resources any more (it becomes not_sync), and rules on its specific resources stop taking effect (target_valid=false).",
 		Tags:        []string{"Resource"},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *SynchronizerPath) (*server.Out[uuid.UUID], error) {
+	}, []string{"catalog", "data:{moved-types}"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *SynchronizerPath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteSynchronizer(ctx, in.ServiceID, in.TypeResourceID, in.SynchronizerID)
 		if err != nil {
 			return nil, err
@@ -483,16 +482,16 @@ func (h *adminHandlers) registerResources(api huma.API) {
 // ---------- Group + GroupMember ----------
 
 func (h *adminHandlers) registerGroups(api huma.API) {
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_group",
 		Method:      http.MethodPost,
 		Path:        "/group",
 		Summary:     "Create a group",
-		Description: "Group names are globally unique (409 on a duplicate).",
+		Description: "Group names are unique inside their service (409 on a duplicate).",
 		Tags:        []string{"Group"},
 		Errors:      []int{http.StatusConflict},
-	}, requireWholeType(model.PlatformGroup, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.GroupInput }) (*server.Out[*model.Group], error) {
-		out, err := h.app.CreateGroup(ctx, &in.Body)
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireWholeType(model.PlatformGroup, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.GroupCreateInput }) (*server.Out[*model.Group], error) {
+		out, err := h.app.CreateGroup(ctx, &model.GroupInput{Name: in.Body.Name, ServiceID: &in.Body.ServiceID})
 		if err != nil {
 			return nil, err
 		}
@@ -505,22 +504,28 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		Path:        "/group",
 		Summary:     "List groups",
 		Tags:        []string{"Group"},
-	}, requireAny(model.PlatformGroup, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.Group], error) {
-		out, err := h.app.ListGroups(ctx)
+	}, requireAny(model.PlatformGroup, model.ActionRead)), func(ctx context.Context, in *struct {
+		ServiceID uuid.UUID `query:"service_id" format:"uuid" required:"false"`
+	}) (*server.Out[[]model.Group], error) {
+		var owner *uuid.UUID
+		if in.ServiceID != uuid.Nil {
+			owner = &in.ServiceID
+		}
+		out, err := h.app.ListGroups(ctx, owner)
 		if err != nil {
 			return nil, err
 		}
 		return server.OK(filterAllowed(ctx, model.PlatformGroup, out, func(g model.Group) uuid.UUID { return g.ID }))
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_group",
 		Method:      http.MethodPatch,
 		Path:        "/group/{group_id}",
 		Summary:     "Rename a group",
 		Tags:        []string{"Group"},
 		Errors:      []int{http.StatusConflict},
-	}, requireResource(model.PlatformGroup, model.ActionWrite, "group_id")), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformGroup, model.ActionWrite, "group_id")), func(ctx context.Context, in *struct {
 		GroupPath
 		Body model.GroupInput
 	}) (*server.Out[*model.Group], error) {
@@ -531,15 +536,15 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_group",
 		Method:      http.MethodDelete,
 		Path:        "/group/{group_id}",
 		Summary:     "Delete a group",
-		Description: "Not allowed while the group is referenced by rules or memberships (409, extra.blocked_by).",
+		Description: "Deletes the group and its membership entries. Not allowed while rules or another group reference it (409, extra.blocked_by).",
 		Tags:        []string{"Group"},
 		Errors:      []int{http.StatusConflict},
-	}, requireResource(model.PlatformGroup, model.ActionWrite, "group_id")), func(ctx context.Context, in *GroupPath) (*server.Out[uuid.UUID], error) {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformGroup, model.ActionWrite, "group_id")), func(ctx context.Context, in *GroupPath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteGroup(ctx, in.GroupID)
 		if err != nil {
 			return nil, err
@@ -547,9 +552,9 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	const memberDescription = "Membership is defined either by a predicate (AND conditions over token claims; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively."
+	const memberDescription = "Membership is defined either by a predicate (AND conditions over the properties of the subject; an empty list matches any subject) or by member_group_id (all members of the nested group become members of this one). Nesting is resolved transitively."
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_group_member",
 		Method:      http.MethodPost,
 		Path:        "/group/{group_id}/member",
@@ -557,7 +562,7 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		Description: memberDescription,
 		Tags:        []string{"Group member"},
 		Errors:      []int{http.StatusBadRequest},
-	}, requireWholeType(model.PlatformGroupMember, model.ActionWrite)), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireWholeType(model.PlatformGroupMember, model.ActionWrite)), func(ctx context.Context, in *struct {
 		GroupPath
 		Body model.GroupMemberInput
 	}) (*server.Out[*model.GroupMember], error) {
@@ -585,14 +590,14 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		return server.OK(filterAllowed(ctx, model.PlatformGroupMember, out, func(m model.GroupMember) uuid.UUID { return m.ID }))
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_group_member",
 		Method:      http.MethodPatch,
 		Path:        "/group/{group_id}/member/{member_id}",
 		Summary:     "Replace a membership rule",
 		Description: memberDescription,
 		Tags:        []string{"Group member"},
-	}, requireResource(model.PlatformGroupMember, model.ActionWrite, "member_id")), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformGroupMember, model.ActionWrite, "member_id")), func(ctx context.Context, in *struct {
 		GroupMemberPath
 		Body model.GroupMemberInput
 	}) (*server.Out[*model.GroupMember], error) {
@@ -606,13 +611,13 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_group_member",
 		Method:      http.MethodDelete,
 		Path:        "/group/{group_id}/member/{member_id}",
 		Summary:     "Delete a membership rule",
 		Tags:        []string{"Group member"},
-	}, requireResource(model.PlatformGroupMember, model.ActionWrite, "member_id")), func(ctx context.Context, in *GroupMemberPath) (*server.Out[uuid.UUID], error) {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformGroupMember, model.ActionWrite, "member_id")), func(ctx context.Context, in *GroupMemberPath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteGroupMember(ctx, in.GroupID, in.MemberID)
 		if err != nil {
 			return nil, err
@@ -624,16 +629,16 @@ func (h *adminHandlers) registerGroups(api huma.API) {
 // ---------- Role + RolePermission ----------
 
 func (h *adminHandlers) registerRoles(api huma.API) {
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_role",
 		Method:      http.MethodPost,
 		Path:        "/role",
 		Summary:     "Create a role",
-		Description: "A role is a named set of permissions: add them with the role permission endpoints, then grant the role with an assignment rule (role_id). Role names are globally unique (409 on a duplicate).",
+		Description: "A role is a named set of permissions: add them with the role permission endpoints, then grant the role with an assignment rule (role_id). Role names are unique inside their service (409 on a duplicate).",
 		Tags:        []string{"Role"},
 		Errors:      []int{http.StatusConflict},
-	}, requireWholeType(model.PlatformRole, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.RoleInput }) (*server.Out[*model.Role], error) {
-		out, err := h.app.CreateRole(ctx, &in.Body)
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireWholeType(model.PlatformRole, model.ActionWrite)), func(ctx context.Context, in *struct{ Body model.RoleCreateInput }) (*server.Out[*model.Role], error) {
+		out, err := h.app.CreateRole(ctx, &model.RoleInput{Name: in.Body.Name, ServiceID: &in.Body.ServiceID})
 		if err != nil {
 			return nil, err
 		}
@@ -646,22 +651,28 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 		Path:        "/role",
 		Summary:     "List roles",
 		Tags:        []string{"Role"},
-	}, requireAny(model.PlatformRole, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.Role], error) {
-		out, err := h.app.ListRoles(ctx)
+	}, requireAny(model.PlatformRole, model.ActionRead)), func(ctx context.Context, in *struct {
+		ServiceID uuid.UUID `query:"service_id" format:"uuid" required:"false"`
+	}) (*server.Out[[]model.Role], error) {
+		var owner *uuid.UUID
+		if in.ServiceID != uuid.Nil {
+			owner = &in.ServiceID
+		}
+		out, err := h.app.ListRoles(ctx, owner)
 		if err != nil {
 			return nil, err
 		}
 		return server.OK(filterAllowed(ctx, model.PlatformRole, out, func(r model.Role) uuid.UUID { return r.ID }))
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_role",
 		Method:      http.MethodPatch,
 		Path:        "/role/{role_id}",
 		Summary:     "Rename a role",
 		Tags:        []string{"Role"},
 		Errors:      []int{http.StatusConflict},
-	}, requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *struct {
 		RolePath
 		Body model.RoleInput
 	}) (*server.Out[*model.Role], error) {
@@ -672,7 +683,7 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_role",
 		Method:      http.MethodDelete,
 		Path:        "/role/{role_id}",
@@ -680,7 +691,7 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 		Description: "Not allowed while rules grant the role (409, extra.blocked_by). Its permission items are deleted with it.",
 		Tags:        []string{"Role"},
 		Errors:      []int{http.StatusConflict},
-	}, requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *RolePath) (*server.Out[uuid.UUID], error) {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *RolePath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteRole(ctx, in.RoleID)
 		if err != nil {
 			return nil, err
@@ -689,7 +700,7 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 	})
 
 	// The items are part of their role: access to them is access to the role itself.
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_role_permission",
 		Method:      http.MethodPost,
 		Path:        "/role/{role_id}/permission",
@@ -697,7 +708,7 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 		Description: rolePermissionDescription,
 		Tags:        []string{"Role permission"},
 		Errors:      []int{http.StatusBadRequest},
-	}, requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *struct {
 		RolePath
 		Body model.RolePermissionInput
 	}) (*server.Out[*model.RolePermission], error) {
@@ -728,14 +739,14 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_role_permission",
 		Method:      http.MethodPatch,
 		Path:        "/role/{role_id}/permission/{permission_id}",
 		Summary:     "Replace a permission of a role",
 		Description: rolePermissionDescription,
 		Tags:        []string{"Role permission"},
-	}, requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *struct {
 		RolePermissionPath
 		Body model.RolePermissionInput
 	}) (*server.Out[*model.RolePermission], error) {
@@ -756,13 +767,13 @@ func (h *adminHandlers) registerRoles(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_role_permission",
 		Method:      http.MethodDelete,
 		Path:        "/role/{role_id}/permission/{permission_id}",
 		Summary:     "Delete a permission of a role",
 		Tags:        []string{"Role permission"},
-	}, requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *RolePermissionPath) (*server.Out[uuid.UUID], error) {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformRole, model.ActionWrite, "role_id")), func(ctx context.Context, in *RolePermissionPath) (*server.Out[uuid.UUID], error) {
 		current, err := h.app.RolePermissionTarget(ctx, in.RoleID, in.PermissionID)
 		if err != nil {
 			return nil, err
@@ -786,8 +797,8 @@ func (h *adminHandlers) checkPlatformTargets(ctx context.Context, typeIDs ...uui
 }
 
 const rolePermissionDescription = "An item grants access levels on a target of a resource type, the same way an inline rule does: " +
-	"the whole type (no resource_id and no resource_from_claim), a resource (resource_id) or a resource computed from a claim " +
-	"of the subject (resource_from_claim). A specific resource can only be targeted on a type with a synchronizer (400 otherwise). " +
+	"the whole type (no resource_id and no resource_from_property), a resource (resource_id) or a resource computed from a property " +
+	"of the subject (resource_from_property). A specific resource can only be targeted on a type with a synchronizer (400 otherwise). " +
 	"'*' is not allowed in a role: denying everything is possible only with an inline deny rule. " +
 	"An item on a platform policy (the self-service types) needs write on that policy as a whole, as creating a rule on it does."
 
@@ -795,27 +806,29 @@ const rolePermissionDescription = "An item grants access levels on a target of a
 
 const ruleDescription = `What it grants — either **role_id** (all permissions of a role; each item of the role keeps its own
 target and access levels) or an inline permission: **type_resource_id** with **access** (for example ["read","write"]),
-on a specific resource (**resource_id**), on a resource computed from a claim at check time (**resource_from_claim**)
+on a specific resource (**resource_id**), on a resource computed from a property at check time (**resource_from_property**)
 or on the whole type (neither). The grant cascades to all resources of child types, including types of other
 services. A specific resource can only be targeted on a type with a synchronizer (400 otherwise): a type without one
-has no resources, and a rule on it grants access to the type as a whole (not_sync in /permission).
+has no resources, and a rule on it grants access to the type as a whole (a not_sync type).
 
-Who the rule applies to — exactly one of: **subject** (a specific user or a group written as group:{uuid}),
-**predicate** (AND conditions over token claims) or **member_of_group_id** (all members of a group). If none is set,
-the rule applies to everyone.
+Who the rule applies to — choose **subject** (a specific subject), **subject_group_id** (the group itself),
+**predicate** (AND conditions over the properties of the subject) or **member_of_group_id** (all members of a group).
+These selectors are mutually exclusive. An empty predicate applies to everyone. The literal subject prefix group: is reserved.
 
 **effect** allow (the default) grants the access levels; deny takes them away from everything the rule covers, unless an
-exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.`
+exception below it lifts the denial. A role assignment takes the effect of the rule for all of its items.
+
+The owning service is derived from the type or role and cannot be changed. Referenced groups and roles must belong to that service; a property lookup type may belong to another service.`
 
 func (h *adminHandlers) registerAssignmentRules(api huma.API) {
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_assignment_rule",
 		Method:      http.MethodPost,
 		Path:        "/assignment_rule",
 		Summary:     "Create an access rule",
 		Description: ruleDescription,
 		Tags:        []string{"AssignmentRule"},
-	}, requireWholeType(model.PlatformAssignmentRule, model.ActionWrite)), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireWholeType(model.PlatformAssignmentRule, model.ActionWrite)), func(ctx context.Context, in *struct {
 		Body model.AssignmentRuleInput
 	}) (*server.Out[*model.AssignmentRule], error) {
 		if err := validate(&in.Body); err != nil {
@@ -831,14 +844,14 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "preview_assignment_rule",
 		Method:      http.MethodPost,
 		Path:        "/assignment_rule/preview",
 		Summary:     "Preview an access rule",
 		Description: "Says what the rule would do if it were created, and creates nothing: how many resources it covers through the hierarchy, which known people it reaches, and which denials and exceptions in force meet it (a denial above it cancels what it grants, one inside it carves a part out) and which rules already give the same. The body is that of POST /assignment_rule and is checked the same way.",
 		Tags:        []string{"AssignmentRule"},
-	}, requireWholeType(model.PlatformAssignmentRule, model.ActionWrite)), func(ctx context.Context, in *struct {
+	}, nil, "none"), requireWholeType(model.PlatformAssignmentRule, model.ActionWrite)), func(ctx context.Context, in *struct {
 		Body model.AssignmentRuleInput
 	}) (*server.Out[*model.GrantPreview], error) {
 		if err := validate(&in.Body); err != nil {
@@ -859,7 +872,7 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/assignment_rule",
 		Summary:     "All access rules",
-		Description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted): such a rule does not take effect.",
+		Description: "Rules of every service and type, with service and type names, sorted by them. target_valid=false marks a rule on a specific resource of a type that has no synchronizer (e.g. after it was deleted), or a rule that looks a resource up in, or climbs through, such a type: such a rule does not take effect (a denial of that kind still applies below the links to the resources the type left).",
 		Tags:        []string{"AssignmentRule"},
 	}, requireAny(model.PlatformAssignmentRule, model.ActionRead)), func(ctx context.Context, _ *struct{}) (*server.Out[[]model.AssignmentRuleWithContext], error) {
 		out, err := h.app.ListAssignmentRules(ctx)
@@ -869,14 +882,14 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 		return server.OK(filterAllowed(ctx, model.PlatformAssignmentRule, out, func(r model.AssignmentRuleWithContext) uuid.UUID { return r.ID }))
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_assignment_rule",
 		Method:      http.MethodPatch,
 		Path:        "/assignment_rule/{rule_id}",
 		Summary:     "Update an access rule",
 		Description: "Replaces the whole rule (not a partial update). The target is re-checked only when it changes, so a rule that stopped taking effect can still be disabled or edited.\n\n" + ruleDescription,
 		Tags:        []string{"AssignmentRule"},
-	}, requireResource(model.PlatformAssignmentRule, model.ActionWrite, "rule_id")), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformAssignmentRule, model.ActionWrite, "rule_id")), func(ctx context.Context, in *struct {
 		RulePath
 		Body model.AssignmentRuleInput
 	}) (*server.Out[*model.AssignmentRule], error) {
@@ -897,13 +910,13 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_assignment_rule",
 		Method:      http.MethodDelete,
 		Path:        "/assignment_rule/{rule_id}",
 		Summary:     "Delete an access rule",
 		Tags:        []string{"AssignmentRule"},
-	}, requireResource(model.PlatformAssignmentRule, model.ActionWrite, "rule_id")), func(ctx context.Context, in *RulePath) (*server.Out[uuid.UUID], error) {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformAssignmentRule, model.ActionWrite, "rule_id")), func(ctx context.Context, in *RulePath) (*server.Out[uuid.UUID], error) {
 		old, err := h.app.AssignmentRuleOf(ctx, in.RuleID)
 		if err != nil {
 			return nil, err
@@ -919,140 +932,6 @@ func (h *adminHandlers) registerAssignmentRules(api huma.API) {
 	})
 }
 
-// ---------- OAuth ----------
-
-// callbackURL is the absolute callback URL of this instance (like request.url_for in FastAPI).
-// Behind a reverse proxy, X-Forwarded-Proto / X-Forwarded-Host are honoured.
-func callbackURL(ctx huma.Context) string {
-	scheme := "http"
-	if ctx.TLS() != nil {
-		scheme = "https"
-	}
-	if p := ctx.Header("X-Forwarded-Proto"); p != "" {
-		scheme = strings.TrimSpace(strings.Split(p, ",")[0])
-	}
-	host := ctx.Host()
-	if fh := ctx.Header("X-Forwarded-Host"); fh != "" {
-		host = strings.TrimSpace(strings.Split(fh, ",")[0])
-	}
-	return scheme + "://" + host + "/service/" + ctx.Param("service_id") + "/oauth/callback"
-}
-
-type oauthLoginInput struct {
-	ServicePath
-	RedirectTo  string `query:"redirect_to" doc:"Where to send the browser after sign-in (the token arrives in the URL fragment). Must start with one of CORS__ALLOW_ORIGINS" example:"http://localhost:3000/auth/callback"`
-	hasRedirect bool
-	callbackURL string
-}
-
-// Resolve is called by Huma after parsing parameters: we pick up what the operation parameters lack.
-func (in *oauthLoginInput) Resolve(ctx huma.Context) []error {
-	u := ctx.URL()
-	in.hasRedirect = u.Query().Has("redirect_to")
-	in.callbackURL = callbackURL(ctx)
-	return nil
-}
-
-type oauthLoginOutput struct {
-	Location string `header:"Location" doc:"Authorization URL of the service IdP"`
-}
-
-type oauthCallbackInput struct {
-	ServicePath
-	Code        string `query:"code" required:"true" doc:"Authorization code from the IdP"`
-	State       string `query:"state" required:"true" doc:"Signed state issued at login"`
-	callbackURL string
-}
-
-func (in *oauthCallbackInput) Resolve(ctx huma.Context) []error {
-	in.callbackURL = callbackURL(ctx)
-	return nil
-}
-
-type oauthCallbackOutput struct {
-	Body func(huma.Context)
-}
-
-func (h *adminHandlers) registerOAuth(api huma.API) {
-	server.Register(api, huma.Operation{
-		OperationID:   "oauth_login",
-		Method:        http.MethodGet,
-		Path:          "/service/{service_id}/oauth/login",
-		Summary:       "Start sign-in via the service IdP",
-		Description:   "Redirects (307) to the service authorization endpoint. For a public client (no client_secret) PKCE is used: the code_verifier is kept in Redis and never reaches the browser.",
-		Tags:          []string{"OAuth"},
-		DefaultStatus: http.StatusTemporaryRedirect,
-	}, func(ctx context.Context, in *oauthLoginInput) (*oauthLoginOutput, error) {
-		var redirectTo *string
-		if in.hasRedirect {
-			redirectTo = &in.RedirectTo
-		}
-		target, err := h.app.StartLogin(ctx, in.ServiceID, in.callbackURL, redirectTo)
-		if err != nil {
-			return nil, err
-		}
-		return &oauthLoginOutput{Location: target}, nil
-	})
-
-	server.Register(api, huma.Operation{
-		OperationID: "oauth_callback",
-		Method:      http.MethodGet,
-		Path:        "/service/{service_id}/oauth/callback",
-		Summary:     "IdP callback",
-		Description: "Exchanges the code for tokens. If redirect_to was given at login, redirects (307) there with the IdP response in the URL fragment (#access_token=...); otherwise the IdP response is returned as JSON.",
-		Tags:        []string{"OAuth"},
-		Errors:      []int{http.StatusFailedDependency},
-		Responses: map[string]*huma.Response{
-			"200": {
-				Description: "The IdP token endpoint response as is",
-				Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{
-					Type: huma.TypeObject, AdditionalProperties: true,
-					Examples: []any{map[string]any{"access_token": "eyJ...", "token_type": "Bearer", "expires_in": 300}},
-				}}},
-			},
-			"307": {
-				Description: "Redirect to redirect_to with the tokens in the URL fragment",
-				Headers:     map[string]*huma.Param{"Location": {Schema: &huma.Schema{Type: huma.TypeString}}},
-			},
-		},
-	}, func(ctx context.Context, in *oauthCallbackInput) (*oauthCallbackOutput, error) {
-		res, err := h.app.FinishLogin(ctx, in.ServiceID, in.Code, in.State, in.callbackURL)
-		if err != nil {
-			return nil, err
-		}
-		return &oauthCallbackOutput{Body: func(hctx huma.Context) {
-			if res.RedirectTo != nil {
-				// The token goes into the URL fragment (#...) — the browser never sends it to a server when navigating further.
-				hctx.SetHeader("Location", *res.RedirectTo+"#"+engine.TokenFragment(res.Token))
-				hctx.SetStatus(http.StatusTemporaryRedirect)
-				return
-			}
-			hctx.SetHeader("Content-Type", "application/json")
-			hctx.SetStatus(http.StatusOK)
-			_ = json.NewEncoder(hctx.BodyWriter()).Encode(res.Token)
-		}}, nil
-	})
-
-	server.Register(api, huma.Operation{
-		OperationID: "oauth_refresh",
-		Method:      http.MethodPost,
-		Path:        "/service/{service_id}/oauth/refresh",
-		Summary:     "Refresh the access token",
-		Description: "Exchanges a refresh token for new tokens at the service IdP (RFC 6749 §6), so the UI can renew the session without leaving the page. Like login and callback it needs no Bearer: holding the refresh token is the proof. If the IdP issued a new refresh token, the old one must be discarded. 401 — the refresh token is invalid or expired (error=invalid_grant), sign in again; 424 — the IdP rejected the request for another reason or is unavailable.",
-		Tags:        []string{"OAuth"},
-		Errors:      []int{http.StatusUnauthorized, http.StatusFailedDependency},
-	}, func(ctx context.Context, in *struct {
-		ServicePath
-		Body model.RefreshTokenInput
-	}) (*server.Out[*model.TokenResponse], error) {
-		out, err := h.app.RefreshTokens(ctx, in.ServiceID, in.Body.RefreshToken)
-		if err != nil {
-			return nil, err
-		}
-		return server.OK(out)
-	})
-}
-
 // ---------- Platform ----------
 
 func (h *adminHandlers) registerPlatform(api huma.API) {
@@ -1061,7 +940,7 @@ func (h *adminHandlers) registerPlatform(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/platform",
 		Summary:     "Self-service id",
-		Description: "Id of the service under which Licetum is registered within itself; the admin UI signs in through its OAuth2 client. 404 means the self-service is not seeded (PLATFORM__* is not set or licetum migrate was not run).",
+		Description: "Id of the service under which Licetum is registered within itself; 404 means the self-service is not seeded (licetum migrate was not run).",
 		Tags:        []string{"Platform"},
 	}, func(ctx context.Context, _ *struct{}) (*server.Out[*model.Platform], error) {
 		out, err := h.app.GetPlatform(ctx)

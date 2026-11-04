@@ -9,7 +9,8 @@ import (
 // ChangeRecord is one entry of the change log: a write of the admin API, who made it, and the entity before and
 // after the change. Secrets are masked in the entities (see Synchronizer).
 type ChangeRecord struct {
-	ID        int64      `json:"id" doc:"Position in the log; it grows with every change. Pass it as after to read the records that follow"`
+	Revision  int64      `json:"revision" doc:"The global revision of the transaction"`
+	Seq       int        `json:"seq" doc:"The record sequence within the revision"`
 	At        time.Time  `json:"at" doc:"When the change was made"`
 	Actor     string     `json:"actor" doc:"The subject that made the change; empty for a change made outside a request"`
 	ServiceID *uuid.UUID `json:"service_id" format:"uuid" nullable:"true" doc:"The service the entity belongs to; null for the platform-wide entities"`

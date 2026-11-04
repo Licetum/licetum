@@ -1,0 +1,94 @@
+# DEC11, transitively: a resource whose own parent is known can still hang below an ancestor whose parent is missing.
+# R9 names the division D9 that the source of divisions does not report; B9's parent R9 and I9's parent B9 are known. D9
+# may be any division for all anyone knows, so every denial that could cover D9 — anchored at a division — is assumed to
+# cover R9 and everything below it, B9 and I9 included (fail closed transitively). A denial at an rrs cannot cover D9 and
+# is not assumed; a denial on R9 itself covers B9 through the known link, with no assumption. The resolved state (D9
+# appears) is a different fixture state and is not modelled here.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4; R9 -> D9 (missing); R9 ⊃ B9 ⊃ I9. Each subject holds the rules of one scenario.
+contracts: [DEC11]
+description: Below an ancestor with an unresolved parent link, denials that could cover the missing parent are assumed.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: rrs, id: R9, name: RRS 9, parents: [{type: division, id: D9}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: branch, id: B9, name: Branch 9, parents: [{type: rrs, id: R9}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+  - {type: item, id: I9, parents: [{type: branch, id: B9}]}
+rules:
+  # The test: read on every branch, a denial on D1.
+  - {name: a1-allow-branch, subject: orphan-above, type: branch, access: [read]}
+  - {name: a1-deny-D1, subject: orphan-above, type: division, resource: D1, access: [read], deny: true}
+  # The resource whose own parent is missing, granted on its own type.
+  - {name: a2-allow-rrs, subject: own-link, type: rrs, access: [read]}
+  - {name: a2-deny-D1, subject: own-link, type: division, resource: D1, access: [read], deny: true}
+  # A denial on an rrs cannot cover the missing division, nor B9, whose rrs is known.
+  - {name: a3-allow-branch, subject: rrs-denial, type: branch, access: [read]}
+  - {name: a3-deny-R1, subject: rrs-denial, type: rrs, resource: R1, access: [read], deny: true}
+  # A denial on any other division is assumed just the same.
+  - {name: a4-allow-branch, subject: other-division, type: branch, access: [read]}
+  - {name: a4-deny-D2, subject: other-division, type: division, resource: D2, access: [read], deny: true}
+  # A denial on the incomplete ancestor itself covers B9 through the known link.
+  - {name: a5-allow-branch, subject: known-link, type: branch, access: [read]}
+  - {name: a5-deny-R9, subject: known-link, type: rrs, resource: R9, access: [read], deny: true}
+cases:
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationOrphanAboveFailsClosed
+  - name: D9 may be D1, so B9 below R9 has no access until the hierarchy above R9 is known
+    subject: orphan-above
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [a1-allow-branch], denials: [{rule: a1-deny-D1, unresolved_parent: true}]}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [a1-allow-branch]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: a1-deny-D1}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: a1-deny-D1}]}
+  - name: two links below the incomplete ancestor, in another service, the denial is assumed too
+    subject: orphan-above
+    service: app
+    questions:
+      - {type: item, resource: I9, action: read, allowed: false, decision: denied, granted_by: [a1-allow-branch], denials: [{rule: a1-deny-D1, unresolved_parent: true}]}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed}
+  - name: the resource that declares the missing parent is assumed to be under the denial itself
+    subject: own-link
+    questions:
+      - {type: rrs, resource: R9, action: read, allowed: false, decision: denied, granted_by: [a2-allow-rrs], denials: [{rule: a2-deny-D1, unresolved_parent: true}]}
+      - {type: rrs, resource: R3, action: read, allowed: true, decision: allowed}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, denials: [{rule: a2-deny-D1}]}
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [a2-allow-rrs], denials: [{rule: a2-deny-D1, unresolved_parent: true}]}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+  - name: a denial below the type of the missing parent is not assumed
+    subject: rrs-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: true, decision: allowed, granted_by: [a3-allow-branch]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: a3-deny-R1}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+  - name: a denial below the type of the missing parent is not assumed for what lies further down either
+    subject: rrs-denial
+    service: app
+    questions:
+      - {type: item, resource: I9, action: read, allowed: true, decision: allowed, granted_by: [a3-allow-branch]}
+  - name: a denial on any division is assumed to cover what lies below the incomplete ancestor
+    subject: other-division
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [a4-allow-branch], denials: [{rule: a4-deny-D2, unresolved_parent: true}]}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: denied, denials: [{rule: a4-deny-D2}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed}
+  - name: a denial on the incomplete ancestor itself covers its descendants through the known link
+    subject: known-link
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [a5-allow-branch], denials: [{rule: a5-deny-R9}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed}

@@ -8,6 +8,7 @@ package api_test
 // environment as hierarchy_test.go.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -21,9 +22,9 @@ func (e *env) lastChangeID() int64 {
 	e.t.Helper()
 	recs := e.changes("?limit=500")
 	if len(recs) == 0 {
-		return 0
+		return e.seedRevision
 	}
-	return int64(recs[len(recs)-1]["id"].(float64))
+	return int64(recs[len(recs)-1]["revision"].(float64))
 }
 
 // revert performs POST /changes/{id}/revert and returns the answer.
@@ -32,11 +33,11 @@ func (e *env) revert(id int64, dryRun bool) map[string]any {
 	return e.must("POST", "/changes/"+strconv.FormatInt(id, 10)+"/revert", map[string]any{"dry_run": dryRun})
 }
 
-func TestIntegrationBatchIsAtomicAndNamesTheFailingOperation(t *testing.T) {
+func TestContract_HIS01_BatchIsAtomicAndNamesTheFailingOperation(t *testing.T) {
 	w := newWorld(t)
 	role := "00000000-0000-4000-8000-0000000000a1"
 	status, raw := w.do("POST", w.admin.URL+"/batch", map[string]any{"operations": []map[string]any{
-		{"op": "create", "entity": "role", "id": role, "body": map[string]any{"name": "batch_role"}},
+		{"op": "create", "entity": "role", "id": role, "body": map[string]any{"service_id": w.org, "name": "batch_role"}},
 		{"op": "create", "entity": "role_permission", "parent": role,
 			"body": map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "access": []string{"read"}}},
 		{"op": "create", "entity": "assignment_rule", "body": map[string]any{"access": []string{"read"}}},
@@ -51,13 +52,24 @@ func TestIntegrationBatchIsAtomicAndNamesTheFailingOperation(t *testing.T) {
 	// Each operation sees the writes of the ones before it: the item names the role created above it, and the
 	// role assignment grants the role to the subject.
 	res := w.must("POST", "/batch", map[string]any{"operations": []map[string]any{
-		{"op": "create", "entity": "role", "id": role, "body": map[string]any{"name": "batch_role"}},
+		{"op": "create", "entity": "role", "id": role, "body": map[string]any{"service_id": w.org, "name": "batch_role"}},
 		{"op": "create", "entity": "role_permission", "parent": role,
 			"body": map[string]any{"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "access": []string{"read"}}},
 		{"op": "create", "entity": "assignment_rule", "body": map[string]any{"role_id": role, "subject": hierarchySubject}},
 	}})
 	if results := res["results"].([]any); len(results) != 3 || results[0].(map[string]any)["id"] != role {
 		t.Fatalf("results: %v", res)
+	}
+	var revision int64
+	if err := w.pool.QueryRow(context.Background(), `SELECT revision FROM change_log WHERE entity_id=$1 ORDER BY revision LIMIT 1`, role).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	var history, entries int
+	if err := w.pool.QueryRow(context.Background(), `SELECT (SELECT count(*) FROM change_log WHERE revision=$1),(SELECT count(*) FROM outbox WHERE revision=$1)`, revision).Scan(&history, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if history != 3 || entries != 1 {
+		t.Fatalf("batch spent more than one publication: history=%d outbox=%d", history, entries)
 	}
 	expectIDs(t, w.permission(w.org, nil), "branch", "B1")
 
@@ -106,7 +118,7 @@ func TestIntegrationRevertUndoesOneChangeOfTheLog(t *testing.T) {
 
 	// A change to a service is not a batch entity: it cannot be reverted, and the answer says so.
 	services := w.changes("?entity=service&limit=500")
-	serviceChange := int64(services[0]["id"].(float64))
+	serviceChange := int64(services[0]["revision"].(float64))
 	if status, raw := w.do("POST", w.admin.URL+"/changes/"+strconv.FormatInt(serviceChange, 10)+"/revert",
 		map[string]any{}); status != http.StatusConflict {
 		t.Fatalf("revert of a service change: %d %s", status, raw)
@@ -116,18 +128,18 @@ func TestIntegrationRevertUndoesOneChangeOfTheLog(t *testing.T) {
 func TestIntegrationRollbackRestoresThePolicyAtAPosition(t *testing.T) {
 	w := newWorld(t)
 	keep := w.rule("branch", "B1", map[string]any{"subject": hierarchySubject})
-	role := w.must("POST", "/role", map[string]any{"name": "reader"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "reader"})["id"].(string)
 	item := w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B2", "access": []string{"read"}})["id"].(string)
 	roleRule := w.must("POST", "/assignment_rule", map[string]any{"role_id": role, "subject": hierarchySubject})["id"].(string)
-	position := w.lastChangeID()
 	expectIDs(t, w.permission(w.org, nil), "branch", "B1", "B2")
+	position := w.lastChangeID()
 
 	// After the position: the rules go, the role with its item goes; a group comes.
 	w.must("DELETE", "/assignment_rule/"+roleRule, nil)
 	w.must("DELETE", "/assignment_rule/"+keep, nil)
 	w.must("DELETE", "/role/"+role, nil)
-	group := w.must("POST", "/group", map[string]any{"name": "later"})["id"].(string)
+	group := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "later"})["id"].(string)
 	expectIDs(t, w.permission(w.org, nil), "branch")
 
 	// The dry run names what would be undone, newest first, and applies nothing.
@@ -158,8 +170,7 @@ func TestIntegrationRollbackRestoresThePolicyAtAPosition(t *testing.T) {
 
 	// A rollback over a change that cannot be undone (a service created after the position) applies nothing.
 	w.must("POST", "/service/", map[string]any{"name": "late", "url": w.mock.URL + "/app", "icon": w.mock.URL + "/icon.png",
-		"authorization_url": w.mock.URL + "/realm/auth", "token_url": w.mock.URL + "/realm/token",
-		"jwks_url": w.mock.URL + "/jwks", "issuer": w.mock.URL + "/realm", "slug": "late", "client_id": "late", "client_secret": "s"})
+		"slug": "late"})
 	before := w.lastChangeID()
 	w.must("DELETE", "/assignment_rule/"+keep, nil)
 	w.must("DELETE", "/assignment_rule/"+roleRule, nil)
@@ -173,7 +184,7 @@ func TestIntegrationChangeFeedWaitsForTheNextRecord(t *testing.T) {
 	w := newWorld(t)
 	last := w.lastChangeID()
 	started := time.Now()
-	status, raw := w.do("GET", w.admin.URL+"/changes?after="+strconv.FormatInt(last, 10)+"&wait=1", nil)
+	status, raw := w.do("GET", w.admin.URL+"/changes?after_seq=2147483647&after_revision="+strconv.FormatInt(last, 10)+"&wait=1", nil)
 	if status != http.StatusOK || strings.TrimSpace(string(raw)) != "[]" || time.Since(started) < 900*time.Millisecond {
 		t.Fatalf("a wait with nothing to read: %d %s after %v", status, raw, time.Since(started))
 	}
@@ -181,11 +192,11 @@ func TestIntegrationChangeFeedWaitsForTheNextRecord(t *testing.T) {
 	// A record written while a client waits is delivered to it.
 	answered := make(chan []byte, 1)
 	go func() {
-		_, body := w.do("GET", w.admin.URL+"/changes?after="+strconv.FormatInt(last, 10)+"&wait=10", nil)
+		_, body := w.do("GET", w.admin.URL+"/changes?after_seq=2147483647&after_revision="+strconv.FormatInt(last, 10)+"&wait=10", nil)
 		answered <- body
 	}()
 	time.Sleep(300 * time.Millisecond)
-	w.must("POST", "/group", map[string]any{"name": "feed"})
+	w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "feed"})
 	select {
 	case body := <-answered:
 		if !strings.Contains(string(body), `"feed"`) {

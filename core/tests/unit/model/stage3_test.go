@@ -72,7 +72,7 @@ func TestRuleConditionsAndTheirTargetsAreChecked(t *testing.T) {
 			in.Predicate = []model.PredicateCondition{{Attr: "ip", Op: model.OpInCIDR, Value: model.PredicateValue{Str: "10.0.0.1"}}}
 		},
 		"a source on a resource condition": func(in *model.AssignmentRuleInput) {
-			in.ResourceWhere = []model.PredicateCondition{{Attr: "owner", Op: model.OpEq, Value: model.PredicateValue{Str: "a"}, Source: model.SourceClaim}}
+			in.ResourceWhere = []model.PredicateCondition{{Attr: "owner", Op: model.OpEq, Value: model.PredicateValue{Str: "a"}, Source: model.SourceSubject}}
 		},
 		"a reserved attribute in resource_where": func(in *model.AssignmentRuleInput) {
 			in.ResourceWhere = []model.PredicateCondition{{Attr: "id", Op: model.OpEq, Value: model.PredicateValue{Str: "a"}}}
@@ -105,7 +105,7 @@ func TestRuleConditionsAndTheirTargetsAreChecked(t *testing.T) {
 	}
 }
 
-// A permission targets one place: a resource id, a resource found by a claim, or the resources matching conditions.
+// A permission targets one place: a resource id, a resource found by a property, or the resources matching conditions.
 func TestAPermissionTargetsOnePlace(t *testing.T) {
 	typeID := uuid.New()
 	subject := "alice"

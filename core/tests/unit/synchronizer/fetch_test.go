@@ -20,7 +20,7 @@ func reply(status int, body string) *http.Client {
 
 // An answer that lists no resource is an answer: the caller applies it (the resources of the type go away).
 func TestAnEmptyListIsAnAnswer(t *testing.T) {
-	adapter := synchronizer.NewAdapterWithHTTPClient(nil, reply(http.StatusOK, "[]"))
+	adapter := synchronizer.NewAdapterWithHTTPClient(reply(http.StatusOK, "[]"))
 	rows, err := adapter.FetchAll(context.Background(), model.SynchronizerConfig{Kind: model.KindHTTP, URL: "https://source.test/list"}, "", false)
 	if err != nil {
 		t.Fatalf("an empty list is a valid answer, got error %v", err)
@@ -39,7 +39,7 @@ func TestAnUnansweredSourceIsAnError(t *testing.T) {
 		"invalid JSON": reply(http.StatusOK, "[{"),
 	}
 	for name, client := range cases {
-		adapter := synchronizer.NewAdapterWithHTTPClient(nil, client)
+		adapter := synchronizer.NewAdapterWithHTTPClient(client)
 		_, err := adapter.FetchAll(context.Background(), model.SynchronizerConfig{Kind: model.KindHTTP, URL: "https://source.test/list"}, "", false)
 		if err == nil {
 			t.Fatalf("%s: want an error, got none", name)
@@ -49,7 +49,7 @@ func TestAnUnansweredSourceIsAnError(t *testing.T) {
 
 // A SQL source without a list query has no answer to give: it is not an empty list.
 func TestSQLSourceWithoutListQueryIsAnError(t *testing.T) {
-	adapter := synchronizer.NewAdapterWithHTTPClient(nil, nil)
+	adapter := synchronizer.NewAdapterWithHTTPClient(nil)
 	_, err := adapter.FetchAll(context.Background(), model.SynchronizerConfig{Kind: model.KindSQL, DSN: "postgres://x"}, "", false)
 	if err == nil {
 		t.Fatal("a SQL source without list_query must not answer with an empty list")

@@ -1,0 +1,19 @@
+{
+  "name": "deny_on_first_deny stops at the first denial: the answer ends with it, and nothing after it is evaluated",
+  "source": "AuthZEN 1.0, evaluations_semantic deny_on_first_deny",
+  "checked_against_text": false,
+  "endpoint": "evaluations",
+  "grants": [["alice@acmecorp.com", "can_read", "todo", "1"], ["alice@acmecorp.com", "can_read", "todo", "2"]],
+  "request": {
+    "subject": {"type": "user", "id": "alice@acmecorp.com"},
+    "action": {"name": "can_read"},
+    "options": {"evaluations_semantic": "deny_on_first_deny"},
+    "evaluations": [
+      {"resource": {"type": "todo", "id": "1"}},
+      {"resource": {"type": "todo", "id": "2"}},
+      {"resource": {"type": "todo", "id": "3"}},
+      {"resource": {"type": "todo", "id": "1"}}
+    ]
+  },
+  "decisions": [true, true, false]
+}

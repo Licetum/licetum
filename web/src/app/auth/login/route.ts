@@ -1,41 +1,37 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-import { ApiUnreachable, PlatformNotSeeded, platformServiceId } from '@/lib/admin-api';
 import { env } from '@/lib/env';
+import { authorizationUrl, FLOW_COOKIE, FLOW_PATH, newFlow, sealFlow } from '@/lib/oidc';
 import { safeReturnTo } from '@/lib/safe-return';
 
 export const dynamic = 'force-dynamic';
 
-/** Starts the sign-in: the admin API redirects to the identity provider of the platform service and brings the browser back to /auth/callback. */
+/**
+ * Starts the sign-in: this server is the OpenID Connect client, so it sends the browser to the identity provider
+ * itself (code flow with PKCE). The state, the nonce and the PKCE verifier go into a short-lived encrypted cookie of
+ * this browser, which the return to /auth/callback checks.
+ */
 export async function GET(request: NextRequest) {
   const base = env.appBaseUrl();
-  let serviceId: string;
+  const flow = newFlow(safeReturnTo(request.nextUrl.searchParams.get('returnTo')));
+  let target: string;
   try {
-    serviceId = await platformServiceId();
-  } catch (error) {
-    const code =
-      error instanceof PlatformNotSeeded
-        ? 'not_seeded'
-        : error instanceof ApiUnreachable
-          ? 'api_unreachable'
-          : 'unknown';
-    return NextResponse.redirect(`${base}/login/error?code=${code}`);
+    target = authorizationUrl(flow);
+  } catch {
+    // The OIDC settings of this application are missing or malformed.
+    return NextResponse.redirect(`${base}/login/error?code=not_configured`);
   }
 
-  const target = new URL(`${env.adminApiPublicUrl()}/service/${serviceId}/oauth/login`);
-  target.searchParams.set('redirect_to', `${base}/auth/callback`);
-
   const response = NextResponse.redirect(target);
-  response.cookies.set(
-    'licetum_return',
-    safeReturnTo(request.nextUrl.searchParams.get('returnTo')),
-    {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: env.secureCookies(),
-      path: '/',
-      maxAge: 600,
-    },
-  );
+  response.cookies.set(FLOW_COOKIE, await sealFlow(flow), {
+    httpOnly: true,
+    // The identity provider returns with a top-level GET, which a lax cookie accompanies.
+    sameSite: 'lax',
+    secure: env.secureCookies(),
+    path: FLOW_PATH,
+    maxAge: 600,
+  });
+  // The page that sent the browser here must not be kept: it carries the start of a sign-in.
+  response.headers.set('cache-control', 'no-store');
   return response;
 }

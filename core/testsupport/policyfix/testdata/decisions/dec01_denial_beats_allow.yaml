@@ -1,0 +1,178 @@
+# DEC01: a denial beats any allow, wherever the allow lies — on the same resource, above or below the denial, on the whole
+# type or on one resource, on a type of another service, through a group. A denial takes only the levels it names, and
+# a denial with nothing granted to take away is no access, not a denial.
+#
+# The world is the one of the integration tests (admin-api/tests/integration/api/hierarchy_test.go, newWorld):
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4. Each subject holds the rules of one scenario.
+contracts: [DEC01]
+description: A denial beats any allow wherever the allow lies; one subject per position of the allow.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+groups:
+  - name: staff
+    members: [{subject: member}]
+rules:
+  # The allow and the denial on the same resource: a tie between an allow and a denial is no contest.
+  - {name: same-allow-B1, subject: same, type: branch, resource: B1, access: [read]}
+  - {name: same-deny-B1, subject: same, type: branch, resource: B1, access: [read], deny: true}
+  # The allow lies below the denial.
+  - {name: below-deny-R1, subject: below, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: below-allow-B1, subject: below, type: branch, resource: B1, access: [read]}
+  # The allow lies above the denial.
+  - {name: above-allow-D1, subject: above, type: division, resource: D1, access: [read]}
+  - {name: above-deny-B1, subject: above, type: branch, resource: B1, access: [read], deny: true}
+  # The allow covers the whole type, the denial one of its resources.
+  - {name: wp-allow-branch, subject: whole-point, type: branch, access: [read]}
+  - {name: wp-deny-B3, subject: whole-point, type: branch, resource: B3, access: [read], deny: true}
+  # The allow covers one resource, the denial the whole of its type.
+  - {name: pw-allow-B1, subject: point-whole, type: branch, resource: B1, access: [read]}
+  - {name: pw-deny-branch, subject: point-whole, type: branch, access: [read], deny: true}
+  # The allow is on a resource of another service, the denial on the whole of a higher type.
+  - {name: cs-allow-I1, subject: cross, type: item, resource: I1, access: [read]}
+  - {name: cs-deny-division, subject: cross, type: division, access: [read], deny: true}
+  # The allow is on the whole of a type of another service, the denial on one resource of a higher type.
+  - {name: cs2-allow-item, subject: cross2, type: item, access: [read]}
+  - {name: cs2-deny-B4, subject: cross2, type: branch, resource: B4, access: [read], deny: true}
+  # The allow is on the whole of a higher type, the denial on the whole of a lower type.
+  - {name: ww-allow-division, subject: whole-whole, type: division, access: [read]}
+  - {name: ww-deny-branch, subject: whole-whole, type: branch, access: [read], deny: true}
+  # Both on the whole of one type: the type as a whole is denied too.
+  - {name: tt-allow-branch, subject: type-type, type: branch, access: [read]}
+  - {name: tt-deny-branch, subject: type-type, type: branch, access: [read], deny: true}
+  # A denial takes only the level it names.
+  - {name: lv-allow-D1, subject: levels, type: division, resource: D1, access: [read, write]}
+  - {name: lv-deny-R1, subject: levels, type: rrs, resource: R1, access: [write], deny: true}
+  # A denial alone grants nothing and has nothing to take away.
+  - {name: only-deny-R1, subject: only-deny, type: rrs, resource: R1, access: [read], deny: true}
+  # Many allows at every height against one denial.
+  - {name: many-allow-D1, subject: many, type: division, resource: D1, access: [read]}
+  - {name: many-allow-R1, subject: many, type: rrs, resource: R1, access: [read]}
+  - {name: many-allow-B1, subject: many, type: branch, resource: B1, access: [read]}
+  - {name: many-allow-branch, subject: many, type: branch, access: [read]}
+  - {name: many-deny-R1, subject: many, type: rrs, resource: R1, access: [read], deny: true}
+  # The allow reaches the subject through a group, the denials directly and through the group as a subject.
+  - {name: grp-allow-D1, member_of: staff, type: division, resource: D1, access: [read]}
+  - {name: grp-deny-B2, subject: member, type: branch, resource: B2, access: [read], deny: true}
+  - {name: grp-deny-R2, subject_group: staff, type: rrs, resource: R2, access: [read], deny: true}
+cases:
+  - name: an allow and a denial on the same resource
+    subject: same
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [same-allow-B1], denials: [{rule: same-deny-B1}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+  - name: an allow and a denial on the same resource, seen from a resource of another service below it
+    subject: same
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [same-allow-B1], denials: [{rule: same-deny-B1}]}
+  - name: an allow below the denial
+    subject: below
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [below-allow-B1], denials: [{rule: below-deny-R1}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+  - name: an allow below the denial, on a resource of another service further down
+    subject: below
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [below-allow-B1], denials: [{rule: below-deny-R1}]}
+  - name: an allow above the denial
+    subject: above
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [above-allow-D1], denials: [{rule: above-deny-B1}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed, granted_by: [above-allow-D1]}
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed}
+  - name: an allow above the denial, on a resource of another service below the denial
+    subject: above
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [above-allow-D1], denials: [{rule: above-deny-B1}]}
+  - name: a whole-type allow and a denial on one resource of the type
+    subject: whole-point
+    questions:
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [wp-allow-branch], denials: [{rule: wp-deny-B3}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+  - name: an allow on one resource and a denial on the whole of its type
+    subject: point-whole
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [pw-allow-B1], denials: [{rule: pw-deny-branch}]}
+  - name: an allow on one resource and a denial on the whole of its type, seen from below
+    subject: point-whole
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [pw-allow-B1], denials: [{rule: pw-deny-branch}]}
+  - name: an allow on a resource of another service and a denial on the whole of a higher type
+    subject: cross
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [cs-allow-I1], denials: [{rule: cs-deny-division}]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: no_access}
+  - name: an allow on the whole of a type of another service and a denial on one resource of a higher type
+    subject: cross2
+    service: app
+    questions:
+      - {type: item, resource: I4, action: read, allowed: false, decision: denied, granted_by: [cs2-allow-item], denials: [{rule: cs2-deny-B4}]}
+      - {type: item, resource: I1, action: read, allowed: true, decision: allowed, granted_by: [cs2-allow-item]}
+  - name: a whole-type allow on a higher type and a whole-type denial on a lower type
+    subject: whole-whole
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed}
+      - {type: rrs, resource: R3, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [ww-allow-division], denials: [{rule: ww-deny-branch}]}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: denied}
+  - name: a whole-type denial on a lower type reaches the types of another service below it
+    subject: whole-whole
+    service: app
+    questions:
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, granted_by: [ww-allow-division], denials: [{rule: ww-deny-branch}]}
+      - {type: item, resource: I4, action: read, allowed: false, decision: denied}
+  - name: an allow and a denial on the whole of one type, asked of the type and of a resource
+    subject: type-type
+    questions:
+      - {type: branch, action: read, allowed: false, decision: denied, granted_by: [tt-allow-branch], denials: [{rule: tt-deny-branch}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [tt-allow-branch], denials: [{rule: tt-deny-branch}]}
+  - name: a denial takes only the level it names
+    subject: levels
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [lv-allow-D1]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, granted_by: [lv-allow-D1], denials: [{rule: lv-deny-R1}]}
+      - {type: rrs, resource: R1, action: read, allowed: true, decision: allowed}
+      - {type: rrs, resource: R1, action: write, allowed: false, decision: denied}
+      - {type: branch, resource: B3, action: write, allowed: true, decision: allowed}
+  - name: a denial with nothing granted is no access
+    subject: only-deny
+    questions:
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access}
+  - name: many allows at every height do not outweigh one denial
+    subject: many
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [many-allow-D1, many-allow-R1, many-allow-B1, many-allow-branch], denials: [{rule: many-deny-R1}]}
+      - {type: rrs, resource: R1, action: read, allowed: false, decision: denied, granted_by: [many-allow-D1, many-allow-R1], denials: [{rule: many-deny-R1}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [many-allow-D1, many-allow-branch]}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [many-allow-branch]}
+  - name: an allow through a group and denials on the subject and on the group
+    subject: member
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [grp-allow-D1]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied, granted_by: [grp-allow-D1], denials: [{rule: grp-deny-B2}]}
+      - {type: rrs, resource: R2, action: read, allowed: false, decision: denied, granted_by: [grp-allow-D1], denials: [{rule: grp-deny-R2}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, granted_by: [grp-allow-D1], denials: [{rule: grp-deny-R2}]}

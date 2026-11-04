@@ -1,6 +1,7 @@
 # Development-only Dex configuration.
 # The passwords and client secret below are intentionally public and must not be reused outside
-# the local Compose stack. Override PLATFORM__* and replace this IdP for production deployments.
+# the local Compose stack. Replace this IdP (ADMIN_AUTH__* of the admin API, OIDC_* of the web interface) for production
+# deployments.
 
 issuer: http://localhost:5556/dex
 
@@ -19,9 +20,10 @@ staticClients:
   - id: licetum-local
     name: Licetum local development
     secret: licetum-local-secret
+    # The web interface is the OIDC client: the browser comes back to its /auth/callback.
     redirectURIs:
-      - http://localhost:8002/service/275d0b64-c908-5af4-a046-41dd0c3ac1aa/oauth/callback
-      - http://127.0.0.1:8002/service/275d0b64-c908-5af4-a046-41dd0c3ac1aa/oauth/callback
+      - http://localhost:3000/auth/callback
+      - http://127.0.0.1:3000/auth/callback
 
 enablePasswordDB: true
 staticPasswords:

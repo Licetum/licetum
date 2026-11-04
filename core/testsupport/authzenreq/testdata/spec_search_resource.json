@@ -1,0 +1,5 @@
+{
+  "subject": {"type": "user", "id": "alice@acmecorp.com"},
+  "action": {"name": "can_read"},
+  "resource": {"type": "account"}
+}

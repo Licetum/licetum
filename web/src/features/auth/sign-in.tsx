@@ -39,7 +39,15 @@ export function SignInScreen({ returnTo }: { returnTo: string }) {
   );
 }
 
-const ERRORS = ['not_seeded', 'api_unreachable', 'unknown'] as const;
+const ERRORS = [
+  'not_configured',
+  'denied',
+  'state',
+  'idp_unreachable',
+  'invalid_response',
+  'idp_error',
+  'unknown',
+] as const;
 
 export function SignInErrorScreen({ code }: { code: string }) {
   const { t } = useTranslation();

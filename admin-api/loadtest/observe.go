@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	support "github.com/licetum/licetum/core/testsupport"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,7 +47,7 @@ func (o observer) read(ctx context.Context) (counters, error) {
 			return counters{}, err
 		}
 		cpu += used
-		one, err := scrape(ctx, c.base)
+		one, err := scrape(ctx, c.ops)
 		if err != nil {
 			return counters{}, err
 		}
@@ -94,11 +96,11 @@ func parseSwapPages(vmstat string) float64 {
 // the extension (shared_preload_libraries); without it the run still measures the server, and the database is a black
 // box in the report.
 func enableStatements(ctx context.Context, o observer) observer {
-	if _, err := o.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pg_stat_statements`); err != nil {
+	if _, err := support.RawExec(ctx, o.pool, `CREATE EXTENSION IF NOT EXISTS pg_stat_statements`); err != nil {
 		slog.Warn("statement statistics are off", "error", err)
 		return o
 	}
-	if _, err := o.pool.Exec(ctx, `SELECT 1 FROM pg_stat_statements LIMIT 1`); err != nil {
+	if _, err := support.RawExec(ctx, o.pool, `SELECT 1 FROM pg_stat_statements LIMIT 1`); err != nil {
 		slog.Warn("statement statistics are off: start the server with shared_preload_libraries=pg_stat_statements", "error", err)
 		return o
 	}
@@ -133,9 +135,9 @@ func procCPU(pid int) (float64, error) {
 	return (utime + stime) / clockTicks, nil
 }
 
-// scrape reads /metrics of the check server.
-func scrape(ctx context.Context, base string) (map[string]float64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/metrics", nil)
+// scrape reads /metrics of the check server, on its ops listener.
+func scrape(ctx context.Context, ops string) (map[string]float64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ops+"/metrics", nil)
 	if err != nil {
 		return nil, err
 	}

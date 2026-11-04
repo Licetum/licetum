@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/licetum/licetum/core/httpx"
 	"github.com/licetum/licetum/core/server"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -76,8 +77,8 @@ func withPolicy(op huma.Operation, p policy) huma.Operation {
 	if op.Metadata == nil {
 		op.Metadata = map[string]any{}
 	}
-	op.Metadata[server.PolicyMetadataKey] = p
-	op.Security = []map[string][]string{{server.BearerScheme: {}}}
+	op.Metadata[httpx.PolicyMetadataKey] = p
+	op.Security = []map[string][]string{{httpx.BearerScheme: {}}}
 	op.Errors = append(op.Errors, http.StatusUnauthorized, http.StatusForbidden,
 		http.StatusFailedDependency, http.StatusServiceUnavailable)
 	return op
@@ -96,7 +97,7 @@ func accessFrom(ctx context.Context) *service.Access {
 func platformAuth(app *service.App) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		op := ctx.Operation()
-		p, ok := op.Metadata[server.PolicyMetadataKey].(policy)
+		p, ok := op.Metadata[httpx.PolicyMetadataKey].(policy)
 		if !ok {
 			next(ctx)
 			return

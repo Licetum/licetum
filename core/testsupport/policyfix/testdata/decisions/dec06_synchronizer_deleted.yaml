@@ -1,0 +1,89 @@
+# DEC06, a type whose synchronizer was deleted after its resources were synchronized (admin-api/tests/integration/api/
+# hierarchy_test.go, TestIntegrationTypeModes): item (service app, under branch) had a synchronizer that reported I1 under
+# B1 and I4 under B4, and the rules were written then; the synchronizer was deleted afterwards. Deleting a synchronizer
+# leaves its resources in the local copy, with their place in the hierarchy, but the type is not_sync now: it has no
+# resources, the whole-type rules on it decide it, nothing flows into it from the types above (the grant on D1), and a
+# rule on one of its resources (the point rule on I4, which the admin API keeps and marks target_valid = false) has no
+# effect. dec06_type_without_synchronizer.yaml has the same policy on a type that never had a synchronizer.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; before: B1 ⊃ I1, B4 ⊃ I4.
+contracts: [DEC06]
+description: A type that lost its synchronizer is decided by its whole-type rules, whatever its resources were.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: false, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, name: Branch 4, parents: [{type: rrs, id: R3}]}
+rules:
+  # hierarchy_test.go:TestIntegrationTypeModes: read on D1, read on I4 (dead once the synchronizer is gone), read on the
+  # whole type item.
+  - {name: modes-D1, subject: user-1, type: division, resource: D1, access: [read]}
+  - {name: modes-I4, subject: user-1, type: item, resource: I4, access: [read]}
+  - {name: modes-item, subject: user-1, type: item, access: [read]}
+  # Grants above item only.
+  - {name: above-D1, subject: only-above, type: division, resource: D1, access: [read, write]}
+  - {name: above-branch, subject: only-above, type: branch, access: [read, write]}
+  # The dead point rule alone.
+  - {name: dead-I1, subject: dead-only, type: item, resource: I1, access: [read, write]}
+  # A dead point denial beside a whole-type grant.
+  - {name: dd-item, subject: dead-denial, type: item, access: [read]}
+  - {name: dd-deny-I1, subject: dead-denial, type: item, resource: I1, access: ["*"], deny: true}
+cases:
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationTypeModes
+  - name: item without its synchronizer is not_sync, with the levels of the whole-type rule on it
+    subject: user-1
+    service: app
+    questions:
+      - {type: item, action: read, allowed: true, decision: allowed, granted_by: [modes-item], denials: []}
+      - {type: item, action: write, allowed: false, decision: no_access, granted_by: []}
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationTypeModes
+  - name: the resources the deleted synchronizer reported are not there to be decided
+    subject: user-1
+    service: app
+    questions:
+      - {type: item, resource: I4, action: read, allowed: false, decision: resource_not_found, granted_by: [], denials: []}
+      - {type: item, resource: I1, action: read, allowed: false, decision: resource_not_found, granted_by: [], denials: []}
+  - name: the grant on D1 still reaches the sync types below it
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [modes-D1]}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationTypeModes
+  - name: the grants above the type no longer cascade into it
+    subject: only-above
+    service: app
+    questions:
+      - {type: item, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: item, action: write, allowed: false, decision: no_access, granted_by: []}
+      - {type: item, resource: I1, action: read, allowed: false, decision: resource_not_found}
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationTypeModes
+  - name: a rule on a resource of the type has no effect once its synchronizer is gone
+    subject: dead-only
+    service: app
+    questions:
+      - {type: item, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: item, action: write, allowed: false, decision: no_access, granted_by: []}
+  - name: a denial on a resource of the type has no effect on the type as a whole
+    subject: dead-denial
+    service: app
+    questions:
+      - {type: item, action: read, allowed: true, decision: allowed, granted_by: [dd-item], denials: []}
+before:
+  # item had its synchronizer when the resources were first synchronized and the rules written.
+  types:
+    - {name: item, service: app, sync: true, parents: [{type: branch}]}
+  resources:
+    - {type: item, id: I1, name: Item 1, parents: [{type: branch, id: B1}]}
+    - {type: item, id: I4, name: Item 4, parents: [{type: branch, id: B4}]}

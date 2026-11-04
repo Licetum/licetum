@@ -21,6 +21,11 @@ linters:
     depguard:
       # The admin module (AGPL) is the outer layer: it may use core, the engine and the check API, and nothing above it.
       rules:
+        no-redis:
+          files: ["$all"]
+          deny:
+            - pkg: github.com/redis/go-redis
+              desc: Redis is not used; the policy, the answers and the synchronization live in PostgreSQL and in memory
         admin-layers:
           files: ["**/admin-api/service/**"]
           deny:

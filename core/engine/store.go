@@ -11,10 +11,10 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-const AssignmentRuleColumns = `ar.id, ar.role_id, ar.type_resource_id, ar.resource_id, ar.resource_from_claim, ar.access,
+const AssignmentRuleColumns = `ar.id, ar.role_id, ar.type_resource_id, ar.resource_id, ar.resource_from_property, ar.access,
 	ar.subject, ar.predicate, ar.member_of_group_id, ar.enabled, ar.effect, ar.exception, ar.valid_from, ar.expires_at,
 	ar.name, ar.description, ar.on_missing_attribute, ar.requires_predicate, ar.requires_group_id, ar.resource_where,
-	ar.subject_kind`
+	ar.subject_type,ar.service_id,ar.subject_group_id`
 
 // RuleActiveSQL selects the rules in force now: enabled and inside their validity period.
 const RuleActiveSQL = `ar.enabled
@@ -24,19 +24,19 @@ const RuleActiveSQL = `ar.enabled
 // ScanAssignmentRule reads the assignmentRuleColumns columns plus any extra dest (if given).
 func ScanAssignmentRule(row pgx.Row, extra ...any) (*model.AssignmentRule, error) {
 	var r model.AssignmentRule
-	var fromClaim, predicate, requires, where []byte
+	var fromProperty, predicate, requires, where []byte
 	var memberOf, requiresGroup uuid.NullUUID
-	dest := append([]any{&r.ID, &r.RoleID, &r.TypeResourceID, &r.ResourceID, &fromClaim, &r.Access,
+	dest := append([]any{&r.ID, &r.RoleID, &r.TypeResourceID, &r.ResourceID, &fromProperty, &r.Access,
 		&r.Subject, &predicate, &memberOf, &r.Enabled, &r.Effect, &r.Exception, &r.ValidFrom, &r.ExpiresAt,
-		&r.Name, &r.Description, &r.OnMissingAttribute, &requires, &requiresGroup, &where, &r.SubjectKind}, extra...)
+		&r.Name, &r.Description, &r.OnMissingAttribute, &requires, &requiresGroup, &where, &r.SubjectType, &r.ServiceID, &r.SubjectGroupID}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}
 	r.MemberOfGroupID = NullUUID(memberOf)
 	r.RequiresGroupID = NullUUID(requiresGroup)
-	if fromClaim != nil && string(fromClaim) != "null" {
-		r.ResourceFromClaim = &model.ResourceFromClaim{}
-		if err := json.Unmarshal(fromClaim, r.ResourceFromClaim); err != nil {
+	if fromProperty != nil && string(fromProperty) != "null" {
+		r.ResourceFromProperty = &model.ResourceFromProperty{}
+		if err := json.Unmarshal(fromProperty, r.ResourceFromProperty); err != nil {
 			return nil, err
 		}
 	}
@@ -63,13 +63,13 @@ func ScanAssignmentRule(row pgx.Row, extra ...any) (*model.AssignmentRule, error
 }
 
 // GroupMemberColumns are the columns scanGroupMember reads (enabled comes with the validity period).
-const GroupMemberColumns = `id, group_id, member_group_id, predicate, enabled, valid_from, expires_at`
+const GroupMemberColumns = `service_id,id, group_id, member_group_id, predicate, enabled, valid_from, expires_at`
 
 func ScanGroupMember(row pgx.Row) (*model.GroupMember, error) {
 	var m model.GroupMember
 	var memberGroup uuid.NullUUID
 	var predicate []byte
-	if err := row.Scan(&m.ID, &m.GroupID, &memberGroup, &predicate, &m.Enabled, &m.ValidFrom, &m.ExpiresAt); err != nil {
+	if err := row.Scan(&m.ServiceID, &m.ID, &m.GroupID, &memberGroup, &predicate, &m.Enabled, &m.ValidFrom, &m.ExpiresAt); err != nil {
 		return nil, err
 	}
 	m.MemberGroupID = NullUUID(memberGroup)
@@ -83,20 +83,20 @@ func ScanGroupMember(row pgx.Row) (*model.GroupMember, error) {
 }
 
 // RolePermissionColumns are the columns scanRolePermission reads.
-const RolePermissionColumns = `rp.id, rp.role_id, rp.type_resource_id, rp.resource_id, rp.resource_from_claim, rp.access,
-	rp.resource_where`
+const RolePermissionColumns = `rp.id, rp.role_id, rp.type_resource_id, rp.resource_id, rp.resource_from_property, rp.access,
+	rp.resource_where,rp.service_id`
 
 // ScanRolePermission reads the rolePermissionColumns columns plus any extra dest (if given).
 func ScanRolePermission(row pgx.Row, extra ...any) (*model.RolePermission, error) {
 	var p model.RolePermission
-	var fromClaim, where []byte
-	dest := append([]any{&p.ID, &p.RoleID, &p.TypeResourceID, &p.ResourceID, &fromClaim, &p.Access, &where}, extra...)
+	var fromProperty, where []byte
+	dest := append([]any{&p.ID, &p.RoleID, &p.TypeResourceID, &p.ResourceID, &fromProperty, &p.Access, &where, &p.ServiceID}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}
-	if fromClaim != nil && string(fromClaim) != "null" {
-		p.ResourceFromClaim = &model.ResourceFromClaim{}
-		if err := json.Unmarshal(fromClaim, p.ResourceFromClaim); err != nil {
+	if fromProperty != nil && string(fromProperty) != "null" {
+		p.ResourceFromProperty = &model.ResourceFromProperty{}
+		if err := json.Unmarshal(fromProperty, p.ResourceFromProperty); err != nil {
 			return nil, err
 		}
 	}
@@ -113,7 +113,7 @@ func ScanSynchronizer(row pgx.Row) (*model.Synchronizer, error) {
 	var s model.Synchronizer
 	var kind string
 	var raw []byte
-	if err := row.Scan(&s.ID, &s.TypeResourceID, &kind, &raw); err != nil {
+	if err := row.Scan(&s.ID, &s.TypeResourceID, &kind, &raw, &s.Regions, &s.RowVersion); err != nil {
 		return nil, err
 	}
 	cfg, err := model.ConfigFromDB(kind, raw)
@@ -121,10 +121,13 @@ func ScanSynchronizer(row pgx.Row) (*model.Synchronizer, error) {
 		return nil, err
 	}
 	s.Config = cfg
+	if s.Regions == nil {
+		s.Regions = []string{}
+	}
 	return &s, nil
 }
 
-const SynchronizerColumns = `id, type_resource_id, kind::text, config`
+const SynchronizerColumns = `id, type_resource_id, kind::text, config, regions, xmin::text`
 
 // ActiveSynchronizer returns the first non-deleted synchronizer of a type (or nil).
 func (a *App) ActiveSynchronizer(ctx context.Context, typeResourceID uuid.UUID) (*model.Synchronizer, error) {

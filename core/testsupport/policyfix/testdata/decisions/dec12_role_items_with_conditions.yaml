@@ -1,0 +1,107 @@
+# DEC12 and DEC10, a role whose item names an access group and covers the resources whose attributes match
+# (admin-api/tests/integration/api/gaps_test.go, TestIntegrationRoleItemsKeepTheirConditionsAndAccessGroupsThroughTheDocument):
+# the role project-reader gives @viewer (read) on the projects alice owns, and a rule grants it to user-1, who then reads P1
+# and P3 — with read only, the levels of the access group. The rest of that test (a condition on a type without a
+# synchronizer is refused, the policy document carries the item) is about the admin API and the document, not decisions.
+#
+# Around the test: a role granted by a denial denies its items' levels on what they cover, and only those; a role granted
+# as an exception lifts a whole-type denial for the resources its items cover (a point lies below the whole of its own
+# type), but not for the type as a whole; a role with several items grants each of them; an access group of several
+# levels in an inline rule, and in a denial, stands for its levels. The explanations name the rule that grants the role.
+#
+# project (service org), no parents: P1 {owner: alice, tier: gold}, P2 {owner: bob, tier: silver}, P3 {owner: alice,
+# tier: silver}. Access groups of project: viewer [read] (the test), editor [read, write].
+contracts: [DEC10, DEC12]
+description: Role items with resource_where and access groups expand with the effect and the exception of the rule.
+services: [org]
+types:
+  - {name: project, service: org, sync: true}
+resources:
+  - {type: project, id: P1, name: Project 1, meta: {owner: alice, tier: gold}}
+  - {type: project, id: P2, name: Project 2, meta: {owner: bob, tier: silver}}
+  - {type: project, id: P3, name: Project 3, meta: {owner: alice, tier: silver}}
+access_groups:
+  - {type: project, name: viewer, levels: [read]}
+  - {type: project, name: editor, levels: [read, write]}
+roles:
+  # The test: @viewer on the projects alice owns.
+  - name: project-reader
+    items:
+      - {type: project, where: [{attr: owner, op: eq, value: alice}], access: ["@viewer"]}
+  # Two items: write on P2, and @editor on the gold projects.
+  - name: mixed
+    items:
+      - {type: project, resource: P2, access: [write]}
+      - {type: project, where: [{attr: tier, op: eq, value: gold}], access: ["@editor"]}
+rules:
+  # The test.
+  - {name: reader-for-user-1, subject: user-1, role: project-reader}
+  # A role with several items.
+  - {name: mixed-for-mixer, subject: mixer, role: mixed}
+  # A role granted by a denial.
+  - {name: denied-allow-all, subject: role-denied, type: project, access: [read, write]}
+  - {name: deny-reader, subject: role-denied, role: project-reader, deny: true}
+  # A role granted as an exception to a whole-type denial.
+  - {name: excepted-allow-all, subject: role-excepted, type: project, access: [read]}
+  - {name: excepted-deny-all, subject: role-excepted, type: project, access: [read], deny: true}
+  - {name: except-reader, subject: role-excepted, role: project-reader, exception: true}
+  # Access groups in inline rules: a grant of @editor, a denial of @viewer.
+  - {name: grant-editor-P2, subject: editor-user, type: project, resource: P2, access: ["@editor"]}
+  - {name: viewer-denied-allow-all, subject: viewer-denied, type: project, access: [read, write]}
+  - {name: deny-viewer-P3, subject: viewer-denied, type: project, resource: P3, access: ["@viewer"], deny: true}
+cases:
+  # from admin-api/tests/integration/api/gaps_test.go:TestIntegrationRoleItemsKeepTheirConditionsAndAccessGroupsThroughTheDocument
+  - name: the role covers the projects alice owns, with the levels of its access group
+    subject: user-1
+    questions:
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [reader-for-user-1], denials: []}
+      - {type: project, resource: P1, action: write, allowed: false, decision: no_access, granted_by: []}
+      - {type: project, resource: P3, action: read, allowed: true, decision: allowed, granted_by: [reader-for-user-1], denials: []}
+      - {type: project, resource: P3, action: write, allowed: false, decision: no_access}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access, granted_by: []}
+  - name: an item on the resources that match says nothing about the type as a whole
+    subject: user-1
+    questions:
+      - {type: project, action: read, allowed: false, decision: no_access, granted_by: []}
+  - name: a role with several items grants each of them
+    subject: mixer
+    questions:
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [mixed-for-mixer]}
+      - {type: project, resource: P1, action: write, allowed: true, decision: allowed, granted_by: [mixed-for-mixer]}
+      - {type: project, resource: P2, action: write, allowed: true, decision: allowed, granted_by: [mixed-for-mixer]}
+      - {type: project, resource: P2, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P3, action: read, allowed: false, decision: no_access}
+      - {type: project, resource: P3, action: write, allowed: false, decision: no_access}
+  - name: a role granted by a denial denies the levels of its items on what they cover
+    subject: role-denied
+    questions:
+      - {type: project, resource: P1, action: read, allowed: false, decision: denied, granted_by: [denied-allow-all], denials: [{rule: deny-reader}]}
+      - {type: project, resource: P3, action: read, allowed: false, decision: denied, granted_by: [denied-allow-all], denials: [{rule: deny-reader}]}
+      - {type: project, resource: P2, action: read, allowed: true, decision: allowed, granted_by: [denied-allow-all], denials: []}
+  - name: a role granted by a denial leaves the levels its items do not name
+    subject: role-denied
+    questions:
+      - {type: project, resource: P1, action: write, allowed: true, decision: allowed, granted_by: [denied-allow-all], denials: []}
+      - {type: project, resource: P3, action: write, allowed: true, decision: allowed, granted_by: [denied-allow-all], denials: []}
+  - name: a role granted as an exception lifts a whole-type denial for the resources its items cover
+    subject: role-excepted
+    questions:
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [excepted-allow-all, except-reader], denials: [{rule: excepted-deny-all, lifted_by: [except-reader]}]}
+      - {type: project, resource: P3, action: read, allowed: true, decision: allowed, granted_by: [excepted-allow-all, except-reader], denials: [{rule: excepted-deny-all, lifted_by: [except-reader]}]}
+      - {type: project, resource: P2, action: read, allowed: false, decision: denied, granted_by: [excepted-allow-all], denials: [{rule: excepted-deny-all}]}
+  - name: a role granted as an exception on resources does not lift the denial of the type as a whole
+    subject: role-excepted
+    questions:
+      - {type: project, action: read, allowed: false, decision: denied, granted_by: [excepted-allow-all], denials: [{rule: excepted-deny-all}]}
+  - name: an access group of several levels in an inline rule grants each of them
+    subject: editor-user
+    questions:
+      - {type: project, resource: P2, action: read, allowed: true, decision: allowed, granted_by: [grant-editor-P2]}
+      - {type: project, resource: P2, action: write, allowed: true, decision: allowed, granted_by: [grant-editor-P2]}
+      - {type: project, resource: P1, action: read, allowed: false, decision: no_access}
+  - name: an access group in a denial denies its levels only
+    subject: viewer-denied
+    questions:
+      - {type: project, resource: P3, action: read, allowed: false, decision: denied, granted_by: [viewer-denied-allow-all], denials: [{rule: deny-viewer-P3}]}
+      - {type: project, resource: P3, action: write, allowed: true, decision: allowed, granted_by: [viewer-denied-allow-all], denials: []}
+      - {type: project, resource: P1, action: read, allowed: true, decision: allowed, granted_by: [viewer-denied-allow-all], denials: []}

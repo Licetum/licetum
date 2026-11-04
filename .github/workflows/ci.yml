@@ -34,6 +34,7 @@ jobs:
             go:
               - 'core/**'
               - 'admin-api/**'
+              - 'contracts.yaml'
               - 'Taskfile.yaml'
               - 'docker-compose.yml'
               - 'infra/**'
@@ -136,6 +137,10 @@ jobs:
       - name: Web lint and checks
         run: CI=true task web:lint
 
+      # The development stack (docker-compose.yml and infra/*.compose.yml) is valid: includes, anchors and variables resolve.
+      - name: Check the Compose file
+        run: docker compose config -q
+
       - name: Web unit tests
         run: task web:test
 
@@ -143,7 +148,7 @@ jobs:
         working-directory: web
         run: pnpm build
 
-  # The check API at the smoke volume (admin-api/loadtest): a ramp of three steps, a gate against gross regressions, not
+  # The PDP at the smoke volume (admin-api/loadtest): a ramp of three steps, a gate against gross regressions, not
   # a benchmark. A step passes on a valid window, errors within 1 %, and at least 95 % of the rate asked answered; the p99
   # of a 15-second step (about 750 requests) is not judged. The runners are shared, and the real numbers come from the
   # nightly loadtest.yml.

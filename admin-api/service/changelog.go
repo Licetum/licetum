@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/licetum/licetum/core/engine"
@@ -18,26 +19,55 @@ import (
 // ChangeFilter selects the records of the change log: those after a position, optionally of one service or of one kind
 // of entity.
 type ChangeFilter struct {
-	After   int64
-	Service *uuid.UUID
-	Entity  string
-	Limit   int
+	AfterRevision int64
+	AfterSeq      int
+	Service       *uuid.UUID
+	Entity        string
+	Limit         int
 }
 
-// changePollInterval is how often WaitChanges looks at the log again.
-const changePollInterval = 250 * time.Millisecond
+// changeHeadEvery is the most often a process asks the log where it ends, however many clients wait on it.
+const changeHeadEvery = time.Second
+
+// changeHead caches the id of the last record of the change log for changeHeadEvery.
+type changeHead struct {
+	mu   sync.Mutex
+	id   int64
+	read time.Time
+	err  error // the failure of the reading at read: it is the answer for changeHeadEvery too, so a down database is asked once
+}
+
+// get returns the id of the last record, at most changeHeadEvery old, and when it was read.
+func (h *changeHead) get(ctx context.Context, a *App) (int64, time.Time, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.read.IsZero() && time.Since(h.read) < changeHeadEvery {
+		return h.id, h.read, h.err
+	}
+	// The query serves every waiter of the process, so it does not end with the request that happened to run it.
+	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	var id int64
+	if err := a.DB.QueryRow(qctx, `SELECT revision FROM revision_state WHERE scope='global'`).Scan(&id); err != nil {
+		h.read, h.err = started, err
+		return 0, started, err
+	}
+	h.id, h.read, h.err = id, started, nil
+	return id, started, nil
+}
 
 // changeColumns are the columns collectChanges reads.
-const changeColumns = `id, at, actor, service_id, entity, entity_id, action, before, after`
+const changeColumns = `revision, seq, at, actor, service_id, entity, entity_id, action, before, after`
 
 // ListChanges returns the records of the change log in order, starting after the position f.After.
 func (a *App) ListChanges(ctx context.Context, f ChangeFilter) ([]model.ChangeRecord, error) {
 	rows, err := a.DB.Query(ctx, `
 		SELECT `+changeColumns+`
-		FROM authz_change
-		WHERE id > $1 AND ($2::uuid IS NULL OR service_id = $2) AND ($3 = '' OR entity = $3)
-		ORDER BY id
-		LIMIT $4`, f.After, engine.ToNullUUID(f.Service), f.Entity, f.Limit)
+		FROM change_log
+		WHERE (revision,seq) > ($1,$2) AND ($3::uuid IS NULL OR service_id = $3) AND ($4 = '' OR entity = $4)
+		ORDER BY revision,seq
+		LIMIT $5`, f.AfterRevision, f.AfterSeq, engine.ToNullUUID(f.Service), f.Entity, f.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -45,41 +75,61 @@ func (a *App) ListChanges(ctx context.Context, f ChangeFilter) ([]model.ChangeRe
 }
 
 // WaitChanges is ListChanges for a client that follows the log: when no record comes after the position yet, it waits
-// up to wait for the first one. It polls the log itself, so the records of every replica are seen.
+// up to wait for the first one. The waiters of a process share one query for the end of the log, asked at most once a
+// second; a waiter reads its own records only when the log has moved past what it has seen. The records of every
+// replica are seen, because the log is the table.
 func (a *App) WaitChanges(ctx context.Context, f ChangeFilter, wait time.Duration) ([]model.ChangeRecord, error) {
+	if wait <= 0 {
+		return a.ListChanges(ctx, f)
+	}
 	deadline := time.Now().Add(wait)
+	seen := f.AfterRevision - 1 // the log is known to hold nothing of interest in (f.After, seen]
 	for {
-		out, err := a.ListChanges(ctx, f)
-		if err != nil || len(out) > 0 || !time.Now().Before(deadline) {
-			return out, err
+		head, read, err := a.changes.get(ctx, a)
+		if err != nil {
+			return nil, err
 		}
+		if head > seen {
+			out, err := a.ListChanges(ctx, f)
+			if err != nil || len(out) > 0 {
+				return out, err
+			}
+			// Nothing for this filter up to the head read above (the ListChanges ran later, so it covers it).
+			seen = head
+		}
+		next := read.Add(changeHeadEvery)
+		if !time.Now().Before(deadline) {
+			return []model.ChangeRecord{}, nil
+		}
+		timer := time.NewTimer(min(time.Until(next), time.Until(deadline)) + time.Millisecond)
 		select {
 		case <-ctx.Done():
-			return out, nil
-		case <-time.After(changePollInterval):
+			timer.Stop()
+			return []model.ChangeRecord{}, nil
+		case <-timer.C:
 		}
 	}
 }
 
-// getChange reads one record of the change log.
-func (a *App) getChange(ctx context.Context, id int64) (model.ChangeRecord, error) {
-	rows, err := a.DB.Query(ctx, `SELECT `+changeColumns+` FROM authz_change WHERE id = $1`, id)
+// changesAt reads the whole transaction in reverse sequence order for revert.
+func (a *App) changesAt(ctx context.Context, revision int64) ([]model.ChangeRecord, error) {
+	rows, err := a.DB.Query(ctx, `SELECT `+changeColumns+` FROM change_log WHERE revision=$1 ORDER BY seq DESC`, revision)
 	if err != nil {
-		return model.ChangeRecord{}, err
+		return nil, err
 	}
 	out, err := collectChanges(rows)
 	if err != nil {
-		return model.ChangeRecord{}, err
+		return nil, err
 	}
 	if len(out) == 0 {
-		return model.ChangeRecord{}, apperr.NotFound(i18n.ChangeNotFound, id)
+		return nil, apperr.NotFound(i18n.ChangeNotFound, revision)
 	}
-	return out[0], nil
+	return out, nil
 }
 
 // changesAfter reads the records after a position, newest first: the order in which they are undone.
 func (a *App) changesAfter(ctx context.Context, position int64) ([]model.ChangeRecord, error) {
-	rows, err := a.DB.Query(ctx, `SELECT `+changeColumns+` FROM authz_change WHERE id > $1 ORDER BY id DESC`, position)
+	rows, err := a.DB.Query(ctx, `SELECT `+changeColumns+` FROM change_log WHERE revision > $1 ORDER BY revision DESC,seq DESC`, position)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +144,7 @@ func collectChanges(rows pgx.Rows) ([]model.ChangeRecord, error) {
 		var c model.ChangeRecord
 		var serviceID, entityID uuid.NullUUID
 		var before, after []byte
-		if err := rows.Scan(&c.ID, &c.At, &c.Actor, &serviceID, &c.Entity, &entityID, &c.Action, &before, &after); err != nil {
+		if err := rows.Scan(&c.Revision, &c.Seq, &c.At, &c.Actor, &serviceID, &c.Entity, &entityID, &c.Action, &before, &after); err != nil {
 			return nil, err
 		}
 		c.ServiceID = engine.NullUUID(serviceID)

@@ -1,5 +1,5 @@
 // Package loadtest measures the check API of Licetum at a given size of policy. It seeds a service through the admin
-// application (resource types synchronized from a PostgreSQL source, groups by a claim, assignment rules), starts the
+// application (resource types synchronized from a PostgreSQL source, groups by a property, assignment rules), starts the
 // check binary as a separate process, and sends it requests at a growing rate until the latency or the error budget
 // breaks. The result says how many answers per second each volume sustains, and what the server spent them on.
 package loadtest
@@ -12,8 +12,8 @@ import (
 // Profile is the size of a run: the subjects that send requests, and the policy and the resources they meet.
 type Profile struct {
 	Name      string `json:"name"`
-	Users     int    `json:"users"`     // subjects; each one has a token and the claims of its department
-	Groups    int    `json:"groups"`    // departments: one group per department, its members are picked by the department claim
+	Users     int    `json:"users"`     // subjects; each one has the properties of its department
+	Groups    int    `json:"groups"`    // departments: one group per department, its members are picked by the department property
 	Rules     int    `json:"rules"`     // assignment rules, in the mix of ruleFor
 	Resources int    `json:"resources"` // folders and documents of the synchronized source; a folder is 1 in 20 of them
 }

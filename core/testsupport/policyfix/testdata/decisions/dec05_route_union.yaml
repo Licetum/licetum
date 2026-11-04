@@ -1,0 +1,140 @@
+# DEC05: with several parents the levels that reach a resource are the union over the routes of the intersection of the
+# inherit masks along each route — not the intersection of everything, and not the union taken link by link.
+#
+# One service s. a has two children, b (read, write flow) and c (write, admin flow). Three types have both b and c as
+# parents, with different masks on the second links:
+#   d: b → d read,  c → d write  — routes {read} and {write}: d gets read and write (the intersection of all is empty);
+#   e: b → e write, c → e read   — routes {write} and {}: e gets write only (link by link it would get read too);
+#   f: b → f admin, c → f read   — routes {} and {}: nothing reaches f (link by link it would get read and admin).
+# A1 ⊃ B1, C1; D1, E1, F1 lie under B1 and C1, D2 under B1 only, D3 under C1 only.
+#
+# A rule on a resource follows the routes of the resource graph, so D2 gets only what flows through b. A whole-type rule
+# covers every resource of a lower type with the levels that flow between the types (the same union, over the routes of
+# the type graph), whatever the parents of the resource: D2 and D3 get read and write from a whole-type rule on a.
+contracts: [DEC05]
+description: The union over routes of the intersection along each route, for point and whole-type rules, grants and denials.
+services: [s]
+types:
+  - {name: a, service: s, sync: true}
+  - {name: b, service: s, sync: true, parents: [{type: a, inherit: [read, write]}]}
+  - {name: c, service: s, sync: true, parents: [{type: a, inherit: [write, admin]}]}
+  - {name: d, service: s, sync: true, parents: [{type: b, inherit: [read]}, {type: c, inherit: [write]}]}
+  - {name: e, service: s, sync: true, parents: [{type: b, inherit: [write]}, {type: c, inherit: [read]}]}
+  - {name: f, service: s, sync: true, parents: [{type: b, inherit: [admin]}, {type: c, inherit: [read]}]}
+resources:
+  - {type: a, id: A1}
+  - {type: b, id: B1, parents: [{type: a, id: A1}]}
+  - {type: c, id: C1, parents: [{type: a, id: A1}]}
+  - {type: d, id: D1, parents: [{type: b, id: B1}, {type: c, id: C1}]}
+  - {type: d, id: D2, parents: [{type: b, id: B1}]}
+  - {type: d, id: D3, parents: [{type: c, id: C1}]}
+  - {type: e, id: E1, parents: [{type: b, id: B1}, {type: c, id: C1}]}
+  - {type: f, id: F1, parents: [{type: b, id: B1}, {type: c, id: C1}]}
+rules:
+  - {name: pt-A1, subject: point, type: a, resource: A1, access: [read, write, admin]}
+  - {name: pd-D1, subject: point-deny, type: d, resource: D1, access: [read, write, admin]}
+  - {name: pd-E1, subject: point-deny, type: e, resource: E1, access: [read, write, admin]}
+  - {name: pd-F1, subject: point-deny, type: f, resource: F1, access: [read, write, admin]}
+  - {name: pd-deny-A1, subject: point-deny, type: a, resource: A1, access: [read, write, admin], deny: true}
+  - {name: ps-D1, subject: point-star, type: d, resource: D1, access: [read, write, admin]}
+  - {name: ps-E1, subject: point-star, type: e, resource: E1, access: [read, write, admin]}
+  - {name: ps-F1, subject: point-star, type: f, resource: F1, access: [read, write, admin]}
+  - {name: ps-deny-A1, subject: point-star, type: a, resource: A1, access: ["*"], deny: true}
+  - {name: wh-a, subject: whole, type: a, access: [read, write, admin]}
+  - {name: wd-d, subject: whole-deny, type: d, access: [read, write, admin]}
+  - {name: wd-e, subject: whole-deny, type: e, access: [read, write, admin]}
+  - {name: wd-f, subject: whole-deny, type: f, access: [read, write, admin]}
+  - {name: wd-deny-a, subject: whole-deny, type: a, access: ["*"], deny: true}
+cases:
+  - name: a grant on A1 — each child gets the levels of its link
+    subject: point
+    questions:
+      - {type: a, resource: A1, action: admin, allowed: true}
+      - {type: b, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [pt-A1]}
+      - {type: b, resource: B1, action: write, allowed: true}
+      - {type: b, resource: B1, action: admin, allowed: false, decision: no_access}
+      - {type: c, resource: C1, action: read, allowed: false, decision: no_access}
+      - {type: c, resource: C1, action: write, allowed: true}
+      - {type: c, resource: C1, action: admin, allowed: true, decision: allowed, granted_by: [pt-A1]}
+  - name: a grant on A1 — D1 gets the union of its two routes, and not admin
+    subject: point
+    questions:
+      - {type: d, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [pt-A1]}
+      - {type: d, resource: D1, action: write, allowed: true, decision: allowed, granted_by: [pt-A1]}
+      - {type: d, resource: D1, action: admin, allowed: false, decision: no_access}
+  - name: a grant on A1 — a resource with one parent gets that route only
+    subject: point
+    questions:
+      - {type: d, resource: D2, action: read, allowed: true}
+      - {type: d, resource: D2, action: write, allowed: false, decision: no_access}
+      - {type: d, resource: D3, action: write, allowed: true}
+      - {type: d, resource: D3, action: read, allowed: false, decision: no_access}
+  - name: a grant on A1 — an empty route adds nothing to the other one
+    subject: point
+    questions:
+      - {type: e, resource: E1, action: write, allowed: true, decision: allowed, granted_by: [pt-A1]}
+      - {type: e, resource: E1, action: read, allowed: false, decision: no_access}
+      - {type: e, resource: E1, action: admin, allowed: false, decision: no_access}
+  - name: a grant on A1 — two empty routes let nothing through
+    subject: point
+    questions:
+      - {type: f, resource: F1, action: read, allowed: false, decision: no_access}
+      - {type: f, resource: F1, action: write, allowed: false, decision: no_access}
+      - {type: f, resource: F1, action: admin, allowed: false, decision: no_access}
+  - name: a denial on A1 takes away the levels of the routes only
+    subject: point-deny
+    questions:
+      - {type: d, resource: D1, action: read, allowed: false, decision: denied, granted_by: [pd-D1], denials: [{rule: pd-deny-A1}]}
+      - {type: d, resource: D1, action: write, allowed: false, decision: denied, denials: [{rule: pd-deny-A1}]}
+      - {type: d, resource: D1, action: admin, allowed: true, decision: allowed, granted_by: [pd-D1]}
+      - {type: e, resource: E1, action: write, allowed: false, decision: denied, denials: [{rule: pd-deny-A1}]}
+      - {type: e, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [pd-E1]}
+      - {type: e, resource: E1, action: admin, allowed: true}
+      - {type: f, resource: F1, action: read, allowed: true, decision: allowed, granted_by: [pd-F1]}
+      - {type: f, resource: F1, action: write, allowed: true}
+      - {type: f, resource: F1, action: admin, allowed: true}
+  - name: the wildcard on A1 takes away the levels of the routes only
+    subject: point-star
+    questions:
+      - {type: d, resource: D1, action: read, allowed: false, decision: denied, granted_by: [ps-D1], denials: [{rule: ps-deny-A1}]}
+      - {type: d, resource: D1, action: write, allowed: false, decision: denied, denials: [{rule: ps-deny-A1}]}
+      - {type: d, resource: D1, action: admin, allowed: true, decision: allowed, granted_by: [ps-D1]}
+      - {type: e, resource: E1, action: write, allowed: false, decision: denied, denials: [{rule: ps-deny-A1}]}
+      - {type: e, resource: E1, action: read, allowed: true}
+      - {type: e, resource: E1, action: admin, allowed: true}
+      - {type: f, resource: F1, action: read, allowed: true}
+      - {type: f, resource: F1, action: write, allowed: true}
+      - {type: f, resource: F1, action: admin, allowed: true, decision: allowed, granted_by: [ps-F1]}
+  - name: a whole-type grant on a — the levels that flow between the types, whatever the parents of the resource
+    subject: whole
+    questions:
+      - {type: a, resource: A1, action: admin, allowed: true, decision: allowed, granted_by: [wh-a]}
+      - {type: b, resource: B1, action: write, allowed: true}
+      - {type: b, resource: B1, action: admin, allowed: false, decision: no_access}
+      - {type: c, resource: C1, action: admin, allowed: true}
+      - {type: c, resource: C1, action: read, allowed: false, decision: no_access}
+      - {type: d, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [wh-a]}
+      - {type: d, resource: D1, action: write, allowed: true}
+      - {type: d, resource: D1, action: admin, allowed: false, decision: no_access}
+      - {type: d, resource: D2, action: read, allowed: true}
+      - {type: d, resource: D2, action: write, allowed: true, decision: allowed, granted_by: [wh-a]}
+      - {type: d, resource: D3, action: read, allowed: true, decision: allowed, granted_by: [wh-a]}
+      - {type: d, resource: D3, action: write, allowed: true}
+      - {type: e, resource: E1, action: write, allowed: true}
+      - {type: e, resource: E1, action: read, allowed: false, decision: no_access}
+      - {type: f, resource: F1, action: read, allowed: false, decision: no_access}
+      - {type: f, resource: F1, action: write, allowed: false, decision: no_access}
+      - {type: f, resource: F1, action: admin, allowed: false, decision: no_access}
+  - name: a whole-type wildcard denial on a — the levels that flow between the types
+    subject: whole-deny
+    questions:
+      - {type: d, resource: D2, action: read, allowed: false, decision: denied, granted_by: [wd-d], denials: [{rule: wd-deny-a}]}
+      - {type: d, resource: D2, action: write, allowed: false, decision: denied, granted_by: [wd-d], denials: [{rule: wd-deny-a}]}
+      - {type: d, resource: D2, action: admin, allowed: true, decision: allowed, granted_by: [wd-d]}
+      - {type: d, resource: D3, action: read, allowed: false, decision: denied}
+      - {type: e, resource: E1, action: write, allowed: false, decision: denied, denials: [{rule: wd-deny-a}]}
+      - {type: e, resource: E1, action: read, allowed: true, decision: allowed, granted_by: [wd-e]}
+      - {type: e, resource: E1, action: admin, allowed: true}
+      - {type: f, resource: F1, action: read, allowed: true}
+      - {type: f, resource: F1, action: write, allowed: true}
+      - {type: f, resource: F1, action: admin, allowed: true, decision: allowed, granted_by: [wd-f]}

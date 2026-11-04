@@ -1,0 +1,28 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/evaluation",
+  "header": {
+    "X-Test-Consistency": [
+      "higher"
+    ]
+  },
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "context": {
+      "ip": "10.0.0.7",
+      "licetum": {
+        "min_revision": "12"
+      }
+    },
+    "resource": {
+      "id": "b1",
+      "type": "branch"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

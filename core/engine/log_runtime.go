@@ -5,14 +5,10 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/licetum/licetum/core/logx"
 	"github.com/licetum/licetum/core/model"
 )
-
-// logSettingsWatchInterval is how often a replica checks whether another one changed the log settings.
-const logSettingsWatchInterval = 15 * time.Second
 
 // LogOptions turns the stored settings into the configuration of the logger, and checks it the way the logger does.
 func LogOptions(s model.LogSettings, salt string) (logx.Options, error) {
@@ -41,9 +37,8 @@ func LogOptions(s model.LogSettings, salt string) (logx.Options, error) {
 func (a *App) LoadLogSettings(ctx context.Context) error {
 	var version int64
 	var raw []byte
-	var salt string
-	if err := a.DB.QueryRow(ctx, `SELECT version, settings, salt FROM log_settings WHERE id = 1`).
-		Scan(&version, &raw, &salt); err != nil {
+	if err := a.DB.QueryRow(ctx, `SELECT version, settings FROM log_settings WHERE id = 1`).
+		Scan(&version, &raw); err != nil {
 		return err
 	}
 	if version == a.logVersion.Load() {
@@ -53,13 +48,13 @@ func (a *App) LoadLogSettings(ctx context.Context) error {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return err
 	}
-	return a.ApplyLogSettings(s, salt, version)
+	return a.ApplyLogSettings(s, version)
 }
 
 // ApplyLogSettings applies a configuration this process has stored or read. A configuration the logger refuses keeps
 // the one in force.
-func (a *App) ApplyLogSettings(s model.LogSettings, salt string, version int64) error {
-	opts, err := LogOptions(s, salt)
+func (a *App) ApplyLogSettings(s model.LogSettings, version int64) error {
+	opts, err := LogOptions(s, a.Cfg.Log.SubjectSalt)
 	if err != nil {
 		return err
 	}
@@ -72,28 +67,21 @@ func (a *App) ApplyLogSettings(s model.LogSettings, salt string, version int64) 
 	return nil
 }
 
-// WatchLogSettings applies the settings another replica changed: every logSettingsWatchInterval it reads the version of
-// the settings and loads them when it moved. It returns when ctx ends.
-func (a *App) WatchLogSettings(ctx context.Context) {
-	ticker := time.NewTicker(logSettingsWatchInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
+// noteLogSettingsRevision loads the log settings when their revision (revision_state, scope log_settings) is not the one
+// this process applied. It is called by every reading of the revisions, so the poll of WatchRevision is what carries a
+// change to the replicas: there is no ticker of its own. A failed load is tried again by the next reading.
+func (a *App) noteLogSettingsRevision(revision int64) {
+	if revision == a.logRevision.Load() || !a.logLoading.CompareAndSwap(false, true) {
+		return
+	}
+	if !a.Background(func(ctx context.Context) {
+		defer a.logLoading.Store(false)
+		if err := a.LoadLogSettings(ctx); err != nil {
+			slog.WarnContext(ctx, "failed to load the log settings", "error", err)
 			return
-		case <-ticker.C:
 		}
-		var version int64
-		if err := a.DB.QueryRow(ctx, `SELECT version FROM log_settings WHERE id = 1`).Scan(&version); err != nil {
-			if ctx.Err() == nil {
-				slog.WarnContext(ctx, "failed to read the log settings version", "error", err)
-			}
-			continue
-		}
-		if version != a.logVersion.Load() {
-			if err := a.LoadLogSettings(ctx); err != nil {
-				slog.WarnContext(ctx, "failed to load the log settings", "error", err)
-			}
-		}
+		a.logRevision.Store(revision)
+	}) {
+		a.logLoading.Store(false)
 	}
 }

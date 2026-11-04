@@ -28,8 +28,8 @@ const k6ThresholdExit = 99
 // k6RawEnv keeps the points of every request of a window (k6 --out json), for reading the answers one by one.
 const k6RawEnv = "LICETUM_LOADTEST_K6_RAW"
 
-// k6Runner runs the traffic of the windows of a run with k6. The script and the tokens are written to the work
-// directory, which is removed when the run ends: the tokens are credentials, and the report directory is kept.
+// k6Runner runs the traffic of the windows of a run with k6. The script and the API key are written to the work
+// directory, which is removed when the run ends: the key is a credential, and the report directory is kept.
 type k6Runner struct {
 	bin string
 	// script is the path of check.js in the work directory.
@@ -40,17 +40,18 @@ type k6Runner struct {
 	outDir string
 	// cpus is the CPU list k6 is pinned to (taskset), empty when it is not pinned.
 	cpus string
+	// issued is how many iterations the windows run so far have started. The next window numbers its iterations from
+	// there (FIRST_ITERATION), so that the cold mode, which asks each evaluation question once, does not ask a window's questions again
+	// in the next one.
+	issued int
 }
 
-// newK6Runner writes the script and the tokens of the run to workDir.
-func newK6Runner(bin, workDir, outDir, cpus string, tokens []string, backend string, p Profile, mix Mix, consistency string) (*k6Runner, error) {
-	raw, err := json.Marshal(tokens)
-	if err != nil {
-		return nil, fmt.Errorf("encode the tokens: %w", err)
-	}
-	tokensPath := filepath.Join(workDir, "tokens.json")
-	if err := os.WriteFile(tokensPath, raw, 0o600); err != nil {
-		return nil, fmt.Errorf("write the tokens: %w", err)
+// newK6Runner writes the script and the API key of the run to workDir. The key is the one line of a file the script reads, not
+// a setting of the environment.
+func newK6Runner(bin, workDir, outDir, cpus, apiKey string, p Profile, mix Mix) (*k6Runner, error) {
+	keyPath := filepath.Join(workDir, "api-key")
+	if err := os.WriteFile(keyPath, []byte(apiKey+"\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("write the API key: %w", err)
 	}
 	script := filepath.Join(workDir, "check.js")
 	if err := os.WriteFile(script, k6Script, 0o600); err != nil {
@@ -62,8 +63,7 @@ func newK6Runner(bin, workDir, outDir, cpus string, tokens []string, backend str
 		outDir: outDir,
 		cpus:   cpus,
 		env: []string{
-			"TOKENS=" + tokensPath,
-			"BACKEND_TOKEN=" + backend,
+			"API_KEY_FILE=" + keyPath,
 			"SERVICE=" + serviceSlug,
 			"USERS=" + strconv.Itoa(p.Users),
 			"GROUPS=" + strconv.Itoa(p.Groups),
@@ -71,7 +71,6 @@ func newK6Runner(bin, workDir, outDir, cpus string, tokens []string, backend str
 			"RULES=" + strconv.Itoa(p.Rules),
 			"FOLDERS=" + strconv.Itoa(p.folders()),
 			"MIX=" + mix.String(),
-			"CONSISTENCY=" + consistency,
 		},
 	}, nil
 }
@@ -126,6 +125,7 @@ func (r *k6Runner) run(ctx context.Context, w window) (k6Result, error) {
 		"BASES="+strings.Join(replicaBases(w), ","),
 		"MODE="+w.mode,
 		"SEED="+strconv.FormatInt(w.seed, 10),
+		"FIRST_ITERATION="+strconv.Itoa(r.issued),
 		"RATE="+strconv.Itoa(w.rate),
 		"MEASURE_SECONDS="+strconv.Itoa(w.seconds),
 		"WARM_SECONDS=0",
@@ -152,6 +152,7 @@ func (r *k6Runner) run(ctx context.Context, w window) (k6Result, error) {
 	if err := json.Unmarshal(raw, &sum); err != nil {
 		return k6Result{}, fmt.Errorf("read the summary of %s: %w", w.name, err)
 	}
+	r.issued += sum.iterations()
 	cpu := cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()
 	return k6Result{summary: sum, elapsed: elapsed, cpu: cpu}, nil
 }
@@ -194,6 +195,11 @@ func (s k6Summary) value(metric, stat string) float64 {
 		return 0
 	}
 	return v
+}
+
+// iterations is how many iterations the window started (the arrivals that were dropped did not start).
+func (s k6Summary) iterations() int {
+	return int(s.value("iterations", "count") + 0.5)
 }
 
 // latency is the distribution of a trend, in milliseconds. A trend in the summary has no count of its own, so the

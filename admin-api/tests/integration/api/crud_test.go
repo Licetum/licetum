@@ -14,8 +14,7 @@ import (
 func servicePayload(e *env, name string) map[string]any {
 	return map[string]any{
 		"name": name, "url": e.mock.URL + "/app", "icon": e.mock.URL + "/icon.png",
-		"authorization_url": e.mock.URL + "/realm/auth", "token_url": e.mock.URL + "/realm/token",
-		"jwks_url": e.mock.URL + "/jwks", "issuer": e.mock.URL + "/realm", "slug": name, "client_id": name, "client_secret": "secret",
+		"slug": name,
 	}
 }
 
@@ -66,8 +65,8 @@ func TestServiceCRUDCoversSuccessNotFoundMalformedIDAndAuthorization(t *testing.
 		t.Fatalf("created service %q is absent from list: %s", serviceID, raw)
 	}
 
-	// Partial update changes only supplied fields and null explicitly clears the secret.
-	updated := e.must(http.MethodPatch, "/service/"+serviceID, map[string]any{"name": "orders-v2", "client_secret": nil})
+	// Partial update changes only the supplied fields.
+	updated := e.must(http.MethodPatch, "/service/"+serviceID, map[string]any{"name": "orders-v2"})
 	if updated["name"] != "orders-v2" {
 		t.Fatalf("updated service = %+v", updated)
 	}
@@ -102,7 +101,7 @@ func TestGroupAndAssignmentRuleCRUDCoversValidationAndBlocking(t *testing.T) {
 	typeID := e.must(http.MethodPost, "/service/"+serviceID+"/type_resource", map[string]any{"name": "product"})["id"].(string)
 
 	// Create/list/update a group and a rule attached to a concrete type.
-	group := e.must(http.MethodPost, "/group", map[string]any{"name": "catalog-readers"})
+	group := e.must(http.MethodPost, "/group", map[string]any{"service_id": serviceID, "name": "catalog-readers"})
 	groupID := group["id"].(string)
 	status, raw := e.do(http.MethodGet, e.admin.URL+"/group", nil)
 	if status != http.StatusOK || !strings.Contains(string(raw), groupID) {
@@ -145,7 +144,8 @@ func TestGroupAndAssignmentRuleCRUDCoversValidationAndBlocking(t *testing.T) {
 
 func TestGroupMemberCRUDSupportsPredicateUpdateAndDelete(t *testing.T) {
 	e := setup(t)
-	role := e.must(http.MethodPost, "/group", map[string]any{"name": "regional-users"})["id"].(string)
+	serviceID := e.newService("group-members")
+	role := e.must(http.MethodPost, "/group", map[string]any{"service_id": serviceID, "name": "regional-users"})["id"].(string)
 
 	member := e.must(http.MethodPost, "/group/"+role+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "region", "op": "eq", "value": "north"}},

@@ -15,19 +15,10 @@ import (
 	"github.com/licetum/licetum/core/model"
 )
 
-// liveSynchronizerExists is the single SQL definition of a type's mode: a type with a live (not
-// deleted) synchronizer is sync, otherwise it is not_sync. typeIDExpr is the SQL expression of the
-// type id being checked.
-func liveSynchronizerExists(typeIDExpr string) string {
-	return `EXISTS (SELECT 1 FROM synchronizer s WHERE s.type_resource_id = ` + typeIDExpr + ` AND s.deleted_at IS NULL)`
-}
-
-// hasSynchronizer reports whether the type has a live synchronizer. The type's mode depends on it:
-// with one it is sync (the type has resources), without one it is not_sync (access to the type as a
-// whole, a "capability").
-func (a *App) hasSynchronizer(ctx context.Context, q db.Querier, typeResourceID uuid.UUID) (bool, error) {
+// hasLiveSynchronizer checks configuration, independently of whether its first data has been applied.
+func (a *App) hasLiveSynchronizer(ctx context.Context, q db.Querier, typeResourceID uuid.UUID) (bool, error) {
 	var ok bool
-	err := q.QueryRow(ctx, `SELECT `+liveSynchronizerExists("$1"), typeResourceID).Scan(&ok)
+	err := q.QueryRow(ctx, `SELECT `+model.LiveSynchronizerSQL("$1"), typeResourceID).Scan(&ok)
 	return ok, err
 }
 
@@ -47,7 +38,7 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 	}
 
 	// A type has one source (uq_synchronizer_live_type): say so before probing the new one.
-	if has, err := a.hasSynchronizer(ctx, a.DB, typeResourceID); err != nil {
+	if has, err := a.hasLiveSynchronizer(ctx, a.DB, typeResourceID); err != nil {
 		return nil, err
 	} else if has {
 		return nil, apperr.Conflict(i18n.SynchronizerExists, typeResourceID)
@@ -58,14 +49,21 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 	}
 
 	var out *model.Synchronizer
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
-		// The probe only proves the source works; the resources reach the cache through the synchronization.
-		s, err := engine.ScanSynchronizer(q.QueryRow(ctx, `
-			INSERT INTO synchronizer (type_resource_id, kind, config)
-			VALUES ($1, $2::synchronizer_kind, $3::jsonb)
-			RETURNING `+engine.SynchronizerColumns,
-			typeResourceID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()),
-		))
+	var move *engine.ClosureMove
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
+		// The probe only proves the source works; the resources reach the cache through the synchronization. The type
+		// stays not_sync until its first data is applied; ChangeMode clears the prior source generation.
+		var s *model.Synchronizer
+		var err error
+		move, err = a.ChangeMode(ctx, q, typeResourceID, func() error {
+			s, err = engine.ScanSynchronizer(q.QueryRow(ctx, `
+				INSERT INTO synchronizer (type_resource_id, kind, config, regions)
+				VALUES ($1, $2::synchronizer_kind, $3::jsonb, $4::text[])
+				RETURNING `+engine.SynchronizerColumns,
+				typeResourceID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()), regionsOrEmpty(in.Regions),
+			))
+			return err
+		})
 		if db.IsUniqueViolation(err) {
 			// Two creations racing for the same type: the second loses.
 			return change{}, apperr.Conflict(i18n.SynchronizerExists, typeResourceID)
@@ -75,11 +73,12 @@ func (a *App) CreateSynchronizer(ctx context.Context, serviceID, typeResourceID 
 		}
 		s.Config = s.Config.Masked()
 		out = s
-		return change{entity: "synchronizer", entityID: s.ID, serviceID: &serviceID, action: actionCreate, after: s}, nil
+		return change{move: move, entity: "synchronizer", entityID: s.ID, serviceID: &serviceID, action: actionCreate, after: s}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	a.AfterClosureMove(ctx, move)
 	return out, nil
 }
 
@@ -123,16 +122,16 @@ func (a *App) UpdateSynchronizer(ctx context.Context, serviceID, typeResourceID,
 	}
 
 	var out *model.Synchronizer
-	err = a.mutate(ctx, func(q db.Querier) (change, error) {
+	err = a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		old, err := a.getExistingSynchronizer(ctx, q, typeResourceID, synchronizerID)
 		if err != nil {
 			return change{}, err
 		}
 		s, err := engine.ScanSynchronizer(q.QueryRow(ctx, `
-			UPDATE synchronizer SET kind = $2::synchronizer_kind, config = $3::jsonb
+			UPDATE synchronizer SET kind = $2::synchronizer_kind, config = $3::jsonb, regions = $4::text[]
 			WHERE id = $1
 			RETURNING `+engine.SynchronizerColumns,
-			synchronizerID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()),
+			synchronizerID, model.KindToDB(in.Config.Kind), engine.MustJSON(in.Config.StoredConfig()), regionsFor(in.Regions, old.Regions),
 		))
 		if err != nil {
 			return change{}, err
@@ -141,7 +140,7 @@ func (a *App) UpdateSynchronizer(ctx context.Context, serviceID, typeResourceID,
 		s.Config = s.Config.Masked()
 		out = s
 		return change{entity: "synchronizer", entityID: synchronizerID, serviceID: &serviceID, action: actionUpdate,
-			before: old.Config.Masked(), after: s}, nil
+			before: maskedSynchronizer(old), after: s}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -150,7 +149,8 @@ func (a *App) UpdateSynchronizer(ctx context.Context, serviceID, typeResourceID,
 }
 
 func (a *App) DeleteSynchronizer(ctx context.Context, serviceID, typeResourceID, synchronizerID uuid.UUID) (uuid.UUID, error) {
-	err := a.mutate(ctx, func(q db.Querier) (change, error) {
+	var move *engine.ClosureMove
+	err := a.mutate(ctx, func(ctx context.Context, q db.Querier) (change, error) {
 		if _, err := a.GetExistingTypeResource(ctx, q, serviceID, typeResourceID); err != nil {
 			return change{}, err
 		}
@@ -158,14 +158,43 @@ func (a *App) DeleteSynchronizer(ctx context.Context, serviceID, typeResourceID,
 		if err != nil {
 			return change{}, err
 		}
-		if _, err := q.Exec(ctx, `UPDATE synchronizer SET deleted_at = now() WHERE id = $1`, synchronizerID); err != nil {
+		// The type is not_sync without it: its rows stay in the local copy, but the closure of the types below no longer
+		// leads through them, and that is written in the same transaction (ChangeMode).
+		move, err = a.ChangeMode(ctx, q, typeResourceID, func() error {
+			_, err := q.Exec(ctx, `UPDATE synchronizer SET deleted_at = now() WHERE id = $1`, synchronizerID)
+			return err
+		})
+		if err != nil {
 			return change{}, err
 		}
-		return change{entity: "synchronizer", entityID: synchronizerID, serviceID: &serviceID, action: actionDelete,
+		return change{move: move, entity: "synchronizer", entityID: synchronizerID, serviceID: &serviceID, action: actionDelete,
 			before: old.Config.Masked()}, nil
 	})
 	if err != nil {
 		return uuid.Nil, err
 	}
+	a.AfterClosureMove(ctx, move)
 	return synchronizerID, nil
+}
+
+// regionsOrEmpty is the regions of a new synchronizer: absent means from anywhere.
+func regionsOrEmpty(regions []string) []string {
+	if regions == nil {
+		return []string{}
+	}
+	return regions
+}
+
+// regionsFor is the regions an update stores: absent keeps the current ones, an empty list clears them.
+func regionsFor(regions, current []string) []string {
+	if regions == nil {
+		return regionsOrEmpty(current)
+	}
+	return regions
+}
+
+func maskedSynchronizer(s *model.Synchronizer) model.Synchronizer {
+	result := *s
+	result.Config = result.Config.Masked()
+	return result
 }

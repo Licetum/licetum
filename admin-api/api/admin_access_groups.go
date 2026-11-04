@@ -36,7 +36,7 @@ func (h *adminHandlers) registerAccessGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "create_access_group",
 		Method:      http.MethodPost,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}/access_group",
@@ -44,7 +44,7 @@ func (h *adminHandlers) registerAccessGroups(api huma.API) {
 		Description: "Names a set of access levels of the type. The name is unique within the type (409). A level is neither * nor a group reference: a deny of everything is an inline deny rule with *.",
 		Errors:      []int{http.StatusConflict},
 		Tags:        []string{"Type resource"},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
 		TypeResourcePath
 		Body model.AccessGroupInput
 	}) (*server.Out[*model.AccessGroup], error) {
@@ -58,7 +58,7 @@ func (h *adminHandlers) registerAccessGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "update_access_group",
 		Method:      http.MethodPatch,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}/access_group/{access_group_id}",
@@ -66,7 +66,7 @@ func (h *adminHandlers) registerAccessGroups(api huma.API) {
 		Description: "Replaces the levels of the group, and its name. A group that a rule or a role item still names cannot be renamed (409, extra.blocked_by); its levels can change, and the rules that name it follow.",
 		Errors:      []int{http.StatusConflict},
 		Tags:        []string{"Type resource"},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *struct {
 		AccessGroupPath
 		Body model.AccessGroupInput
 	}) (*server.Out[*model.AccessGroup], error) {
@@ -80,7 +80,7 @@ func (h *adminHandlers) registerAccessGroups(api huma.API) {
 		return server.OK(out)
 	})
 
-	server.Register(api, withPolicy(huma.Operation{
+	server.Register(api, withPolicy(withOutbox(huma.Operation{
 		OperationID: "delete_access_group",
 		Method:      http.MethodDelete,
 		Path:        "/service/{service_id}/type_resource/{type_resource_id}/access_group/{access_group_id}",
@@ -88,7 +88,7 @@ func (h *adminHandlers) registerAccessGroups(api huma.API) {
 		Description: "Not allowed while a rule or a role item names the group (409, extra.blocked_by).",
 		Errors:      []int{http.StatusConflict},
 		Tags:        []string{"Type resource"},
-	}, requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *AccessGroupPath) (*server.Out[uuid.UUID], error) {
+	}, []string{"svc:{owner}"}, "owner-and-descendants"), requireResource(model.PlatformTypeResource, model.ActionWrite, "type_resource_id")), func(ctx context.Context, in *AccessGroupPath) (*server.Out[uuid.UUID], error) {
 		out, err := h.app.DeleteAccessGroup(ctx, in.TypeResourceID, in.AccessGroupID)
 		if err != nil {
 			return nil, err

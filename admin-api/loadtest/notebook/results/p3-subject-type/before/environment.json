@@ -1,0 +1,53 @@
+{
+  "collected_at": "2026-11-01T16:30:46.512552287Z",
+  "git_commit": "cbfd132b41d9f7371354557fbaa9ed7848e088c7",
+  "git_dirty": false,
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "logical_cpus": 5,
+  "memory_kib": 34906004,
+  "os": "Debian GNU/Linux 13 (trixie)",
+  "kernel": "6.18.57",
+  "cpu_governor": "unknown",
+  "load_average_at_start": "1.41 1.67 1.49 5/372 561427",
+  "go_version": "go1.26.10",
+  "k6_version": "k6 v1.8.2 (go1.26.10, linux/amd64)",
+  "docker_version": "28.4.0",
+  "postgres_version": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "postgres_settings": {
+    "autovacuum": "on",
+    "checkpoint_timeout": "300",
+    "effective_cache_size": "524288",
+    "jit": "on",
+    "maintenance_work_mem": "65536",
+    "max_connections": "100",
+    "max_wal_size": "1024",
+    "random_page_cost": "4",
+    "shared_buffers": "16384",
+    "synchronous_commit": "on",
+    "work_mem": "4096"
+  },
+  "check_binary": "/workspace/.licetum-tools/p3-before-subject-matching/licetum",
+  "check_binary_sha256": "4135164278cba9d76e33d036c885ec9575c03fd1bc3ca15e18d9e0e9acfc44de",
+  "check_server_env": {
+    "DB__MAX_OVERFLOW": "0",
+    "DB__POOL_SIZE": "16",
+    "DB__URI": "postgresql://authz:%2A%2A%2A@localhost:5432/licetum_test_970965107c024ef0b783d9e886577c6d",
+    "PEP__RATE_LIMIT": "0"
+  },
+  "harness_env": {
+    "DB__MAX_OVERFLOW": "0",
+    "DB__POOL_SIZE": "8",
+    "DB__URI": "postgresql://authz:%2A%2A%2A@localhost:5432/licetum_test_970965107c024ef0b783d9e886577c6d",
+    "GOMAXPROCS": "4",
+    "LICETUM_TEST_POSTGRES_URI": "postgresql://authz:%2A%2A%2A@localhost:5432/authz_db",
+    "LOG__SUBJECT_SALT": "p3-reproducible-loadtest",
+    "SYNC__DBOS_POOL_SIZE": "8"
+  },
+  "k6_cpus": "3",
+  "check_cpus": "0-2",
+  "containers": "testcontainers, no CPU or memory limits set by the harness (external servers when named by LICETUM_TEST_*)",
+  "stack_cpus": {
+    "lt-pg": "unknown"
+  },
+  "check_db_pool_connections": 16
+}

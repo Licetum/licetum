@@ -33,7 +33,6 @@ type Environment struct {
 	DockerVersion  string            `json:"docker_version"`
 	PostgresVer    string            `json:"postgres_version"`
 	PostgresConfig map[string]string `json:"postgres_settings"`
-	RedisVersion   string            `json:"redis_version"`
 	CheckBinary    string            `json:"check_binary"`
 	CheckSHA256    string            `json:"check_binary_sha256"`
 	CheckEnv       map[string]string `json:"check_server_env"`
@@ -46,7 +45,7 @@ type Environment struct {
 }
 
 // environmentPrefixes are the settings of the product the report records (secrets are masked, see maskSetting).
-var environmentPrefixes = []string{"DB__", "REDIS__", "SYNC__", "SUBJECTS__", "DELEGATION__", "LOG__", "AUTH__", "HTTP__", "LICETUM_", "GOMAXPROCS", "GOGC", "GOMEMLIMIT"}
+var environmentPrefixes = []string{"DB__", "SYNC__", "LOG__", "AUTH__", "HTTP__", "LICETUM_", "GOMAXPROCS", "GOGC", "GOMEMLIMIT"}
 
 // collectEnvironment writes what can be read about the host, the tools and the infrastructure of the run.
 func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin string) (Environment, error) {
@@ -84,9 +83,6 @@ func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin stri
 	if err := readPostgresSettings(ctx, e.pool, env.PostgresConfig); err != nil {
 		return env, err
 	}
-	if info, err := e.app.Redis.Info(ctx, "server").Result(); err == nil {
-		env.RedisVersion = redisField(info, "redis_version")
-	}
 	for _, kv := range os.Environ() {
 		key, value, _ := strings.Cut(kv, "=")
 		if hasAnyPrefix(key, environmentPrefixes) {
@@ -100,14 +96,14 @@ func collectEnvironment(ctx context.Context, e *env, opts Options, checkBin stri
 	return env, nil
 }
 
-// checkServerEnv is the environment the check server is started with (see startCheck).
+// checkServerEnv is the environment the check server is started with (see startPDP). The whole traffic is one PEP client, so the
+// rate limit of a client (PEP__RATE_LIMIT) is off whatever the environment of the run says: the limit is not what is measured.
 func checkServerEnv(e *env, opts Options) []string {
 	return []string{
-		"DB__URI=" + e.dbURI,
+		"DB__URI=" + e.checkDBURI,
 		fmt.Sprintf("DB__POOL_SIZE=%d", opts.DBPool),
 		"DB__MAX_OVERFLOW=0",
-		"REDIS__URI=" + e.redisURI,
-		"AUTH__STATE_SECRET=" + e.stateSecret,
+		"PEP__RATE_LIMIT=0",
 	}
 }
 
@@ -157,15 +153,6 @@ func readPostgresSettings(ctx context.Context, pool *pgxpool.Pool, out map[strin
 		out[name] = value
 	}
 	return rows.Err()
-}
-
-func redisField(info, field string) string {
-	for _, line := range strings.Split(info, "\n") {
-		if k, v, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && k == field {
-			return v
-		}
-	}
-	return ""
 }
 
 // readOSRelease is the pretty name of the operating system.
@@ -226,7 +213,7 @@ func readTrim(path string) string {
 // when the container is not pinned, or "unknown" when docker does not know it.
 func stackCPUs(ctx context.Context) map[string]string {
 	out := map[string]string{}
-	for _, name := range []string{"lt-pg", "lt-redis"} {
+	for _, name := range []string{"lt-pg"} {
 		set := commandOutput(ctx, "docker", "inspect", "--format", "{{.HostConfig.CpusetCpus}}", name)
 		if set == "" {
 			set = "all"

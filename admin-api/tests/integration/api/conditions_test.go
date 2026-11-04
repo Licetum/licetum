@@ -5,12 +5,11 @@ package api_test
 // Integration tests of the rule language of stage 3 through the HTTP API: request attributes (context) and the
 // answers that depend on them, the missing-attribute semantics of deny rules, the clock conditions, guards
 // (requires_predicate, requires_group_id), resource_where over the attributes the synchronizers report, access
-// groups and their references, and subject_kind. Same Testcontainers environment as hierarchy_test.go.
+// groups and their references, and subject_type. Same Testcontainers environment as hierarchy_test.go.
 
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"slices"
 	"testing"
 
@@ -19,49 +18,50 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
-// checkWith performs POST /service/{id}/check as the subject of claims, with the request attributes context.
+// checkWith asks the AuthZEN evaluations of the checks as the subject of properties, with the request attributes context, and
+// returns each answer in the form the check API gave before them: {"allowed", "explanation"}, the explanation being there
+// when it was asked for. A check is {"type", "resource_id", "action"}; without resource_id it is about the type as a whole.
+// consistency is minimize_latency, the default, or higher. An evaluation that could not be decided fails the test: it is
+// not a denial.
 func (w *world) checkWith(serviceID string, claims jwt.MapClaims, context map[string]any, explain bool, consistency string,
 	checks ...map[string]any) []map[string]any {
 	w.t.Helper()
-	body := map[string]any{"checks": checks, "explain": explain}
+	questions := make([]authzenreq.Question, len(checks))
+	for i, c := range checks {
+		resourceType, _ := c["type"].(string)
+		id, _ := c["resource_id"].(string)
+		action, _ := c["action"].(string)
+		questions[i] = authzenreq.Question{Resource: authzenreq.Resource{Type: resourceType, ID: id}, Action: action}
+	}
+	var opts []authzenreq.Option
 	if context != nil {
-		body["context"] = context
+		opts = append(opts, authzenreq.WithContext(context))
 	}
-	status, raw := w.do("POST", w.check.URL+"/service/"+serviceID+"/check?consistency="+consistency, body,
-		"Authorization", "Bearer "+w.token(claims))
-	if status != http.StatusOK {
-		w.t.Fatalf("check: %d %s", status, raw)
+	if explain {
+		opts = append(opts, authzenreq.Explain())
 	}
-	var out struct {
-		Results []map[string]any `json:"results"`
+	switch consistency {
+	case string(engine.HigherConsistency):
+		opts = append(opts, authzenreq.Fresh())
+	case string(engine.MinimizeLatency):
+	default:
+		w.t.Fatalf("consistency %q", consistency)
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		w.t.Fatal(err)
+	token := w.token(claims)
+	status, body := w.ask(authzenreq.Evaluations(w.ref(serviceID), authzenreq.SubjectOf(token), questions, opts...), token)
+	decisions, err := authzenreq.Decisions(status, body)
+	if err != nil {
+		w.t.Fatalf("evaluations: %v", err)
 	}
-	return out.Results
-}
-
-// permissionWith performs GET /service/{id}/permission as the subject of claims, with the request attributes context
-// given as the context query parameter.
-func (w *world) permissionWith(serviceID string, claims jwt.MapClaims, context map[string]any) engine.PermissionResult {
-	w.t.Helper()
-	target := w.check.URL + "/service/" + serviceID + "/permission?consistency=higher"
-	if context != nil {
-		raw, err := json.Marshal(context)
-		if err != nil {
-			w.t.Fatal(err)
+	out := make([]map[string]any, len(decisions))
+	for i, d := range decisions {
+		out[i] = map[string]any{"allowed": d.Allowed}
+		if reason, ok := d.Context["reason_admin"]; ok {
+			out[i]["explanation"] = reason
 		}
-		target += "&context=" + url.QueryEscape(string(raw))
-	}
-	status, raw := w.do("GET", target, nil, "Authorization", "Bearer "+w.token(claims))
-	if status != http.StatusOK {
-		w.t.Fatalf("permission: %d %s", status, raw)
-	}
-	var out engine.PermissionResult
-	if err := json.Unmarshal(raw, &out); err != nil {
-		w.t.Fatal(err)
 	}
 	return out
 }
@@ -114,9 +114,9 @@ func TestIntegrationRequestAttributesDecideAndAreCachedByValue(t *testing.T) {
 	inside := map[string]any{"ip": "10.1.2.3"}
 	outside := map[string]any{"ip": "192.168.0.1"}
 
-	expectIDs(t, w.permissionWith(w.org, claims, inside), "branch", "B1", "B2", "B3", "B4")
-	expectIDs(t, w.permissionWith(w.org, claims, outside), "branch")
-	expectIDs(t, w.permissionWith(w.org, claims, nil), "branch")
+	w.expectVisible(w.org, claims, inside, "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, claims, outside, "branch")
+	w.expectVisible(w.org, claims, nil, "branch")
 
 	// The answers are cached per value of the attribute: alternating requests never see each other's answer.
 	check := map[string]any{"type": "branch", "resource_id": "B1", "action": "read"}
@@ -135,37 +135,24 @@ func TestIntegrationRequestAttributesDecideAndAreCachedByValue(t *testing.T) {
 	if granted := res[0]["explanation"].(map[string]any)["granted_by"].([]any); len(granted) != 1 {
 		t.Fatalf("granted_by: %v", granted)
 	}
-	status, raw := w.do("POST", w.check.URL+"/service/"+w.org+"/access/v1/evaluation", map[string]any{
-		"subject":  map[string]any{"type": "user", "id": hierarchySubject},
-		"resource": map[string]any{"type": "branch", "id": "B2"},
-		"action":   map[string]any{"name": "read"},
-		"context":  map[string]any{"ip": "10.9.9.9"},
-	}, "Authorization", "Bearer "+w.token(claims))
-	if status != http.StatusOK {
-		t.Fatalf("authzen: %d %s", status, raw)
-	}
-	var decision struct {
-		Decision bool `json:"decision"`
-	}
-	if err := json.Unmarshal(raw, &decision); err != nil || !decision.Decision {
-		t.Fatalf("authzen with an address inside the network: %s", raw)
+	status, raw := w.ask(authzenreq.Evaluation(w.ref(w.org), hierarchySubject, authzenreq.On("branch", "B2"), "read",
+		authzenreq.WithContext(map[string]any{"ip": "10.9.9.9"})), w.token(claims))
+	if allowed, err := authzenreq.Allowed(status, raw); err != nil || !allowed {
+		t.Fatalf("authzen with an address inside the network: %d %s", status, raw)
 	}
 
-	// The admin simulation takes the same attributes without a token.
-	sim := w.must("POST", "/service/"+w.org+"/simulate/check", map[string]any{
-		"subject": hierarchySubject, "claims": map[string]any{"preferred_username": hierarchySubject},
-		"context": outside, "checks": []map[string]any{check},
-	})
-	if results := sim["results"].([]any); results[0].(map[string]any)["allowed"] != false {
-		t.Fatalf("simulation with an address outside the network: %v", sim)
+	// The admin simulation takes the same attributes without a credential.
+	if status, sim := w.simulate(authzenreq.Evaluation(w.org, hierarchySubject, authzenreq.On("branch", "B1"), "read",
+		authzenreq.WithContext(outside))); status != http.StatusOK || sim["decision"] != false {
+		t.Fatalf("simulation with an address outside the network: %d %v", status, sim)
 	}
 
-	// A context name with a space, and an address that is not a network, are refused.
-	status, _ = w.do("POST", w.check.URL+"/service/"+w.org+"/check", map[string]any{
-		"checks": []map[string]any{check}, "context": map[string]any{"bad name": 1},
-	}, "Authorization", "Bearer "+w.token(claims))
-	if status != http.StatusUnprocessableEntity {
-		t.Fatalf("context name with a space: %d", status)
+	// A context name with a space is ignored by an AuthZEN request (AZ06), as if the attribute were absent: the rule has no
+	// address to read, so the evaluation is answered 200 and denied. An address that is not a network is refused.
+	status, raw = w.ask(authzenreq.Evaluation(w.ref(w.org), hierarchySubject, authzenreq.On("branch", "B1"), "read",
+		authzenreq.WithContext(map[string]any{"bad name": 1})), w.token(claims))
+	if allowed, err := authzenreq.Allowed(status, raw); err != nil || allowed {
+		t.Fatalf("context name with a space is ignored: want 200 and a denial, got %d %s (%v)", status, raw, err)
 	}
 	status, raw = w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "access": []string{"read"}, "subject": "u",
@@ -183,7 +170,7 @@ func TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt(t *test
 
 	// A new deny rule applies on a missing attribute: without the address, B2 is denied (fail closed).
 	denyB2 := w.rule("branch", "B2", map[string]any{"effect": "deny", "access": []string{"read"}, "predicate": cidr})
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil), "branch", "B1", "B3", "B4")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, "branch", "B1", "B3", "B4")
 	res := w.checkWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, true, "higher",
 		map[string]any{"type": "branch", "resource_id": "B2", "action": "read"})
 	denials := res[0]["explanation"].(map[string]any)["denials"].([]any)
@@ -192,15 +179,15 @@ func TestIntegrationDenyWithAMissingAttributeAppliesUnlessTheRuleSkipsIt(t *test
 		t.Fatalf("the denial on a missing attribute is not explained: %+v", res)
 	}
 	// With an address outside the denied network, the condition does not hold, and B2 is accessible again.
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject},
-		map[string]any{"ip": "10.1.1.1"}), "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject},
+		map[string]any{"ip": "10.1.1.1"}, "branch", "B1", "B2", "B3", "B4")
 
 	// A deny rule that skips a missing attribute leaves B3 alone when the address is not known.
 	w.rule("branch", "B3", map[string]any{"effect": "deny", "access": []string{"read"}, "predicate": cidr,
 		"on_missing_attribute": "skip"})
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil), "branch", "B1", "B3", "B4")
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject},
-		map[string]any{"ip": "10.99.4.4"}), "branch", "B1", "B4")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, "branch", "B1", "B3", "B4")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject},
+		map[string]any{"ip": "10.99.4.4"}, "branch", "B1", "B4")
 
 	// An allow rule grants nothing on a missing attribute, and may not be told to apply it.
 	status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
@@ -220,7 +207,7 @@ func TestIntegrationClockConditionsReadTheHourOfTheDecision(t *testing.T) {
 		map[string]any{"attr": "weekday", "source": "now", "op": "in", "value": []string{"1", "2", "3", "4", "5", "6", "7"}})})
 	w.rule("division", "D2", map[string]any{"predicate": append(slices.Clone(me),
 		map[string]any{"attr": "hour", "source": "now", "op": "lt", "value": "0"})})
-	expectIDs(t, w.permissionWith(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil), "division", "D1")
+	w.expectVisible(w.org, jwt.MapClaims{"preferred_username": hierarchySubject}, nil, "division", "D1")
 
 	// Only hour and weekday are read from the clock, and they are compared as numbers or days.
 	status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
@@ -234,7 +221,7 @@ func TestIntegrationClockConditionsReadTheHourOfTheDecision(t *testing.T) {
 
 func TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse(t *testing.T) {
 	w := newWorld(t)
-	auditors := w.must("POST", "/group", map[string]any{"name": "auditors"})["id"].(string)
+	auditors := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "auditors"})["id"].(string)
 	w.must("POST", "/group/"+auditors+"/member", map[string]any{
 		"predicate": []map[string]any{{"attr": "team", "op": "eq", "value": "audit"}}})
 	w.rule("branch", "", map[string]any{
@@ -246,9 +233,9 @@ func TestIntegrationGuardsNarrowARuleAndBlockTheGroupTheyUse(t *testing.T) {
 	both := jwt.MapClaims{"preferred_username": hierarchySubject, "team": "audit", "env": "prod"}
 	noTeam := jwt.MapClaims{"preferred_username": hierarchySubject, "env": "prod"}
 	noEnv := jwt.MapClaims{"preferred_username": hierarchySubject, "team": "audit"}
-	expectIDs(t, w.permissionWith(w.org, both, nil), "branch", "B1", "B2", "B3", "B4")
-	expectIDs(t, w.permissionWith(w.org, noTeam, nil), "branch")
-	expectIDs(t, w.permissionWith(w.org, noEnv, nil), "branch")
+	w.expectVisible(w.org, both, nil, "branch", "B1", "B2", "B3", "B4")
+	w.expectVisible(w.org, noTeam, nil, "branch")
+	w.expectVisible(w.org, noEnv, nil, "branch")
 
 	// The group the rule is guarded by cannot be deleted while the rule names it.
 	status, raw := w.do("DELETE", w.admin.URL+"/group/"+auditors, nil)
@@ -296,7 +283,7 @@ func TestIntegrationResourceWhereCoversTheResourcesWhoseAttributesMatch(t *testi
 	// and so is a type without a synchronizer (no resources to match).
 	bad := []map[string]any{
 		{"type_resource_id": w.typeByName["project"], "subject": "u", "access": []string{"read"},
-			"resource_where": []map[string]any{{"attr": "owner", "source": "claim", "op": "eq", "value": "a"}}},
+			"resource_where": []map[string]any{{"attr": "owner", "source": "subject", "op": "eq", "value": "a"}}},
 		{"type_resource_id": w.typeByName["project"], "subject": "u", "access": []string{"read"}, "resource_id": "P1",
 			"resource_where": []map[string]any{{"attr": "owner", "op": "eq", "value": "a"}}},
 		{"type_resource_id": w.typeByName["project"], "subject": "u", "access": []string{"read"},
@@ -365,19 +352,41 @@ func TestIntegrationAccessGroupsNameLevelsAndProtectTheirReferences(t *testing.T
 	}
 }
 
-func TestIntegrationSubjectKindIsStoredAndChecked(t *testing.T) {
+func TestIntegrationSubjectTypeIsStoredAndChecked(t *testing.T) {
 	w := newWorld(t)
 	rule := w.must("POST", "/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "subject": "svc-reporter",
-		"access": []string{"read"}, "subject_kind": "service",
+		"access": []string{"read"}, "subject_type": "service",
 	})
-	if rule["subject_kind"] != "service" {
-		t.Fatalf("subject_kind: %v", rule["subject_kind"])
+	if rule["subject_type"] != "service" {
+		t.Fatalf("subject_type: %v", rule["subject_type"])
 	}
+	w.must("POST", "/assignment_rule", map[string]any{"type_resource_id": w.branch, "access": []string{"read"}, "subject": "robot-1", "subject_type": "robot"})
+	for _, selector := range []map[string]any{{"predicate": []map[string]any{{"attr": "department", "op": "eq", "value": "sales"}}}, {}} {
+		selector["type_resource_id"] = w.branch
+		selector["access"] = []string{"read"}
+		selector["subject_type"] = "user"
+		w.expect(http.StatusUnprocessableEntity, "POST", "/assignment_rule", selector)
+	}
+
+	doc := w.exportPolicy()
+	found := false
+	for _, r := range doc.Rules {
+		if r.Subject != nil && *r.Subject == "svc-reporter" {
+			found = r.SubjectType != nil && *r.SubjectType == "service"
+		}
+	}
+	if !found {
+		t.Fatalf("subject type missing from policy: %+v", doc.Rules)
+	}
+	if plan := w.importPolicy(doc, true, false); len(plan.Operations) != 0 {
+		t.Fatalf("typed subject round trip: %+v", plan)
+	}
+
 	if status, raw := w.do("POST", w.admin.URL+"/assignment_rule", map[string]any{
 		"type_resource_id": w.typeByName["branch"], "resource_id": "B1", "subject": "x",
-		"access": []string{"read"}, "subject_kind": "robot",
+		"access": []string{"read"}, "subject_type": "group",
 	}); status != http.StatusUnprocessableEntity {
-		t.Fatalf("unknown subject_kind: %d %s", status, raw)
+		t.Fatalf("reserved subject_type: %d %s", status, raw)
 	}
 }

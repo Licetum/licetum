@@ -1,0 +1,48 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/evaluations",
+  "body": {
+    "context": {
+      "licetum": {
+        "explain": true,
+        "min_revision": "3"
+      }
+    },
+    "evaluations": [
+      {
+        "action": {
+          "name": "read"
+        },
+        "resource": {
+          "id": "b1",
+          "type": "branch"
+        }
+      },
+      {
+        "action": {
+          "name": "write"
+        },
+        "resource": {
+          "id": "b2",
+          "type": "branch"
+        }
+      },
+      {
+        "action": {
+          "name": "enabled"
+        },
+        "resource": {
+          "id": "*",
+          "type": "flag"
+        }
+      }
+    ],
+    "options": {
+      "evaluations_semantic": "deny_on_first_deny"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

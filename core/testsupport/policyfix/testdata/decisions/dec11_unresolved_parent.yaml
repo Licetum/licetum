@@ -1,0 +1,130 @@
+# DEC11, a resource whose own parent is missing: B9 names the rrs R9 that the source of rrs does not report, so B9 may
+# lie under any rrs or division for all anyone knows, and every denial that could cover R9 — anchored at an rrs or at a
+# division, the types R9 is or lies below — is assumed to cover B9 (fail closed). A denial that cannot cover R9 (a
+# branch, a point below) is not assumed; a whole-type denial covers B9 as it covers every resource of the type, without
+# any assumption. The unresolved link reaches what lies below B9 too (I9 in the service app). The resolved state (R9
+# appears) is a different fixture state and is not modelled here.
+#
+# division <- rrs <- branch (service org) and item <- branch (service app); D1 ⊃ R1, R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3;
+# R3 ⊃ B4; B1 ⊃ I1; B4 ⊃ I4; B9 -> R9 (missing); B9 ⊃ I9. Each subject holds the rules of one scenario.
+contracts: [DEC11]
+description: A resource with an unresolved parent link is assumed to be under every denial that could cover the missing parent.
+services: [org, app]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+  - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  - {name: item, service: app, sync: true, parents: [{type: branch}]}
+resources:
+  - {type: division, id: D1}
+  - {type: division, id: D2}
+  - {type: rrs, id: R1, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R2, parents: [{type: division, id: D1}]}
+  - {type: rrs, id: R3, parents: [{type: division, id: D2}]}
+  - {type: branch, id: B1, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B2, parents: [{type: rrs, id: R1}]}
+  - {type: branch, id: B3, parents: [{type: rrs, id: R2}]}
+  - {type: branch, id: B4, parents: [{type: rrs, id: R3}]}
+  - {type: branch, id: B9, name: Branch 9, parents: [{type: rrs, id: R9}]}
+  - {type: item, id: I1, parents: [{type: branch, id: B1}]}
+  - {type: item, id: I4, parents: [{type: branch, id: B4}]}
+  - {type: item, id: I9, parents: [{type: branch, id: B9}]}
+rules:
+  # The test: read on every branch, a denial on R1.
+  - {name: t1-allow-branch, subject: orphan, type: branch, access: [read]}
+  - {name: t1-deny-R1, subject: orphan, type: rrs, resource: R1, access: [read], deny: true}
+  # A denial on a division: R9 could lie below it.
+  - {name: t2-allow-branch, subject: division-denial, type: branch, access: [read]}
+  - {name: t2-deny-D2, subject: division-denial, type: division, resource: D2, access: [read], deny: true}
+  # A denial on another branch: it cannot cover R9, so it is not assumed.
+  - {name: t3-allow-branch, subject: branch-denial, type: branch, access: [read]}
+  - {name: t3-deny-B1, subject: branch-denial, type: branch, resource: B1, access: [read], deny: true}
+  # A whole-type denial covers B9 like every branch, with no assumption.
+  - {name: t4-allow-branch, subject: whole-denial, type: branch, access: [read]}
+  - {name: t4-deny-rrs, subject: whole-denial, type: rrs, access: [read], deny: true}
+  # No denial at all: an unresolved parent alone takes nothing away.
+  - {name: t5-allow-branch, subject: no-denial, type: branch, access: [read]}
+  # The grant lies on the orphan itself.
+  - {name: t6-allow-B9, subject: point-grant, type: branch, resource: B9, access: [read]}
+  - {name: t6-deny-R1, subject: point-grant, type: rrs, resource: R1, access: [read], deny: true}
+  # The assumed denial takes only the level it names.
+  - {name: t7-allow-branch, subject: levels, type: branch, access: [read, write]}
+  - {name: t7-deny-R1, subject: levels, type: rrs, resource: R1, access: [write], deny: true}
+  # A denial on the missing parent itself: the local copy does not have R9, yet the denial names exactly the parent of B9.
+  - {name: t8-allow-branch, subject: missing-parent-denial, type: branch, access: [read]}
+  - {name: t8-deny-R9, subject: missing-parent-denial, type: rrs, resource: R9, access: [read], deny: true}
+  # A point exception on the orphan itself does not lift the assumed denial: B9 is not known to lie below R1, so the
+  # exception is not provably below it (the conservative reading, kept on purpose).
+  - {name: t9-allow-branch, subject: orphan-exception, type: branch, access: [read]}
+  - {name: t9-deny-R1, subject: orphan-exception, type: rrs, resource: R1, access: [read], deny: true}
+  - {name: t9-except-B9, subject: orphan-exception, type: branch, resource: B9, access: [read], exception: true}
+cases:
+  # from admin-api/tests/integration/api/graph_test.go:TestIntegrationOrphanFailsClosed
+  - name: B9 may lie under R1, so the denial on R1 is assumed to cover it
+    subject: orphan
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [t1-allow-branch], denials: [{rule: t1-deny-R1, unresolved_parent: true}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [t1-allow-branch]}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, granted_by: [t1-allow-branch], denials: [{rule: t1-deny-R1}]}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: denied}
+  - name: what lies below the orphan, in another service, is assumed to be under the denial too
+    subject: orphan
+    service: app
+    questions:
+      - {type: item, resource: I9, action: read, allowed: false, decision: denied, granted_by: [t1-allow-branch], denials: [{rule: t1-deny-R1, unresolved_parent: true}]}
+      - {type: item, resource: I4, action: read, allowed: true, decision: allowed}
+      - {type: item, resource: I1, action: read, allowed: false, decision: denied, denials: [{rule: t1-deny-R1}]}
+  - name: a denial on a division is assumed to cover the orphan as well
+    subject: division-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [t2-allow-branch], denials: [{rule: t2-deny-D2, unresolved_parent: true}]}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: denied, denials: [{rule: t2-deny-D2}]}
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed}
+  - name: a denial that cannot cover the missing parent is not assumed
+    subject: branch-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: true, decision: allowed, granted_by: [t3-allow-branch]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: denied, denials: [{rule: t3-deny-B1}]}
+      - {type: branch, resource: B2, action: read, allowed: true, decision: allowed}
+  - name: a whole-type denial covers the orphan without an assumption
+    subject: whole-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [t4-allow-branch], denials: [{rule: t4-deny-rrs}]}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: denied, denials: [{rule: t4-deny-rrs}]}
+  - name: without a denial the orphan keeps its grant
+    subject: no-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: true, decision: allowed, granted_by: [t5-allow-branch]}
+  - name: without a denial what lies below the orphan keeps its grant
+    subject: no-denial
+    service: app
+    questions:
+      - {type: item, resource: I9, action: read, allowed: true, decision: allowed, granted_by: [t5-allow-branch]}
+  - name: a grant on the orphan itself is taken away by the assumed denial
+    subject: point-grant
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [t6-allow-B9], denials: [{rule: t6-deny-R1, unresolved_parent: true}]}
+  - name: a grant on the orphan is taken away below it as well
+    subject: point-grant
+    service: app
+    questions:
+      - {type: item, resource: I9, action: read, allowed: false, decision: denied, granted_by: [t6-allow-B9], denials: [{rule: t6-deny-R1, unresolved_parent: true}]}
+  - name: the assumed denial takes only the level it names
+    subject: levels
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: true, decision: allowed, granted_by: [t7-allow-branch]}
+      - {type: branch, resource: B9, action: write, allowed: false, decision: denied, granted_by: [t7-allow-branch], denials: [{rule: t7-deny-R1, unresolved_parent: true}]}
+      - {type: branch, resource: B1, action: write, allowed: false, decision: denied, denials: [{rule: t7-deny-R1}]}
+      - {type: branch, resource: B3, action: write, allowed: true, decision: allowed}
+  # found by refeval: a denial on a resource the local copy lacks was dropped, so B9 escaped the denial on its own parent
+  - name: a denial on the missing parent covers the orphan, and nothing else
+    subject: missing-parent-denial
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [t8-allow-branch], denials: [{rule: t8-deny-R9, unresolved_parent: true}]}
+      - {type: branch, resource: B3, action: read, allowed: true, decision: allowed, granted_by: [t8-allow-branch], denials: []}
+  - name: a point exception on the orphan does not lift the denial assumed above it
+    subject: orphan-exception
+    questions:
+      - {type: branch, resource: B9, action: read, allowed: false, decision: denied, granted_by: [t9-allow-branch, t9-except-B9], denials: [{rule: t9-deny-R1, unresolved_parent: true}]}

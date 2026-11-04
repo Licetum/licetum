@@ -1,0 +1,41 @@
+# Everything switched on: the web interface, the ingresses, the network policy, the service monitor, and the custom-metric
+# autoscaling.
+region: eu
+publicUrl: https://licetum.example.com
+existingSecret: licetum-secrets
+policyMaxStaleness: 30s
+db:
+  pgbouncer: true
+platform:
+  url: https://admin.example.com
+  icon: https://admin.example.com/favicon.ico
+adminAuth:
+  issuer: https://idp.example.com
+  audience: licetum-admin
+  jwksUrl: https://idp.example.com/keys
+pdp:
+  maxInflight: "512"
+  opsPort: 9090
+  autoscaling:
+    targetInflight: 200
+web:
+  enabled: true
+  appBaseUrl: https://app.example.com
+  checkApiPublicUrl: https://licetum.example.com
+  oidc:
+    authorizationUrl: https://idp.example.com/auth
+    tokenUrl: https://idp.example.com/token
+    clientId: licetum-web
+  ingress:
+    enabled: true
+    className: nginx
+    host: app.example.com
+ingress:
+  enabled: true
+  className: nginx
+  host: licetum.example.com
+networkPolicy:
+  enabled: true
+  dbCidrs: [10.20.0.0/24]
+serviceMonitor:
+  enabled: true

@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/evaluation",
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "context": {
+      "licetum": {
+        "explain": true
+      }
+    },
+    "resource": {
+      "id": "b1",
+      "type": "branch"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

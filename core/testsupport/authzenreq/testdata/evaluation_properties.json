@@ -1,0 +1,32 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/evaluation",
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "context": {
+      "explain": false,
+      "licetum": {
+        "explain": true
+      },
+      "role": "auditor"
+    },
+    "resource": {
+      "id": "b1",
+      "type": "branch"
+    },
+    "subject": {
+      "id": "bob",
+      "properties": {
+        "department": "sales",
+        "groups": [
+          "a",
+          "b"
+        ],
+        "preferred_username": "bob"
+      },
+      "type": "user"
+    }
+  }
+}

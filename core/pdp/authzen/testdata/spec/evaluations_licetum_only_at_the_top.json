@@ -1,0 +1,18 @@
+{
+  "name": "context.licetum of an evaluation is not a setting: explain is read from the top-level context only",
+  "source": "Licetum extension, read only from the top-level context (ADR 0001, 6 and 7.7)",
+  "checked_against_text": false,
+  "endpoint": "evaluations",
+  "grants": [["alice@acmecorp.com", "can_read", "todo", "1"]],
+  "request": {
+    "subject": {"type": "user", "id": "alice@acmecorp.com"},
+    "action": {"name": "can_read"},
+    "context": {"time": "1985-10-26T01:22-07:00"},
+    "evaluations": [
+      {"resource": {"type": "todo", "id": "1"}, "context": {"licetum": {"explain": true}, "time": "1985-10-26T01:22-07:00"}},
+      {"resource": {"type": "todo", "id": "2"}}
+    ]
+  },
+  "decisions": [true, false],
+  "reasons": [false, false]
+}

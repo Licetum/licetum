@@ -7,8 +7,6 @@ import (
 
 	"github.com/licetum/licetum/core/engine"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/licetum/licetum/core/apperr"
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/i18n"
@@ -33,37 +31,36 @@ func (a *App) GetLogSettings(ctx context.Context) (model.LogSettings, error) {
 
 // PutLogSettings replaces the structure of the process logs. The settings are checked the way the logger applies them,
 // stored together with a change-log record, and applied to this process at once. The other replicas apply them when
-// they next check (see WatchLogSettings).
+// the next poll of the revisions (see WatchRevision).
 func (a *App) PutLogSettings(ctx context.Context, in model.LogSettings) (model.LogSettings, error) {
 	if in.Fields == nil {
 		in.Fields = []model.LogField{}
 	}
 	var version int64
-	var salt string
-	err := db.InTx(ctx, a.DB, func(tx pgx.Tx) error {
+	err := a.mutate(ctx, func(ctx context.Context, tx db.Querier) (change, error) {
 		var raw []byte
-		if err := tx.QueryRow(ctx, `SELECT settings, salt FROM log_settings WHERE id = 1 FOR UPDATE`).Scan(&raw, &salt); err != nil {
-			return err
+		if err := tx.QueryRow(ctx, `SELECT settings FROM log_settings WHERE id = 1 FOR UPDATE`).Scan(&raw); err != nil {
+			return change{}, err
 		}
 		var before model.LogSettings
 		if err := json.Unmarshal(raw, &before); err != nil {
-			return err
+			return change{}, err
 		}
-		if _, err := engine.LogOptions(in, salt); err != nil {
-			return apperr.Unprocessable(i18n.LogSettingInvalid, err.Error())
+		if _, err := engine.LogOptions(in, a.Cfg.Log.SubjectSalt); err != nil {
+			return change{}, apperr.Unprocessable(i18n.LogSettingInvalid, err.Error())
 		}
 		if err := tx.QueryRow(ctx, `
 			UPDATE log_settings SET settings = $1::jsonb, version = version + 1, updated_at = now(), updated_by = $2
 			WHERE id = 1
 			RETURNING version`, engine.MustJSON(in), engine.ActorFrom(ctx)).Scan(&version); err != nil {
-			return err
+			return change{}, err
 		}
-		return recordChange(ctx, tx, change{entity: "log_settings", action: actionUpdate, before: before, after: in})
+		return change{entity: "log_settings", action: actionUpdate, before: before, after: in}, nil
 	})
 	if err != nil {
 		return model.LogSettings{}, err
 	}
-	if err := a.ApplyLogSettings(in, salt, version); err != nil {
+	if err := a.ApplyLogSettings(in, version); err != nil {
 		slog.WarnContext(ctx, "the stored log settings cannot be applied", "error", err)
 	}
 	return in, nil

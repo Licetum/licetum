@@ -1,0 +1,63 @@
+# DEC05 (and DEC11), a parent type deleted under a live type (admin-api/tests/integration/api/hierarchy_test.go,
+# TestIntegrationHierarchyDeletedMiddleType): the middle type rrs of division <- rrs <- branch is deleted while branch still
+# names it as its parent. The admin API refuses that deletion (a live type names it); the test, and the runner, set its
+# deleted_at. The source of branch still reports the rrs above each branch, but with the type gone the link names nothing:
+# the branches are roots, not orphans. Their resources stay, a grant on one of them covers it, nothing flows to them from
+# a division any more, and no denial on a division is assumed for them: a link to a deleted type is no link, not an
+# unresolved one.
+#
+# division, branch (service org). Now: D1, D2; B1, B2, B3, B4 with no parent. Before: division <- rrs <- branch, D1 ⊃ R1,
+# R2; D2 ⊃ R3; R1 ⊃ B1, B2; R2 ⊃ B3; R3 ⊃ B4.
+contracts: [DEC05, DEC11]
+description: The resources under a deleted parent type are roots, covered by their own grants only.
+services: [org]
+types:
+  - {name: division, service: org, sync: true}
+  - {name: branch, service: org, sync: true}
+resources:
+  - {type: division, id: D1, name: Div 1}
+  - {type: division, id: D2, name: Div 2}
+  - {type: branch, id: B1, name: Branch 1}
+  - {type: branch, id: B2, name: Branch 2}
+  - {type: branch, id: B3, name: Branch 3}
+  - {type: branch, id: B4, name: Branch 4}
+rules:
+  # hierarchy_test.go:TestIntegrationHierarchyDeletedMiddleType: read on B1.
+  - {name: deleted-B1, subject: user-1, type: branch, resource: B1, access: [read]}
+  # Read on D1, which was above B1, B2 and B3.
+  - {name: above-D1, subject: above, type: division, resource: D1, access: [read]}
+  # Read on every branch, and a denial on D1.
+  - {name: roots-allow-branch, subject: roots, type: branch, access: [read]}
+  - {name: roots-deny-D1, subject: roots, type: division, resource: D1, access: [read], deny: true}
+cases:
+  # from admin-api/tests/integration/api/hierarchy_test.go:TestIntegrationHierarchyDeletedMiddleType
+  - name: a grant on a branch under the deleted type covers that branch only
+    subject: user-1
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [deleted-B1], denials: []}
+      - {type: branch, resource: B2, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access}
+      - {type: branch, resource: B4, action: read, allowed: false, decision: no_access}
+  - name: nothing flows to the branches from the division above the deleted type
+    subject: above
+    questions:
+      - {type: division, resource: D1, action: read, allowed: true, decision: allowed, granted_by: [above-D1]}
+      - {type: branch, resource: B1, action: read, allowed: false, decision: no_access, granted_by: []}
+      - {type: branch, resource: B3, action: read, allowed: false, decision: no_access, granted_by: []}
+  - name: the branches are roots, so no denial on a division is assumed for them
+    subject: roots
+    questions:
+      - {type: branch, resource: B1, action: read, allowed: true, decision: allowed, granted_by: [roots-allow-branch], denials: []}
+      - {type: branch, resource: B4, action: read, allowed: true, decision: allowed, granted_by: [roots-allow-branch], denials: []}
+before:
+  types:
+    - {name: rrs, service: org, sync: true, parents: [{type: division}]}
+    - {name: branch, service: org, sync: true, parents: [{type: rrs}]}
+  resources:
+    - {type: rrs, id: R1, name: RRS 1, parents: [{type: division, id: D1}]}
+    - {type: rrs, id: R2, name: RRS 2, parents: [{type: division, id: D1}]}
+    - {type: rrs, id: R3, name: RRS 3, parents: [{type: division, id: D2}]}
+    - {type: branch, id: B1, name: Branch 1, parents: [{type: rrs, id: R1}]}
+    - {type: branch, id: B2, name: Branch 2, parents: [{type: rrs, id: R1}]}
+    - {type: branch, id: B3, name: Branch 3, parents: [{type: rrs, id: R2}]}
+    - {type: branch, id: B4, name: Branch 4, parents: [{type: rrs, id: R3}]}

@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/service/orders/access/v1/search/resource",
+  "body": {
+    "action": {
+      "name": "read"
+    },
+    "context": {
+      "ip": "10.0.0.7"
+    },
+    "page": {
+      "limit": 20
+    },
+    "resource": {
+      "type": "branch"
+    },
+    "subject": {
+      "id": "alice",
+      "type": "user"
+    }
+  }
+}

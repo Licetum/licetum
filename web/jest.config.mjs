@@ -19,6 +19,8 @@ const config = {
     '^@/(.*)$': '<rootDir>/src/$1',
     // `server-only` throws outside of the Next.js server build; the modules it guards are tested directly.
     '^server-only$': '<rootDir>/tests/server-only-stub.ts',
+    // The screens run without the App Router: the address and the query are set by the test.
+    '^next/navigation$': '<rootDir>/tests/next-navigation-stub.ts',
   },
   clearMocks: true,
 };

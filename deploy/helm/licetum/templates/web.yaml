@@ -1,0 +1,116 @@
+{{- if .Values.web.enabled }}
+{{- $component := dict "root" . "component" "web" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "licetum.fullname" . }}-web
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "licetum.selectorLabels" $component | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "licetum.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      serviceAccountName: {{ include "licetum.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: web
+          image: {{ include "licetum.imageWeb" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.port }}
+          env:
+            - name: ADMIN_API_URL
+              value: {{ printf "http://%s-admin:%v" (include "licetum.fullname" .) .Values.admin.port | quote }}
+            - name: CHECK_API_URL
+              value: {{ printf "http://%s-pdp:%v" (include "licetum.fullname" .) .Values.pdp.port | quote }}
+            - name: CHECK_API_PUBLIC_URL
+              value: {{ required "web.checkApiPublicUrl is required when the web interface is enabled" .Values.web.checkApiPublicUrl | quote }}
+            - name: APP_BASE_URL
+              value: {{ required "web.appBaseUrl is required when the web interface is enabled" .Values.web.appBaseUrl | quote }}
+            - name: OIDC_AUTHORIZATION_URL
+              value: {{ required "web.oidc.authorizationUrl is required when the web interface is enabled: the administrators sign in there" .Values.web.oidc.authorizationUrl | quote }}
+            - name: OIDC_TOKEN_URL
+              value: {{ required "web.oidc.tokenUrl is required when the web interface is enabled" .Values.web.oidc.tokenUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ required "web.oidc.clientId is required when the web interface is enabled" .Values.web.oidc.clientId | quote }}
+            {{- with .Values.web.oidc.scope }}
+            - name: OIDC_SCOPE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "SESSION_SECRET") | nindent 12 }}
+            {{- include "licetum.secretEnv" (dict "root" . "key" "OIDC_CLIENT_SECRET" "optional" true) | nindent 12 }}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "licetum.fullname" . }}-web
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  selector:
+    {{- include "licetum.selectorLabels" $component | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.web.port }}
+      targetPort: http
+{{- if .Values.web.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "licetum.fullname" . }}-web
+  labels:
+    {{- include "licetum.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  {{- with .Values.web.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.web.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.web.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ required "web.ingress.host is required when the ingress is enabled" .Values.web.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "licetum.fullname" . }}-web
+                port:
+                  name: http
+{{- end }}
+{{- end }}

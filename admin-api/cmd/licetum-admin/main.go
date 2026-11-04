@@ -2,7 +2,7 @@
 //
 //	licetum-admin admin                         — admin API (default :8000)
 //	licetum-admin restore-admin [-user name]... — put the access of the platform administrators back
-//	licetum-admin openapi admin [-yaml] [-lang en|ru|zh] — print the OpenAPI spec (no DB or Redis needed)
+//	licetum-admin openapi admin [-yaml] [-lang en|ru|zh] — print the OpenAPI spec (no DB needed)
 //
 // The database is migrated by the core binary (licetum migrate). The address can be overridden with -addr or HTTP__ADDR.
 package main
@@ -26,7 +26,6 @@ import (
 	"github.com/licetum/licetum/core/db"
 	"github.com/licetum/licetum/core/engine"
 	"github.com/licetum/licetum/core/logx"
-	"github.com/licetum/licetum/core/redisx"
 )
 
 const usage = `Usage: licetum-admin <command> [flags]
@@ -43,7 +42,14 @@ func main() {
 		logLevel = slog.LevelDebug
 	}
 	// The process logs through logx; its format, fields and sampling come from the stored settings (see cli.Serve).
-	logs, logErr := logx.New(os.Stdout, logx.DefaultOptions(logLevel))
+	logOptions := logx.DefaultOptions(logLevel)
+	logOptions.Salt = os.Getenv("LOG__SUBJECT_SALT")
+	logOutput := os.Stdout
+	// Machine-readable commands reserve stdout for their result.
+	if len(os.Args) > 1 && os.Args[1] == "openapi" {
+		logOutput = os.Stderr
+	}
+	logs, logErr := logx.New(logOutput, logOptions)
 	if logErr != nil {
 		fmt.Fprintln(os.Stderr, "logging:", logErr)
 		os.Exit(1)
@@ -92,15 +98,15 @@ type users []string
 func (u *users) String() string     { return fmt.Sprint([]string(*u)) }
 func (u *users) Set(v string) error { *u = append(*u, v); return nil }
 
-// restoreAdmin is the way back in when nobody can manage the platform any more. It needs the database (and Redis, to
-// drop the cached answers; without it the answers fix themselves within a minute).
+// restoreAdmin is the way back in when nobody can manage the platform any more. It needs the database only: it bumps the
+// revision of the rules in PostgreSQL, which every PDP follows, so the answers made before it are not served again.
 func restoreAdmin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("restore-admin", flag.ExitOnError)
 	var also users
 	fs.Var(&also, "user", "also make this user (preferred_username) an administrator; repeatable")
 	_ = fs.Parse(args)
 
-	cfg, err := cli.LoadConfig(false)
+	cfg, err := cli.LoadConfig()
 	if err != nil {
 		return err
 	}
@@ -116,15 +122,5 @@ func restoreAdmin(ctx context.Context, args []string) error {
 	}
 	slog.Warn("administrator access restored", "memberships", report.Members, "denials_switched_off", report.DisabledDenials)
 
-	if cfg.RequireRedis() == nil {
-		if rdb, err := redisx.Connect(ctx, cfg.Redis.URI); err != nil {
-			slog.Warn("Redis is not reachable: cached answers expire within a minute", "error", err)
-		} else {
-			defer rdb.Close()
-			if _, err := redisx.BumpVersion(ctx, rdb); err != nil {
-				slog.Warn("could not drop the cached answers: they expire within a minute", "error", err)
-			}
-		}
-	}
 	return nil
 }

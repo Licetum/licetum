@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The baseline campaign on the smoke profile (10k resources): five runs per mode, each on a fresh stack (new PostgreSQL and Redis containers,
+# The baseline campaign on the smoke profile (10k resources): five runs per mode, each on a fresh stack (a new PostgreSQL container,
 # a new check server, the policy seeded again), then one ramp to find the knee, then the aggregate report.
 #
 # Usage: LT=path/to/licetum-loadtest K6=path/to/k6 OUT=reports/baseline scripts/baseline.sh
@@ -17,10 +17,10 @@ K6_CPUS=${K6_CPUS:-10-11}
 CHECK_CPUS=${CHECK_CPUS:-0-7}
 CHECK_BIN=${CHECK_BIN:-../core/bin/licetum}
 
-# reset_stack restarts the PostgreSQL and Redis containers of the local test stack (lt-pg, lt-redis), so that every run
-# starts with a cold buffer cache and an empty Redis. The harness then creates a database of its own for the run.
+# reset_stack restarts the PostgreSQL container of the local test stack (lt-pg), so that every run
+# starts with a cold buffer cache. The harness then creates a database of its own for the run.
 reset_stack() {
-  docker restart lt-pg lt-redis >/dev/null || { echo "campaign: cannot restart the test stack"; exit 1; }
+  docker restart lt-pg >/dev/null || { echo "campaign: cannot restart the test stack"; exit 1; }
   for _ in $(seq 60); do
     docker exec lt-pg pg_isready -h 127.0.0.1 -p 5432 -U licetum >/dev/null 2>&1 && return 0
     sleep 1

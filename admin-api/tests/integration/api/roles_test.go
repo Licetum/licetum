@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/licetum/licetum/core/engine"
@@ -14,29 +13,32 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/licetum/licetum/core/model"
+	"github.com/licetum/licetum/core/testsupport/authzenreq"
 )
 
 // A role is a set of permissions: its items reach a subject through the assignment rule that grants the role.
 func TestRolePermissionsReachSubjectsThroughAssignments(t *testing.T) {
 	w := newWorld(t)
-	sales := w.must("POST", "/group", map[string]any{"name": "sales"})["id"].(string)
+	sales := w.must("POST", "/group", map[string]any{"service_id": w.org, "name": "sales"})["id"].(string)
 	w.must("POST", "/group/"+sales+"/member", map[string]any{
 		"predicate": []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}},
 	})
-	role := w.must("POST", "/role", map[string]any{"name": "catalog-readers"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "catalog-readers"})["id"].(string)
 	w.must("POST", "/role/"+role+"/permission", map[string]any{
 		"type_resource_id": w.branch, "resource_id": "B1", "access": []string{"read"},
 	})
-	w.must("POST", "/role/"+role+"/permission", map[string]any{
+	appRole := w.must("POST", "/role", map[string]any{"service_id": w.appSvc, "name": "catalog-readers"})["id"].(string)
+	w.must("POST", "/role/"+appRole+"/permission", map[string]any{
 		"type_resource_id": w.item, "access": []string{"read"},
 	})
 	salesClaim := []any{map[string]any{"attr": "department", "op": "eq", "value": "sales"}}
+	w.must("POST", "/assignment_rule", map[string]any{"role_id": appRole, "predicate": salesClaim})
 	grant := w.must("POST", "/assignment_rule", map[string]any{"role_id": role, "predicate": salesClaim})
 	if grant["type_resource_id"] != nil || grant["access"] != nil {
 		t.Fatalf("a role rule must not carry an inline permission: %v", grant)
 	}
 
-	inSales := engine.Claims{"department": "sales"}
+	inSales := engine.Properties{"department": "sales"}
 	expectIDs(t, w.permission(w.org, inSales), "branch", "B1")
 	expectIDs(t, w.permission(w.appSvc, inSales), "item", "I1", "I4")
 	expectIDs(t, w.permission(w.org, nil), "branch")
@@ -44,6 +46,7 @@ func TestRolePermissionsReachSubjectsThroughAssignments(t *testing.T) {
 
 	// A deny rule that grants the same role takes all of its items away — deny wins.
 	w.must("POST", "/assignment_rule", map[string]any{"role_id": role, "effect": "deny", "predicate": salesClaim})
+	w.must("POST", "/assignment_rule", map[string]any{"role_id": appRole, "effect": "deny", "predicate": salesClaim})
 	expectIDs(t, w.permission(w.org, inSales), "branch")
 	expectIDs(t, w.permission(w.appSvc, inSales), "item")
 }
@@ -51,7 +54,7 @@ func TestRolePermissionsReachSubjectsThroughAssignments(t *testing.T) {
 func TestRoleValidationAndBlocking(t *testing.T) {
 	w := newWorld(t)
 	feature := w.typeResource(w.org, "feature", "") // no synchronizer: a permission on it is for the whole type
-	role := w.must("POST", "/role", map[string]any{"name": "editors"})["id"].(string)
+	role := w.must("POST", "/role", map[string]any{"service_id": w.org, "name": "editors"})["id"].(string)
 	items := "/role/" + role + "/permission"
 
 	status, raw := w.do(http.MethodPost, w.admin.URL+items, map[string]any{
@@ -60,8 +63,8 @@ func TestRoleValidationAndBlocking(t *testing.T) {
 	requireErrorCode(t, status, raw, http.StatusUnprocessableEntity, "access_level_invalid")
 
 	status, raw = w.do(http.MethodPost, w.admin.URL+items, map[string]any{
-		"type_resource_id": w.branch, "resource_id": "B1", "resource_from_claim": map[string]any{
-			"claim": "branch", "lookup_type_resource_id": w.branch,
+		"type_resource_id": w.branch, "resource_id": "B1", "resource_from_property": map[string]any{
+			"property": "branch", "lookup_type_resource_id": w.branch,
 		}, "access": []string{"read"},
 	})
 	requireErrorCode(t, status, raw, http.StatusUnprocessableEntity, "resource_target_exclusive")
@@ -73,7 +76,8 @@ func TestRoleValidationAndBlocking(t *testing.T) {
 
 	w.must("POST", items, map[string]any{"type_resource_id": feature, "access": []string{"use"}})
 	item := w.must("POST", items, map[string]any{"type_resource_id": w.branch, "resource_id": "B2", "access": []string{"read"}})
-	w.must("POST", items, map[string]any{"type_resource_id": w.item, "access": []string{"read"}})
+	w.expect(http.StatusUnprocessableEntity, "POST", items, map[string]any{"type_resource_id": w.item, "access": []string{"read"}})
+	w.must("POST", items, map[string]any{"type_resource_id": w.rrs, "access": []string{"read"}})
 
 	status, raw = w.do(http.MethodPost, w.admin.URL+"/assignment_rule", map[string]any{
 		"role_id": role, "type_resource_id": w.branch, "access": []string{"read"}, "subject": hierarchySubject,
@@ -97,7 +101,7 @@ func TestRoleValidationAndBlocking(t *testing.T) {
 	for _, it := range listed {
 		names[it["type_resource_name"].(string)] = true
 	}
-	if !names["branch"] || !names["item"] || !names["feature"] {
+	if !names["branch"] || !names["rrs"] || !names["feature"] {
 		t.Fatalf("items without their type names: %s", raw)
 	}
 
@@ -122,7 +126,7 @@ func TestRoleValidationAndBlocking(t *testing.T) {
 	}
 }
 
-// The service slug is the second identifier of a service in the check API.
+// The service slug is the identifier of a service in the AuthZEN API.
 func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	e := setup(t)
 	orders := e.must("POST", "/service", servicePayload(e, "orders"))["id"].(string)
@@ -143,73 +147,27 @@ func TestServiceSlugAddressesTheServiceInTheCheckAPI(t *testing.T) {
 	if status, raw := e.permission("orders", alice); status != http.StatusOK {
 		t.Fatalf("the slug addresses the service: %d %v", status, raw)
 	}
-	if status, _ := e.permission(orders, alice); status != http.StatusOK {
-		t.Fatalf("the id still addresses the service: %d", status)
-	}
+	// The path of the PDP names the service by its slug only (ADR 0001, 7.2): the id is a reference nobody has.
+	status, header, body := e.permissionRaw(orders, alice)
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 
-	e.must("PATCH", "/service/"+orders, map[string]any{"slug": "orders-v2"})
-	if status, _ := e.permission("orders", alice); status != http.StatusNotFound {
-		t.Fatalf("the old slug after a rename: want 404, got %d", status)
+	status, raw = e.do(http.MethodPatch, e.admin.URL+"/service/"+orders, map[string]any{"slug": "orders-v2"})
+	requireErrorCode(t, status, raw, http.StatusUnprocessableEntity, "service_slug_immutable")
+	e.must("PATCH", "/service/"+orders, map[string]any{"slug": "orders"})
+	if status, _ := e.permission("orders", alice); status != http.StatusOK {
+		t.Fatalf("unchanged slug: %d", status)
 	}
-	if status, _ := e.permission("orders-v2", alice); status != http.StatusOK {
-		t.Fatalf("the new slug: %d", status)
-	}
-}
-
-// cache_ttl keeps the list of a source in Redis: a synchronization that runs again (an admin write ends the
-// throttle) reads the cached list, while consistency=higher asks the source every time.
-func TestSynchronizerCacheTTLKeepsTheSourceListInRedis(t *testing.T) {
-	e := setup(t)
-	var listCalls atomic.Int32
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /src/branch", func(w http.ResponseWriter, _ *http.Request) {
-		listCalls.Add(1)
-		_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "b1", "name": "Branch1"}, {"id": "b2", "name": "Branch2"}})
-	})
-	mux.HandleFunc("GET /src/branch/{id}", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": r.PathValue("id"), "name": "Branch"})
-	})
-	source := newTestServer(t, mux)
-
-	org := e.must("POST", "/service", servicePayload(e, "cache-org"))["id"].(string)
-	branch := e.must("POST", "/service/"+org+"/type_resource", map[string]any{"name": "branch"})["id"].(string)
-	e.must("POST", "/service/"+org+"/type_resource/"+branch+"/resource/synchronizer", map[string]any{
-		"config":            map[string]any{"kind": "http", "url": source.URL + "/src/branch", "cache_ttl": 300},
-		"probe_resource_id": "b1",
-	})
-	e.must("POST", "/assignment_rule", map[string]any{"type_resource_id": branch, "access": []string{"read"}, "subject": "alice"})
-
-	alice := e.token(jwt.MapClaims{"preferred_username": "alice", "sub": "alice-sub"})
-	ask := func(path string) {
-		t.Helper()
-		status, raw := e.do(http.MethodGet, e.check.URL+path, nil, "Authorization", "Bearer "+alice)
-		if status != http.StatusOK || !strings.Contains(string(raw), `"b2"`) {
-			t.Fatalf("permission %s: %d %s", path, status, raw)
-		}
-	}
-
-	ask("/service/" + org + "/permission")
-	if got := listCalls.Load(); got != 1 {
-		t.Fatalf("the first synchronization asks the source %d times, want 1", got)
-	}
-	// Another admin write ends the throttle of the synchronization: it runs again, but the list is in Redis.
-	e.must("POST", "/service", servicePayload(e, "unrelated"))
-	ask("/service/" + org + "/permission")
-	if got := listCalls.Load(); got != 1 {
-		t.Fatalf("a synchronization within cache_ttl asked the source again: %d calls", got)
-	}
-	// consistency=higher never answers from the cached list.
-	ask("/service/" + org + "/permission?consistency=higher")
-	if got := listCalls.Load(); got != 2 {
-		t.Fatalf("consistency=higher must ask the source: %d calls, want 2", got)
-	}
+	original := authzenreq.SearchResource("orders", "alice", "branch", "read")
+	credential, _ := e.callers.Prepare(original.Path, alice, original.Body)
+	status, header, body = e.askWithHeader(authzenreq.SearchResource("orders-v2", "alice", "branch", "read"), credential)
+	requireAuthzenError(t, status, header, body, http.StatusForbidden, "authzen_forbidden")
 }
 
 // An item on a platform policy grants access to the platform itself: it needs write on that policy as a
 // whole, like creating a rule on it. A point write on the role — which is all a role editor has — is not enough.
 func TestRoleItemOnAPlatformPolicyNeedsWriteOnThePolicy(t *testing.T) {
 	w := newWorld(t)
-	ops := w.must("POST", "/role", map[string]any{"name": "ops"})["id"].(string)
+	ops := w.must("POST", "/role", map[string]any{"service_id": model.PlatformServiceID, "name": "ops"})["id"].(string)
 	carol := w.token(jwt.MapClaims{"preferred_username": "carol"})
 	w.must("POST", "/assignment_rule", map[string]any{
 		"type_resource_id": model.PlatformTypeResourceID(model.PlatformRole).String(), "resource_id": ops,
@@ -223,12 +181,8 @@ func TestRoleItemOnAPlatformPolicyNeedsWriteOnThePolicy(t *testing.T) {
 	}, asUser(carol)...)
 	requireErrorCode(t, status, raw, http.StatusForbidden, "access_denied")
 
-	// A type of the business is still within a role editor's reach.
-	if status, raw := w.do(http.MethodPost, w.admin.URL+items, map[string]any{
-		"type_resource_id": w.branch, "resource_id": "B1", "access": []string{"read"},
-	}, asUser(carol)...); status != http.StatusOK {
-		t.Fatalf("a role editor adds an item on a business type: %d %s", status, raw)
-	}
+	// Business items cannot enter a platform-owned role, even for an administrator.
+	w.expect(http.StatusUnprocessableEntity, http.MethodPost, items, map[string]any{"type_resource_id": w.branch, "resource_id": "B1", "access": []string{"read"}})
 
 	// An admin's item on the policy cannot be changed or removed by the role editor either.
 	item := w.must("POST", items, map[string]any{"type_resource_id": platformRules, "access": []string{"read"}})["id"].(string)
@@ -242,13 +196,13 @@ func TestRoleItemOnAPlatformPolicyNeedsWriteOnThePolicy(t *testing.T) {
 	}
 }
 
-// A type that a claim-based target uses as its lookup type cannot be deleted while the target exists.
-func TestLookupTypeOfAClaimTargetCannotBeDeleted(t *testing.T) {
+// A type that a property-based target uses as its lookup type cannot be deleted while the target exists.
+func TestLookupTypeOfAPropertyTargetCannotBeDeleted(t *testing.T) {
 	w := newWorld(t)
 	region := w.typeResource(w.org, "region", "")
 	rule := w.must("POST", "/assignment_rule", map[string]any{
 		"type_resource_id": w.branch, "access": []string{"read"}, "subject": hierarchySubject,
-		"resource_from_claim": map[string]any{"claim": "region", "lookup_type_resource_id": region, "match_by": "name"},
+		"resource_from_property": map[string]any{"property": "region", "lookup_type_resource_id": region, "match_by": "name"},
 	})["id"].(string)
 
 	status, raw := w.do(http.MethodDelete, w.admin.URL+w.typePath("region"), nil)

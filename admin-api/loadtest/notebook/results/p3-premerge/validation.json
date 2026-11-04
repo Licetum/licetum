@@ -1,0 +1,192 @@
+{
+  "validated_code_commit": "72dd04a1370410b67cdf65aaa26282bd5175ada8",
+  "date": "2026-11-01",
+  "go": "1.26.10",
+  "postgresql": "16.15",
+  "suites": {
+    "core-all": {
+      "packages": [
+        {
+          "package": "github.com/licetum/licetum/core/db",
+          "seconds": 1.013
+        },
+        {
+          "package": "github.com/licetum/licetum/core/engine",
+          "seconds": 12.129
+        },
+        {
+          "package": "github.com/licetum/licetum/core/internal/tools/contractscheck",
+          "seconds": 1.012
+        },
+        {
+          "package": "github.com/licetum/licetum/core/outbox",
+          "seconds": 1.5779999999999998
+        },
+        {
+          "package": "github.com/licetum/licetum/core/pepauth",
+          "seconds": 3.004
+        },
+        {
+          "package": "github.com/licetum/licetum/core/server",
+          "seconds": 1.244
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/integration/db",
+          "seconds": 28.123
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/integration/engine",
+          "seconds": 6.021
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/apperr",
+          "seconds": 1.01
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/config",
+          "seconds": 1.037
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/db",
+          "seconds": 1.012
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/i18n",
+          "seconds": 1.019
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/logx",
+          "seconds": 1.026
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/model",
+          "seconds": 1.029
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/observe",
+          "seconds": 1.025
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/service",
+          "seconds": 1.019
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/synchronizer",
+          "seconds": 1.025
+        },
+        {
+          "package": "github.com/licetum/licetum/core/tests/unit/testsupport",
+          "seconds": 1.4849999999999999
+        },
+        {
+          "package": "github.com/licetum/licetum/core/testsupport/authzenreq",
+          "seconds": 1.045
+        },
+        {
+          "package": "github.com/licetum/licetum/core/testsupport/policyfix",
+          "seconds": 1.505
+        },
+        {
+          "package": "github.com/licetum/licetum/core/testsupport/policygen",
+          "seconds": 24.192
+        },
+        {
+          "package": "github.com/licetum/licetum/core/testsupport/refeval",
+          "seconds": 7.018
+        }
+      ],
+      "passed_test_events": 732,
+      "skipped_tests": [],
+      "unexpected_failures": []
+    },
+    "api": {
+      "packages": [
+        {
+          "package": "github.com/licetum/licetum/admin-api/tests/integration/api",
+          "seconds": 1535.328
+        }
+      ],
+      "passed_test_events": 380,
+      "skipped_tests": [
+        "TestSyncWorkerMemory"
+      ],
+      "unexpected_failures": []
+    },
+    "cluster": {
+      "packages": [
+        {
+          "package": "github.com/licetum/licetum/admin-api/tests/integration/cluster",
+          "seconds": 279.706
+        }
+      ],
+      "passed_test_events": 39,
+      "skipped_tests": [],
+      "unexpected_failures": []
+    },
+    "contracts": {
+      "packages": [
+        {
+          "package": "github.com/licetum/licetum/admin-api/tests/integration/contracts",
+          "seconds": 392.054
+        }
+      ],
+      "passed_test_events": 855,
+      "skipped_tests": [],
+      "unexpected_failures": []
+    },
+    "chaos": {
+      "packages": [
+        {
+          "package": "github.com/licetum/licetum/admin-api/tests/integration/api",
+          "seconds": 1.01
+        },
+        {
+          "package": "github.com/licetum/licetum/admin-api/tests/integration/chaos",
+          "seconds": 191.262
+        },
+        {
+          "package": "github.com/licetum/licetum/admin-api/tests/integration/harness",
+          "seconds": 1.073
+        }
+      ],
+      "passed_test_events": 14,
+      "skipped_tests": [],
+      "unexpected_failures": []
+    },
+    "harness": {
+      "packages": [
+        {
+          "package": "github.com/licetum/licetum/admin-api/tests/integration/harness",
+          "seconds": 1.067
+        }
+      ],
+      "passed_test_events": 5,
+      "skipped_tests": [],
+      "unexpected_failures": []
+    }
+  },
+  "other_checks": {
+    "task_check": "passed",
+    "web_jest": {
+      "suites": 13,
+      "tests": 111,
+      "result": "passed"
+    },
+    "web_production_build": "passed",
+    "helm_golden_kubeconform": "passed",
+    "compose_config": "passed",
+    "fresh_volume_runtime_smoke": "passed"
+  },
+  "baseline_regression_proof": {
+    "commit": "38e15a0",
+    "expected_failures": 4,
+    "final_core_passed": true
+  },
+  "external_checks": {
+    "github_ci": "not_run",
+    "codeql": "not_run",
+    "independent_human_review": "pending",
+    "merged_epic_nightly": "not_run",
+    "multiregion": "disabled_until_P7"
+  }
+}

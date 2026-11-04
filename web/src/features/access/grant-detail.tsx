@@ -216,9 +216,9 @@ export function GrantDetail({ ruleId }: { ruleId: string }) {
             <Descriptions.Item label={t('access.col.conditions')}>
               <Conditions rule={rule} lang={lang} />
             </Descriptions.Item>
-            {rule.subject_kind && (
-              <Descriptions.Item label={t('grantDetail.kind')}>
-                {t(`rule.subjectKind.${rule.subject_kind}`, { defaultValue: rule.subject_kind })}
+            {rule.subject_type && (
+              <Descriptions.Item label={t('grantDetail.subjectType')}>
+                {rule.subject_type}
               </Descriptions.Item>
             )}
             {rule.description && (

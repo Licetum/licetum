@@ -58,12 +58,12 @@ type RevertResponse struct {
 // RollbackInput is the body of POST /changes/rollback.
 type RollbackInput struct {
 	_      struct{} `additionalProperties:"true"`
-	To     int64    `json:"to" minimum:"0" doc:"The position of the change log to go back to: every change after it is undone, newest first. Take it from the id of a record of GET /changes"`
+	To     int64    `json:"to" minimum:"0" doc:"The position of the change log to go back to: every change after it is undone, newest first. Take it from the revision of a record of GET /changes"`
 	DryRun bool     `json:"dry_run" required:"false" doc:"Return the operations that would undo the changes, and apply nothing"`
 }
 
-// RevertInput is the body of POST /changes/{change_id}/revert.
+// RevertInput is the body of POST /changes/{revision}/revert.
 type RevertInput struct {
 	_      struct{} `additionalProperties:"true"`
-	DryRun bool     `json:"dry_run" required:"false" doc:"Return the operation that would undo the change, and apply nothing"`
+	DryRun bool     `json:"dry_run" required:"false" doc:"Return the operations that would undo the revision, and apply nothing"`
 }

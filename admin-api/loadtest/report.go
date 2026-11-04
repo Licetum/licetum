@@ -21,15 +21,13 @@ const (
 	keyFetchCount   = "licetum_source_fetch_seconds_count"
 )
 
-// serverOperation is the operation id each request kind carries in the server's metrics.
+// serverOperation is the operation id each request kind carries in the server's metrics. Requests that reach the same
+// operation (the batches of ten and of a hundred) share its figure.
 var serverOperation = [numOps]string{
-	opPermission:   "get_permission",
-	opCheck1:       "check_access",
-	opCheck10:      "check_access",
-	opCheck100:     "check_access",
-	opAuthzen:      "authzen_evaluation",
-	opAuthzenBatch: "authzen_evaluations",
-	opOnBehalf:     "delegated_check",
+	opSearchResource: "authzen_search_resource",
+	opEvaluation:     "authzen_evaluation",
+	opEvaluations10:  "authzen_evaluations",
+	opEvaluations100: "authzen_evaluations",
 }
 
 // Server is what the check server and its database did during a window, read from their own counters. A figure with
@@ -46,6 +44,9 @@ type Server struct {
 	DBCommitsPerRequest     float64            `json:"db_commits_per_request"`
 	DBStatementMSPerRequest float64            `json:"db_statement_ms_per_request"`
 	DBCallsPerRequest       float64            `json:"db_calls_per_request"`
+	// DBQueriesPerRequest is what the check servers themselves counted (the series licetum_db_queries_total) per API
+	// request they served, background work included.
+	DBQueriesPerRequest float64 `json:"db_queries_per_request"`
 }
 
 // Settings are the options of the run that the numbers depend on.
@@ -54,7 +55,7 @@ type Settings struct {
 	Mode           string  `json:"mode"`
 	Seed           int64   `json:"seed"`
 	Mix            string  `json:"mix"`
-	Consistency    string  `json:"consistency"`
+	Workload       string  `json:"workload,omitempty"`
 	Concurrency    int     `json:"concurrency"`
 	DBPool         int     `json:"db_pool"`
 	AccessLog      bool    `json:"access_log"`
@@ -73,7 +74,10 @@ type Settings struct {
 	RequiredRate   float64 `json:"required_rate"`
 	RawPointsKept  bool    `json:"raw_points_kept"`
 	Replicas       int     `json:"replicas"`
-	PauseRedisSecs float64 `json:"pause_redis_seconds"`
+	// AddedLatencyMS is the latency added to each round trip to PostgreSQL (0: none).
+	AddedLatencyMS float64 `json:"added_latency_ms"`
+	// RampThrough: the ramp went on after a failed step (see Options.RampThrough).
+	RampThrough bool `json:"ramp_through,omitempty"`
 	// ExtraSQL is the file applied after the warm-up, when the run is an experiment (empty otherwise).
 	ExtraSQL string `json:"extra_sql,omitempty"`
 }
@@ -114,10 +118,12 @@ func (r *Report) finish(required float64, ramp bool) {
 	r.RequiredRPS = required
 	r.SustainedRPS = 0
 	if ramp {
+		// The highest step before the first one that failed: a step that passes above a failed one is luck, not capacity.
 		for _, m := range r.Measurements {
-			if m.passes() {
-				r.SustainedRPS = max(r.SustainedRPS, m.RateAsked)
+			if !m.passes() {
+				break
 			}
+			r.SustainedRPS = max(r.SustainedRPS, m.RateAsked)
 		}
 		r.Passed = r.SustainedRPS > 0 && r.SustainedRPS >= required
 	} else {
@@ -144,8 +150,8 @@ func (r *Report) Markdown() string {
 	fmt.Fprintf(&b, "# Load test: %s, %s mode, seed %d\n\n", p.Name, r.Settings.Mode, r.Settings.Seed)
 	fmt.Fprintf(&b, "Policy: %d subjects in %d groups, %d assignment rules, %d resources (%d folders, %d documents).\n",
 		p.Users, p.Groups, r.RulesWritten, p.Resources, p.folders(), p.documents())
-	fmt.Fprintf(&b, "Check server: DB pool %d connections, consistency `%s`, access log %s, CPUs `%s`. Requests: `%s`.\n",
-		r.Settings.DBPool, r.Settings.Consistency, onOff(r.Settings.AccessLog), cpuLabel(r.Settings.CheckCPUs), r.Settings.Mix)
+	fmt.Fprintf(&b, "Check server: DB pool %d connections, access log %s, CPUs `%s`. Requests: `%s`.\n",
+		r.Settings.DBPool, onOff(r.Settings.AccessLog), cpuLabel(r.Settings.CheckCPUs), r.Settings.Mix)
 	fmt.Fprintf(&b, "Load generator: k6 %s, at most %d virtual users, CPUs `%s`. Machine: %d CPUs, %s/%s, %s.\n",
 		strings.TrimPrefix(r.Machine.K6, "k6 v"), r.Settings.Concurrency, cpuLabel(r.Settings.K6CPUs), r.Machine.CPUs, r.Machine.OS,
 		r.Machine.Arch, r.Machine.GoVersion)
@@ -216,8 +222,9 @@ func (m Measurement) markdown(b *strings.Builder, ramp bool) {
 		m.Dropped, pct(m.AllowedShare), m.Decisions)
 	fmt.Fprintf(b, "- load generator CPU %.0f%% of %d cores; server CPU %s cores; permission cache hit %s, check cache hit %s\n",
 		100*m.K6CPUShare, m.K6Cores, num(m.Server.CPUCores), pct(m.Server.PermissionCacheHit), pct(m.Server.CheckCacheHit))
-	fmt.Fprintf(b, "- oracle: %d answers checked (%d expected granted), %d mismatches\n",
-		m.Oracle.Checked, m.Oracle.Granted, m.Oracle.Mismatches)
+	fmt.Fprintf(b, "- per request: %s database queries (counted by the server)\n", num2(m.Server.DBQueriesPerRequest))
+	fmt.Fprintf(b, "- oracle: %d answers checked (%d expected granted), %d wrong answers, %d unanswered\n",
+		m.Oracle.Checked, m.Oracle.Granted, m.Oracle.Mismatches, m.Oracle.Unanswered)
 	if m.Valid {
 		b.WriteString("- validity: valid\n")
 	} else {
@@ -261,6 +268,10 @@ func serverSide(before, after counters, requests int, elapsed time.Duration) Ser
 			d(fmt.Sprintf(`licetum_http_request_duration_seconds_count{operation=%q}`, op)),
 		)
 	}
+	served := sumDelta(before.series, after.series, "licetum_http_requests_total{", func(series string) bool {
+		return !strings.Contains(series, `operation="unmatched"`) && !strings.Contains(series, `operation="healthz"`)
+	})
+	srv.DBQueriesPerRequest = perRequest(sumDelta(before.series, after.series, "licetum_db_queries_total{", nil), int(served))
 	reads := delta(before.db, after.db, "blks_read")
 	hits := delta(before.db, after.db, "blks_hit")
 	commits := delta(before.db, after.db, "xact_commit")
@@ -273,6 +284,17 @@ func serverSide(before, after counters, requests int, elapsed time.Duration) Ser
 		srv.DBCallsPerRequest = perRequest(delta(before.db, after.db, "calls"), requests)
 	}
 	return srv
+}
+
+// sumDelta is the growth between two readings of all the series that start with prefix (and pass keep, when given).
+func sumDelta(before, after map[string]float64, prefix string, keep func(series string) bool) float64 {
+	var sum float64
+	for series, v := range after {
+		if strings.HasPrefix(series, prefix) && (keep == nil || keep(series)) {
+			sum += v - before[series]
+		}
+	}
+	return sum
 }
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
@@ -305,6 +327,13 @@ func num(v float64) string {
 		return "–"
 	}
 	return fmt.Sprintf("%.1f", v)
+}
+
+func num2(v float64) string {
+	if v < 0 {
+		return "–"
+	}
+	return fmt.Sprintf("%.2f", v)
 }
 
 func pct(v float64) string {
