@@ -168,7 +168,7 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: grafana/setup-k6-action@v1.2.2
+      - uses: grafana/setup-k6-action@v1.3.0
         with:
           k6-version: '2.2.0'
 
